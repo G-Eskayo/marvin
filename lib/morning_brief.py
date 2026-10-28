@@ -25,6 +25,9 @@ from typing import Callable
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
+import brief_fallback  # noqa: E402
+import machine_profile  # noqa: E402
+
 CLAUDE = Path.home() / ".claude"
 BRIEFS = CLAUDE / "briefs"
 HEALTH_STATUS = CLAUDE / "logs" / "health-status.json"
@@ -277,12 +280,38 @@ def _day(now: datetime) -> str:
     return now.astimezone().strftime("%Y-%m-%d")
 
 
-def write(now: datetime | None = None, sources: dict[str, Callable] | None = None) -> Path:
+def builder_path(now: datetime) -> Path:
+    """Path to sidecar tracking which machine built today's brief."""
+    return BRIEFS / f"{_day(now)}.built-by"
+
+
+def write(now: datetime | None = None, sources: dict[str, Callable] | None = None) -> tuple[Path, bool]:
+    import os
+    import tempfile
+
     now = now or datetime.now(timezone.utc)
     BRIEFS.mkdir(parents=True, exist_ok=True)
     path = BRIEFS / f"{_day(now)}.md"
-    path.write_text(render(gather(now, sources), now))
-    return path
+
+    # Skip if file is already produced (another machine built it)
+    if brief_fallback.produced(path):
+        return path, False
+
+    # Build and recheck immediately before write
+    content = render(gather(now, sources), now)
+    if brief_fallback.produced(path):
+        return path, False
+
+    # Write atomically via temp file + rename
+    fd, temp_path = tempfile.mkstemp(dir=BRIEFS, prefix=f"{_day(now)}_", suffix=".tmp")
+    try:
+        os.close(fd)
+        Path(temp_path).write_text(content)
+        os.replace(temp_path, path)
+    except Exception:
+        Path(temp_path).unlink(missing_ok=True)
+        raise
+    return path, True
 
 
 def show_today(now: datetime | None = None) -> str | None:
@@ -307,9 +336,59 @@ def read_dates() -> list[datetime]:
     return _dates(".read")
 
 
+def build(now: datetime | None = None, sources: dict[str, Callable] | None = None) -> Path | None:
+    """Build today's brief if should_run() allows it.
+
+    Returns the path if built, or None if the decision was not to run.
+    Records the builder machine in a sidecar file.
+    """
+    import os
+    import tempfile
+
+    now = now or datetime.now(timezone.utc)
+    path = BRIEFS / f"{_day(now)}.md"
+
+    should_build, reason = brief_fallback.should_run(path, usual_hour=9, usual_minute=15, now=now)
+    if not should_build:
+        return None
+
+    result, wrote = write(now, sources)
+
+    # Record which machine built this brief (atomically with a temp file)
+    if wrote:
+        builder = machine_profile.registry_id()
+        bp = builder_path(now)
+        fd, temp_builder = tempfile.mkstemp(dir=BRIEFS, prefix=f"{_day(now)}_", suffix=".tmp")
+        try:
+            os.close(fd)
+            Path(temp_builder).write_text(builder)
+            os.replace(temp_builder, bp)
+        except Exception:
+            Path(temp_builder).unlink(missing_ok=True)
+            raise
+
+    return result
+
+
+def builder_of(now: datetime | None = None) -> str | None:
+    """Read which machine built today's brief, or None if not recorded."""
+    now = now or datetime.now(timezone.utc)
+    path = builder_path(now)
+    if not path.exists():
+        return None
+    try:
+        return path.read_text().strip()
+    except OSError:
+        return None
+
+
 if __name__ == "__main__":
     if sys.argv[1:] == ["build"]:
-        print(write())
+        result = build()
+        if result:
+            print(result)
+        else:
+            print("Brief not built (should_run returned False)")
     elif sys.argv[1:] == ["show"]:
         print(show_today() or "No brief for today yet.")
     else:

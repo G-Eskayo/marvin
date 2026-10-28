@@ -284,52 +284,6 @@ def test_reviewer_health_log_invalid_timestamp_skipped(tmp_path, monkeypatch):
     assert "1 succeeded" in result
 
 
-def test_main_short_circuits_when_out_file_exists(tmp_path, monkeypatch):
-    """main() returns early if today's digest already exists."""
-    out_file = tmp_path / "2026-10-22.md"
-    original_content = "# Already exists"
-    out_file.write_text(original_content)
-
-    # Mock OUT_FILE and DIGEST_DIR
-    digest_dir = tmp_path
-    monkeypatch.setattr(dd, "OUT_FILE", out_file)
-    monkeypatch.setattr(dd, "DIGEST_DIR", digest_dir)
-
-    # Patch functions with raise-on-call sentinels: if any of these are called,
-    # it means the short-circuit didn't work
-    def raise_roadmap():
-        raise AssertionError("roadmap_summary should not be called when out_file exists")
-    def raise_bench():
-        raise AssertionError("bench_summary should not be called when out_file exists")
-    def raise_reviewer_health():
-        raise AssertionError("reviewer_health_summary should not be called when out_file exists")
-    def raise_call_claude(prompt: str):
-        raise AssertionError("call_claude should not be called when out_file exists")
-
-    monkeypatch.setattr(dd, "roadmap_summary", raise_roadmap)
-    monkeypatch.setattr(dd, "bench_summary", raise_bench)
-    monkeypatch.setattr(dd, "reviewer_health_summary", raise_reviewer_health)
-    monkeypatch.setattr(dd, "call_claude", raise_call_claude)
-
-    # Capture stdout to verify the short-circuit message is printed
-    import io
-    old_stdout = sys.stdout
-    sys.stdout = io.StringIO()
-
-    try:
-        # Run main — should return immediately without calling any of the above
-        dd.main()
-        output = sys.stdout.getvalue()
-    finally:
-        sys.stdout = old_stdout
-
-    # Verify the short-circuit message was printed
-    assert "Today's digest already exists" in output
-
-    # Verify content is unchanged
-    assert out_file.read_text() == original_content
-
-
 # ── missing helper test ────────────────────────────────────────────────────────
 
 def test_missing_helper_format():

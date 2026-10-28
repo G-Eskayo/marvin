@@ -11,7 +11,8 @@
         <string>/Users/gileskayo/.agents/skills/improve/scripts/daily_digest.py</string>
     </array>
 
-    <!-- Run every day at 08:30 local time -->
+    <!-- Mini only, primary builder: ADR 0067. Fallback: MacBook runs com.marvin.daily-digest-fallback at 09:30.
+         Run every day at 08:30 UTC. -->
     <key>StartCalendarInterval</key>
     <dict>
         <key>Hour</key>

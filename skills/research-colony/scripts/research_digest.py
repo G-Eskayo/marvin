@@ -3,7 +3,7 @@
 import json
 import subprocess
 import sys
-from datetime import date
+from datetime import date, datetime
 from pathlib import Path
 
 DIGEST_DIR = Path.home() / ".claude" / "research-digest"
@@ -14,6 +14,7 @@ SAFETY_MONITOR_SCRIPTS = Path.home() / ".agents" / "skills" / "safety-monitor" /
 sys.path.insert(0, str(Path.home() / ".agents" / "lib"))
 from notify import notify  # noqa: E402
 import marvin_launcher  # noqa: E402
+import brief_fallback  # noqa: E402
 
 sys.path.insert(0, str(SAFETY_MONITOR_SCRIPTS))
 try:
@@ -95,11 +96,16 @@ def _fmt_item(item: dict) -> str:
     return f"  [{item.get('source', '?')}] {item.get('title', '')[:80]} <{item.get('url', '')}>"
 
 
-def generate() -> Path | None:
+def generate(now: datetime | None = None) -> Path | None:
     today = date.today().isoformat()
     out_path = DIGEST_DIR / f"{today}.md"
 
-    if out_path.exists():
+    decision, reason = brief_fallback.should_run(out_path, usual_hour=9, usual_minute=0, now=now)
+    if not decision:
+        print(f"[colony] {reason}", file=sys.stderr)
+        return None
+
+    if brief_fallback.produced(out_path):
         print(f"[colony] research digest already exists for {today}", file=sys.stderr)
         return out_path
 
@@ -151,6 +157,12 @@ def generate() -> Path | None:
         )
 
     DIGEST_DIR.mkdir(parents=True, exist_ok=True)
+
+    # Recheck immediately before write: another process may have produced this while we were calling claude
+    if brief_fallback.produced(out_path):
+        print(f"[colony] another process produced the digest; skipping write", file=sys.stderr)
+        return out_path
+
     out_path.write_text(
         f"# Research Digest — {today}\n\n"
         f"*{len(all_items)} items fetched · {len(correlated)} correlated*\n\n"

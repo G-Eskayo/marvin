@@ -1,6 +1,7 @@
 """The morning brief (marvin#306): one short start-of-day brief, built from what MARVIN already knows, no model run."""
 import json
 from datetime import datetime, timezone
+from pathlib import Path
 
 import morning_brief as mb
 
@@ -60,8 +61,8 @@ def test_a_failing_source_is_named_not_hidden():
 
 def test_writing_and_reading_mark_consumption(tmp_path, monkeypatch):
     monkeypatch.setattr(mb, "BRIEFS", tmp_path)
-    path = mb.write(NOW, _sources())
-    assert path.name == "2026-10-09.md" and path.read_text().startswith("# Morning brief")
+    path, wrote = mb.write(NOW, _sources())
+    assert wrote and path.name == "2026-10-09.md" and path.read_text().startswith("# Morning brief")
     assert mb.read_dates() == []
     shown = mb.show_today(NOW)
     assert "Needs you" in shown

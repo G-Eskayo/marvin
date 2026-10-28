@@ -1,0 +1,1 @@
+The design doc I already delivered stands — this background pytest run (full `lib/tests`, `skills/improve/scripts/tests`, `skills/research-colony/scripts/tests`, exit 0) finished after I'd already gathered what I needed from the narrower runs. No further plan changes needed; the plan above is the final answer for this round.

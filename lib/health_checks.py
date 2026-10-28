@@ -26,9 +26,11 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
+import brief_fallback  # noqa: E402
 import code_sync  # noqa: E402
 import cron_health as ch  # noqa: E402
 import machine_profile  # noqa: E402
+import morning_brief  # noqa: E402
 from machine_profile import machine_label  # noqa: E402
 from task_dispatch import TAILSCALE_BIN, TAILSCALE_ENV  # noqa: E402  (absolute path -- launchd's PATH omits the shell's additions)
 
@@ -406,6 +408,39 @@ def check_catalog_fresh(path: Path | None = None, now: datetime | None = None) -
     n = len(cat.get("projects", []))
     sev = "green" if age_h <= CATALOG_YELLOW_AFTER_HOURS else "yellow" if age_h <= CATALOG_RED_AFTER_HOURS else "red"
     return _result(cid, label, sev, f"{n} projects, built {age_h:.1f}h ago", value=round(age_h, 1))
+
+
+BRIEF_PRIMARY_DEADLINE_HOUR = 9
+BRIEF_PRIMARY_DEADLINE_MINUTE = 15
+BRIEF_GRACE_MINUTES = 60
+
+
+def check_brief_builder(now: datetime | None = None) -> dict:
+    """Morning brief builder status: green when built, yellow during deadline window, red after grace expires.
+    Verifies that either the primary or fallback machine successfully builds the brief each day."""
+    cid, label = "brief:builder", "Morning brief builder"
+    now = now or _now()
+
+    builder = morning_brief.builder_of(now)
+    if builder:
+        return _result(cid, label, "green", f"built by {builder}", value=builder)
+
+    # No builder recorded. Check if we're within the deadline windows.
+    primary_past = brief_fallback.past_deadline(now, BRIEF_PRIMARY_DEADLINE_HOUR,
+                                                  BRIEF_PRIMARY_DEADLINE_MINUTE, BRIEF_GRACE_MINUTES)
+    fallback_grace = BRIEF_GRACE_MINUTES * 2  # Wider grace for fallback
+    fallback_past = brief_fallback.past_deadline(now, BRIEF_PRIMARY_DEADLINE_HOUR,
+                                                  BRIEF_PRIMARY_DEADLINE_MINUTE, fallback_grace)
+
+    if not primary_past:
+        return _result(cid, label, "green", "primary has until 10:15 to build", value="waiting")
+    if not fallback_past:
+        return _result(cid, label, "yellow", "primary missed deadline; fallback building (grace until 11:15)")
+
+    # Both deadlines passed with no builder recorded: escalate to red
+    return _result(cid, label, "red",
+                  "primary missed 10:15 deadline, fallback missed 11:15 — brief not built today",
+                  value="failed")
 
 
 GH_CALLS_PATH = Path.home() / ".claude" / "logs" / "gh-calls.jsonl"
@@ -990,7 +1025,7 @@ if [ -f "$LEDGER" ]; then echo "disk_ledger=$(tail -14 "$LEDGER" | /usr/bin/tr '
 # host only (ADR 0032, 0033), "laptop" = only where Gil sits. Edit here when a job is deliberately moved; a job that
 # is not listed is reported as unplaced so a new job cannot silently run on only one machine.
 JOB_PLACEMENT = {
-    "code-sync-push": "both", "cross-machine-merge": "both", "daily-digest": "both", "research-colony": "both",
+    "code-sync-push": "both", "cross-machine-merge": "both", "daily-digest": "mini", "research-colony": "mini",
     "desktoplive": "both", "dashboard-webhook": "both",  # webhook on both until #112 (ADR 0032)
     "ticket-pipeline": "both",  # mini scans; the laptop's copy is a standby that scans only if the mini goes quiet (scanner_role.py)
     "architecture-review": "mini", "auto-fix": "mini", "cron-health": "mini", "health-check": "mini",
@@ -999,7 +1034,10 @@ JOB_PLACEMENT = {
     "cleanup-sweep": "both",  # daily: each machine sweeps its own pipeline worktrees (lib/cleanup_sweep.py)
     "machine-resources": "both",  # 30s: samples disk/mem/swap/CPU/GPU for resources panel (#130)
     "dashboard-launch": "laptop",
-    "morning-brief": "laptop",  # one writer (the brief syncs to the mini via ~/.claude); after the digests (lib/morning_brief.py)
+    "morning-brief": "mini",  # primary: mini builds it after the digests, synced to laptop via ~/.claude
+    "morning-brief-fallback": "laptop",  # fallback: laptop covers if primary is down
+    "daily-digest-fallback": "laptop",  # fallback: laptop covers if primary is down
+    "research-colony-fallback": "laptop",  # fallback: laptop covers if primary is down
     # the website map (#189): rebuilt nightly and after MARVIN changes on the mini, where the dev site runs; the nightly
     # job also publishes it to production (ADR 0057), so it must never run on the laptop
     "snapshot-deploy-nightly": "mini", "snapshot-deploy-reactive": "mini",
@@ -1479,6 +1517,7 @@ def default_checks(reach: dict[str, str] | None = None, reach_results: list[dict
         ("profile:no-machines", "Projects with no machines", check_unrunnable_profiles, CHECK_BUDGET_S),
         ("triggers:missed", "Dashboard triggers cover every change", check_trigger_coverage, CHECK_BUDGET_S),
         ("catalog:fresh", "Project catalog is current", check_catalog_fresh, CHECK_BUDGET_S),
+        ("brief:builder", "Morning brief builder", check_brief_builder, CHECK_BUDGET_S),
         ("tickets:project-tags", "Tickets are on their project's board", check_project_tags, CHECK_BUDGET_S),
         ("tickets:hold-revisit", "Hold tickets have revisit dates", check_hold_revisit, CHECK_BUDGET_S),
         ("github:budget", "GitHub request budget", check_github_budget, CHECK_BUDGET_S),
