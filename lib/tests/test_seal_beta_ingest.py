@@ -261,6 +261,105 @@ def records_ok(paths):
     return out
 
 
+# ── feature gating (#647, items 1–6) ──────────────────────────────────────
+
+def test_feature_off_skips_ingest_cleanly_with_no_filesystem_touch(paths, monkeypatch):
+    """Item 1: feature off returns skipped; no files written, no attachments dir listed."""
+    drop(paths[0], report([conv("A")]))
+
+    scanned = []
+    real_find = sbi.find_reports
+    def spy_find(root):
+        scanned.append(str(root))
+        raise AssertionError("find_reports should never be called when feature is off")
+    monkeypatch.setattr(sbi, "find_reports", spy_find)
+
+    st = sbi.ingest(attachments_dir=paths[0], store_dir=paths[1], now=NOW,
+                     feature_enabled=lambda n: False)
+    assert st["ok"] is True and st["skipped"] == "feature_off"
+    assert st["files_found"] == 0 and st["new_conversations"] == 0
+    assert not scanned  # find_reports was never called
+    assert not (paths[1] / "reports.jsonl").exists()
+    assert not (paths[1] / "summary.json").exists()
+    assert not (paths[1] / "status.json").exists()
+
+def test_feature_on_behaves_as_today(paths):
+    """Item 2: feature_enabled=lambda n: True behaves exactly as today (regression guard)."""
+    drop(paths[0], report([conv("A"), conv("B")]))
+    st = sbi.ingest(attachments_dir=paths[0], store_dir=paths[1], now=NOW,
+                     feature_enabled=lambda n: True)
+    assert st["ok"] is True
+    assert "skipped" not in st
+    assert st["files_found"] == 1 and st["new_conversations"] == 2
+    assert len(records(paths)) == 2
+
+def test_feature_off_does_not_race_permission_errors(paths, monkeypatch):
+    """Item 3: feature off short-circuits before any filesystem touch, even with FDAdenied."""
+    def denied(*a, **k):
+        raise PermissionError("Full Disk Access denied")
+    monkeypatch.setattr(sbi.os, "scandir", denied)
+
+    st = sbi.ingest(attachments_dir=paths[0], store_dir=paths[1], now=NOW,
+                     feature_enabled=lambda n: False)
+    assert st["ok"] is True and st["skipped"] == "feature_off"
+    assert st["error"] is None
+
+def test_feature_gate_with_corrupt_config(paths, monkeypatch):
+    """Item 4: feature_enabled backed by lib/instance.py with corrupt config reads as off."""
+    import instance as inst
+
+    def bad_config():
+        raise ValueError("malformed json")
+    monkeypatch.setattr(inst, "_config", lambda: {})  # graceful: empty config
+
+    st = sbi.ingest(attachments_dir=paths[0], store_dir=paths[1], now=NOW,
+                     feature_enabled=inst.feature_enabled)
+    assert st["skipped"] == "feature_off"
+
+def test_concurrent_ingest_while_feature_off_never_opens_lock(paths):
+    """Item 5: two concurrent ingest() calls with feature off both return skipped, no .lock file."""
+    lock_opened = []
+    original_open = sbi.os.open
+
+    def tracked_open(path, *args, **kwargs):
+        if ".lock" in str(path):
+            lock_opened.append(str(path))
+        return original_open(path, *args, **kwargs)
+
+    import unittest.mock as mock
+    with mock.patch.object(sbi.os, "open", tracked_open):
+        def go():
+            st = sbi.ingest(attachments_dir=paths[0], store_dir=paths[1], now=NOW,
+                           feature_enabled=lambda n: False)
+            assert st["skipped"] == "feature_off"
+
+        ts = [threading.Thread(target=go) for _ in range(3)]
+        [t.start() for t in ts]
+        [t.join() for t in ts]
+
+    assert not lock_opened
+    assert not (paths[1] / ".lock").exists()
+
+def test_main_run_command_wires_feature_enabled_from_instance(paths, tmp_path, monkeypatch):
+    """Item 6: main(['run']) passes feature_enabled=inst.feature_enabled, honors real gate."""
+    drop(paths[0], report([conv("A")]))
+
+    # Create a fake instance dir with feature off
+    inst_dir = tmp_path / "inst"
+    inst_dir.mkdir()
+    (inst_dir / "instance.json").write_text(json.dumps({"features": {"seal_ingest": False}}))
+
+    # Point lib/instance.py at our fake instance
+    import instance as inst
+    monkeypatch.setenv("MARVIN_INSTANCE_DIR", str(inst_dir))
+    inst.reset()
+
+    exit_code = sbi.main(["run", "--attachments", str(paths[0]), "--store", str(paths[1])])
+    assert exit_code == 0  # Not an error; feature is just off
+    assert not (paths[1] / "reports.jsonl").exists()  # Nothing was ingested
+
+    inst.reset()
+
 def test_concurrent_runs_never_double_append(paths):
     drop(paths[0], report([conv(f"C{i}") for i in range(50)]))
     errs = []

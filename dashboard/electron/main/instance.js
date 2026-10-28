@@ -56,3 +56,39 @@ export function featureEnabled(name) {
 export function reset() {
   cache = null
 }
+
+// ── feature gates (ADR 0074) ────────────────────────────────────────────────
+
+const KNOWN_ADDONS = ['portfolio', 'resume_tailor', 'seal_ingest']
+
+export function getFeatures() {
+  const f = load().config.features || {}
+  return KNOWN_ADDONS.reduce((acc, name) => {
+    acc[name] = featureEnabled(name)
+    return acc
+  }, {})
+}
+
+export function setFeature(name, value) {
+  if (!KNOWN_ADDONS.includes(name)) {
+    throw new Error(`Unknown add-on: ${name}. Known add-ons: ${KNOWN_ADDONS.join(', ')}`)
+  }
+
+  const { writeFileSync } = require('fs')
+  const path = require('path')
+  const configPath = instancePath('instance.json')
+
+  let config = load().config
+  if (!config.features || typeof config.features !== 'object' || Array.isArray(config.features)) {
+    config.features = {}
+  }
+
+  config.features[name] = !!value
+
+  // Write atomically via temp file
+  const tmpPath = path.join(instanceDir(), `.instance.json.tmp`)
+  writeFileSync(tmpPath, JSON.stringify(config, null, 2) + '\n')
+  require('fs').renameSync(tmpPath, configPath)
+
+  reset()
+}

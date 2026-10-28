@@ -33,6 +33,7 @@ import { recordRefusal } from '../../webhook-server/refusal_log.js'
 import { sendBackForOptions } from './decisions_submit.js'
 import { createLocalFirst, coalesce, createIssueReader, createRepoHeadCheck } from './local_first.js'
 import { createMrActions } from './mr_actions.js'
+import { getFeatures, setFeature } from './instance.js'
 
 const mergeOps = createMergeOps()
 // marvin#568: every change to a merge op is pushed to the renderer (the card subscribes; it reads once on mount).
@@ -391,6 +392,19 @@ function registerHealthHandlers() {
     }
     setDispatch(repo, value)
     return { done: true, cancelled: false }
+  })
+}
+
+function registerInstanceHandlers() {
+  ipcMain.handle('instance:features', () => {
+    try {
+      return getFeatures()
+    } catch {
+      return { portfolio: false, resume_tailor: false, seal_ingest: false }
+    }
+  })
+  ipcMain.handle('instance:setFeature', (_event, name, value) => {
+    setFeature(name, value)
   })
 }
 
@@ -1049,6 +1063,7 @@ app.whenReady().then(() => {
   registerMrReviewHandlers()
   registerDispatchHandlers()
   registerHealthHandlers()
+  registerInstanceHandlers()
   registerSessionHandlers()
   registerDocsHandlers()
   registerActivityHandlers()

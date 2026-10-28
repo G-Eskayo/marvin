@@ -14,6 +14,10 @@ stores it on the Mac under ~/Library/Messages/Attachments/<xx>/<yy>/<UUID>/. Thi
 Reading ~/Library/Messages needs Full Disk Access for the interpreter launchd runs. A Homebrew Python upgrade resets
 that grant, so a denied read is a loud failure (exit 2, status `ok: false`), never "0 reports".
 
+The `ingest()` function accepts an optional `feature_enabled` callable (default: always True for backward
+compatibility). When the feature is off, ingest returns a clean `{"ok": True, "skipped": "feature_off", ...}` without
+touching the filesystem.
+
     ~/.agents/venv/bin/python seal_beta_ingest.py run        # ingest (what launchd runs)
     ~/.agents/venv/bin/python seal_beta_ingest.py summary    # print the per-device table
 """
@@ -321,7 +325,17 @@ def _latest(stamps: list[str]) -> str | None:
 
 # ── the run ─────────────────────────────────────────────────────────────────
 
-def ingest(attachments_dir: Path | None = None, store_dir: Path | None = None, now: datetime | None = None) -> dict:
+def ingest(attachments_dir: Path | None = None, store_dir: Path | None = None, now: datetime | None = None,
+            feature_enabled: callable | None = None) -> dict:
+    if feature_enabled is None:
+        feature_enabled = lambda n: True
+
+    if not feature_enabled("seal_ingest"):
+        return {"generated_at": (now or datetime.now(timezone.utc)).isoformat(),
+                "ok": True, "skipped": "feature_off", "error": None, "files_found": 0,
+                "new_conversations": 0, "total_conversations": 0, "invalid": [], "last_report_at": None,
+                "store_bad_lines": 0}
+
     att = Path(attachments_dir or ATTACHMENTS_DIR)
     store = Path(store_dir or STORE_DIR)
     now = now or datetime.now(timezone.utc)
@@ -428,10 +442,13 @@ def main(argv: list[str] | None = None) -> int:
     if a.cmd == "summary":
         print_summary(Path(a.store or STORE_DIR))
         return 0
-    st = ingest(attachments_dir=a.attachments, store_dir=a.store)
-    if not st["ok"]:
+    from lib import instance as inst  # noqa: E402
+    st = ingest(attachments_dir=a.attachments, store_dir=a.store, feature_enabled=inst.feature_enabled)
+    if not st["ok"] and st.get("error"):
         print(f"seal-beta-ingest: {st['error']['kind']}: {st['error']['detail']}", file=sys.stderr)
         return 2 if st["error"]["kind"] == "permission" else 1
+    if st.get("skipped") == "feature_off":
+        return 0  # Feature is off; this is not an error
     print(f"seal-beta-ingest: {st['files_found']} report file(s), {st['new_conversations']} new conversation(s), "
           f"{st['total_conversations']} total, {len(st['invalid'])} invalid")
     return 0

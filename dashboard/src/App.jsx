@@ -10,6 +10,7 @@ import PortfolioHub from '@components/PortfolioHub.jsx'
 import DispatchStatusBadge from '@components/DispatchStatusBadge.jsx'
 import MarvinButton from '@components/MarvinButton.jsx'
 import ActivityHover from '@components/ActivityHover.jsx'
+import { AddonGate } from '@components/AddonGate.jsx'
 
 const TABS = [
   { id: 'metrics', label: 'Metrics' },
@@ -56,9 +57,26 @@ export default function App() {
   }
   const [reviewStatus, setReviewStatus] = useState(null)
   const [healthOverall, setHealthOverall] = useState(null)
+  const [features, setFeatures] = useState(null)
 
   // Docs speed budget (#570): pdf.js and the markdown renderer are warmed once, when the app is idle after boot.
   useEffect(() => warmDocs(), [])
+
+  useEffect(() => {
+    let cancelled = false
+    async function refreshFeatures() {
+      try {
+        const result = await window.api.instance.features()
+        if (!cancelled) setFeatures(result)
+      } catch {
+        if (!cancelled) setFeatures({ portfolio: false, resume_tailor: false, seal_ingest: false })
+      }
+    }
+    refreshFeatures()
+    return () => {
+      cancelled = true
+    }
+  }, [])
   useEffect(() => {
     let cancelled = false
     async function refresh() {
@@ -150,7 +168,15 @@ export default function App() {
         ) : activeTab === 'docs' ? (
           <DocsExplorer nav={nav} onOpenBoard={(repo) => navigate('activity', { repo })} onOpenTicket={(repo, number) => navigate('activity', { repo, ticketNumber: number })} onOpenPr={(repo, number) => navigate('mr-review', { prKey: `${repo}#${number}` })} />
         ) : activeTab === 'portfolio' ? (
-          <PortfolioHub />
+          <AddonGate
+            addon="portfolio"
+            enabled={features?.portfolio}
+            onEnable={() => {
+              window.api.instance.features().then(setFeatures).catch(() => {})
+            }}
+          >
+            <PortfolioHub />
+          </AddonGate>
         ) : (
           <ActivityBoard nav={nav} onOpenMr={(prKey) => navigate('mr-review', { prKey })} onOpenDocs={(projectId, path) => navigate('docs', { projectId, path })} onOpenTicket={(repo, number) => navigate('activity', { repo, ticketNumber: number })} onOpenProject={(repo) => navigate('activity', { repo })} />
         )}

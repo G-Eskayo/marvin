@@ -114,3 +114,113 @@ describe('dashboard readers point at the instance (ADR 0071 step 2)', () => {
     expect(profiles.PROFILES_DIR).toBe(path.join(root, 'inst', 'config', 'projects'))
   })
 })
+
+describe('addon feature gates (items 13–16 of #647)', () => {
+  describe('Item 13: getFeatures with missing/corrupt/empty instance.json', () => {
+    it('returns all features false when instance.json is missing', () => {
+      at({})
+      const features = inst.getFeatures()
+      expect(features).toEqual({
+        portfolio: false,
+        resume_tailor: false,
+        seal_ingest: false
+      })
+    })
+
+    it('returns all features false when instance.json is corrupt JSON', () => {
+      at({ config: '{not json}' })
+      const features = inst.getFeatures()
+      expect(features).toEqual({
+        portfolio: false,
+        resume_tailor: false,
+        seal_ingest: false
+      })
+    })
+
+    it('returns all features false when instance.json has empty features object', () => {
+      at({ config: { features: {} } })
+      const features = inst.getFeatures()
+      expect(features).toEqual({
+        portfolio: false,
+        resume_tailor: false,
+        seal_ingest: false
+      })
+    })
+  })
+
+  describe('Item 14: setFeature with unknown addon name', () => {
+    it('throws when setting an unknown addon name', () => {
+      at({ config: {} })
+      expect(() => {
+        inst.setFeature('unknown_addon', true)
+      }).toThrow()
+    })
+
+    it('accepts known addon names without throwing', () => {
+      at({ config: {} })
+      expect(() => {
+        inst.setFeature('portfolio', true)
+      }).not.toThrow()
+    })
+  })
+
+  describe('Item 15: setFeature with missing/corrupt existing file', () => {
+    it('writes a valid minimal instance.json when file is missing', () => {
+      const dir = at({})
+      rmSync(path.join(dir, 'instance.json'), { force: true })
+      const configPath = path.join(dir, 'instance.json')
+
+      expect(!require('fs').existsSync(configPath))
+      inst.setFeature('portfolio', true)
+
+      expect(require('fs').existsSync(configPath))
+      const data = JSON.parse(require('fs').readFileSync(configPath, 'utf8'))
+      expect(data.features.portfolio).toBe(true)
+    })
+
+    it('writes a valid instance.json when existing file is corrupt', () => {
+      const dir = at({ config: '{corrupt}' })
+      inst.reset()
+      inst.setFeature('resume_tailor', true)
+
+      const data = JSON.parse(require('fs').readFileSync(path.join(dir, 'instance.json'), 'utf8'))
+      expect(data.features.resume_tailor).toBe(true)
+    })
+
+    it('preserves unrelated keys when writing', () => {
+      const dir = at({ config: { owner: 'pat-example', tickets_repo: 'org/tickets' } })
+      inst.setFeature('portfolio', true)
+
+      const data = JSON.parse(require('fs').readFileSync(path.join(dir, 'instance.json'), 'utf8'))
+      expect(data.owner).toBe('pat-example')
+      expect(data.tickets_repo).toBe('org/tickets')
+      expect(data.features.portfolio).toBe(true)
+    })
+  })
+
+  describe('Item 16: setFeature then getFeatures sees the change without restart', () => {
+    it('setFeature writes, reset is called, then getFeatures reflects the change', () => {
+      at({ config: {} })
+
+      let features = inst.getFeatures()
+      expect(features.portfolio).toBe(false)
+
+      inst.setFeature('portfolio', true)
+
+      features = inst.getFeatures()
+      expect(features.portfolio).toBe(true)
+    })
+
+    it('multiple feature changes accumulate correctly', () => {
+      at({ config: {} })
+
+      inst.setFeature('portfolio', true)
+      inst.setFeature('resume_tailor', true)
+
+      const features = inst.getFeatures()
+      expect(features.portfolio).toBe(true)
+      expect(features.resume_tailor).toBe(true)
+      expect(features.seal_ingest).toBe(false)
+    })
+  })
+})
