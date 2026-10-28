@@ -324,3 +324,17 @@ def test_tail_since_ignores_a_half_written_last_line_and_handles_empty_and_missi
     assert hs.tail_since(log, 0) == []
     log.write_text(json.dumps(row(1, "a")) + "\n" + '{"t": 1')
     assert len(hs.tail_since(log, 0)) == 1
+
+
+def test_a_mac_with_only_the_old_history_db_moves_it_into_marvin_db_and_reports_from_it(tmp_path):
+    """#621: before this Mac's first open, its rows are still in ~/.claude/history.db. The report must not fall back
+    to raw logs (or show nothing): it opens the store, which copies the old file in, and the old file stays."""
+    old = hs.connect(hs.OLD_DB_PATH)  # the suite's temp stand-in for ~/.claude/history.db (conftest)
+    hs.load(old, "gh-calls", "mac-mini-1", [json.dumps(row(5, "a")), json.dumps(row(6, "b"))])
+    old.close()
+    assert not hs.DB_PATH.exists()
+    r = gu.report(NOW, cache_path=tmp_path / "cache.json", device="mac-mini-1",
+                  local_calls=tmp_path / "none.jsonl", local_budget=tmp_path / "none-b.jsonl")
+    assert _total(r) == 2
+    assert hs.DB_PATH.exists() and hs.OLD_DB_PATH.exists()
+

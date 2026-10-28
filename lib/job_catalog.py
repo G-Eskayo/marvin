@@ -73,7 +73,7 @@ JOBS: dict[str, dict] = {
                       "healthy": "last run exit 0; pipeline worktrees under the disk budget", "consumer": "Health disk:*"},
     "machine-resources": {"machine": "both", "goal": "ns1", "reporter": "machine-resources samples",
                           "healthy": "a sample in the last 2 min", "consumer": "the Resources panel"},
-    "history-load": {"machine": "mini", "goal": "ns1", "reporter": "history.db load log",
+    "history-load": {"machine": "mini", "goal": "ns1", "reporter": "marvin.db load log",
                      "healthy": "a load in the last 15 min", "consumer": "Vitals history, GitHub usage"},
     "seal-beta-ingest": {"machine": "mini", "goal": "project:clarity-captions", "reporter": "its launchd log",
                          "healthy": "last run exit 0", "consumer": "the Seal Speak beta view and tickets"},

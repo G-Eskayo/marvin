@@ -290,3 +290,13 @@ def _isolate_node_modules_cache(tmp_path_factory, monkeypatch):
     import node_modules_seed
     monkeypatch.setattr(node_modules_seed, "CACHE_ROOT", tmp_path_factory.mktemp("node-modules-cache"))
     monkeypatch.setattr(node_modules_seed, "_runtime", lambda: "node-test")
+
+
+@pytest.fixture(autouse=True)
+def _isolate_history_store(tmp_path_factory, monkeypatch):
+    # #621: a no-argument history_store.connect() opens (and on first use migrates into) this Mac's real
+    # ~/.agents/var/marvin.db from ~/.claude/history.db. A test must never open, create or migrate either.
+    import history_store
+    d = tmp_path_factory.mktemp("history-store")
+    monkeypatch.setattr(history_store, "DB_PATH", d / "var" / "marvin.db")
+    monkeypatch.setattr(history_store, "OLD_DB_PATH", d / "claude" / "history.db")

@@ -1,8 +1,13 @@
 #!/usr/bin/env python3
 """History store (ADR 0066, marvin#449): one SQLite record of what MARVIN did on both Macs.
 
-Jobs keep appending to their JSONL logs, which are now *outboxes*. This module moves new outbox lines into
-`~/.claude/history.db` on the Mini, the laptop's over ssh whenever it's reachable. The database is the record.
+Jobs keep appending to their JSONL logs, which are now *outboxes*. This module moves new outbox lines into this Mac's
+store, `~/.agents/var/marvin.db` (#621: one store per Mac, MARVIN-owned, never under ~/.claude), on the Mini, the
+laptop's over ssh whenever it's reachable. The database is the record.
+
+The store used to be `~/.claude/history.db`. The first no-argument connect() on each Mac copies it in once (migrate()):
+under one flock, from one read snapshot, verified by row count and content hash, then renamed into place. The old file
+is never deleted here; it stays in place as a backup.
 
 Complexity (north star #1):
 - load: O(new lines x log n). A cursor per outbox (device, path) remembers the byte offset and inode, so a run reads
@@ -39,7 +44,8 @@ from typing import Callable, Iterable
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 HOME = Path.home()
-DB_PATH = HOME / ".claude" / "history.db"
+DB_PATH = HOME / ".agents" / "var" / "marvin.db"  # this Mac's one store (#621)
+OLD_DB_PATH = HOME / ".claude" / "history.db"  # where it lived before #621: copied in once, then left as a backup
 LOGS_REL = "~/.claude/logs"
 FINGERPRINT_BYTES = 64
 HOME_DEVICE = "mac-mini-1"  # the database's home: the only Mac that loads outboxes (ADR 0066)
@@ -47,31 +53,51 @@ SHIP_LIMIT = 50_000  # rows per run to the laptop's copy, so a long absence catc
 VERIFY_EVERY_S = 7 * 86400
 DEFAULT_STREAMS = ["gh-calls", "gh-budget"]  # gh-budget: the allowance readings the GitHub usage chart draws (G4)
 SSH_OPTS = ["-o", "ConnectTimeout=5", "-o", "BatchMode=yes", "-o", "StrictHostKeyChecking=accept-new"]
+COPY_PAGES = 4096  # pages per backup step (16 MB at 4 KB pages): bounded memory, and progress between steps
 
-SCHEMA = """
-CREATE TABLE IF NOT EXISTS events(
-    id INTEGER PRIMARY KEY,           -- rowid order: what the backup ships incrementally (G3)
-    stream TEXT NOT NULL,
-    device TEXT NOT NULL,
-    ts REAL,                          -- epoch seconds; NULL when the line has no readable time
-    hash BLOB NOT NULL UNIQUE,
-    data TEXT NOT NULL
-);
-CREATE INDEX IF NOT EXISTS events_stream_ts ON events(stream, ts);
-CREATE TABLE IF NOT EXISTS meta(key TEXT PRIMARY KEY, value TEXT);
-CREATE TABLE IF NOT EXISTS cursors(
-    device TEXT NOT NULL,
-    path TEXT NOT NULL,
-    inode INTEGER NOT NULL,
-    offset INTEGER NOT NULL,
-    fingerprint BLOB NOT NULL,
-    PRIMARY KEY(device, path)
-);
-"""
+# Version 1 = #621. The old history.db is version 0 (same tables, no ticket column, no views). The schema is applied
+# once per version inside one BEGIN IMMEDIATE, never on every connect: per-connect DROP/CREATE VIEW raced between two
+# opens ("view already exists") and invalidated other connections' prepared statements.
+SCHEMA_VERSION = 1
+_SCHEMA = [
+    """CREATE TABLE IF NOT EXISTS events(
+        id INTEGER PRIMARY KEY,           -- rowid order: what the backup ships incrementally (G3)
+        stream TEXT NOT NULL,
+        device TEXT NOT NULL,
+        ts REAL,                          -- epoch seconds; NULL when the line has no readable time
+        hash BLOB NOT NULL UNIQUE,
+        data TEXT NOT NULL)""",
+    "CREATE INDEX IF NOT EXISTS events_stream_ts ON events(stream, ts)",
+    "CREATE TABLE IF NOT EXISTS meta(key TEXT PRIMARY KEY, value TEXT)",
+    """CREATE TABLE IF NOT EXISTS cursors(
+        device TEXT NOT NULL,
+        path TEXT NOT NULL,
+        inode INTEGER NOT NULL,
+        offset INTEGER NOT NULL,
+        fingerprint BLOB NOT NULL,
+        PRIMARY KEY(device, path))""",
+]
+# A virtual column (computed on read, no extra bytes per row, nothing to backfill or ship) so (ticket) can be indexed.
+# json_valid first: a malformed line is still stored, and json_extract on it would raise.
+_TICKET_COLUMN = ("ALTER TABLE events ADD COLUMN ticket GENERATED ALWAYS AS "
+                  "(CASE WHEN json_valid(data) THEN json_extract(data, '$.ticket') END) VIRTUAL")
+_SCHEMA_AFTER_COLUMNS = [
+    "CREATE INDEX IF NOT EXISTS events_ticket ON events(ticket) WHERE ticket IS NOT NULL",  # most rows have none
+    """CREATE VIEW IF NOT EXISTS gh_calls AS
+        SELECT id, device, ts, json_extract(data, '$.caller') AS caller, json_extract(data, '$.cmd') AS cmd,
+               json_extract(data, '$.rc') AS rc, json_extract(data, '$.ms') AS ms,
+               json_extract(data, '$.priority') AS priority
+        FROM events WHERE stream = 'gh-calls' AND json_valid(data)""",
+]
+MIGRATED_KEY = "migrated_from"
 
 
 class Unreachable(Exception):
     """The other Mac couldn't be read (asleep, away, ssh refused). Its outbox waits; nothing is lost."""
+
+
+class MigrationError(Exception):
+    """The old history.db couldn't be copied in safely. Nothing was created and the old file is untouched."""
 
 
 def _enable_wal(conn: sqlite3.Connection, wait_s: float = 30.0) -> None:
@@ -92,14 +118,171 @@ def _enable_wal(conn: sqlite3.Connection, wait_s: float = 30.0) -> None:
             delay = min(delay * 2, 0.5)
 
 
+def ensure_schema(conn: sqlite3.Connection) -> None:
+    """O(1) when current: one PRAGMA read. Otherwise the upgrade runs once, in one transaction, re-checked under the
+    write lock so a second opener that lost the race does nothing."""
+    if conn.execute("PRAGMA user_version").fetchone()[0] >= SCHEMA_VERSION:
+        return
+    conn.execute("BEGIN IMMEDIATE")
+    try:
+        if conn.execute("PRAGMA user_version").fetchone()[0] < SCHEMA_VERSION:
+            for stmt in _SCHEMA:
+                conn.execute(stmt)
+            if "ticket" not in {r[1] for r in conn.execute("PRAGMA table_xinfo(events)")}:
+                conn.execute(_TICKET_COLUMN)
+            for stmt in _SCHEMA_AFTER_COLUMNS:
+                conn.execute(stmt)
+            conn.execute(f"PRAGMA user_version = {int(SCHEMA_VERSION)}")
+        conn.execute("COMMIT")
+    except BaseException:
+        conn.execute("ROLLBACK")
+        raise
+
+
 def connect(path: Path | str | None = None) -> sqlite3.Connection:
-    path = Path(path or DB_PATH)
+    """This Mac's store when path is None (migrating the old history.db in first, once); any other file otherwise."""
+    if path is None:
+        migrate()
+        path = DB_PATH
+    path = Path(path)
     path.parent.mkdir(parents=True, exist_ok=True)
     conn = sqlite3.connect(path, timeout=30, isolation_level=None)  # transactions are explicit (BEGIN IMMEDIATE)
     conn.execute("PRAGMA busy_timeout=30000")
     _enable_wal(conn)
-    conn.executescript(SCHEMA)
+    ensure_schema(conn)
     return conn
+
+
+# ── the one-time move of ~/.claude/history.db into marvin.db (#621) ─────────
+
+_FINGERPRINT_ORDER = {"events": "id", "cursors": "device, path", "meta": "key"}
+_FINGERPRINT_COLUMNS = {"events": "id, stream, device, ts, hash, data", "cursors": "*", "meta": "key, value"}
+
+
+def _fingerprint(conn: sqlite3.Connection) -> dict:
+    """{table: (rows, sha256 of every row in key order)} for the tables that hold history. O(n), once per migration."""
+    present = {r[0] for r in conn.execute("SELECT name FROM sqlite_master WHERE type = 'table'")}
+    out = {}
+    for table, order in _FINGERPRINT_ORDER.items():
+        h, n = hashlib.sha256(), 0
+        if table in present:
+            for row in conn.execute(f"SELECT {_FINGERPRINT_COLUMNS[table]} FROM {table} ORDER BY {order}"):
+                h.update(repr(tuple(row)).encode())
+                n += 1
+        out[table] = (n, h.hexdigest())
+    return out
+
+
+def _db_files(path: Path) -> list[Path]:
+    return [path, *(path.with_name(path.name + s) for s in ("-wal", "-shm", "-journal"))]
+
+
+def _remove(paths: Iterable[Path]) -> None:
+    for p in paths:
+        try:
+            p.unlink()
+        except FileNotFoundError:
+            pass
+
+
+def _fsync(path: Path) -> None:
+    fd = os.open(path, os.O_RDONLY)
+    try:
+        os.fsync(fd)
+    finally:
+        os.close(fd)
+
+
+def _open_target(path: Path) -> sqlite3.Connection:
+    return sqlite3.connect(path, isolation_level=None)
+
+
+def _marker(dst: Path) -> str | None:
+    conn = sqlite3.connect(f"file:{dst}?mode=ro", uri=True, timeout=30)
+    try:
+        has_meta = conn.execute("SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'meta'").fetchone()
+        row = conn.execute("SELECT value FROM meta WHERE key = ?", (MIGRATED_KEY,)).fetchone() if has_meta else None
+        return row[0] if row else None
+    finally:
+        conn.close()
+
+
+def _build(tmp: Path, src: Path, pages: int, progress, on_snapshot) -> dict:
+    """Build the complete store at tmp. With a source: copy it from one read snapshot and verify the copy against
+    that same snapshot. A writer on the old file during the copy isn't blocked (WAL) and can't make the copy
+    inconsistent; what it wrote after the snapshot is re-read from its outbox by the next load (the copied cursor is
+    the snapshot's)."""
+    target = _open_target(tmp)
+    try:
+        expected = None
+        if src.exists():
+            source = sqlite3.connect(src, timeout=30, isolation_level=None)
+            try:
+                source.execute("PRAGMA query_only=1")  # the old file is a backup: this never writes it
+                source.execute("BEGIN")
+                expected = _fingerprint(source)  # the read snapshot starts here and holds for the copy
+                if on_snapshot:
+                    on_snapshot()
+                source.backup(target, pages=pages, progress=progress)
+                source.execute("ROLLBACK")
+            finally:
+                source.close()
+            actual = _fingerprint(target)
+            if actual != expected:
+                raise MigrationError(f"verify failed: the copy of {src} doesn't match it ({actual} vs {expected})")
+        ensure_schema(target)
+        rows = expected["events"][0] if expected else 0
+        marker = {"path": str(src).replace(str(HOME), "~", 1), "rows": rows,
+                  "digest": expected["events"][1] if expected else None, "at": datetime.now().astimezone().isoformat()}
+        target.execute("INSERT OR REPLACE INTO meta(key, value) VALUES (?, ?)", (MIGRATED_KEY, json.dumps(marker)))
+        check = target.execute("PRAGMA quick_check").fetchone()[0]
+        if check != "ok":
+            raise MigrationError(f"the copy of {src} failed its integrity check: {check}")
+        target.execute("PRAGMA journal_mode=DELETE")  # one self-contained file to rename; connect() turns WAL back on
+        return {"status": "migrated" if expected else "fresh", "rows": rows, "digest": marker["digest"]}
+    finally:
+        target.close()
+
+
+def migrate(dst: Path | None = None, src: Path | None = None, *, pages: int = COPY_PAGES,
+            progress: Callable | None = None, on_snapshot: Callable[[], None] | None = None) -> dict:
+    """Copy the old history.db into marvin.db once. Every check (does the store exist, does it carry the marker)
+    happens under one flock, so a rerun or a second concurrent caller sees either nothing or the finished store and
+    does nothing. The store appears only by an atomic rename of a fully built, verified file, so it's never half
+    there. O(rows) once; after that O(1): a lock and one key lookup.
+
+    {"status": "done"} when already migrated, "migrated" or "fresh" (no old file) when this call built it."""
+    import fcntl
+    dst, src = Path(dst or DB_PATH), Path(src or OLD_DB_PATH)
+    dst.parent.mkdir(parents=True, exist_ok=True)
+    tmp = dst.with_name(dst.name + ".migrating")
+    lock_fd = os.open(dst.with_name(dst.name + ".lock"), os.O_RDWR | os.O_CREAT, 0o600)
+    try:
+        fcntl.flock(lock_fd, fcntl.LOCK_EX)
+        if dst.exists():
+            try:
+                marker = _marker(dst)
+            except sqlite3.DatabaseError as exc:
+                raise MigrationError(f"{dst} exists but can't be read ({exc}); it is left as it is") from exc
+            if marker is None and src.exists():
+                raise MigrationError(f"{dst} exists without a migration marker while {src} is still there: "
+                                     "refusing to merge or overwrite either; move one aside")
+            return {"status": "done"}
+        _remove(_db_files(tmp) + _db_files(dst)[1:])  # a crashed earlier attempt, or a stale -wal that'd replay
+        try:
+            out = _build(tmp, src, pages, progress, on_snapshot)
+            _fsync(tmp)
+            os.replace(tmp, dst)
+            _fsync(dst.parent)
+        except sqlite3.Error as exc:
+            _remove(_db_files(tmp))
+            raise MigrationError(f"couldn't copy {src} into {dst}: {exc}") from exc
+        except BaseException:
+            _remove(_db_files(tmp))
+            raise
+        return out
+    finally:
+        os.close(lock_fd)  # closing releases the flock
 
 
 def _ts(record: dict) -> float | None:

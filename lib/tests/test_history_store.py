@@ -346,7 +346,7 @@ def test_the_copy_reports_its_tip_as_id_and_hash_through_the_real_cli(tmp_path):
     env = {**os.environ, "HOME": str(tmp_path)}
     cli = [sys.executable, str(Path(hs.__file__)), "--replica-max"]
     assert subprocess.run(cli, env=env, capture_output=True, text=True).stdout.strip() == "0"
-    conn = hs.connect(tmp_path / ".claude" / "history.db")
+    conn = hs.connect(tmp_path / ".agents" / "var" / "marvin.db")  # the store the CLI opens (#621)
     hs.load(conn, "s", "d", [_line(1)])
     conn.close()
     top, h = subprocess.run(cli, env=env, capture_output=True, text=True).stdout.split()
@@ -375,3 +375,426 @@ def test_the_remote_read_command_works_with_gnu_stat_as_well_as_bsd():
     # The Macs read mac-mini-2012's logs over ssh; Linux's stat -f means "filesystem", not BSD's format flag.
     cmd = hs.remote_read_command("~/.claude/logs/x.jsonl", 0)
     assert "stat -c '%i %s'" in cmd and "stat -f '%i %z'" in cmd
+
+
+# ── marvin.db (#621): one store per Mac, and the one-time move of the old history.db ──────────────────────────────
+# Every test here builds its own temp HOME layout; DB_PATH/OLD_DB_PATH are pointed away from the real machine by the
+# suite-wide fixture in conftest.py, and these tests pass explicit temp paths on top of that.
+
+def _old_store(path: Path, n: int = 50, device: str = "mac-mini-1") -> Path:
+    """An old-format history.db (schema as it shipped before #621: no ticket column, user_version 0)."""
+    path.parent.mkdir(parents=True, exist_ok=True)
+    conn = sqlite3.connect(path, isolation_level=None)
+    conn.execute("PRAGMA journal_mode=WAL")
+    conn.executescript("""
+        CREATE TABLE events(id INTEGER PRIMARY KEY, stream TEXT NOT NULL, device TEXT NOT NULL, ts REAL,
+                            hash BLOB NOT NULL UNIQUE, data TEXT NOT NULL);
+        CREATE INDEX events_stream_ts ON events(stream, ts);
+        CREATE TABLE meta(key TEXT PRIMARY KEY, value TEXT);
+        CREATE TABLE cursors(device TEXT NOT NULL, path TEXT NOT NULL, inode INTEGER NOT NULL, offset INTEGER NOT NULL,
+                             fingerprint BLOB NOT NULL, PRIMARY KEY(device, path));
+    """)
+    conn.execute("BEGIN")
+    hs.load(conn, "gh-calls", device, [_line(i, ticket=f"o/r#{i % 7}") for i in range(n)])
+    hs.load(conn, "gh-calls", device, ["{not json"])
+    conn.execute("INSERT INTO cursors VALUES ('mac-mini-1', '~/.claude/logs/gh-calls.jsonl', 1, 10, x'00')")
+    conn.execute("INSERT INTO meta VALUES ('verified:laptop', '1.0')")
+    conn.execute("COMMIT")
+    conn.close()
+    return path
+
+
+@pytest.fixture
+def layout(tmp_path):
+    home = tmp_path / "home"
+    return {"src": home / ".claude" / "history.db", "dst": home / ".agents" / "var" / "marvin.db"}
+
+
+def _file_rows(path):
+    conn = sqlite3.connect(path)
+    try:
+        return conn.execute("SELECT id, stream, device, ts, hash, data FROM events ORDER BY id").fetchall()
+    finally:
+        conn.close()
+
+
+def test_the_default_store_is_marvin_db_under_agents_var_and_the_old_one_is_history_db(tmp_path):
+    import subprocess
+    lib = Path(hs.__file__).resolve().parent
+    code = f"import sys; sys.path.insert(0, {str(lib)!r}); import history_store as hs; print(hs.DB_PATH); print(hs.OLD_DB_PATH)"
+    out = subprocess.run([sys.executable, "-c", code], env={**os.environ, "HOME": str(tmp_path)},
+                         capture_output=True, text=True, timeout=30).stdout.split()
+    assert out == [str(tmp_path / ".agents" / "var" / "marvin.db"), str(tmp_path / ".claude" / "history.db")]
+
+
+def test_the_suite_never_points_the_store_at_the_real_machine():
+    real = Path(os.path.expanduser("~"))
+    assert real not in hs.DB_PATH.parents and real not in hs.OLD_DB_PATH.parents
+
+
+def test_migration_copies_every_row_cursor_and_meta_and_keeps_ids(layout):
+    _old_store(layout["src"], 120)
+    out = hs.migrate(layout["dst"], layout["src"])
+    assert out["status"] == "migrated" and out["rows"] == 121
+    assert _file_rows(layout["dst"]) == _file_rows(layout["src"])
+    conn = hs.connect(layout["dst"])
+    assert conn.execute("SELECT offset FROM cursors").fetchone() == (10,)
+    assert conn.execute("SELECT value FROM meta WHERE key = 'verified:laptop'").fetchone() == ("1.0",)
+    marker = json.loads(conn.execute("SELECT value FROM meta WHERE key = 'migrated_from'").fetchone()[0])
+    assert marker["rows"] == 121 and len(marker["digest"]) == 64
+
+
+def test_the_old_history_db_is_left_in_place_unchanged(layout):
+    _old_store(layout["src"], 30)
+    before = _file_rows(layout["src"])
+    hs.migrate(layout["dst"], layout["src"])
+    assert layout["src"].exists() and _file_rows(layout["src"]) == before
+
+
+def test_rerunning_the_migration_does_nothing(layout):
+    _old_store(layout["src"], 10)
+    hs.migrate(layout["dst"], layout["src"])
+    conn = hs.connect(layout["dst"])
+    hs.load(conn, "gh-calls", "d", [_line(999)])  # new work in the new store must survive a rerun
+    conn.close()
+    assert hs.migrate(layout["dst"], layout["src"])["status"] == "done"
+    assert len(_file_rows(layout["dst"])) == 12
+
+
+def test_a_missing_history_db_gives_a_fresh_empty_store(layout):
+    out = hs.migrate(layout["dst"], layout["src"])
+    assert out["status"] == "fresh" and _file_rows(layout["dst"]) == []
+    assert not layout["src"].exists()
+    assert hs.migrate(layout["dst"], layout["src"])["status"] == "done"
+
+
+@pytest.mark.parametrize("content", [b"", b"this is not a database at all" * 100, b"SQLite format 3\0" + b"\xff" * 4000])
+def test_a_corrupt_history_db_fails_loudly_and_creates_nothing(layout, content):
+    layout["src"].parent.mkdir(parents=True)
+    layout["src"].write_bytes(content)
+    if content == b"":  # an empty file is a valid empty database: nothing to copy, still a clean store
+        assert hs.migrate(layout["dst"], layout["src"])["rows"] == 0
+        return
+    with pytest.raises(hs.MigrationError):
+        hs.migrate(layout["dst"], layout["src"])
+    assert not layout["dst"].exists()
+    assert not list(layout["dst"].parent.glob("marvin.db.migrating*"))
+    assert layout["src"].read_bytes() == content
+
+
+def test_a_corrupt_history_db_makes_the_default_connect_fail_loudly(layout, monkeypatch):
+    layout["src"].parent.mkdir(parents=True)
+    layout["src"].write_bytes(b"garbage" * 1000)
+    monkeypatch.setattr(hs, "DB_PATH", layout["dst"])
+    monkeypatch.setattr(hs, "OLD_DB_PATH", layout["src"])
+    with pytest.raises(hs.MigrationError, match="history.db"):
+        hs.connect()
+
+
+def test_the_default_connect_migrates_once_then_opens_the_new_store(layout, monkeypatch):
+    _old_store(layout["src"], 5)
+    monkeypatch.setattr(hs, "DB_PATH", layout["dst"])
+    monkeypatch.setattr(hs, "OLD_DB_PATH", layout["src"])
+    conn = hs.connect()
+    assert conn.execute("SELECT COUNT(*) FROM events").fetchone()[0] == 6
+    hs.load(conn, "gh-calls", "d", [_line(500)])
+    conn.close()
+    conn = hs.connect()
+    assert conn.execute("SELECT COUNT(*) FROM events").fetchone()[0] == 7
+    conn.close()
+
+
+def test_a_half_written_destination_left_by_a_crash_is_discarded_and_redone(layout):
+    _old_store(layout["src"], 40)
+    layout["dst"].parent.mkdir(parents=True)
+    tmp = layout["dst"].with_name("marvin.db.migrating")
+    tmp.write_bytes(b"SQLite format 3\0" + b"\0" * 100)  # torn: header only
+    tmp.with_name(tmp.name + "-journal").write_bytes(b"junk")
+    assert hs.migrate(layout["dst"], layout["src"])["status"] == "migrated"
+    assert _file_rows(layout["dst"]) == _file_rows(layout["src"])
+    assert not tmp.exists() and not tmp.with_name(tmp.name + "-journal").exists()
+
+
+def test_a_process_killed_mid_copy_leaves_no_store_and_the_next_run_completes(layout):
+    import subprocess
+    _old_store(layout["src"], 3000)
+    lib = Path(hs.__file__).resolve().parent
+    code = (f"import sys, os; sys.path.insert(0, {str(lib)!r}); import history_store as hs\n"
+            f"hs.migrate(hs.Path({str(layout['dst'])!r}), hs.Path({str(layout['src'])!r}), pages=1,\n"
+            f"           progress=lambda status, remaining, total: os._exit(9) if remaining < total // 2 else None)\n")
+    assert subprocess.run([sys.executable, "-c", code], timeout=60).returncode == 9
+    assert not layout["dst"].exists()
+    assert hs.migrate(layout["dst"], layout["src"])["status"] == "migrated"
+    assert _file_rows(layout["dst"]) == _file_rows(layout["src"])
+
+
+def test_a_destination_that_exists_but_is_not_a_database_is_never_overwritten(layout):
+    _old_store(layout["src"], 5)
+    layout["dst"].parent.mkdir(parents=True)
+    layout["dst"].write_bytes(b"not sqlite" * 50)
+    with pytest.raises(hs.MigrationError):
+        hs.migrate(layout["dst"], layout["src"])
+    assert layout["dst"].read_bytes() == b"not sqlite" * 50
+
+
+def test_a_store_made_without_the_migration_is_never_merged_or_overwritten(layout):
+    """marvin.db opened by an explicit path (no marker) while history.db still exists: refuse rather than guess."""
+    _old_store(layout["src"], 5)
+    hs.connect(layout["dst"]).close()
+    with pytest.raises(hs.MigrationError, match="marker"):
+        hs.migrate(layout["dst"], layout["src"])
+    assert len(_file_rows(layout["src"])) == 6
+
+
+def test_disk_full_during_the_copy_leaves_no_store_and_the_old_file_intact(layout, monkeypatch):
+    _old_store(layout["src"], 500)
+    before = _file_rows(layout["src"])
+    real_open = hs._open_target
+
+    def full_disk(path):
+        conn = real_open(path)
+        conn.execute("PRAGMA max_page_count=3")  # SQLite's own SQLITE_FULL, through the real copy path
+        return conn
+    monkeypatch.setattr(hs, "_open_target", full_disk)
+    with pytest.raises(hs.MigrationError, match="full"):
+        hs.migrate(layout["dst"], layout["src"])
+    assert not layout["dst"].exists()
+    assert not list(layout["dst"].parent.glob("marvin.db.migrating*"))
+    assert _file_rows(layout["src"]) == before
+    monkeypatch.setattr(hs, "_open_target", real_open)
+    assert hs.migrate(layout["dst"], layout["src"])["status"] == "migrated"
+
+
+def test_a_copy_that_does_not_match_the_source_is_rejected(layout, monkeypatch):
+    _old_store(layout["src"], 20)
+    real = hs._fingerprint
+    calls = []
+
+    def tampered(conn):
+        fp = real(conn)
+        calls.append(fp)
+        if len(calls) == 2:  # the copy's fingerprint: pretend a row went missing in transit
+            fp = {**fp, "events": (fp["events"][0] - 1, fp["events"][1])}
+        return fp
+    monkeypatch.setattr(hs, "_fingerprint", tampered)
+    with pytest.raises(hs.MigrationError, match="verify"):
+        hs.migrate(layout["dst"], layout["src"])
+    assert not layout["dst"].exists()
+
+
+@pytest.mark.skipif(os.geteuid() == 0, reason="root ignores file modes")
+def test_an_unwritable_store_folder_fails_clearly_and_touches_nothing(layout):
+    _old_store(layout["src"], 5)
+    layout["dst"].parent.mkdir(parents=True)
+    layout["dst"].parent.chmod(0o500)
+    try:
+        with pytest.raises((PermissionError, hs.MigrationError)):
+            hs.migrate(layout["dst"], layout["src"])
+        assert not layout["dst"].exists()
+    finally:
+        layout["dst"].parent.chmod(0o700)
+    assert len(_file_rows(layout["src"])) == 6
+    assert hs.migrate(layout["dst"], layout["src"])["status"] == "migrated"
+
+
+@pytest.mark.skipif(os.geteuid() == 0, reason="root ignores file modes")
+def test_an_unreadable_history_db_fails_loudly_and_works_once_fixed(layout):
+    _old_store(layout["src"], 5)
+    layout["src"].chmod(0o000)
+    try:
+        with pytest.raises(hs.MigrationError):
+            hs.migrate(layout["dst"], layout["src"])
+        assert not layout["dst"].exists()
+    finally:
+        layout["src"].chmod(0o600)
+    assert hs.migrate(layout["dst"], layout["src"])["rows"] == 6
+
+
+def test_two_concurrent_migrations_one_copies_and_the_other_does_nothing(layout):
+    """The old race (check-before-lock): every check now happens under the lock, so no caller can see a half state."""
+    _old_store(layout["src"], 2000)
+    n = 8
+    barrier = threading.Barrier(n)
+    results, errors = [], []
+
+    def go():
+        barrier.wait()
+        try:
+            results.append(hs.migrate(layout["dst"], layout["src"])["status"])
+        except Exception as exc:  # noqa: BLE001 - the test is that there are none
+            errors.append(exc)
+    threads = [threading.Thread(target=go) for _ in range(n)]
+    [t.start() for t in threads]
+    [t.join() for t in threads]
+    assert errors == []
+    assert sorted(results) == ["done"] * (n - 1) + ["migrated"]
+    assert _file_rows(layout["dst"]) == _file_rows(layout["src"])
+
+
+def test_concurrent_migrations_from_separate_processes_serialize(layout):
+    import subprocess
+    _old_store(layout["src"], 2000)
+    lib = Path(hs.__file__).resolve().parent
+    code = (f"import sys; sys.path.insert(0, {str(lib)!r}); import history_store as hs\n"
+            f"print(hs.migrate(hs.Path({str(layout['dst'])!r}), hs.Path({str(layout['src'])!r}))['status'])\n")
+    procs = [subprocess.Popen([sys.executable, "-c", code], stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+             for _ in range(4)]
+    outs = [p.communicate(timeout=60) for p in procs]
+    assert all(p.returncode == 0 for p in procs), [o[1] for o in outs]
+    assert sorted(o[0].decode().strip() for o in outs) == ["done"] * 3 + ["migrated"]
+
+
+def test_a_writer_committing_after_the_snapshot_still_leaves_a_verified_copy(layout):
+    """Real overlap, synchronised with events, not a sleep: the old loader commits new rows and moves its cursor
+    after the copy's snapshot is taken and while the copy runs. The copy is the snapshot (verified by count and hash),
+    and the rows written after it are not lost: the cursor in the copy is the snapshot's, so the next load reads them."""
+    _old_store(layout["src"], 0)
+    outbox = layout["src"].parent / "logs" / "gh-calls.jsonl"
+    outbox.parent.mkdir(parents=True)
+    _append(outbox, *[_line(i) for i in range(400)])
+    old = sqlite3.connect(layout["src"], isolation_level=None, timeout=30)
+    old.execute("DELETE FROM cursors")
+    hs.load_source(old, "gh-calls", "mac-mini-1", str(outbox), lambda b: hs.read_local(outbox, b))
+    snap_rows = old.execute("SELECT COUNT(*) FROM events").fetchone()[0]
+
+    snapshot_taken, writer_done = threading.Event(), threading.Event()
+    steps_seen_after_write = []
+
+    def writer():
+        snapshot_taken.wait(10)
+        _append(outbox, *[_line(i) for i in range(400, 450)])
+        w = sqlite3.connect(layout["src"], isolation_level=None, timeout=30)
+        hs.load_source(w, "gh-calls", "mac-mini-1", str(outbox), lambda b: hs.read_local(outbox, b))
+        w.close()
+        writer_done.set()
+
+    def progress(status, remaining, total):
+        if writer_done.is_set():
+            steps_seen_after_write.append(remaining)
+
+    t = threading.Thread(target=writer)
+    t.start()
+
+    def on_snapshot():
+        snapshot_taken.set()
+        assert writer_done.wait(10), "the writer must commit while the copy holds its snapshot"
+    out = hs.migrate(layout["dst"], layout["src"], pages=1, progress=progress, on_snapshot=on_snapshot)
+    t.join()
+    old.close()
+    assert steps_seen_after_write, "the copy must still be running after the writer committed"
+    assert out["rows"] == snap_rows
+    assert len(_file_rows(layout["src"])) == snap_rows + 50  # the old file did take the write
+
+    new = hs.connect(layout["dst"])
+    hs.load_source(new, "gh-calls", "mac-mini-1", str(outbox), lambda b: hs.read_local(outbox, b))
+    got = {r[0] for r in new.execute("SELECT data FROM events WHERE data != '{not json'")}
+    assert got == {_line(i) for i in range(450)}
+    new.close()
+
+
+def test_a_writer_inserting_between_copy_steps_never_breaks_verification(layout):
+    _old_store(layout["src"], 3000)
+    w = sqlite3.connect(layout["src"], isolation_level=None, timeout=30)
+    inserted = []
+
+    def progress(status, remaining, total):
+        if len(inserted) < 20:
+            w.execute("INSERT INTO events(stream, device, ts, hash, data) VALUES ('s', 'd', 1, ?, 'x')",
+                      (os.urandom(16),))
+            inserted.append(remaining)
+    out = hs.migrate(layout["dst"], layout["src"], pages=2, progress=progress)
+    w.close()
+    assert len(inserted) == 20
+    assert out["rows"] == 3001 and len(_file_rows(layout["dst"])) == 3001
+
+
+# ── the schema: created once, by version, never rewritten on connect (the old per-connect DDL) ─────────────────────
+
+def test_reopening_the_store_never_rewrites_the_schema(tmp_path):
+    p = tmp_path / "marvin.db"
+    hs.connect(p).close()
+    a = sqlite3.connect(p)
+    cookie = a.execute("PRAGMA schema_version").fetchone()[0]
+    for _ in range(5):
+        hs.connect(p).close()
+    assert a.execute("PRAGMA schema_version").fetchone()[0] == cookie
+    assert a.execute("PRAGMA user_version").fetchone()[0] == hs.SCHEMA_VERSION
+    a.close()
+
+
+def test_many_connections_opening_an_old_store_at_once_upgrade_it_exactly_once(tmp_path):
+    p = _old_store(tmp_path / "history.db", 100)
+    n = 12
+    barrier = threading.Barrier(n)
+    errors = []
+
+    def go():
+        barrier.wait()
+        try:
+            c = hs.connect(p)
+            c.execute("SELECT COUNT(*) FROM gh_calls").fetchone()
+            c.close()
+        except Exception as exc:  # noqa: BLE001
+            errors.append(exc)
+    threads = [threading.Thread(target=go) for _ in range(n)]
+    [t.start() for t in threads]
+    [t.join() for t in threads]
+    assert errors == []
+    c = sqlite3.connect(p)
+    assert c.execute("SELECT COUNT(*) FROM sqlite_master WHERE type = 'view' AND name = 'gh_calls'").fetchone()[0] == 1
+    assert c.execute("PRAGMA user_version").fetchone()[0] == hs.SCHEMA_VERSION
+
+
+def test_a_prepared_statement_on_another_connection_survives_new_opens(tmp_path):
+    p = tmp_path / "marvin.db"
+    a = hs.connect(p)
+    hs.load(a, "gh-calls", "d", [_line(i) for i in range(5)])
+    cur = a.execute("SELECT data FROM events ORDER BY id")
+    first = cur.fetchone()
+    hs.connect(p).close()  # used to drop and recreate the view, invalidating this cursor's statement
+    assert first and len(cur.fetchall()) == 4
+    a.close()
+
+
+def test_ticket_lookups_use_an_index_and_tolerate_malformed_lines(tmp_path):
+    conn = hs.connect(tmp_path / "marvin.db")
+    hs.load(conn, "launches", "d", [json.dumps({"t": 1, "ticket": "o/r#621"}), json.dumps({"t": 2, "ticket": None}),
+                                    "{not json", json.dumps([1, 2]), json.dumps({"t": 3})])
+    assert conn.execute("SELECT COUNT(*) FROM events WHERE ticket = ?", ("o/r#621",)).fetchone()[0] == 1
+    plan = " ".join(r[3] for r in conn.execute("EXPLAIN QUERY PLAN SELECT id FROM events WHERE ticket = ?", ("x",)))
+    assert "events_ticket" in plan
+    conn.close()
+
+
+def test_the_gh_calls_view_reads_the_fields_and_skips_malformed_lines(tmp_path):
+    conn = hs.connect(tmp_path / "marvin.db")
+    hs.load(conn, "gh-calls", "mac", [json.dumps({"t": 5, "caller": "c", "cmd": "pr list", "rc": 0, "ms": 9}), "{bad"])
+    hs.load(conn, "gh-budget", "mac", [json.dumps({"t": 6})])
+    assert conn.execute("SELECT device, ts, caller, cmd, rc, ms FROM gh_calls").fetchall() == [
+        ("mac", 5.0, "c", "pr list", 0, 9)]
+    conn.close()
+
+
+def test_many_writers_on_a_fresh_store_at_once_lose_nothing(layout, monkeypatch):
+    monkeypatch.setattr(hs, "DB_PATH", layout["dst"])
+    monkeypatch.setattr(hs, "OLD_DB_PATH", layout["src"])
+    _old_store(layout["src"], 10)
+    n = 8
+    barrier = threading.Barrier(n)
+    errors = []
+
+    def go(k):
+        barrier.wait()
+        try:
+            c = hs.connect()
+            c.execute("BEGIN IMMEDIATE")
+            hs.load(c, "gh-calls", f"w{k}", [_line(i) for i in range(50)])
+            c.execute("COMMIT")
+            c.close()
+        except Exception as exc:  # noqa: BLE001
+            errors.append(exc)
+    threads = [threading.Thread(target=go, args=(k,)) for k in range(n)]
+    [t.start() for t in threads]
+    [t.join() for t in threads]
+    assert errors == []
+    assert len(_file_rows(layout["dst"])) == 11 + n * 50
