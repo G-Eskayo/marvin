@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react'
 import { cleanIpcError } from '../lib/ipcError.js'
+import { readSaved, writeSaved, ageText } from '../lib/saved_state.js'
 
 // Format ISO timestamp relative to now: "just now", "5m ago", "2h ago", "3d ago", "2w ago", or short date
 export function formatRelativeTime(iso, now = Date.now()) {
@@ -97,11 +98,15 @@ export default function DashboardHome({ onOpenProject }) {
   // Every hook before any early return: a hook after the "no boards yet" return ran only once boards loaded, and
   // React blanked the Activity tab (error #310, 2026-10-09).
   const [showArchived, setShowArchived] = useState(false)
-  const [boards, setBoards] = useState(null)
-  const [overview, setOverview] = useState(null)
-  const [summaries, setSummaries] = useState({})
+  const SAVED_STATE_KEY = 'dash:home:state'
+  const [saved] = useState(() => readSaved(typeof window !== 'undefined' ? window.localStorage : null, SAVED_STATE_KEY))
+  const validSaved = saved && Array.isArray(saved.value?.boards) && typeof saved.value?.overview === 'object' && saved.value.overview !== null && !Array.isArray(saved.value.overview)
+  const [boards, setBoards] = useState(validSaved ? saved.value.boards : null)
+  const [overview, setOverview] = useState(validSaved ? saved.value.overview : null)
+  const [summaries, setSummaries] = useState(validSaved ? saved.value.summaries ?? {} : {})
+  const [savedAt, setSavedAt] = useState(validSaved ? saved.at : null)
   const [error, setError] = useState(null)
-  const [loading, setLoading] = useState(true)
+  const [loading, setLoading] = useState(!validSaved)
 
   useEffect(() => {
     const load = async () => {
@@ -130,8 +135,16 @@ export default function DashboardHome({ onOpenProject }) {
             )
         )
         setSummaries(sums)
+        const now = Date.now()
+        setSavedAt(now)
+        writeSaved(typeof window !== 'undefined' ? window.localStorage : null, SAVED_STATE_KEY, {
+          boards: boardsList,
+          overview: act,
+          summaries: sums
+        }, now)
       } catch (e) {
         setError(cleanIpcError(e))
+        // Don't clear boards/overview/summaries on error; keep showing cached data if it exists
       } finally {
         setLoading(false)
       }
@@ -147,7 +160,7 @@ export default function DashboardHome({ onOpenProject }) {
     )
   }
 
-  if (error) {
+  if (error && !boards) {
     return (
       <div className="p-6">
         <p className="text-red-400">Failed to load projects: {error}</p>
@@ -157,8 +170,11 @@ export default function DashboardHome({ onOpenProject }) {
 
   if (!boards || boards.length === 0) {
     return (
-      <div className="flex h-full items-center justify-center">
-        <p className="text-neutral-500">No project boards yet</p>
+      <div className="p-6">
+        {error && <p className="mb-3 text-sm text-amber-300">{error} Showing the last good result.</p>}
+        <div className="flex h-full items-center justify-center">
+          <p className="text-neutral-500">No project boards yet</p>
+        </div>
       </div>
     )
   }
@@ -169,8 +185,12 @@ export default function DashboardHome({ onOpenProject }) {
 
   return (
     <div className="max-w-6xl space-y-6 p-6">
+      {error && <p className="mb-3 text-sm text-amber-300">{error} Showing the last good result.</p>}
       <div>
-        <h1 className="mb-4 text-2xl font-semibold text-white">Project Boards</h1>
+        <div className="mb-4 flex items-end justify-between">
+          <h1 className="text-2xl font-semibold text-white">Project Boards</h1>
+          {savedAt && <p className="text-xs text-neutral-500">{ageText(savedAt)}</p>}
+        </div>
         <div className="grid auto-fit gap-4" style={{ gridTemplateColumns: 'repeat(auto-fit, minmax(300px, 1fr))' }}>
           {active.map((card) => (
             <ProjectCard key={card.repo} card={card} onOpen={onOpenProject} />

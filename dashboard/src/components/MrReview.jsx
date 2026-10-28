@@ -9,6 +9,7 @@ import MrDetail from './MrDetail.jsx'
 import CheckProgress from './CheckProgress.jsx'
 import MergeProgress from './MergeProgress.jsx'
 import { opForHead } from '../lib/merge_progress.js'
+import { readSaved, writeSaved, ageText } from '../lib/saved_state.js'
 
 const MR_LIST_REFRESH_MS = 120000
 
@@ -553,9 +554,13 @@ export function CorrectionNotice({ notice, onDismiss = null }) {
   )
 }
 
-function OpenPrs({ nav, onOpenDocs, onOpenBoard, onOpenTicket, onCount }) {
+export function OpenPrs({ nav, onOpenDocs, onOpenBoard, onOpenTicket, onCount }) {
+  const SAVED_STATE_KEY = 'dash:mr:open-prs'
+  const [saved] = useState(() => readSaved(typeof window !== 'undefined' ? window.localStorage : null, SAVED_STATE_KEY))
+  const validSaved = saved && Array.isArray(saved.value)
   const [fetchStatus, setFetchStatus] = useState(null)
-  const [prs, setPrs] = useState(null)
+  const [prs, setPrs] = useState(validSaved ? saved.value : null)
+  const [savedAt, setSavedAt] = useState(validSaved ? saved.at : null)
   const [error, setError] = useState(null)
   const [selected, setSelected] = useState(null)
   const [parity, setParity] = useState(null)
@@ -566,6 +571,13 @@ function OpenPrs({ nav, onOpenDocs, onOpenBoard, onOpenTicket, onCount }) {
   const [notice, setNotice] = useState(null)
   useEffect(() => window.api.mr.onCorrected?.((c) => setNotice({ ...c, at: Date.now() })), [])
 
+  // Instant tab badge when seeded from saved state (mount-only, since prs doesn't change after first render from seed)
+  useEffect(() => {
+    if (validSaved && prs) {
+      onCount?.(prs.length)
+    }
+  }, [])
+
   function reload() {
     window.api.mr.parity().then(setParity).catch(() => setParity(null))
     window.api.mr.autoMergeReport?.().then(setAmReport).catch(() => setAmReport(null))
@@ -573,6 +585,10 @@ function OpenPrs({ nav, onOpenDocs, onOpenBoard, onOpenTicket, onCount }) {
       .list()
       .then((list) => {
         setPrs(list)
+        setError(null)
+        const now = Date.now()
+        setSavedAt(now)
+        writeSaved(typeof window !== 'undefined' ? window.localStorage : null, SAVED_STATE_KEY, list, now)
         // An open detail view follows the list (a correction, finished checks); a PR gone from it keeps its last view.
         setSelected((cur) => (cur ? list.find((p) => p.key === cur.key) || cur : cur))
         onCount?.(list.length)
@@ -656,7 +672,7 @@ function OpenPrs({ nav, onOpenDocs, onOpenBoard, onOpenTicket, onCount }) {
     )
   }
 
-  if (error) {
+  if (error && prs === null) {
     return <div className="flex h-full items-center justify-center text-red-400">Failed to load MRs: {error}</div>
   }
   if (prs === null) {
@@ -669,10 +685,14 @@ function OpenPrs({ nav, onOpenDocs, onOpenBoard, onOpenTicket, onCount }) {
 
   return (
     <div className="flex flex-col gap-4 p-6">
-      <p className="text-sm text-neutral-500">
-        {prs.length} pipeline-raised PR{prs.length === 1 ? '' : 's'} awaiting review. Click a title for the full
-        detail view.
-      </p>
+      {error && <p className="text-sm text-amber-300">{error} Showing the last good result.</p>}
+      <div className="flex items-end justify-between">
+        <p className="text-sm text-neutral-500">
+          {prs.length} pipeline-raised PR{prs.length === 1 ? '' : 's'} awaiting review. Click a title for the full
+          detail view.
+        </p>
+        {savedAt && <p className="text-xs text-neutral-500">{ageText(savedAt)}</p>}
+      </div>
       {amReport?.ready && amReport.mode !== 'on' && (
         <div className={`rounded-lg border px-4 py-3 text-sm ${amReport.disagreements?.length ? 'border-amber-700 bg-amber-950/40 text-amber-200' : 'border-emerald-700 bg-emerald-950/40 text-emerald-200'}`}>
           {amReport.line}
