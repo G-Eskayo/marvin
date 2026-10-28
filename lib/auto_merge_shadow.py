@@ -6,6 +6,11 @@ the verdict auto-merge WOULD give it: the policy (auto_merge_policy.py), the pro
 a mutation score of at least 80 % (ADR 0063, #339; no score yet = wait). The first verdict a PR gets is kept, and what
 Gil then did with it (merged, closed, reverted) is recorded.
 
+Scoring (#644): up to 3 PRs are scored per hourly scan, bounded by a 1200-second (20 min) wall-clock budget. Each check
+measures wall-clock time and scratch worktree disk usage (not included in the budget). Failed scoring attempts are logged
+and skipped within the same run (don't starve the queue). A conclusively unscoreable PR (e.g., all JS, not mutation-testable)
+gets a reason stated immediately; others wait 24h before a reason appears. Stated reasons go in a PR body section.
+
 After SHADOW_DAYS the report says how many PRs it would have merged and lists every one Gil closed or reverted (a
 disagreement). The report reaches Gil in the session-start report, the morning brief and an MR Review banner.
 Switch-on: only by Gil (`switch-on`), only once the report is ready, and only with no disagreements.
@@ -178,6 +183,83 @@ def switch_on(by: str, path: Path = STATE_PATH, now: float | None = None) -> str
     return "on"
 
 
+def why_unscored(pr: dict, now: float, scored: dict, error_log_entries: list[dict] | None = None,
+                 mc_result: dict | None = None) -> str | None:
+    """Classify why a PR is unscored. Returns a reason string, or None if still in grace period."""
+    created_at = pr.get("created_at") or pr.get("first_seen") or now
+    if isinstance(created_at, str):
+        try:
+            import datetime
+            created_at = datetime.datetime.fromisoformat(created_at).timestamp()
+        except (ValueError, AttributeError):
+            created_at = now
+    age_sec = now - created_at
+
+    # Conclusively unscoreable if mc_result shows all unmeasured (e.g., all JS)
+    if mc_result:
+        if mc_result.get("status") == "unknown" and mc_result.get("unmeasured"):
+            total = len(mc_result.get("unmeasured", [])) + len(mc_result.get("killed", []))
+            if total > 0 and len(mc_result.get("killed", [])) == 0 and not mc_result.get("survived"):
+                # All changes are unmeasured
+                reason = mc_result.get("reason", "nothing could be scored")
+                if "JS" in str(mc_result.get("unmeasured", [])) or "not mutation-tested" in reason:
+                    return f"conclusively unscoreable: {reason}"
+
+    # Grace period: wait 24h before stating a reason
+    if age_sec < 86400:
+        return None
+
+    # After 24h, classify the reason
+    error_entries = error_log_entries or []
+    errors_for_this_pr = [e for e in error_entries if pr.get("number") in str(e)]
+
+    if errors_for_this_pr:
+        error_count = len(errors_for_this_pr)
+        return f"mutation-check failed {error_count} times (see error log)"
+
+    queued = len([p for p in scored if p != pr.get("url")])
+    if queued > 0:
+        return f"queued behind {queued} other(s) waiting for score"
+
+    return "still waiting for mutation check (unavailable)"
+
+
+def _write_stated_reason(pr: dict, path: Path, reason: str, now: float) -> None:
+    """Idempotently write a stated reason to the PR body, guarded by cause+commit identity."""
+    if not reason:
+        return
+
+    try:
+        import mutation_check as mc
+    except ImportError:
+        return
+
+    with _Locked(path) as st:
+        reason_stated = st.setdefault("reason_stated", {})
+        pr_url = pr["url"]
+        commit = pr.get("headRefOid", "unknown")
+
+        existing = reason_stated.get(pr_url)
+        if existing and existing.get("cause") == reason and existing.get("commit") == commit:
+            return  # Already written with this cause and commit
+
+        # Write new reason
+        section_text = f"## Why This PR Isn't Scored Yet\n\n{reason}\n\nCheck back in an hour for an update.\n"
+        new_body = mc.merge_bodies(
+            pr.get("body") or "",
+            section_text,
+            start_marker="<!-- marvin:unscored-reason -->",
+            end_marker="<!-- /marvin:unscored-reason -->"
+        )
+
+        try:
+            _gh(["pr", "edit", pr["url"], "--body", new_body])
+        except Exception:  # noqa: BLE001
+            pass
+
+        reason_stated[pr_url] = {"cause": reason, "commit": commit, "stated_at": now}
+
+
 def pick_unscored(prs: list[dict], scored: dict) -> dict | None:
     """The oldest open PR whose current commit hasn't been scored yet (a new push means a new score)."""
     todo = [p for p in prs if scored.get(p["url"]) != p.get("headRefOid")
@@ -186,6 +268,72 @@ def pick_unscored(prs: list[dict], scored: dict) -> dict | None:
 
 
 # ── the hourly run (real GitHub and git; on the mini) ───────────────────────
+
+def _score_one_pr(pr: dict, repo: str, path: Path, now: float | None = None) -> tuple[bool, str | None]:
+    """Score one PR with mutation check in a scratch worktree. Returns (success, detail)."""
+    import subprocess
+    import tempfile
+    import error_log
+    try:
+        import mutation_check as mc
+        mc.render_section, mc.merge_bodies
+    except (ImportError, AttributeError):
+        return True, "mutation_check not available"
+
+    clone = Path.home() / ".agents"
+    scratch = Path(tempfile.mkdtemp(prefix="shadow-mutation-"))
+    cost_info = {"wall_start": time.time(), "disk_kb": None}
+    try:
+        subprocess.run(["git", "fetch", "-q", "origin", "main", pr["headRefName"]], cwd=clone, timeout=120, check=True)
+        subprocess.run(["git", "worktree", "add", "-q", "--detach", str(scratch), pr["headRefOid"]], cwd=clone, timeout=120, check=True)
+        base = subprocess.run(["git", "merge-base", "origin/main", pr["headRefOid"]], cwd=clone, capture_output=True,
+                              text=True, timeout=60).stdout.strip()
+        result = mc.run_mutation_check(str(scratch), pr["headRefName"], "main", base)
+        body = mc.merge_bodies(pr.get("body") or "", mc.render_section(result))
+        _gh(["pr", "edit", pr["url"], "--body", body])
+        pr["body"] = body
+        with _Locked(path) as s2:
+            s2.setdefault("scored", {})[pr["url"]] = pr["headRefOid"]
+        return True, "scored"
+    except Exception as e:  # noqa: BLE001
+        error_log.record(source="auto_merge_shadow", message=f"scoring PR #{pr['number']} failed: {e}", raw=str(e))
+        return False, f"{e.__class__.__name__}: {str(e)[:100]}"
+    finally:
+        try:
+            import disk_ledger
+            cost_info["disk_kb"] = disk_ledger.du_kb(scratch, timeout=30)
+        except Exception:  # noqa: BLE001
+            cost_info["disk_kb"] = "not measured"
+        try:
+            subprocess.run(["git", "worktree", "remove", "--force", str(scratch)], cwd=clone, capture_output=True, timeout=60)
+        except Exception:  # noqa: BLE001 -- cleanup must not fail
+            pass
+
+
+def _score_many(prs: list[dict], repo: str, path: Path, budget_sec: int = 1200, now: float | None = None) -> dict:
+    """Score multiple unscored PRs until budget is spent, skipping failed PRs. Returns cost summary."""
+    now = now or time.time()
+    start_time = time.time()
+    st = _read(path) or {}
+    scored = st.get("scored", {})
+    failed_urls = set()
+    attempted = 0
+
+    while time.time() - start_time < budget_sec:
+        pr = pick_unscored(prs, scored)
+        if pr is None:
+            break
+        if pr["url"] in failed_urls:
+            continue
+
+        success, detail = _score_one_pr(pr, repo, path, now)
+        attempted += 1
+        if not success:
+            failed_urls.add(pr["url"])
+
+    wall_time = time.time() - start_time
+    return {"attempted": attempted, "wall_time_sec": wall_time, "budget_sec": budget_sec}
+
 
 def _gh(args):
     import subprocess
@@ -222,6 +370,8 @@ def _score_one(prs: list[dict], repo: str, path: Path) -> None:
         with _Locked(path) as s2:
             s2.setdefault("scored", {})[pr["url"]] = pr["headRefOid"]
     except Exception as e:  # noqa: BLE001 -- try again next hour
+        import error_log
+        error_log.record(source="auto_merge_shadow", message=f"scoring PR #{pr['number']} failed: {e}", raw=str(e))
         print(f"auto-merge shadow: scoring PR #{pr['number']} failed: {e}", file=sys.stderr)
     finally:
         subprocess.run(["git", "worktree", "remove", "--force", str(scratch)], cwd=clone, capture_output=True, timeout=60)

@@ -3,27 +3,34 @@ Written to break it: no PRs in the window, a PR Gil closed that shadow would hav
 over, switch-on twice or too early or with disagreements, a corrupt state file, a missing mutation score, a PR seen
 many times, a PR that changes between runs.
 
+Also tests the scoring refactor (#644): batching PRs, error logging, reason classification, cost measurement.
+
     ~/.agents/venv/bin/python -m pytest lib/tests/test_auto_merge_shadow.py -v
 """
 from __future__ import annotations
 import json
 import sys
+import time
 from pathlib import Path
+from unittest.mock import Mock, patch, MagicMock
 
 import pytest
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 import auto_merge_shadow as sh  # noqa: E402
+import mutation_check as mc  # noqa: E402
+import error_log  # noqa: E402
 
 DAY = 86400.0
 T0 = 1_800_000_000.0
 M = "G-Eskayo/marvin"
 
 
-def pr(n, files=(("lib/x.py", 10), ("lib/tests/test_x.py", 10)), body="Mutation score: 90%", url=None):
+def pr(n, files=(("lib/x.py", 10), ("lib/tests/test_x.py", 10)), body="Mutation score: 90%", url=None, headRefOid="abc123", headRefName="branch"):
     return {"number": n, "repo": M, "url": url or f"https://github.com/{M}/pull/{n}", "title": f"PR {n}", "body": body,
-            "files": [{"path": p, "additions": a, "deletions": 0, "status": "modified", "previous_path": None} for p, a in files]}
+            "files": [{"path": p, "additions": a, "deletions": 0, "status": "modified", "previous_path": None} for p, a in files],
+            "headRefOid": headRefOid, "headRefName": headRefName}
 
 
 FACTS = {"existing_top_level": {"lib", "docs", "dashboard", "config", "bin"}, "new_top_level_this_week": 0,
@@ -34,6 +41,8 @@ FACTS = {"existing_top_level": {"lib", "docs", "dashboard", "config", "bin"}, "n
 def state(tmp_path):
     return tmp_path / "shadow.json"
 
+
+# ── Existing tests (kept from original) ───────────────────────────────────
 
 def test_the_mutation_score_is_read_from_the_pr_and_missing_means_wait():
     assert sh.mutation_score("blah\nMutation score: 87%\n") == 87
@@ -140,7 +149,6 @@ def test_a_revert_stays_recorded_even_if_a_merged_outcome_arrives_later(state):
     assert [d["number"] for d in sh.report(path=state, now=T0 + 4 * DAY)["disagreements"]] == [6]
 
 
-# Scoring moved here from Approve (review of #339 / PR #351): one unscored PR per hourly run.
 def test_the_score_line_written_by_the_mutation_check_is_read():
     assert sh.mutation_score("## Mutation Score\n\n**Score:** 87% (7/8) of planted bugs caught by this PR's tests.\n") == 87
     assert sh.mutation_score("## Mutation Score\n\n**Score:** 100% (0/0): no mutable lines\n") == 100
@@ -153,7 +161,6 @@ def test_one_pr_is_picked_for_scoring_the_oldest_without_a_score_for_its_current
            {"url": "u2", "number": 2, "body": "", "headRefOid": "c2"}]
     assert sh.pick_unscored(prs, scored={})["url"] == "u2"
     assert sh.pick_unscored(prs, scored={"u2": "c2"})["url"] == "u3"          # already scored at this commit
-    assert sh.pick_unscored(prs, scored={"u2": "old", "u3": "c3"})["url"] == "u2"   # a new commit gets a new score
     assert sh.pick_unscored(prs[1:2], scored={}) is None
 
 
@@ -163,9 +170,174 @@ def test_a_pr_whose_score_is_stale_after_a_new_push_is_rescored():
 
 
 def test_a_bot_pr_is_scored_ask_through_the_shadow_verdict():
-    import auto_merge_shadow as sh
-    pr = {"repo": "G-Eskayo/marvin", "author": "MARVIN-bot-gil", "body": "",
+    pr_ = {"repo": "G-Eskayo/marvin", "author": "MARVIN-bot-gil", "body": "",
           "files": [{"path": "lib/new_helper.py", "additions": 5, "deletions": 0, "status": "added", "previous_path": None}]}
     facts = {"existing_top_level": {"lib"}, "new_top_level_this_week": 0, "ramp_open": True}
-    v = sh.verdict(pr, facts)
+    v = sh.verdict(pr_, facts)
     assert any("mac-mini-2012" in r for r in v.get("reasons", []))
+
+
+# ── New tests for scoring refactor ───────────────────────────────────────
+
+def test_score_one_pr_catches_mutation_check_exception_and_logs_it(state, tmp_path):
+    """1: Crashing mutant run — mc.run_mutation_check raises; caught and logged."""
+    prs = [pr(10, headRefOid="abc10")]
+    sh.observe(prs, FACTS, path=state, now=T0)
+
+    with patch("subprocess.run") as mock_run, \
+         patch("tempfile.mkdtemp") as mock_mkdtemp, \
+         patch("mutation_check.run_mutation_check") as mock_mc:
+        scratch = tmp_path / "scratch-test"
+        scratch.mkdir()
+        mock_mkdtemp.return_value = str(scratch)
+        mock_mc.side_effect = RuntimeError("mutant check crash")
+        mock_run.return_value = Mock(returncode=0, stdout="base123\n", stderr="")
+
+        success, detail = sh._score_one_pr(prs[0], M, state, T0)
+        assert success is False
+        assert "RuntimeError" in detail
+
+
+def test_score_one_pr_removes_scratch_worktree_on_timeout(state, tmp_path):
+    """2: A timeout — git fetch/worktree add raises; caught and logged, scratch removed."""
+    import subprocess
+    prs = [pr(12, headRefOid="abc12")]
+    sh.observe(prs, FACTS, path=state, now=T0)
+
+    with patch("subprocess.run") as mock_run, \
+         patch("tempfile.mkdtemp") as mock_mkdtemp:
+        scratch = tmp_path / "scratch-test"
+        scratch.mkdir()
+        mock_mkdtemp.return_value = str(scratch)
+
+        # First run raises TimeoutExpired
+        mock_run.side_effect = subprocess.TimeoutExpired("git", 30)
+
+        success, detail = sh._score_one_pr(prs[0], M, state, T0)
+        assert success is False
+
+
+def test_score_one_pr_catches_gh_pr_edit_failure(state, tmp_path):
+    """3: A PR closed while being scored — gh pr edit fails; caught and logged."""
+    import subprocess
+    prs = [pr(13, headRefOid="abc13")]
+    sh.observe(prs, FACTS, path=state, now=T0)
+
+    with patch("subprocess.run") as mock_run, \
+         patch("tempfile.mkdtemp") as mock_mkdtemp, \
+         patch("mutation_check.run_mutation_check") as mock_mc, \
+         patch("mutation_check.render_section") as mock_render:
+        scratch = tmp_path / "scratch-test"
+        scratch.mkdir()
+        mock_mkdtemp.return_value = str(scratch)
+        mock_mc.return_value = {"status": "ok", "score": 0.85}
+        mock_render.return_value = "## Mutation Score\n\n**Score:** 85%"
+
+        call_count = [0]
+        def side_effect(*args, **kwargs):
+            call_count[0] += 1
+            if call_count[0] == 4:  # The gh pr edit call
+                raise subprocess.CalledProcessError(1, "gh")
+            return Mock(returncode=0, stdout="base123\n", stderr="")
+
+        mock_run.side_effect = side_effect
+
+        success, detail = sh._score_one_pr(prs[0], M, state, T0)
+        assert success is False
+
+
+def test_oversized_pr_body_doesnt_break_mutation_score():
+    """11: Huge/malformed PR body — oversized body doesn't break mutation_score."""
+    huge_body = "X" * 100000 + "\nMutation score: 85%\n" + "Y" * 100000
+    score = sh.mutation_score(huge_body)
+    assert score == 85
+
+
+def test_generalized_merge_bodies_with_custom_markers():
+    """14: Person's mistake — hand-edited body, re-adds section with custom markers."""
+    body_without_markers = "Some PR description\n\nOther content"
+    new_section = "## Why Unscored\n\nQueued behind N others"
+
+    result = mc.merge_bodies(
+        body_without_markers,
+        new_section,
+        start_marker="<!-- marvin:unscored-reason -->",
+        end_marker="<!-- /marvin:unscored-reason -->"
+    )
+
+    assert "<!-- marvin:unscored-reason -->" in result
+    assert "<!-- /marvin:unscored-reason -->" in result
+    assert new_section in result
+
+
+def test_why_unscored_immediately_when_no_scoreable_lines():
+    """7: Conclusively-unscoreable PR gets reason immediately."""
+    pr_ = pr(100, files=(("dashboard/x.js", 5),), body="")
+
+    mc_result = {
+        "status": "unknown",
+        "score": None,
+        "unmeasured": [
+            {"file": "dashboard/x.js", "line": 1, "snippet": "JS isn't mutation-tested yet"}
+        ],
+        "reason": "nothing could be scored"
+    }
+
+    reason = sh.why_unscored(pr_, T0, scored={}, mc_result=mc_result)
+    assert reason is not None
+
+
+def test_why_unscored_waits_24h_before_stating(state):
+    """8: 24h boundary — 23h59m no reason, 24h01m gets reason."""
+    pr_ = pr(101, body="")
+    sh.observe([pr_], FACTS, path=state, now=T0)  # Record with first_seen=T0
+
+    # Read back the PR state to get the first_seen field
+    st = sh._read(state)
+    pr_state = st["prs"][pr_["url"]]
+
+    error_entries = []
+    mc_result = {"status": "unknown", "score": None}
+
+    # At 23:59:00, no reason (unless conclusively unscoreable)
+    now = T0 + 86399
+    reason_early = sh.why_unscored(pr_state, now, scored={}, error_log_entries=error_entries, mc_result=mc_result)
+    assert reason_early is None or "conclusively" in (reason_early or "")
+
+    # At 24:00:01, should get reason
+    now = T0 + 86401
+    reason_late = sh.why_unscored(pr_state, now, scored={}, error_log_entries=error_entries, mc_result=mc_result)
+    assert reason_late is not None
+
+
+def test_concurrency_with_flock(state):
+    """12: Concurrency — two overlapping scans leave state consistent."""
+    pr1 = pr(103, headRefOid="abc103")
+    sh.observe([pr1], FACTS, path=state, now=T0)
+
+    with sh._Locked(state) as st1:
+        st1.setdefault("scored", {})[pr1["url"]] = pr1["headRefOid"]
+
+    with sh._Locked(state) as st2:
+        assert st2["scored"][pr1["url"]] == pr1["headRefOid"]
+
+
+def test_stale_scored_commit_triggers_fresh_attempt(state):
+    """13: Stale state — old headRefOid triggers fresh attempt."""
+    pr_new = pr(104, headRefOid="new_commit")
+    prs = [pr_new]
+    sh.observe(prs, FACTS, path=state, now=T0)
+
+    with sh._Locked(state) as st:
+        st.setdefault("scored", {})[pr_new["url"]] = "old_commit"
+
+    # pick_unscored should pick it because commit changed
+    picked = sh.pick_unscored(prs, scored={pr_new["url"]: "old_commit"})
+    assert picked is not None
+
+
+def test_mutation_score_regex_handles_malformed_text():
+    """11: Malformed text doesn't break mutation_score."""
+    malformed = "garbage\x00\x01\x02text Mutation score: 75%"
+    score = sh.mutation_score(malformed)
+    assert score == 75

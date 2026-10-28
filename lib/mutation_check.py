@@ -2,7 +2,10 @@
 """Mutation testing in the merge gate: measure test quality by killing mutants.
 
 One small Python module for stdlib-only mutation operators, applied in-process to each test's mapped source file.
-Deterministically sampled for large PRs; time-boxed to 10 minutes total.
+Deterministically sampled for large PRs; time-boxed to 600 seconds (10 minutes) total per check.
+
+merge_bodies() is generalized to support custom section markers (start/end), allowing reuse for both mutation-score
+sections (the original) and unscored-reason sections (new, #644).
 """
 from __future__ import annotations
 
@@ -287,11 +290,9 @@ def render_section(score_report: dict) -> str:
     return md
 
 
-def merge_bodies(current_body: str, new_section: str) -> str:
-    """Merge a mutation section into a PR body, replacing if it exists."""
-    start_marker = "<!-- marvin:mutation-check -->"
-    end_marker = "<!-- /marvin:mutation-check -->"
-
+def merge_bodies(current_body: str, new_section: str, start_marker: str = "<!-- marvin:mutation-check -->",
+                 end_marker: str = "<!-- /marvin:mutation-check -->") -> str:
+    """Merge a section into a PR body, replacing if it exists. Markers are customizable for reuse."""
     if start_marker in current_body and end_marker in current_body:
         # Replace existing section
         before = current_body.split(start_marker)[0]

@@ -381,6 +381,12 @@ ever been closed unmerged. Gil approves almost everything; the wait is the cost.
   card shows what auto-merge would have done and its mutation score while Gil keeps approving. Then a report (would
   have merged N; any Gil would have denied) surfaces in the next session's start report, the morning brief and an MR
   Review banner. Auto-merge switches on **only when Gil says yes**; until then it keeps shadowing.
+- **Scoring (#644)**: every hourly scan scores up to 3 open PRs, bounded by 1200 seconds (20 min) wall-clock budget
+  per run. Failed attempts (network, GitHub down, mutation-check crash) are logged to `error_log` and skipped within
+  the same run; they retry on the next hour. A PR with nothing to score (e.g., all JS, not mutation-testable) gets a
+  stated reason immediately. Others wait 24h of being open before a reason appears (grace period for slow/large checks).
+  Stated reasons appear in the PR body in a section alongside the Mutation Score. Costs (wall time, scratch-worktree
+  disk usage) are measured and logged per scan.
 - **Deciding the area**: one readable rules file lists owned and core paths; the rules file is itself core (auto-merge
   can never widen its own permissions); one core file anywhere in a PR makes the whole PR wait. **New folders need no
   permission** (Gil): a new folder inherits its parent's area; a brand-new top-level folder counts as owned, but at
