@@ -1786,3 +1786,20 @@ On 2026-10-22 #81, #218, #455, #459 and #563 were each planned 6-13 times (about
 - **Marketplace** (later): other people publish their own add-ons for MARVIN, free or paid. Not built.
 _Avoid_: "plugin", "extension", "skill" for an add-on. A skill is one capability inside MARVIN; an add-on is what an
 owner turns on or buys, and may hold several skills.
+
+## The work loop as one system (ADR 0080, proposed 2026-10-28, marvin#737)
+
+- **Work loop**: the path from an idea to shipped work: ticket, mock-up, the owner's answer, build, review, merge,
+  ship. Every surface (pipeline, dashboard, Mobile, chats on either Mac) is a road into the same loop.
+- **Invariant**: a rule about the loop that must always hold, numbered I1–I6 in ADR 0080 (current evidence, askable
+  questions, answers acted on, a next step always, nothing stuck silently, one truth).
+- **Choke point**: the one place every road to a state passes through, and the only place an invariant is
+  implemented. Other code calls it and never repeats it. `bin/gh` is the choke point for writes to GitHub.
+- **Next owner / next action**: who moves an open ticket or PR on (MARVIN or the owner) and what they do next.
+  Derived from state by `next_step()`, never stored.
+- **Loop test**: the end-to-end test that walks a fake ticket through the whole loop in a sandbox. "The loop works"
+  means it passes.
+- **Root fix**: a fix for a recurring problem that makes it an invariant at its choke point. A memory note or a prompt
+  line is advice and doesn't count for a second occurrence.
+_Avoid_: calling a fix to one surface (the dashboard, a session prompt) "fixed" when the same state can be reached
+another way.

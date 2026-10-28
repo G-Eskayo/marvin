@@ -203,6 +203,53 @@ Several things happen automatically, in order:
 
 ---
 
+## The rules that always hold *(ADR 0080, proposed 2026-10-28, marvin#737)*
+
+Every surface (the pipeline, the dashboard, Mobile, a chat on either Mac) is a different road into the same loop.
+A rule kept on one road is skipped by the others, so each rule below lives in **one place every road passes**, and
+everything else calls it. The full reasoning is in [ADR 0080](adr/0080-the-work-loop-is-one-system.md).
+
+| Rule | What always holds | The one place it lives |
+|---|---|---|
+| **I1 Current evidence** | Look changes show working images, pinned by commit, newer than the last look change | `lib/pr_images.py`, called by `bin/gh` and the dashboard's merge server |
+| **I2 Askable questions** | Every question to you is in the dashboard's Decisions format | `bin/gh` |
+| **I3 Answers are acted on** | Your answer changes the same PR, gets a reply, and earlier looks stay viewable | the owner-decisions trigger |
+| **I4 A next step, always** | Every ticket and PR has one next owner and next action, through merge and ship | `next_step()`, derived, read by every screen |
+| **I5 Nothing stuck silently** | MARVIN's stuck steps restart, yours get one nudge, ownerless ones and failing jobs turn Health red | one liveness checker |
+| **I6 One truth** | A replaced decision updates repo and memory together; a recurring-mistake note links to its rule | memory writes + `memory_lint` |
+
+**The loop test** walks a fake ticket from idea to shipped in a sandbox and fails if anything drops it. It is what
+"the loop works" means.
+
+### Where every open piece fits
+
+| Ticket / PR | Rule | What happens to it |
+|---|---|---|
+| #735 / PR #736 (screenshot gate, pr-shots) | I1 | Merge as is: it is I1's choke point for chats and agents. |
+| #733 / PR #734 (stale images in the merge gate; a fix must reply) | I1, I3 | Rework: its image check calls `lib/pr_images.py` instead of a third copy. Keep the reply rule (I3). |
+| new: dashboard merges skip `bin/gh` | I1 | The merge server uses the one rule; `ui_evidence.js`'s copy goes. |
+| new: refuse Decisions that aren't machine-readable | I2 | Small addition to the same gate. |
+| #724 (owner-decisions scan reads GitHub) | I3 | Done (merged 2026-10-28). Becomes I3's backstop. |
+| PR #738 (feedback on the same PR, variations) | I3 | Kept as I3's design. |
+| new: `next_step()` and a ship step per project | I4 | The spine. The dashboard, Mobile and the pipeline read it. |
+| #729 (approving a look starts the build) | I4 | A transition in `next_step`. |
+| #231 (approve queues the merge) | I4 | A transition in `next_step`. |
+| #678 (a fix after a refusal doesn't bring Approve back) | I5 | The liveness checker sees "fix pushed, Approve missing" as stuck. The PR-head event is part of the fix. |
+| new: liveness checker, failing-job alarm | I5 | Built on `next_step`. |
+| #652 (replaced decisions update repo and memory) | I6 | As written, plus the recurring-mistake link. |
+| new: the loop test | all | Starts with I1–I3 and grows with each rule. |
+
+### Order
+
+1. **I1:** merge #736, point the dashboard's merges at the same rule, rework #734 to call it.
+2. **I2:** the Decisions-format check in `bin/gh`.
+3. **The loop test**, first for I1–I3.
+4. **I4:** `next_step()`, then #729, #231 and the ship step as its transitions.
+5. **I5:** the liveness checker and the failing-job alarm, then #678.
+6. **I6:** #652 and the memory link. This is where the semantic-memory work connects.
+
+---
+
 ## Every loop, in one place
 
 | Loop | Starts when… | Goes back to | Who acts | Status |
