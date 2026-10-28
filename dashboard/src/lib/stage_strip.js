@@ -135,10 +135,13 @@ export function deriveStageStrip(events = [], opts = {}) {
     // For failed stages, extract the code and remediation from the latest event's detail.
     let code = null
     let remediation = null
+    let cause = null
     if (status === 'failed' && stageEvents.length > 0) {
       const latest = stageEvents[stageEvents.length - 1]
       code = extractCode(latest.detail)
       remediation = remediationFor(code)
+      // What the gate knew went wrong ("The Mac mini's disk is nearly full (...)"), after the code (2026-10-28).
+      if (code) cause = String(latest.detail).slice(code.length + 1).trim() || null
     }
 
     // Special case: gate-stage failure with REBASE_CONFLICT code becomes a distinct "needs rebase" state.
@@ -152,6 +155,7 @@ export function deriveStageStrip(events = [], opts = {}) {
       label: STAGE_LABEL[stage] || stage,
       status: displayStatus,
       code,
+      cause,
       remediation,
       elapsed: status === 'running' && stageEvents.length > 0 ? now - new Date(stageEvents[stageEvents.length - 1].timestamp).getTime() : null,
       detail: stageEvents.length > 0 ? stageEvents[stageEvents.length - 1].detail : ''

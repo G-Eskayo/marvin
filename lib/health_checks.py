@@ -1603,6 +1603,58 @@ def write_status(status: dict | None = None) -> dict:
     return status
 
 
+# A low disk result is the trigger for the cleanup sweep's rebuildable trims (2026-10-28: macOS's aerial wallpaper
+# refilled the Mac mini between daily sweeps and the merge gate refused two Approves). This check already runs on its
+# schedule; reacting to its result adds no loop of its own. Only a real measurement counts (an unreachable or asleep
+# Mac is never "low"), each Mac at most once per DISK_FIRST_AID_EVERY, through the registered first-aid step.
+DISK_FIRST_AID_STEP = "disk-clear-rebuildable"
+DISK_FIRST_AID_EVERY = timedelta(hours=1)
+DISK_FIRST_AID_STAMP = HOME / ".claude" / "logs" / "disk-first-aid.json"
+_MEASURED_DISK = re.compile(r"^\d+ GiB free of \d+ \(\d+%\)")
+
+
+def react_to_low_disk(checks: list[dict], run=None, stamp_path: Path | None = None, now: datetime | None = None) -> list[dict]:
+    """Run the disk first aid on each Mac whose disk:space result is a measured yellow or red. Never raises."""
+    stamp_path = stamp_path or DISK_FIRST_AID_STAMP
+    now = now or _now()
+    if run is None:
+        import purpose_metrics as pm
+        run = lambda dev: pm.first_aid_everywhere(DISK_FIRST_AID_STEP, only={dev})  # noqa: E731
+    try:
+        stamps = json.loads(stamp_path.read_text())
+        stamps = stamps if isinstance(stamps, dict) else {}
+    except (OSError, ValueError):
+        stamps = {}
+    out = []
+    for r in checks:
+        rid = str(r.get("id", ""))
+        if not rid.startswith("disk:space@") or r.get("severity") not in ("yellow", "red"):
+            continue
+        if not _MEASURED_DISK.match(str(r.get("detail") or "")):
+            continue
+        dev = rid.split("@", 1)[1]
+        try:
+            last = datetime.fromisoformat(stamps[dev])
+            if now - last < DISK_FIRST_AID_EVERY:
+                continue
+        except (KeyError, TypeError, ValueError):
+            pass
+        stamps[dev] = now.isoformat()
+        try:
+            res = run(dev) or []
+            ok = all(x.get("ok") for x in res) if res else True
+            detail = "; ".join(str(x.get("detail", "")) for x in res)[:300] or "ran"
+        except Exception as exc:  # noqa: BLE001 -- first aid failing must not break the health check
+            ok, detail = False, f"{type(exc).__name__}: {str(exc)[:200]}"
+        out.append({"device": dev, "ok": ok, "detail": detail})
+    try:
+        stamp_path.parent.mkdir(parents=True, exist_ok=True)
+        stamp_path.write_text(json.dumps(stamps))
+    except OSError:
+        pass
+    return out
+
+
 import job_events  # noqa: E402  (run log shown in the dashboard's Health tab)
 
 
@@ -1627,6 +1679,9 @@ def _cli() -> None:
                 dfn.notify_red_headroom(device, days, detail)
             except Exception:
                 pass
+
+    for aid in react_to_low_disk(out.get("checks", [])):
+        job_events.step("Disk first aid", f"{aid['device']}: {'ok' if aid['ok'] else 'failed'}, {aid['detail']}")
 
     if "--json" in sys.argv:
         print(json.dumps(out, indent=2))

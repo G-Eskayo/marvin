@@ -17,6 +17,7 @@ import { assertChecksGreen } from './ci_status.js'
 import { checkOpenPrs } from './post_merge_rebase.js'
 import { applyVersionBump } from './changelog.js'
 import { createCountParser, gateExtension, machineLoad } from './merge_progress.js'
+import { machineLabel } from '../src/lib/merge_progress.js'
 
 const execFileAsync = promisify(execFile)
 const __dirname = path.dirname(fileURLToPath(import.meta.url))
@@ -26,6 +27,7 @@ const TICKET_PIPELINE_SCRIPT = path.resolve(__dirname, '..', '..', 'lib', 'ticke
 const VENV_PYTHON = path.resolve(__dirname, '..', '..', 'venv', 'bin', 'python')
 const PROFILE_SCRIPT = path.resolve(__dirname, '..', '..', 'lib', 'project_profile.py')
 const GENERATED_SCRIPT = path.resolve(__dirname, '..', '..', 'lib', 'generated_paths.py')
+const PURPOSE_METRICS_SCRIPT = path.resolve(__dirname, '..', '..', 'lib', 'purpose_metrics.py')
 const NODE_MODULES_SEED_SCRIPT = path.resolve(__dirname, '..', '..', 'lib', 'node_modules_seed.py')
 
 // #687: a gate copy gets node_modules as a copy-on-write clone of a cached install (lib/node_modules_seed.py), so the
@@ -258,12 +260,46 @@ export async function freeDiskBytes(dir = tmpdir()) {
   return s.bavail * s.bsize
 }
 
-export async function rebaseAndRetest(headRef, exec = execFileAsync, repoPath = REPO_PATH, runTests = _defaultRunTests, base = 'main', resolveConflicts = null, sleep = null, progress = noProgress, freeBytes = freeDiskBytes) {
-  const free = await freeBytes(tmpdir()).catch(() => null) // unreadable: carry on, as before this check
+// First aid for a nearly full disk (2026-10-28: macOS's aerial wallpaper refilled the Mac mini between daily sweeps and
+// two Approves were refused). The registered step `disk-clear-rebuildable` in lib/purpose_metrics.py FIRST_AID runs the
+// cleanup sweep's own rebuildable trims (lib/cleanup_sweep.py clear_rebuildable: aerial videos keep-newest, disk_trim's
+// allowlisted caches): no deletion rule of its own. Never throws; a failed run is a failed step.
+export const DISK_FIRST_AID_STEP = 'disk-clear-rebuildable'
+const DISK_FIRST_AID_TIMEOUT_MS = 10 * 60_000
+
+export async function runDiskFirstAid(exec = execFileAsync) {
+  try {
+    const { stdout } = await exec(VENV_PYTHON, [PURPOSE_METRICS_SCRIPT, 'first-aid', DISK_FIRST_AID_STEP, '--local'], { timeout: DISK_FIRST_AID_TIMEOUT_MS })
+    const last = String(stdout || '').trim().split('\n').pop() || ''
+    const r = JSON.parse(last)
+    if (!r || typeof r !== 'object' || Array.isArray(r)) throw new Error('no answer')
+    return { ok: !!r.ok, changed: !!r.changed, detail: String(r.detail || '').slice(0, 300) }
+  } catch (e) {
+    const why = String(e?.stderr || e?.message || e).trim().split('\n').pop() || 'no answer'
+    return { ok: false, changed: false, detail: `first aid could not run: ${why.slice(0, 200)}` }
+  }
+}
+
+export async function rebaseAndRetest(headRef, exec = execFileAsync, repoPath = REPO_PATH, runTests = _defaultRunTests, base = 'main', resolveConflicts = null, sleep = null, progress = noProgress, freeBytes = freeDiskBytes, firstAid = null) {
+  let free = await freeBytes(tmpdir()).catch(() => null) // unreadable: carry on, as before this check
+  const gb = (n) => `${(n / 1024 ** 3).toFixed(1)} GB`
+  let aidNote = ''
+  if (free !== null && free < MIN_GATE_FREE_BYTES && firstAid) {
+    // Once per approve: one call here, no retry loop. Only then refuse.
+    progress('rebasing', 'running', { detail: `disk nearly full (${gb(free)} free): clearing rebuildable files first`, logDetail: true })
+    let aid
+    try { aid = await firstAid() } catch (e) { aid = { ok: false, detail: `first aid failed: ${String(e?.message || e).slice(0, 200)}` } }
+    if (!aid || typeof aid !== 'object') aid = { ok: false, detail: 'first aid gave no answer' }
+    const detail = String(aid.detail || (aid.ok ? 'nothing to clear' : 'first aid failed')).replace(/\s+/g, ' ').slice(0, 300)
+    const before = free
+    free = await freeBytes(tmpdir()).catch(() => null)
+    progress('rebasing', 'running', { detail: `first aid: ${detail}; ${free === null ? 'free space unreadable' : `${gb(free)} free now`} (was ${gb(before)})`, logDetail: true })
+    aidNote = `\n\nFirst aid ran first: ${detail}; ${free === null ? 'free space unreadable' : `${gb(free)} free`} after.`
+  }
   if (free !== null && free < MIN_GATE_FREE_BYTES) {
-    const gb = (n) => `${(n / 1024 ** 3).toFixed(1)} GB`
-    // Worded so summarizeGateFailure files it as GATE_INFRA: the machine, not the PR, and nothing is sent back.
-    return { ok: false, reason: `Disk check before rebasing onto ${base}:\n\nNo space left on device for the check: ${gb(free)} free, the gate needs ${gb(MIN_GATE_FREE_BYTES)}. Free up space on this Mac, then approve again.` }
+    // Worded so summarizeGateFailure files it as GATE_INFRA (the machine, not the PR, and nothing is sent back) and
+    // infraCause can name the disk and both numbers.
+    return { ok: false, reason: `Disk check before rebasing onto ${base}:\n\nNo space left on device for the check: ${gb(free)} free, the gate needs ${gb(MIN_GATE_FREE_BYTES)}. Free up space on this Mac, then approve again.${aidNote}` }
   }
   const scratchDir = await mkdtemp(path.join(tmpdir(), 'mr-merge-gate-'))
   progress('rebasing', 'running', { detail: `onto ${base}` })
@@ -552,7 +588,7 @@ async function mergePrUnqueued(
   deps = {}
 ) {
   const { sleep, recordFailureFn = recordFailure, gateContext = defaultGateContext, baselineFails = null, gateTimeoutMs = GATE_TIMEOUT_MS, rebaseOpen = checkOpenPrs, uiEvidence = assertUiEvidence, decisions = assertDecisions,
-    progress: report = noProgress, loadNow = () => machineLoad(), now = Date.now } = deps
+    progress: report = noProgress, loadNow = () => machineLoad(), now = Date.now, diskFirstAid = null } = deps
   if (typeof prUrl !== 'string' || !prUrl.startsWith('https://github.com/')) {
     throw new MergeFailure(classifyFailure({ stage: 'request', error: new Error(`Not a GitHub PR URL: ${prUrl}`) }))
   }
@@ -630,8 +666,8 @@ async function mergePrUnqueued(
     const run = gateExec(exec, gateAbort.signal)
     const result = await withGateTimeout(
       Promise.resolve(ctx
-        ? rebaseAndRetestFn(headRefName, run, ctx.clone, ctx.runTests, ctx.base, ctx.resolveConflicts, sleep ?? null, progress)
-        : rebaseAndRetestFn(headRefName, run, REPO_PATH, _defaultRunTests, 'main', generatedResolver(MARVIN_REPO, run), sleep ?? null, progress)),
+        ? rebaseAndRetestFn(headRefName, run, ctx.clone, ctx.runTests, ctx.base, ctx.resolveConflicts, sleep ?? null, progress, undefined, diskFirstAid)
+        : rebaseAndRetestFn(headRefName, run, REPO_PATH, _defaultRunTests, 'main', generatedResolver(MARVIN_REPO, run), sleep ?? null, progress, undefined, diskFirstAid)),
       gateTimeoutMs,
       () => gateExtension({ baseMs: gateTimeoutMs, load: loadNow(), lastOutputAt, now: now() }),
       (reason) => progress('tests', 'running', { detail: reason, logDetail: true }),
@@ -640,17 +676,23 @@ async function mergePrUnqueued(
       // Structured, concise feedback (code header, failing test names, capped tail)
       // instead of a raw output wall: this comment is what the ticket's executor reads
       // to decide how to fix its work, so it has to be parseable and to the point.
-      const summary = summarizeGateFailure(result.reason)
+      let where = null
+      try { where = loadNow()?.id ? machineLabel(loadNow().id) : null } catch { /* unknown machine: "This Mac" */ }
+      const summary = summarizeGateFailure(result.reason, { where })
       if (summary.code === 'GATE_INFRA') {
         // The machine failed, not the PR: leave the ticket and PR alone so it can simply be approved again.
-        stage('gate', 'failed', 'GATE_INFRA: the build machine or test setup failed, not the code')
         const timedOut = /did not finish within \d+ min/.test(summary.comment)
         // marvin#568: say what the machine was doing when the limit ran out (busy, or idle so the tests hung).
         const loadNote = (String(result.reason).match(/cut off\. (.+?)\.?\s*$/s) || [])[1]
-        throw new MergeFailure(refusal('GATE_INFRA', 'gate', timedOut
+        // 2026-10-28: the cause the gate knows (a full disk, a locked build database, ...) is the message, so the
+        // dashboard, MR Review, the stage strip and the webhook log all say it instead of a generic line.
+        const message = timedOut
           ? `the check on this PR did not finish in time and was cut off${loadNote ? ` (${loadNote})` : ''}. That points at the machine or its setup, not at the PR's code`
-          : 'the build machine or the project\'s test setup failed while checking this PR, not the PR\'s code',
-          `Approve it again. The PR was not sent back for rework. What failed: ${summary.comment.slice(0, 300)}`))
+          : `${summary.cause || "The build machine or the project's test setup failed while checking this PR"}. That is the machine, not the PR's code`
+        stage('gate', 'failed', `GATE_INFRA: ${timedOut ? 'the check did not finish in time' : summary.cause || 'the build machine or test setup failed, not the code'}`)
+        throw new MergeFailure(refusal('GATE_INFRA', 'gate', message,
+          // A named cause says it all; only an unnamed one keeps the raw output for a person to read.
+          `${summary.next || 'Approve it again.'} The PR was not sent back for rework.${summary.cause ? '' : ` What failed: ${summary.comment.slice(0, 300)}`}`))
       }
       if (summary.code === 'GATE_TESTS_FAILED' && summary.failingTests.length && baselineFails) {
         // Did the PR break these, or was the base branch already red? Only a test that passes on the base is the PR's fault.

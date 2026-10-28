@@ -107,10 +107,49 @@ const XCTEST_FAILED = /Test Case '-\[(\S+) (\S+)\]' failed/
 // database from two builds at once, a full disk, a lost network, a project with no test script yet). These must not send a good PR back for a pointless rebuild.
 const GATE_INFRA = /did not finish within \d+ min|has no test command|missing script|database is locked|unable to attach db|no space left on device|could not resolve host|operation not permitted|resource temporarily unavailable|too many open files|cannot allocate memory/i
 
-export function summarizeGateFailure(reason) {
+// Which part of the machine failed, in words the owner can act on (2026-10-28: Approve on #600 and #739 was refused with
+// "the build machine or the project's test setup failed" while the gate knew the disk had 1.6 GB free). Each GATE_INFRA
+// signature above has a sentence here; the code stays GATE_INFRA. `where` is the machine's label ("Mac mini"), derived
+// from its device id at run time. The disk rule reads only the gate's own disk-check wording (rebaseAndRetest), so a
+// test that prints "N GB free" is never taken for it. Returns { cause, next } (one line each) or null when the failure
+// is not the machine's.
+const CAUSE_MAX = 200
+const oneLine = (s, max = CAUSE_MAX) => String(s).replace(/\s+/g, ' ').trim().slice(0, max)
+const DISK_CHECK = /^Disk check before rebasing[^\n]*\n+No space left on device for the check: (\d+(?:\.\d+)?) GB free, the gate needs (\d+(?:\.\d+)?) GB/i
+const FIRST_AID_RAN = /^First aid ran first: ([^\n]+)$/m
+const INFRA_CAUSES = [
+  { test: /no space left on device/i, cause: (w) => `${w}'s disk filled up during the check (no space left on device)`, next: 'Free up space on this Mac, then approve again.' },
+  { test: /has no test command|missing script/i, cause: () => 'This project has no test command yet, so the check could not run', next: 'Add a test script to the project, then approve again.' },
+  { test: /database is locked|unable to attach db/i, cause: () => 'Two builds used the same build database at once (database is locked)', next: 'Approve again once the other build has finished.' },
+  { test: /could not resolve host/i, cause: (w) => `${w} lost its network connection during the check (could not resolve host)`, next: 'Approve again once the network is back.' },
+  { test: /operation not permitted/i, cause: () => 'macOS refused a file operation during the check (operation not permitted), usually a missing privacy permission', next: 'Check Full Disk Access for the webhook, then approve again.' },
+  { test: /too many open files|resource temporarily unavailable/i, cause: (w) => `${w} ran out of processes or open files during the check`, next: 'Approve again once the machine is less busy.' },
+  { test: /cannot allocate memory/i, cause: (w) => `${w} ran out of memory during the check`, next: 'Approve again once the machine is less busy.' }
+]
+
+export function infraCause(reason, { where } = {}) {
+  const text = String(reason ?? '')
+  const label = oneLine(where ?? '', 40)
+  const w = label ? `The ${label}` : 'This Mac'
+  const disk = text.match(DISK_CHECK)
+  if (disk) {
+    const aid = text.match(FIRST_AID_RAN)
+    return {
+      cause: oneLine(`${w}'s disk is nearly full (${disk[1]} GB free, the check needs ${disk[2]} GB)`),
+      next: oneLine(`${aid ? `MARVIN cleared rebuildable files first (${aid[1].replace(/[.\s]+$/, '')}), and it was not enough. ` : ''}Free up space on this Mac, then approve again.`, 400)
+    }
+  }
+  if (/^rebase onto main failed/i.test(text) || !GATE_INFRA.test(text)) return null
+  const rule = INFRA_CAUSES.find((r) => r.test.test(text))
+  if (!rule) return { cause: null, next: null } // a GATE_INFRA signature with no sentence yet (e.g. the time limit): the caller words it
+  return { cause: oneLine(rule.cause(w)), next: rule.next }
+}
+
+export function summarizeGateFailure(reason, { where } = {}) {
   const text = String(reason ?? '')
   const isRebase = /^rebase onto main failed/i.test(text)
   const code = isRebase ? 'REBASE_CONFLICT' : GATE_INFRA.test(text) ? 'GATE_INFRA' : 'GATE_TESTS_FAILED'
+  const infra = code === 'GATE_INFRA' ? infraCause(text, { where }) : null
   const body = text.replace(/^[^\n]*:\s*\n+/, '') // drop the "…failed:" header line
   const lines = body.split('\n')
 
@@ -138,7 +177,7 @@ export function summarizeGateFailure(reason) {
     parts.push(`Failing tests (${unique.length}):\n${unique.map((t) => `- ${t}`).join('\n')}`)
   }
   parts.push(`Last output:\n\`\`\`\n${tail}\n\`\`\``)
-  return { code, failingTests: unique, comment: parts.join('\n\n') }
+  return { code, failingTests: unique, comment: parts.join('\n\n'), cause: infra?.cause ?? null, next: infra?.next ?? null }
 }
 
 // A refusal the gate decides itself (not a gh/git error to be pattern-matched): same shape as a

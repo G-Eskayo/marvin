@@ -770,3 +770,82 @@ def test_the_guard_always_uses_marvins_shared_patterns_even_in_another_repo(tmp_
     (wt_path / "cfg.py").write_text(f"KEY = '{key}'")
     wt = {"path": wt_path, "branch": "pipeline/g-eskayo/marvin#57", "clone": clone}
     assert cs.backup_worktree(wt, today="20261024") is None
+
+
+# ── first aid for a nearly full disk (2026-10-28: aerial videos refilled the disk between daily sweeps) ──────────
+
+def _aerials(n, size=2**20):
+    import os
+    d = cs.HOME / cs.AERIAL_SUBPATH  # conftest's temp home, never ~/Library
+    d.mkdir(parents=True, exist_ok=True)
+    for i in range(n):
+        (d / f"v{i}.mov").write_bytes(b"x" * size)
+        os.utime(d / f"v{i}.mov", (1000 + i, 1000 + i))
+    return d
+
+
+@pytest.fixture
+def lock_path(tmp_path, monkeypatch):
+    p = tmp_path / "cleanup-sweep.lock"
+    monkeypatch.setattr(cs, "LOCK_PATH", p)
+    return p
+
+
+def test_clear_rebuildable_runs_only_the_sweeps_own_trims_and_logs_what_it_freed(log_path, lock_path, monkeypatch):
+    import disk_trim
+    d = _aerials(3)
+    calls = []
+    monkeypatch.setattr(disk_trim, "trim_with_logging", lambda dry_run=True: calls.append(dry_run) or {"total_kb_freed": 2048})
+    for other in ("sweep_worktrees", "sweep_stale_claims", "sweep_simulators", "_default_outcome_check"):
+        monkeypatch.setattr(cs, other, lambda *a, **k: pytest.fail(f"first aid must not run {other}"))
+    r = cs.clear_rebuildable()
+    assert [p.name for p in d.iterdir()] == ["v2.mov"]   # keep-newest, as the daily sweep does
+    assert calls == [False]                              # disk_trim's own allowlist, for real
+    assert r["changed"] is True and r["freed_bytes"] == 2 * 2**20 + 2048 * 1024
+    assert "aerial videos 2 MiB" in r["detail"] and "caches 2 MiB" in r["detail"]
+    log = log_path.read_text()
+    assert "First aid (disk nearly full)" in log and "4 MiB" in log
+
+
+def test_clear_rebuildable_with_nothing_to_clear_changes_nothing_and_logs_nothing(log_path, lock_path):
+    r = cs.clear_rebuildable()
+    assert r["changed"] is False and r["freed_bytes"] == 0
+    assert not log_path.exists()
+
+
+def test_clear_rebuildable_never_follows_a_video_link_out_of_the_folder(log_path, lock_path, tmp_path):
+    import os
+    d = _aerials(1)
+    precious = tmp_path / "precious.mov"
+    precious.write_bytes(b"keep me")
+    (d / "zz.mov").symlink_to(precious)
+    os.utime(d / "zz.mov", (1, 1), follow_symlinks=False)
+    cs.clear_rebuildable()
+    assert precious.read_bytes() == b"keep me"
+
+
+def test_clear_rebuildable_waits_for_nobody_when_the_sweep_is_running(log_path, lock_path):
+    import fcntl
+    d = _aerials(3)
+    lock_path.parent.mkdir(parents=True, exist_ok=True)
+    with open(lock_path, "a") as held:
+        fcntl.flock(held, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        r = cs.clear_rebuildable()
+    assert r["changed"] is False and "already running" in r["detail"]
+    assert len(list(d.iterdir())) == 3   # nothing touched while the sweep holds the lock
+
+
+def test_clear_rebuildable_survives_a_broken_cache_trim_and_still_clears_videos(log_path, lock_path, monkeypatch):
+    import disk_trim
+    d = _aerials(2)
+    monkeypatch.setattr(disk_trim, "trim_with_logging", lambda dry_run=True: 1 / 0)
+    r = cs.clear_rebuildable()
+    assert [p.name for p in d.iterdir()] == ["v1.mov"]
+    assert r["changed"] is True and "caches failed" in r["detail"]
+
+
+def test_clear_rebuildable_reads_a_garbled_cache_answer_as_nothing_freed(log_path, lock_path, monkeypatch):
+    import disk_trim
+    for answer in (None, "x", {"total_kb_freed": "lots"}, {"total_kb_freed": -5}):
+        monkeypatch.setattr(disk_trim, "trim_with_logging", lambda dry_run=True, a=answer: a)
+        assert cs.clear_rebuildable()["freed_bytes"] == 0

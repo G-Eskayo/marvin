@@ -65,4 +65,12 @@ describe('StageStrip component', () => {
     // Pending stages should have the pending icon
     expect(html).toContain('◌')
   })
+
+  it('shows a failure\'s cause in full, before the generic remediation', () => {
+    const cause = "The Mac mini's disk is nearly full (1.6 GB free, the check needs 5.0 GB)"
+    const html = renderToStaticMarkup(<StageStrip events={[{ stage: 'gate', status: 'failed', detail: `GATE_INFRA: ${cause}`, timestamp: new Date().toISOString() }]} />)
+    const title = (html.match(/title="(Merge gate[^"]*)"/) || [])[1].replace(/&#x27;/g, "'")
+    expect(title).toContain(`Cause: ${cause}`)
+    expect(title.indexOf('Cause:')).toBeLessThan(title.indexOf('Remediation:'))
+  })
 })
