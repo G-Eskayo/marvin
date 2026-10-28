@@ -139,11 +139,11 @@ def test_without_a_worktree_or_capture_config_the_old_na_reason_stands(tmp_path)
     assert dev == {"na": True, "reason": "no capture"}
 
 
-def test_the_pr_body_shows_each_screenshot_from_the_pushed_branch():
+def test_the_pr_body_shows_each_screenshot_pinned_to_the_pushed_commit():
     dev = {"na": False, "screenshots": [{"path": "docs/evidence/w/main-light.png", "caption": "main, light"}],
            "description": "Simulator screenshots."}
-    text = mr_raiser._format_dev_evidence(dev, repo="G-Eskayo/clarity-captions", branch="pipeline/g-eskayo/clarity-captions#7")
-    assert "![main, light](https://github.com/G-Eskayo/clarity-captions/blob/pipeline/g-eskayo/clarity-captions%237/docs/evidence/w/main-light.png?raw=true)" in text
+    text = mr_raiser._format_dev_evidence(dev, repo="G-Eskayo/clarity-captions", ref="a" * 40)
+    assert f"![main, light](https://raw.githubusercontent.com/G-Eskayo/clarity-captions/{'a' * 40}/docs/evidence/w/main-light.png)" in text
     assert "Simulator screenshots." in text
 
 

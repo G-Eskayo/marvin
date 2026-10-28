@@ -164,3 +164,101 @@ def test_a_gate_started_by_the_real_gh_passes_through_unlogged(tmp_path):
     p = _run(tmp_path, _fake_gh(tmp_path), "issue", "list", env_extra={gg.INSIDE_ENV: "1"})
     assert p.returncode == 0 and p.stdout.strip() == "ok"
     assert not (tmp_path / ".claude" / "logs" / "gh-calls.jsonl").exists()
+
+
+# ── UI PRs carry current, working images (marvin #735) ─────────────────────
+
+SHA735 = "a7174e5642d35c6272c1787ae7db24aa2015db34"
+RAW735 = f"https://raw.githubusercontent.com/o/r/{SHA735}/docs/images/pr/a.png"
+
+
+def _asker(files, body="", compare_since=None):
+    """A fake GitHub: the PR's files and body, and what changed since a pinned commit."""
+    def ask(args):
+        if args[:2] == ["repo", "view"]:
+            return {"nameWithOwner": "o/r"}
+        if args[:2] == ["pr", "view"]:
+            return {"files": [{"path": f} for f in files], "body": body, "headRefOid": "f" * 40}
+        if args[0] == "api" and args[1] == "repos/o/r":
+            return {"default_branch": "main"}
+        if args[0] == "api" and args[1].startswith(f"repos/o/r/compare/{SHA735}..."):
+            return {"files": [{"filename": f} for f in (compare_since or [])]}
+        if args[0] == "api" and args[1].startswith("repos/o/r/compare/"):
+            return {"files": [{"filename": f} for f in files]}
+        raise AssertionError(args)
+    return ask
+
+
+def test_creating_a_ui_pr_with_no_images_is_refused(tmp_path):
+    msg = gg.ui_evidence_refusal(["pr", "create", "-R", "o/r", "--head", "x", "--title", "t", "--body", "words"],
+                                 _asker(["site/page.html"]), profiles_dir=tmp_path)
+    assert msg.startswith("NO_UI_EVIDENCE") and "site/page.html" in msg
+
+
+def test_creating_a_ui_pr_reads_the_body_file_and_uses_the_current_branch(tmp_path):
+    body = tmp_path / "b.md"
+    body.write_text(f"![a]({RAW735})")
+    argv = ["pr", "create", "--body-file", str(body), "--title", "t"]
+    assert gg.ui_evidence_refusal(argv, _asker(["site/page.html"]), current_branch=lambda: "feat/x",
+                                  profiles_dir=tmp_path) is None
+
+
+def test_a_non_ui_pr_and_other_gh_calls_pass(tmp_path):
+    assert gg.ui_evidence_refusal(["pr", "create", "-R", "o/r", "-H", "x", "-b", "hi"], _asker(["lib/a.py"]),
+                                  profiles_dir=tmp_path) is None
+    assert gg.ui_evidence_refusal(["issue", "list"], _asker([]), profiles_dir=tmp_path) is None
+
+
+def test_merging_with_images_older_than_a_later_look_change_is_refused(tmp_path):
+    ask = _asker(["site/page.html"], body=f"![a]({RAW735})", compare_since=["site/page.html"])
+    assert gg.ui_evidence_refusal(["pr", "merge", "9", "-R", "o/r"], ask, profiles_dir=tmp_path).startswith("STALE_UI_EVIDENCE")
+    ok = _asker(["site/page.html"], body=f"![a]({RAW735})", compare_since=["docs/images/pr/a.png"])
+    assert gg.ui_evidence_refusal(["pr", "merge", "9", "-R", "o/r"], ok, profiles_dir=tmp_path) is None
+
+
+def test_the_projects_profile_adds_its_own_ui_paths(tmp_path):
+    (tmp_path / "voice.json").write_text(json.dumps({"repo": "o/r", "evidence": {"ui_paths": ["App/Sources/**/*.swift"]}}))
+    msg = gg.ui_evidence_refusal(["pr", "ready", "9", "-R", "o/r"], _asker(["App/Sources/MenuBarIcon.swift"]),
+                                 profiles_dir=tmp_path)
+    assert msg.startswith("NO_UI_EVIDENCE")
+
+
+def _fake_pr_gh(tmp_path, files, body):
+    """A real gh stand-in on PATH that answers the gate's questions and records whether the call went through."""
+    bin_dir = tmp_path / "bin"
+    bin_dir.mkdir()
+    fake = bin_dir / "gh"
+    view = json.dumps({"files": [{"path": f} for f in files], "body": body, "headRefOid": "f" * 40})
+    fake.write_text(f"#!/bin/sh\nif [ \"$1 $2\" = \"pr view\" ]; then echo '{view}'; exit 0; fi\n"
+                    f"echo \"$@\" >> {tmp_path}/ran\nexit 0\n")
+    fake.chmod(fake.stat().st_mode | stat.S_IEXEC)
+    return bin_dir
+
+
+def _run_gate(tmp_path, bin_dir, argv, extra_env=None):
+    env = {"PATH": f"{bin_dir}:/usr/bin:/bin", "HOME": str(tmp_path), "MARVIN_INSTANCE_DIR": str(tmp_path / "inst"),
+           **(extra_env or {})}
+    return subprocess.run([sys.executable, str(GATE), *argv], capture_output=True, text=True, env=env)
+
+
+def test_end_to_end_a_refused_merge_never_reaches_github_and_says_why(tmp_path):
+    bin_dir = _fake_pr_gh(tmp_path, ["site/page.html"], "no images")
+    p = _run_gate(tmp_path, bin_dir, ["pr", "merge", "9", "-R", "o/r", "--merge"])
+    assert p.returncode == 1 and "NO_UI_EVIDENCE" in p.stderr
+    assert not (tmp_path / "ran").exists()
+
+
+def test_end_to_end_a_person_can_override_once_with_a_reason(tmp_path):
+    bin_dir = _fake_pr_gh(tmp_path, ["site/page.html"], "no images")
+    p = _run_gate(tmp_path, bin_dir, ["pr", "merge", "9", "-R", "o/r"], {"MARVIN_UI_EVIDENCE_OK": "copy-only fix"})
+    assert p.returncode == 0 and "pr merge 9" in (tmp_path / "ran").read_text()
+
+
+def test_end_to_end_when_github_cant_be_asked_the_call_goes_through_with_a_note(tmp_path):
+    bin_dir = tmp_path / "bin"
+    bin_dir.mkdir()
+    fake = bin_dir / "gh"
+    fake.write_text(f"#!/bin/sh\nif [ \"$1 $2\" = \"pr view\" ]; then echo offline >&2; exit 1; fi\necho \"$@\" >> {tmp_path}/ran\n")
+    fake.chmod(fake.stat().st_mode | stat.S_IEXEC)
+    p = _run_gate(tmp_path, bin_dir, ["pr", "merge", "9", "-R", "o/r"])
+    assert p.returncode == 0 and "couldn't check" in p.stderr and (tmp_path / "ran").exists()

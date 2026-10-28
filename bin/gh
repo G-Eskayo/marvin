@@ -247,6 +247,65 @@ def _say(msg: str) -> None:
     sys.stderr.write(f"gh-gate: {msg}\n")
 
 
+# ── UI PRs carry current, working images (marvin #735) ─────────────────────
+# A PR opened, readied or merged from a chat came straight through here with nothing checking the owner's rule that a
+# look change shows images (the dashboard's Approve checks, chats never press it). The rules live in lib/pr_images.py.
+# Fails OPEN when GitHub can't be asked (with a note): a gate bug must not stop all PR work, and the dashboard's
+# Approve still fails closed. MARVIN_UI_EVIDENCE_OK="<reason>" lets one call through, logged.
+
+UI_EVIDENCE_OK = "MARVIN_UI_EVIDENCE_OK"
+
+
+def _gh_json(real: str, args: list[str]):
+    env = {**os.environ, INSIDE_ENV: "1"}
+    p = subprocess.run([real, *args], capture_output=True, text=True, env=env, timeout=60)
+    if p.returncode != 0:
+        raise RuntimeError((p.stderr or p.stdout).strip().splitlines()[-1:] or ["gh failed"])
+    return json.loads(p.stdout)
+
+
+def ui_evidence_refusal(argv: list[str], ask, read_file=None, current_branch=None, profiles_dir=None) -> str | None:
+    """The refusal message for a PR call that breaks the images rule, else None. `ask(args)` runs gh and returns JSON."""
+    sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "lib"))
+    import pr_images as pi
+    call = pi.parse_pr_call(argv)
+    if not call:
+        return None
+    repo = call["repo"] or ask(["repo", "view", "--json", "nameWithOwner"])["nameWithOwner"]
+    if call["action"] == "create":
+        if call["body_file"] == "-":
+            return None  # the body is on stdin, which belongs to gh
+        if call["body_file"]:
+            body = (read_file or (lambda f: Path(f).read_text()))(call["body_file"])
+        else:
+            body = call["body"] or ""
+        head = call["head"] or (current_branch or _current_branch)()
+        base = call["base"] or ask(["api", f"repos/{repo}"])["default_branch"]
+        files = [f["filename"] for f in ask(["api", f"repos/{repo}/compare/{base}...{head}"]).get("files", [])]
+        head_ref = head
+    else:
+        target = [call["target"]] if call["target"] else []
+        pr = ask(["pr", "view", *target, "--repo", repo, "--json", "files,body,headRefOid"])
+        files, body, head_ref = [f["path"] for f in pr.get("files", [])], pr.get("body") or "", pr.get("headRefOid")
+
+    def changed_since(sha):
+        try:
+            return [f["filename"] for f in ask(["api", f"repos/{repo}/compare/{sha}...{head_ref}"]).get("files", [])]
+        except Exception:  # noqa: BLE001
+            return None
+
+    extra = pi.ui_paths_for(repo, profiles_dir or Path(os.environ.get("MARVIN_INSTANCE_DIR") or Path.home() / ".agents" / "instance") / "config" / "projects")
+    problems = pi.verdict(files, body, extra, changed_since if head_ref else None)
+    if not problems:
+        return None
+    code, message = problems[0]
+    return f"{code}: {message}"
+
+
+def _current_branch() -> str:
+    return subprocess.run(["git", "rev-parse", "--abbrev-ref", "HEAD"], capture_output=True, text=True).stdout.strip()
+
+
 def main(argv: list[str]) -> int:
     real = find_real_gh(os.environ.get("PATH", ""))
     if not real:
@@ -254,6 +313,20 @@ def main(argv: list[str]) -> int:
         return 127
     if os.environ.get(INSIDE_ENV):
         return subprocess.call([real, *argv])
+    if len(argv) >= 2 and argv[0] == "pr" and argv[1] in ("create", "ready", "merge"):
+        override = os.environ.get(UI_EVIDENCE_OK, "").strip()
+        try:
+            refusal = None if override else ui_evidence_refusal(argv, lambda a: _gh_json(real, a))
+        except Exception as e:  # noqa: BLE001
+            _say(f"couldn't check this PR's images ({str(e)[:160]}); letting it through")
+            refusal = None
+        if override:
+            _log({"t": time.time(), "caller": _caller(), "cmd": f"pr {argv[1]}", "ui_evidence_override": override[:200]})
+        if refusal:
+            _say(refusal)
+            _say(f"(only if a person agrees the images aren't needed: {UI_EVIDENCE_OK}=\"<reason>\" gh ...)")
+            _log({"t": time.time(), "caller": _caller(), "cmd": f"pr {argv[1]}", "rc": 1, "ui_evidence": refusal[:200]})
+            return 1
     prio = priority_of(os.environ)
     caller = _caller()
     cmd = " ".join(a for a in argv[:2] if not a.startswith("-"))

@@ -18,6 +18,7 @@ subprocess calls) -- same testability seam as sandbox_orchestration's
 committed) is testable without hitting the real GitHub API.
 """
 from __future__ import annotations
+import re
 import subprocess
 import sys
 from pathlib import Path
@@ -122,15 +123,31 @@ def _format_test_results(test_results: dict | None) -> str:
     return text
 
 
-def _image_url(path: str, repo: str | None, branch: str | None) -> str:
-    """A PR description can't show a repo-relative image, so point at the file on the pushed branch (#374)."""
-    if not repo or not branch or path.startswith(("http://", "https://")):
+def _image_url(path: str, repo: str | None, ref: str | None) -> str:
+    """A PR description can't show a repo-relative image (#374), so point at the pushed file, pinned by full commit SHA
+    on the raw host (#735): a branch link turns into whatever is newest ("old photos"), and blob/...?raw=true is a 404
+    for a private repo in the dashboard."""
+    if not repo or not ref or path.startswith(("http://", "https://")):
         return path
     from urllib.parse import quote
-    return f"https://github.com/{repo}/blob/{quote(branch, safe='/')}/{quote(path, safe='/')}?raw=true"
+    return f"https://raw.githubusercontent.com/{repo}/{quote(ref, safe='')}/{quote(path, safe='/')}"
 
 
-def _format_dev_evidence(dev_evidence: dict | None, repo: str | None = None, branch: str | None = None) -> str:
+def _head_sha(repo: str | None, branch: str) -> str | None:
+    """The pushed branch's commit, so images are pinned to exactly what was reviewed."""
+    if not repo:
+        return None
+    from urllib.parse import quote
+    try:
+        r = subprocess.run(["gh", "api", f"repos/{repo}/commits/{quote(branch, safe='')}", "-q", ".sha"],
+                           check=True, capture_output=True, text=True)
+        sha = r.stdout.strip()
+        return sha if re.fullmatch(r"[0-9a-f]{40}", sha) else None
+    except (subprocess.CalledProcessError, OSError):
+        return None
+
+
+def _format_dev_evidence(dev_evidence: dict | None, repo: str | None = None, ref: str | None = None) -> str:
     if not dev_evidence:
         return "Not available."
     if dev_evidence.get("na"):
@@ -140,9 +157,9 @@ def _format_dev_evidence(dev_evidence: dict | None, repo: str | None = None, bra
     description = dev_evidence.get("description", "")
     shots = dev_evidence.get("screenshots")
     if shots:
-        images = "\n\n".join(f"![{s.get('caption', 'Screenshot')}]({_image_url(s['path'], repo, branch)})" for s in shots)
+        images = "\n\n".join(f"![{s.get('caption', 'Screenshot')}]({_image_url(s['path'], repo, ref)})" for s in shots)
         return f"{description}\n\n{images}".strip()
-    screenshot = _image_url(dev_evidence.get("screenshot_path", ""), repo, branch)
+    screenshot = _image_url(dev_evidence.get("screenshot_path", ""), repo, ref)
     return f"![Screenshot]({screenshot})\n\n{description}".strip()
 
 
@@ -182,6 +199,7 @@ def _default_open_pr(
     dev_evidence: dict | None = None,
     base_branch: str = "main",
 ) -> str:
+    head = _head_sha(_repo_of(ticket_ref), branch) if dev_evidence and not dev_evidence.get("na") else None
     body = (
         f"Closes {ticket_ref}\n\n"
         f"Autonomously implemented and verified by the MR pipeline.\n\n"
@@ -192,7 +210,7 @@ def _default_open_pr(
         f"## Test Results\n\n"
         f"{_format_test_results(test_results)}\n\n"
         f"## Dev Environment Evidence\n\n"
-        f"{_format_dev_evidence(dev_evidence, _repo_of(ticket_ref), branch)}\n\n"
+        f"{_format_dev_evidence(dev_evidence, _repo_of(ticket_ref), head)}\n\n"
         f"## Code Review\n\n"
         f"{_format_code_review(comparison.get('code_review'))}"
     )
