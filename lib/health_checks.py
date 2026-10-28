@@ -1509,6 +1509,26 @@ def _cron_job_logs() -> list[dict]:
     return out
 
 
+def check_brief_builder() -> dict:
+    """Did the morning brief get built today, and which machine built it?
+    Green: brief exists with builder info. Yellow: no brief built yet (may still be pending)."""
+    import morning_brief
+    cid, label = "brief:builder", "Morning brief builder"
+    now = _now()
+    day = now.astimezone().strftime("%Y-%m-%d")
+
+    builder_info = morning_brief.builder_of(day)
+    if builder_info:
+        return _result(cid, label, "green", f"Built by: {builder_info}")
+
+    brief_path = morning_brief.BRIEFS / f"{day}.md"
+    if brief_path.exists():
+        # Brief exists but no sidecar — shouldn't happen, but we can read it
+        return _result(cid, label, "green", "Brief exists (legacy, no builder info)")
+
+    return _result(cid, label, "yellow", "No brief built yet today")
+
+
 def default_checks(reach: dict[str, str] | None = None, reach_results: list[dict] | None = None) -> list[tuple]:
     """Every check the sweep runs, in the order the Health tab shows them. `reach` maps machine:<id> -> severity from
     the reachability check, which runs first; `reach_results` are its rows, listed where they always appeared."""
@@ -1535,6 +1555,7 @@ def default_checks(reach: dict[str, str] | None = None, reach_results: list[dict
         ("main:green", "The main branch passes its tests", check_main_health, CHECK_BUDGET_S),
         ("memory:lint", "Memory links and index are sound", check_memory_lint, CHECK_BUDGET_S),
         ("seal:beta-ingest", "Seal Speak beta reports are picked up", check_seal_beta_ingest, CHECK_BUDGET_S),
+        ("brief:builder", "Morning brief builder", check_brief_builder, CHECK_BUDGET_S),
         ("cron", "Cron job logs", _cron_job_logs, CHECK_BUDGET_S),
         ("machine", "Machine reachability", lambda: list(reach_results or []), CHECK_BUDGET_S),
         ("repo:sync", "Repo sync", lambda: check_repo_sync_everywhere(reach), CROSS_MACHINE_BUDGET_S),

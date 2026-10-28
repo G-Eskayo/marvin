@@ -1376,3 +1376,44 @@ def test_memory_lint_is_a_registered_health_check():
     ids = [spec[0] for spec in hc.default_checks()]
     assert "memory:lint" in ids
     assert ids.index("memory:lint") == ids.index("main:green") + 1
+
+
+# ---- brief builder check ----
+
+def test_check_brief_builder_reports_the_machine(tmp_path, monkeypatch):
+    """check_brief_builder() reports green with machine and role when sidecar exists."""
+    import morning_brief
+
+    briefs_dir = tmp_path / "briefs"
+    briefs_dir.mkdir()
+    monkeypatch.setattr(morning_brief, "BRIEFS", briefs_dir)
+    monkeypatch.setattr(morning_brief, "builder_of", lambda day: "mac-mini: primary")
+
+    result = hc.check_brief_builder()
+    assert result["severity"] == "green"
+    assert "mac-mini: primary" in result["detail"]
+
+
+def test_check_brief_builder_yellow_when_nothing_built_yet(tmp_path, monkeypatch):
+    """check_brief_builder() reports yellow when no brief for today."""
+    import morning_brief
+
+    briefs_dir = tmp_path / "briefs"
+    briefs_dir.mkdir()
+    monkeypatch.setattr(morning_brief, "BRIEFS", briefs_dir)
+    monkeypatch.setattr(morning_brief, "builder_of", lambda day: None)
+
+    result = hc.check_brief_builder()
+    assert result["severity"] == "yellow"
+    assert "No brief built yet" in result["detail"]
+
+
+def test_job_placement_reflects_the_new_ownership(monkeypatch):
+    """JOB_PLACEMENT has the new ownership: mini for primary jobs, laptop for fallbacks."""
+    # Check that the new assignments exist
+    assert hc.JOB_PLACEMENT.get("daily-digest") == "mini"
+    assert hc.JOB_PLACEMENT.get("daily-digest-fallback") == "laptop"
+    assert hc.JOB_PLACEMENT.get("research-colony") == "mini"
+    assert hc.JOB_PLACEMENT.get("research-colony-fallback") == "laptop"
+    assert hc.JOB_PLACEMENT.get("morning-brief") == "mini"
+    assert hc.JOB_PLACEMENT.get("morning-brief-fallback") == "laptop"
