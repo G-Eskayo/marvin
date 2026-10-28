@@ -190,6 +190,63 @@ Fetch thread history with optional pagination.
 
 **Response**: `200 { "ok": true, "data": [{ id, source, role, text, sessionId, ts }, ...] }` (messages in reverse chronological order, newest first)
 
+### `POST /chat`
+
+Send a text message to the chat interface.
+
+**Request body**: `{ "message": "<text>" }`
+
+**Response**: `200 application/x-ndjson` (chunked, streaming)
+- Each line is a JSON object: `{ type: "session" | "text" | "result" | "error", ... }`
+- Accumulates messages with source `"chat"` in thread store
+- Applies session rotation policy on completion
+
+**Semantics**:
+- User message appended to thread store immediately (source: `"chat"`, role: `"user"`).
+- Session ID backfilled once `result` event arrives.
+- Assistant message appended after stream completion (source: `"chat"`, role: `"assistant"`).
+- Pending summary prepended to outgoing message if present; consumed after exchange.
+- Rotation check applies message-length threshold; on rotate, session archived and pending summary set for next turn.
+
+### `POST /voice`
+
+Send a voice/audio prompt and receive streamed sentences for text-to-speech synthesis.
+
+**Request body**: `{ "text": "<text>", "device": "homepod" | "mac" | "iphone" | "watch" }`
+
+**Query/Request validation**:
+- `text` (required, string): The voice prompt.
+- `device` (required, string): Target device. Supported: `"homepod"`, `"mac"`, `"iphone"`, `"watch"` (case-insensitive).
+
+**Response**: `200 application/x-ndjson` (chunked, streaming)
+- Each line is a JSON object describing a routing/streaming event.
+
+**Event types**:
+- `{ type: "classification", intent: "<string>", brainType: "fast" | "deep", method: "<string>", score: <number>, routingMs: <ms> }` — routing decision.
+- `{ type: "placeholder", text: "<string>" }` — placeholder text emitted before deep-brain processing begins.
+- `{ type: "sentence", text: "<string>" }` — complete sentence, stripped of markdown, ready for TTS.
+- `{ type: "error_speech", text: "<string>" }` — fallback text if an error occurred during processing.
+- `{ type: "error", message: "<string>" }` — unrecoverable error (HTTP client should stop listening).
+- `{ type: "timing", routingMs: <ms>, firstTokenMs: <ms>, firstSentenceMs: <ms>, firstReplyMs: <ms>, totalMs: <ms> }` — performance metrics.
+
+**Confirm-gate behavior**:
+- Side-effecting tool calls (Bash, Edit, Write, etc.) are intercepted by `permission_hook.js` and require approval via the `/pending-actions/resolve` endpoint. The voice stream waits for a resolution (approval/denial) or timeout (default 120s, fallback to deny).
+
+**Fallback on unreachable model**:
+- If the local model (Ollama) or remote model endpoint becomes unreachable, an error event is emitted and stream ends gracefully.
+
+**Semantics**:
+- User message appended to thread store immediately (source: `"voice"`, role: `"user"`, text: original input).
+- Prompt is routed via `route.py --json` to classify intent (recall/research/coding/architecture).
+- Fast intents (recall, research) use the fast brain; others use the deep brain.
+- Deep brain emits a placeholder (`"Thinking..."`) before processing begins.
+- Session ID backfilled once assistant response completes.
+- Assistant message appended to thread store (source: `"voice"`, role: `"assistant"`, text: full raw response).
+- All text is converted to speakable format (markdown and URLs stripped) before sentence streaming.
+- Sentences are emitted complete (when a terminal `.`, `!`, or `?` is encountered).
+- Pending summary prepended to outgoing prompt if present; consumed after exchange.
+- Rotation check applies message-length threshold; on rotate, session archived and pending summary set for next turn.
+
 ### `POST /offline-batch`
 
 Batch-upload offline exchanges. Idempotent deduplication by client-assigned message ID; new exchanges get a Session-based review for memory curation.

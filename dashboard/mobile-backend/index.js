@@ -8,6 +8,7 @@ import { whois, loadAllowlist, isAllowed } from './device_gate.js'
 import { createDashboardApiRouter } from './dashboard_api.js'
 import { createDashboardGhApiRouter } from './dashboard_gh_api.js'
 import { createChatApiRouter } from './chat_api.js'
+import { createVoiceApiRouter } from './voice_api.js'
 import { createOfflineBatchApiRouter } from './offline_batch_api.js'
 import { createThreadStore } from './thread_store.js'
 import { createPendingActionsStore } from './pending_actions.js'
@@ -58,6 +59,8 @@ const dashboardApiRouter = createDashboardApiRouter()
 const dashboardGhApiRouter = createDashboardGhApiRouter({ mrWebhookUrl: MR_WEBHOOK_URL, watchChecks: true })
 const threadStore = createThreadStore()
 const chatApiRouter = createChatApiRouter({ threadStore })
+const permissionHookPath = path.join(path.dirname(new URL(import.meta.url).pathname), 'permission_hook.js')
+const voiceApiRouter = createVoiceApiRouter({ threadStore, permissionHookPath })
 const offlineBatchApiRouter = createOfflineBatchApiRouter({ threadStore })
 const pendingActionStore = createPendingActionsStore()
 const permissionApiRouter = createPermissionApiRouter({ pendingActionStore })
@@ -104,6 +107,10 @@ const server = createServer(async (req, res) => {
 
   // Route through chat API
   handled = await chatApiRouter(req, res)
+  if (handled) return
+
+  // Route through voice API
+  handled = await voiceApiRouter(req, res)
   if (handled) return
 
   // Route through offline batch API

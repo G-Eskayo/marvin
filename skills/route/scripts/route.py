@@ -284,6 +284,7 @@ def _build_arg_parser() -> argparse.ArgumentParser:
     ap.add_argument("--launch", action="store_true", help="exec claude with the routed settings")
     ap.add_argument("--table", action="store_true", help="print the full routing table and exit")
     ap.add_argument("--aliases", action="store_true", help="print shell alias definitions and exit")
+    ap.add_argument("--json", action="store_true", help="output classification result as JSON")
     ap.add_argument(
         "--keyword", action="store_true",
         help="use the old keyword classifier instead of the embedding classifier "
@@ -370,7 +371,15 @@ def main() -> None:
         print_table_proper()
         return
 
-    print_routing(intent, args.task, hits, method)
+    if args.json:
+        result = {
+            "intent": intent,
+            "method": method,
+            "score": hits
+        }
+        print(json.dumps(result))
+    else:
+        print_routing(intent, args.task, hits, method)
 
     if args.launch:
         launch(intent)
