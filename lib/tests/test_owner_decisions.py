@@ -292,3 +292,28 @@ def test_the_scan_step_never_breaks_dispatch(monkeypatch):
     monkeypatch.setattr(od, "sync", lambda repos: {"ok": True, "filed": [{"repo": REPO, "pr": 577, "result": "filed x"}],
                                                    "closed": [], "waiting": [1]})
     assert ticket_pipeline._owner_decisions() == "1 PR(s) waiting on MARVIN; marvin PR #577: filed x"
+
+
+# ── the real gh, outside any git repo (launchd runs the hourly scan from /) ──────────────────────────────────────
+
+def test_the_search_reaches_github_from_outside_a_git_repo(tmp_path):
+    """-F treats "q=…label:owner-decisions sort:updated-desc…" as a magic value and runs git to resolve it; from /
+    (where launchd starts the scan) that fails in 36 ms before any request, so every hourly scan read nothing.
+    The real gh, pointed at a closed port with a throwaway HOME, must get as far as the network."""
+    import shutil
+    import pytest
+    gh = shutil.which("gh", path="/opt/homebrew/bin:/usr/local/bin")  # past conftest's stub; never reaches GitHub
+    if not gh:
+        pytest.skip("gh not installed")
+    env = {"HOME": str(tmp_path), "PATH": "/usr/bin:/bin", "GH_HOST": "127.0.0.1:1", "GH_ENTERPRISE_TOKEN": "x",
+           "GIT_CEILING_DIRECTORIES": str(tmp_path.parent)}
+    seen = []
+
+    def real(cmd, **kw):
+        r = subprocess.run([gh, *cmd[1:]], capture_output=True, text=True, timeout=30, cwd=tmp_path, env=env)
+        seen.append(r.stdout + r.stderr)
+        return r
+
+    od.fetch([REPO, "G-Eskayo/clarity-captions"], real)
+    assert seen and "error parsing" not in seen[0] and "not a git repository" not in seen[0], seen[0]
+    assert "127.0.0.1:1" in seen[0], seen[0]

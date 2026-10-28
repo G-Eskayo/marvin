@@ -184,9 +184,10 @@ def fetch(repos, run=subprocess.run) -> dict | None:
     f = f"is:issue label:{FOLLOWUP_LABEL} sort:updated-desc {users}"
     prs, followups, after, complete = [], [], None, False
     for _ in range(MAX_PAGES):
-        args = ["api", "graphql", "-f", f"query={_QUERY}", "-F", f"q={q}", "-F", f"f={f}"]
+        # -f (raw), never -F: -F reads some search strings as magic values and runs git, which fails from / (launchd)
+        args = ["api", "graphql", "-f", f"query={_QUERY}", "-f", f"q={q}", "-f", f"f={f}"]
         if after:
-            args += ["-F", f"after={after}"]
+            args += ["-f", f"after={after}"]
         out = _gh(args, run)
         if out.returncode != 0:
             return None
