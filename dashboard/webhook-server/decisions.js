@@ -124,6 +124,15 @@ export function summarizeDecisions(body) {
   return { ...parsed, pending: pendingDecisions(parsed) }
 }
 
+// The first heading that asks the owner something, trimmed, else null. The ask word is the whole heading, or is followed
+// only by "for/to ..." or punctuation: "## Choose", "## Open questions", "## Questions for you". A report ("## Choices
+// made", "## Decisions recorded", "### Decisions from the owner") is not an ask. bin/gh refuses a body with one of these
+// and no decisions section (rule I2, lib/decisions_check.py).
+export function askingHeading(body) {
+  const heading = unfencedLines(body).find((l) => l !== null && /^#{1,6}\s*(choose|choices|decide|decisions?|pick|questions?|open questions?)(\s+(for|to)\b[^\n]*)?\s*[:?]?\s*$/i.test(l.trim()))
+  return heading ? heading.trim() : null
+}
+
 // Does a description ask the owner to choose, in prose, without a decisions section? Deliberately narrow so ordinary
 // checklists ("## Acceptance criteria", "## Tests") never trip it: a heading that asks, a ticked-list item that is a
 // question, or an explicit "A, B or C" / "which option" ask.
@@ -132,10 +141,8 @@ export function vagueness(body) {
   const lines = unfencedLines(body).filter((l) => l !== null)
   const text = lines.join('\n')
   const reasons = []
-  // The ask word is the whole heading, or is followed only by "for/to ..." or punctuation: "## Choose", "## Open
-  // questions", "## Questions for you". A report ("## Choices made", "## Decisions recorded") is not an ask.
-  const heading = lines.find((l) => /^#{1,6}\s*(choose|choices|decide|decisions?|pick|questions?|open questions?)(\s+(for|to)\b[^\n]*)?\s*[:?]?\s*$/i.test(l.trim()))
-  if (heading) reasons.push(`"${heading.trim()}" asks for a choice`)
+  const heading = askingHeading(body)
+  if (heading) reasons.push(`"${heading}" asks for a choice`)
   const askItem = lines.find((l) => /^\s*[-*]\s+\[[ xX]\]\s+.*\?\s*\**\s*$/.test(l))
   if (askItem) reasons.push(`"${askItem.trim().slice(0, 80)}" is a question in a checklist`)
   const phrase = text.match(/\b([A-Z]\s*,\s*[A-Z],?\s+or\s+[A-Z]|which (option|one)|pick one|choose (one|between))\b/i)

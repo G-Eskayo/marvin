@@ -62,5 +62,5 @@ on PR #N* (`ready-for-agent`, `owner-decisions`), flagged when the notes ask a q
 addressed or closes. It shows at the top of the dashboard's ranked attention list. Whoever acts replies on the PR with
 the marker. Code: `lib/owner_decisions.py`.
 
-Code: `dashboard/webhook-server/decisions.js` (parser, pure), `decisions_gate.js` (merge-server check),
+Code: `dashboard/webhook-server/decisions.js` (the one parser, pure; `decisions_cli.js` runs it for `lib/decisions_check.py`, the `bin/gh` rule), `decisions_gate.js` (merge-server check),
 `dashboard/electron/main/decisions_submit.js` (submit), `dashboard/src/components/Decisions.jsx` (the form).
