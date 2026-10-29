@@ -1,0 +1,238 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>MR Review variations</title>
+<!-- Mock-up for marvin#737 (design only, nothing here is wired). It copies the MR Review detail's look
+     (MrDetail.jsx, Decisions.jsx, PrImages.jsx: neutral-950 page, neutral-900 sections, sky Decisions box) and adds
+     the "Earlier versions" section. ?theme=light shows the same screen on a light palette. -->
+<style>
+  :root {
+    --page: #0a0a0a; --section: #171717; --section-2: #0a0a0a; --line: #262626; --line-2: #404040;
+    --text: #fafafa; --text-2: #d4d4d4; --muted: #a3a3a3; --faint: #737373;
+    --sky-line: #075985; --sky-bg: rgba(8, 47, 73, .2); --sky-text: #7dd3fc;
+    --ok: #34d399; --ok-btn: #059669; --deny-bg: #450a0a; --deny-text: #fca5a5;
+    --amber: #fcd34d; --amber-bg: rgba(120, 53, 15, .25); --amber-line: #92400e;
+    --pill: #262626; --link: #60a5fa;
+    --phone: #000; --phone-text: #f5f5f5; --phone-row: #1c1c1e; --phone-sep: #2c2c2e; --accent: #0a84ff;
+  }
+  :root[data-theme="light"] {
+    --page: #f5f5f5; --section: #ffffff; --section-2: #fafafa; --line: #e5e5e5; --line-2: #d4d4d4;
+    --text: #0a0a0a; --text-2: #262626; --muted: #525252; --faint: #737373;
+    --sky-line: #7dd3fc; --sky-bg: #f0f9ff; --sky-text: #0369a1;
+    --ok: #047857; --ok-btn: #059669; --deny-bg: #fee2e2; --deny-text: #b91c1c;
+    --amber: #92400e; --amber-bg: #fffbeb; --amber-line: #fcd34d;
+    --pill: #e5e5e5; --link: #2563eb;
+    --phone: #f2f2f7; --phone-text: #111; --phone-row: #fff; --phone-sep: #e5e5ea; --accent: #007aff;
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--page); color: var(--text); font: 14px/1.45 -apple-system, BlinkMacSystemFont, "Helvetica Neue", sans-serif; }
+  .mono { font-family: ui-monospace, "SF Mono", Menlo, monospace; }
+  .wrap { display: flex; flex-direction: column; gap: 16px; padding: 24px; max-width: 1180px; }
+  .back { color: var(--muted); font-size: 13px; }
+  .head { display: flex; justify-content: space-between; align-items: flex-start; gap: 12px; flex-wrap: wrap; }
+  h2 { margin: 0; font-size: 18px; }
+  .sub { font-size: 12px; color: var(--faint); margin-top: 2px; }
+  .sub a { color: var(--link); text-decoration: none; }
+  .actions { display: flex; gap: 8px; align-items: center; }
+  .btn { border: 0; border-radius: 8px; padding: 7px 14px; font-size: 13px; font-weight: 600; }
+  .approve { background: var(--ok-btn); color: #fff; opacity: .45; }
+  .deny { background: var(--deny-bg); color: var(--deny-text); }
+  .hint { font-size: 12px; color: var(--amber); }
+  .section { border: 1px solid var(--line); background: var(--section); border-radius: 10px; padding: 16px; }
+  .section h4 { margin: 0 0 10px; font-size: 13px; font-family: ui-monospace, Menlo, monospace; }
+  .round { border: 1px solid var(--line); background: var(--section); border-radius: 10px; padding: 12px 16px; display: flex; gap: 10px; align-items: center; flex-wrap: wrap; font-size: 13px; }
+  .tag { border-radius: 999px; padding: 2px 9px; font-size: 11px; font-weight: 600; background: var(--pill); color: var(--text-2); }
+  .tag.now { background: var(--ok-btn); color: #fff; }
+  .tag.sky { background: var(--sky-bg); color: var(--sky-text); border: 1px solid var(--sky-line); }
+  .decisions { border: 2px solid var(--sky-line); background: var(--sky-bg); border-radius: 10px; padding: 16px; }
+  .decisions h4 { margin: 0; font-size: 13px; font-family: ui-monospace, Menlo, monospace; }
+  .q { border: 1px solid var(--line); background: var(--section-2); border-radius: 10px; padding: 14px; margin-top: 12px; }
+  .q p { margin: 0 0 10px; font-size: 15px; font-weight: 500; }
+  .opts { display: flex; flex-wrap: wrap; gap: 8px; }
+  .opt { min-height: 44px; border: 2px solid var(--line-2); border-radius: 12px; padding: 8px 14px; font-size: 13px; font-weight: 500; color: var(--text-2); background: transparent; text-align: left; }
+  .submit { display: flex; justify-content: flex-end; margin-top: 14px; }
+  .submit .btn { background: var(--ok-btn); color: #fff; opacity: .45; min-height: 44px; border-radius: 12px; padding: 0 20px; }
+  .grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 12px; }
+  figure { margin: 0; display: flex; flex-direction: column; gap: 4px; }
+  figcaption { font-size: 12px; color: var(--muted); }
+  .shot { border: 1px solid var(--line); border-radius: 8px; background: var(--section-2); height: 230px; display: flex; justify-content: center; align-items: center; overflow: hidden; }
+  .shot svg { height: 214px; width: auto; }
+  .pin { font-size: 11px; color: var(--faint); }
+  .ver { border-top: 1px solid var(--line); padding: 12px 0; }
+  .ver:first-of-type { border-top: 0; padding-top: 0; }
+  .ver-row { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+  .chev { color: var(--muted); width: 14px; }
+  .ver-title { font-weight: 600; }
+  .ver-meta { color: var(--faint); font-size: 12px; }
+  .ver-note { color: var(--text-2); font-size: 13px; margin: 6px 0 0 24px; }
+  .ver-note b { color: var(--muted); font-weight: 500; }
+  .mini { display: flex; gap: 6px; margin-left: auto; }
+  .mini .shot { height: 54px; width: 34px; border-radius: 5px; }
+  .mini .shot svg { height: 50px; }
+  .goback { margin-left: 8px; border: 1px solid var(--line-2); background: transparent; color: var(--text-2); border-radius: 8px; padding: 6px 12px; font-size: 12px; font-weight: 600; }
+  .compare { margin: 12px 0 0 24px; display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 12px; }
+  .pair { display: grid; grid-template-columns: 1fr 1fr; gap: 6px; }
+  .pair .shot { height: 190px; }
+  .pair .shot svg { height: 176px; }
+  .pair-label { font-size: 11px; color: var(--faint); display: flex; justify-content: space-between; }
+  .pair-cap { font-size: 12px; color: var(--muted); margin-top: 2px; }
+  @media (max-width: 899px) {
+    .wrap { padding: 16px; }
+    .grid, .compare { grid-template-columns: 1fr; }
+    .compare { margin-left: 0; }
+    .ver-note { margin-left: 0; }
+    .mini { margin-left: 24px; width: 100%; }
+    .actions { width: 100%; justify-content: flex-end; }
+  }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <div class="back">← Back to MR Review</div>
+
+  <div class="head">
+    <div>
+      <h2 class="mono">#171 — Caption language and live translation in Settings: mock-up</h2>
+      <div class="sub"><a href="#">https://github.com/G-Eskayo/clarity-captions/pull/171</a></div>
+      <div class="sub">Project: <span style="color:var(--text-2)">clarity-captions</span></div>
+    </div>
+    <div class="actions">
+      <span class="hint">Answer the decisions first</span>
+      <button class="btn deny">Deny</button>
+      <button class="btn approve">Approve &amp; Merge</button>
+    </div>
+  </div>
+
+  <!-- New: one line that says the feedback landed on this PR, and when. -->
+  <div class="round">
+    <span class="tag now">v3 · current</span>
+    <span>Your answers from 09:12 are in. Applied on this PR at 09:31, screenshots retaken.</span>
+    <span class="ver-meta mono">a41c9e2</span>
+    <a class="sub" href="#" style="margin-left:auto">MARVIN's reply ↗</a>
+  </div>
+
+  <div class="decisions">
+    <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap">
+      <h4>Decisions</h4><span class="ver-meta">for v3 · 2 to answer</span>
+    </div>
+    <div class="q">
+      <p>Is the language picker right now?</p>
+      <div class="opts">
+        <button class="opt">Yes, build it</button>
+        <button class="opt">Close, change what my note says</button>
+        <button class="opt">No, go back to an earlier version (pick it below)</button>
+      </div>
+      <div class="sub" style="margin-top:8px">+ Add a note</div>
+    </div>
+    <div class="q">
+      <p>Translation toggle position</p>
+      <div class="opts">
+        <button class="opt">Under the language list (as in v3)</button>
+        <button class="opt">Top of the screen (as in v1)</button>
+      </div>
+    </div>
+    <div class="submit"><button class="btn">Submit decisions</button></div>
+  </div>
+
+  <div class="section">
+    <h4>Images &amp; recordings — v3, current (3)</h4>
+    <div class="grid">
+      <figure><div class="shot" data-screen="list" data-v="3"></div><figcaption>Settings → Caption language: search on top, recent languages first</figcaption></figure>
+      <figure><div class="shot" data-screen="toggle" data-v="3"></div><figcaption>Live translation on: target language under the list</figcaption></figure>
+      <figure><div class="shot" data-screen="empty" data-v="3"></div><figcaption>Search with no match ("Klingon")</figcaption></figure>
+    </div>
+    <div class="pin mono" style="margin-top:8px">pinned at a41c9e2 · all 3 load</div>
+  </div>
+
+  <!-- New: every round the owner didn't approve, newest first, collapsed. One expanded here to show it. -->
+  <div class="section">
+    <h4>Earlier versions (2)</h4>
+
+    <div class="ver">
+      <div class="ver-row">
+        <span class="chev">▾</span>
+        <span class="ver-title">v2</span>
+        <span class="tag">not approved</span>
+        <span class="ver-meta">27 Oct 14:10 · <span class="mono">7be0d13</span></span>
+        <button class="goback">Go back to v2</button>
+      </div>
+      <div class="ver-note"><b>Your note on v2:</b> "Search should be at the top, and put the languages I used recently first."</div>
+      <div class="compare">
+        <div><div class="pair"><div class="pair-label"><span>v2</span></div><div class="pair-label"><span>v3 now</span></div>
+          <div class="shot" data-screen="list" data-v="2"></div><div class="shot" data-screen="list" data-v="3"></div></div>
+          <div class="pair-cap">Caption language</div></div>
+        <div><div class="pair"><div class="pair-label"><span>v2</span></div><div class="pair-label"><span>v3 now</span></div>
+          <div class="shot" data-screen="toggle" data-v="2"></div><div class="shot" data-screen="toggle" data-v="3"></div></div>
+          <div class="pair-cap">Live translation on</div></div>
+        <div><div class="pair"><div class="pair-label"><span>v2</span></div><div class="pair-label"><span>v3 now</span></div>
+          <div class="shot" data-screen="none"></div><div class="shot" data-screen="empty" data-v="3"></div></div>
+          <div class="pair-cap">No-match search (new in v3)</div></div>
+      </div>
+    </div>
+
+    <div class="ver">
+      <div class="ver-row">
+        <span class="chev">▸</span>
+        <span class="ver-title">v1</span>
+        <span class="tag">not approved</span>
+        <span class="ver-meta">27 Oct 08:41 · <span class="mono">3f9a0c5</span></span>
+        <div class="mini"><div class="shot" data-screen="list" data-v="1"></div><div class="shot" data-screen="toggle" data-v="1"></div></div>
+        <button class="goback">Go back to v1</button>
+      </div>
+      <div class="ver-note"><b>Your answer on v1:</b> Grouped list · <b>note:</b> "too many languages to scroll, group them."</div>
+    </div>
+  </div>
+
+  <div class="section">
+    <h4>PR Description</h4>
+    <div class="sub">…</div>
+  </div>
+</div>
+
+<script>
+  // Fixture screens: a phone Settings screen drawn per version, so v1/v2/v3 really look different.
+  const params = new URLSearchParams(location.search)
+  if (params.get('theme') === 'light') document.documentElement.dataset.theme = 'light'
+  const css = (n) => getComputedStyle(document.documentElement).getPropertyValue(n).trim()
+  const LANGS = ['English', 'Español', 'Français', 'Deutsch', 'Italiano', 'Português', '日本語', '한국어', 'עברית']
+  function phone(screen, v) {
+    const bg = css('--phone'), fg = css('--phone-text'), row = css('--phone-row'), sep = css('--phone-sep'), ac = css('--accent')
+    if (screen === 'none') return `<svg viewBox="0 0 120 240"><rect x="2" y="2" width="116" height="236" rx="16" fill="none" stroke="${sep}" stroke-dasharray="4 4"/><text x="60" y="122" font-size="8" fill="${css('--faint')}" text-anchor="middle">not in v2</text></svg>`
+    let y = 34, out = `<rect width="120" height="240" rx="16" fill="${bg}"/><text x="12" y="24" font-size="9" font-weight="700" fill="${fg}">Caption language</text>`
+    const rowAt = (label, opts = {}) => {
+      out += `<rect x="8" y="${y}" width="104" height="14" rx="${opts.r ?? 0}" fill="${row}"/><text x="14" y="${y + 10}" font-size="6.5" fill="${opts.c || fg}">${label}</text>`
+      if (opts.check) out += `<text x="104" y="${y + 10}" font-size="7" fill="${ac}" text-anchor="end">✓</text>`
+      if (opts.sw) out += `<rect x="92" y="${y + 3}" width="14" height="8" rx="4" fill="${opts.sw === 'on' ? '#34c759' : sep}"/><circle cx="${opts.sw === 'on' ? 102 : 96}" cy="${y + 7}" r="3.2" fill="#fff"/>`
+      y += 15
+    }
+    const search = (txt) => { out += `<rect x="8" y="${y}" width="104" height="13" rx="6" fill="${row}"/><text x="14" y="${y + 9}" font-size="6.5" fill="${css('--faint')}">⌕ ${txt || 'Search'}</text>`; y += 19 }
+    const head = (t) => { out += `<text x="12" y="${y + 6}" font-size="5.5" fill="${css('--faint')}">${t}</text>`; y += 9 }
+    const tr = screen === 'toggle'
+    if (v === 1) {
+      rowAt('Live translation', { sw: tr ? 'on' : 'off', r: 3 }); y += 4
+      if (tr) { rowAt('Translate to: Español', { c: ac, r: 3 }); y += 4 }
+      LANGS.forEach((l, i) => rowAt(l, { check: i === 0 }))
+    } else if (v === 2) {
+      head('LATIN'); LANGS.slice(0, 6).forEach((l, i) => rowAt(l, { check: i === 0 }))
+      head('OTHER SCRIPTS'); LANGS.slice(6).forEach((l) => rowAt(l))
+      y += 4; rowAt('Live translation', { sw: tr ? 'on' : 'off', r: 3 })
+      if (tr) rowAt('Translate to: Español', { c: ac })
+    } else {
+      if (screen === 'empty') {
+        search('Klingon')
+        out += `<text x="60" y="${y + 40}" font-size="7" fill="${fg}" text-anchor="middle">No language called “Klingon”</text><text x="60" y="${y + 52}" font-size="5.5" fill="${css('--faint')}" text-anchor="middle">Captions support 25 languages</text>`
+      } else {
+        search(); head('RECENT'); ['English', 'עברית'].forEach((l, i) => rowAt(l, { check: i === 0 }))
+        head('ALL LANGUAGES'); LANGS.slice(1, tr ? 5 : 7).forEach((l) => rowAt(l))
+        y += 4; rowAt('Live translation', { sw: tr ? 'on' : 'off', r: 3 })
+        if (tr) rowAt('Translate to: Español', { c: ac })
+      }
+    }
+    return `<svg viewBox="0 0 120 240">${out}</svg>`
+  }
+  document.querySelectorAll('.shot').forEach((el) => { el.innerHTML = phone(el.dataset.screen, Number(el.dataset.v)) })
+</script>
+</body>
+</html>
