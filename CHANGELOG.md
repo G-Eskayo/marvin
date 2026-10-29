@@ -1,5 +1,7 @@
 # Changelog
 
+- Merge gate on a nearly full disk: name the cause instead of GATE_INFRA ([#745](https://github.com/G-Eskayo/marvin/pull/745))
+
 - calibrate() returns lowest labeled score instead of risk-controlled max, and tau never recalculates after new labels ([#703](https://github.com/G-Eskayo/marvin/pull/703))
 
 - Real titles on PRs: ticket title instead of "Implement …#n", repo name on onboarding PRs, repo shown in MR Review ([#590](https://github.com/G-Eskayo/marvin/pull/590))
