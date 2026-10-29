@@ -12,8 +12,9 @@ macOS has it on. There are no other switches: the owner picked one answer for ea
 
 ## The motion
 
-- **One path, left to right.** A card leaves Open left to right, comes into Merged from the left, and a new MR comes
-  into Open left to right too. In the split view that reads as one trip across the window.
+- **Direction tells the story.** A card leaves Open left to right, and a new MR comes into Open left to right too. On
+  the Merged tab the card arrives right to left, so leaving one list and arriving in the next reads like turning a
+  page. In the split view it comes into Merged from the left instead, so it reads as one trip across the window.
 - **In place.** Leaving: a solid blue fill crosses the card, and the closing sweep follows a third of a card behind it
   and leaves the space empty. The card never slides. Once the sweep is done, the cards below fall together.
 - **Coming in** is the mirror: a space opens where the card belongs, the fill sweeps across it, and the card shows
@@ -33,7 +34,7 @@ macOS has it on. There are no other switches: the owner picked one answer for ea
 | 3 | `hold` | Approve: the card waits with its merge progress until GitHub confirms, then the sweep plays |
 | 4 | `refused` | GitHub refuses: the card never moved; the existing "GitHub disagreed" notice says why |
 | 5 | `detail` | Inside the MR when it merges: a plain "✓ Merged" line; the sweep plays when you go back |
-| 6 | `arrive` | Arriving in Merged: a space opens at the top, the fill sweeps the row in from the left |
+| 6 | `arrive` | Arriving in Merged: a space opens at the top, the fill sweeps the row in from the right |
 | 7 | `split` | Open beside Merged: out of Open left to right, a moment later into Merged from the left |
 | 8 | `queue` | Three merges confirmed out of list order: one at a time, in confirmation order |
 | 9 | `reverted` | A revert PR merges; the original's Merged row gets a "reverted by #N" tag |
@@ -52,6 +53,9 @@ what GitHub just did). They aren't dashboard UI.
   merge while you're elsewhere (`routeMerge`, `onListShown`), scroll anchoring both ways (`scrollPlan`) and the swipe
   interrupt. Tests are in `dashboard/test/merge_motion_proto.test.js`.
 - `index.html` draws each frame as a pure function of time, so live play, the scrubber and the recording all match.
+  Its easing comes from Motion (motion.dev) 14.8.0, vendored as `vendor/motion-14.8.0.js` (MIT, `vendor/motion-LICENSE.md`):
+  the gap opens and closes on a Motion spring with no bounce, and the sweep uses Motion's `easeInOut`. A spring sampled
+  at a given time is still a pure function of that time, so seeking works.
   The band's two edges come from one eased trip, so it stays a third of the card wide all the way across.
 - `record.mjs` seeks frame by frame in headless Chrome at 25 fps, and ffmpeg builds one 2×2 GIF and MP4 per scene
   (dark | dark Reduce Motion / light | light Reduce Motion): `node docs/design/merge-animation-757/record.mjs <outDir> [scene …]`.
