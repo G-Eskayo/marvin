@@ -1,0 +1,3 @@
+#!/bin/bash
+# helper-tab: start a helper in a labelled, group-coloured WezTerm tab on this machine (marvin#753). See lib/helper_tab.py.
+exec "$HOME/.agents/venv/bin/python" "$HOME/.agents/lib/helper_tab.py" "$@"
