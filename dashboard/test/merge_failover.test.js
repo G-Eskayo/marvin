@@ -101,6 +101,11 @@ describe('mergeMachines: where an approval can go', () => {
     expect(m.map((x) => x.url)).toEqual(['http://127.0.0.1:5555/approve'])
   })
 
+  it('an explicit webhook URL with an explicit local one (MARVIN_MR_LOCAL_WEBHOOK_URL: the failover evidence capture) fails over between the two', () => {
+    const m = mergeMachines({ primaryUrl: 'http://127.0.0.1:5555/approve', explicit: true, localUrl: 'http://127.0.0.1:6666/approve', localExplicit: true, primaryId: 'mac-mini-1', localId: 'macbook-pro-1' })
+    expect(m.map((x) => [x.label, x.url])).toEqual([['Mac mini', 'http://127.0.0.1:5555/approve'], ['MacBook Pro', 'http://127.0.0.1:6666/approve']])
+  })
+
   it('unknown machines still get plain names, never a bare id or undefined', () => {
     const m = mergeMachines({ primaryUrl: 'http://gils-mac-mini:7878/approve', primaryId: null, localId: null })
     expect(m.map((x) => x.label)).toEqual(['Mac mini', 'this Mac'])

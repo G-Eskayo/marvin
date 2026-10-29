@@ -86,11 +86,12 @@ export function createMergeOps({ maxMergingMs = 45 * 60_000 } = {}) {
       ops.set(url, { ...o, notice: text })
       return ops.get(url)
     },
-    // No machine could take the approval: it is saved (approval_ledger.js) and retried when one comes back.
+    // No machine could take the approval: it is saved (approval_ledger.js) and retried when one comes back. Nothing
+    // ran, so there is no progress to show.
     queue(url, reason, now = Date.now()) {
       if (mergedHere(url)) return ops.get(url)
       const o = ops.get(url)
-      ops.set(url, { state: 'queued', reason, head: o?.head ?? null, progress: closeRunning(o?.progress, 'skipped', null, now), at: now })
+      ops.set(url, { state: 'queued', reason, head: o?.head ?? null, progress: null, at: now })
       return ops.get(url)
     },
     cancelQueued(url) {

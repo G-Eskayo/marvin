@@ -283,7 +283,7 @@ describe('failover notice and queued approvals', () => {
   it('queue() ends the running op as queued with its reason; a retry may start it again', () => {
     const ops = createMergeOps()
     ops.start(URL, 1, 'abc')
-    expect(ops.queue(URL, 'Neither Mac can merge right now', 2)).toMatchObject({ state: 'queued', reason: 'Neither Mac can merge right now', head: 'abc' })
+    expect(ops.queue(URL, 'Neither Mac can merge right now', 2)).toMatchObject({ state: 'queued', reason: 'Neither Mac can merge right now', head: 'abc', progress: null })
     expect(ops.mergingUrls()).toEqual([])
     expect(ops.start(URL, 3)).toBe(true)
   })

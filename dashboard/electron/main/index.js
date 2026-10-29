@@ -53,7 +53,14 @@ const approvalLedger = createApprovalLedger()
 const approveFlow = createApproveFlow({
   mergeOps,
   ledger: approvalLedger,
-  machines: () => mergeMachines({ primaryUrl: MR_WEBHOOK_URL, explicit: !!process.env.MARVIN_MR_WEBHOOK_URL, primaryId: primaryDeviceId(), localId: resolveDeviceId() }),
+  machines: () => mergeMachines({
+    primaryUrl: MR_WEBHOOK_URL,
+    explicit: !!process.env.MARVIN_MR_WEBHOOK_URL,
+    localUrl: process.env.MARVIN_MR_LOCAL_WEBHOOK_URL || undefined,
+    localExplicit: !!process.env.MARVIN_MR_LOCAL_WEBHOOK_URL,
+    primaryId: primaryDeviceId(),
+    localId: resolveDeviceId()
+  }),
   // marvin#568: the webhook streams each stage as it happens; each one is folded into the op and pushed.
   send: (url, target, opts) => approveMrStream(url, target, opts),
   push: (url, op) => pushMergeOp(url, op),
@@ -81,9 +88,15 @@ const approveFlow = createApproveFlow({
 const approvalRetry = createApprovalRetry({
   ledger: approvalLedger,
   approve: (url, entry) => approveFlow(url, { number: entry.number, head: entry.head, retry: true }),
-  viewPr: (url) => viewPrState(url),
+  // A fixed PR list (MARVIN_MR_FIXTURE, evidence captures) is its own GitHub: its PRs are open unless it says otherwise.
+  viewPr: (url) => process.env.MARVIN_MR_FIXTURE ? fixturePrState(url) : viewPrState(url),
   log: (line) => console.log(line)
 })
+function fixturePrState(url) {
+  const pr = JSON.parse(readFileSync(process.env.MARVIN_MR_FIXTURE, 'utf8')).find((p) => p.url === url)
+  if (!pr) throw new Error(`not in the fixture: ${url}`)
+  return { state: pr.state || 'OPEN' }
+}
 const retryApprovals = (trigger) => { approvalRetry.run(trigger).catch((err) => appendError({ source: 'approval-retry', message: `Retrying saved approvals failed (${trigger})`, raw: err?.stack || err })) }
 
 // A merge running here whose PR GitHub now calls merged was merged on GitHub by hand: end it as "Merged on GitHub"

@@ -17,9 +17,11 @@ function isLocal(url) {
 
 // The machines an approval may go to, in order: [{ id, label, url, here }]. One entry when there is nowhere else to
 // go: this machine is the primary, or the webhook URL was set explicitly (MARVIN_MR_WEBHOOK_URL: evidence captures
-// point it at their own server, and must never reach the real one).
-export function mergeMachines({ primaryUrl, primaryId = null, localId = null, explicit = false, localUrl = LOCAL_APPROVE_URL }) {
+// point it at their own server, and must never reach the real one) without an explicit local one to fail over to
+// (MARVIN_MR_LOCAL_WEBHOOK_URL, localExplicit: the failover evidence capture's stand-in for this Mac's webhook).
+export function mergeMachines({ primaryUrl, primaryId = null, localId = null, explicit = false, localUrl = LOCAL_APPROVE_URL, localExplicit = false }) {
   const here = { id: localId, label: localId ? machineLabel(localId) : 'this Mac', url: localUrl, here: true }
+  if (explicit && localExplicit) return [{ id: primaryId, label: labelOf(primaryId), url: primaryUrl, here: false }, here]
   if (explicit) return [{ id: isLocal(primaryUrl) ? localId : primaryId, label: isLocal(primaryUrl) ? here.label : labelOf(primaryId), url: primaryUrl, here: isLocal(primaryUrl) }]
   if (isLocal(primaryUrl)) return [{ ...here, url: primaryUrl }]
   return [{ id: primaryId, label: labelOf(primaryId), url: primaryUrl, here: false }, here]
