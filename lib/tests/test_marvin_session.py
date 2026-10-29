@@ -60,6 +60,7 @@ def test_the_shell_script_sets_its_own_environment_and_keeps_the_token_off_the_c
 
 
 def test_spawns_into_the_running_wezterm_and_falls_back_to_starting_it(tmp_path):
+    """When gui_identity returns a value and spawn succeeds: use spawn. When it fails: fall back to start."""
     calls = []
 
     def run(cmd, **kw):
@@ -67,8 +68,9 @@ def test_spawns_into_the_running_wezterm_and_falls_back_to_starting_it(tmp_path)
         return subprocess.CompletedProcess(cmd, 1 if cmd[1:3] == ["cli", "spawn"] else 0, "", "no mux")
 
     started = []
+    # Use a non-None gui so that _spawn is attempted (the old test had gui=None, which now skips spawning entirely)
     ms.open_in_wezterm(tmp_path, wezterm="/x/wezterm", run=run, start=lambda cmd: started.append(cmd),
-                       state_file=tmp_path / "window.json", identity=lambda run: None)
+                       state_file=tmp_path / "window.json", identity=lambda run: "2279 x")
     spawn = next(c for c in calls if c[1:3] == ["cli", "spawn"])
     assert spawn[:4] == ["/x/wezterm", "cli", "spawn", "--new-window"]
     assert started and started[0][:2] == ["/x/wezterm", "start"]

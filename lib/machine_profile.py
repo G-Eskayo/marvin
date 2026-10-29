@@ -67,15 +67,24 @@ def _claude_install_method(claude_path: str) -> str:
     return "unknown"
 
 
-def _mobility_class(hw_model: str) -> str:
-    # Apple's model-identifier scheme doesn't reliably distinguish desktop
-    # families by number (Mac16,x spans mini/Studio/iMac), but every mobile
-    # Mac has always been named MacBook* — that substring is the stable signal.
-    return "mobile" if "MacBook" in hw_model else "stationary"
+def _has_battery() -> bool:
+    """Check if this machine has an internal battery via pmset.
+    Returns False on any error."""
+    try:
+        out = _run(["/usr/sbin/pmset", "-g", "batt"])
+        return "InternalBattery" in out
+    except Exception:
+        return False
 
 
-def _label(hw_model: str) -> str:
-    return "macbook-pro" if "MacBook" in hw_model else "mac-mini"
+def _mobility_class(has_battery: bool) -> str:
+    """Determine mobility class from battery presence (more reliable than hw_model)."""
+    return "mobile" if has_battery else "stationary"
+
+
+def _label(has_battery: bool) -> str:
+    """Determine machine label from battery presence."""
+    return "macbook-pro" if has_battery else "mac-mini"
 
 
 def build_profile() -> dict:
@@ -84,6 +93,7 @@ def build_profile() -> dict:
     hw_model = _run(["/usr/sbin/sysctl", "-n", "hw.model"])
     claude_path = _run(["bash", "-lc", "readlink -f $(which claude) 2>/dev/null || which claude"])
     venv_python = str(Path.home() / ".agents" / "venv" / "bin" / "python")
+    has_battery = _has_battery()
 
     chromadb_version = ""
     try:
@@ -96,12 +106,12 @@ def build_profile() -> dict:
         pass
 
     return {
-        "label": _label(hw_model),
+        "label": _label(has_battery),
         "hostname": _run(["/usr/sbin/scutil", "--get", "ComputerName"]),
         "hardware_uuid": _hardware_uuid(),
         "serial": _serial(),
         "hw_model": hw_model,
-        "mobility_class": _mobility_class(hw_model),
+        "mobility_class": _mobility_class(has_battery),
         "chip_arch": _run(["uname", "-m"]),
         "macos_version": _run(["sw_vers", "-productVersion"]),
         "claude_version": _run(["bash", "-lc", "claude --version"]),

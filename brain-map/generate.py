@@ -54,6 +54,17 @@ OUTPUT_PATH = HERE / "index.html"
 # JSON decoder and regex-extracting a <script> block is fragile by nature.
 TREE_DATA_PATH = HERE / "tree-data.json"
 
+# Safe defaults for enrichment.json — these keys are unconditionally indexed in build_tree()
+_SAFE_DEFAULTS = {
+    "structural": [],
+    "category_order": [],
+    "skill_categories": {},
+    "category_labels": {},
+    "skills_trunk_desc": "skills",
+    "root": {"id": "MARVIN", "desc": "Memory, routing, and skills"},
+    "skill_desc_overrides": {},
+}
+
 SKILLS_DIR = Path.home() / ".agents" / "skills"
 LAUNCHD_DIR = Path.home() / "Library" / "LaunchAgents"
 HOOK_SETTINGS_PATHS = (marvin_hooks.USER_SETTINGS, marvin_hooks.LOCAL_SETTINGS)
@@ -879,9 +890,28 @@ def _compute_code_layer(graph: dict, ownership_path: str) -> dict:
     }
 
 
+def _load_enrichment(path: Path) -> dict:
+    """Load enrichment.json robustly. Missing file → defaults silently; corrupt/wrong-shaped JSON → warn
+    then defaults; valid partial JSON → setdefault only what's missing."""
+    if not path.exists():
+        return _SAFE_DEFAULTS.copy()
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+        if not isinstance(data, dict):
+            print(f"WARNING: {path.name} is not a JSON object, using defaults", file=sys.stderr)
+            return _SAFE_DEFAULTS.copy()
+        # Merge with defaults: preserve all keys in data, fill missing ones with defaults
+        result = _SAFE_DEFAULTS.copy()
+        result.update(data)
+        return result
+    except (OSError, ValueError) as exc:
+        print(f"WARNING: could not read {path.name}: {exc}, using defaults", file=sys.stderr)
+        return _SAFE_DEFAULTS.copy()
+
+
 def main() -> None:
     manifest = json.loads(MANIFEST_PATH.read_text(encoding="utf-8"))
-    enrichment = json.loads(ENRICHMENT_PATH.read_text(encoding="utf-8"))
+    enrichment = _load_enrichment(ENRICHMENT_PATH)
 
     tree = build_tree(manifest, enrichment)
     attach_layout(tree)

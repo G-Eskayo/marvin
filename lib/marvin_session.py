@@ -166,6 +166,14 @@ def open_in_wezterm(directory: Path, wezterm: str | None = None, run: Callable =
     with open(state_file.with_suffix(".lock"), "w") as lock:
         fcntl.flock(lock, fcntl.LOCK_EX)  # two quick presses must not both decide "no window yet"
         gui = identity(run)
+        # If no GUI is running, skip both _spawn() attempts and go straight to start()
+        if gui is None:
+            state_file.unlink(missing_ok=True)  # a freshly started WezTerm has none of the old windows
+            try:
+                start([wezterm, "start", "--cwd", str(directory), "--", *program])
+            except OSError as exc:
+                raise SessionError(f"WezTerm isn't running and couldn't be started: {exc}") from exc
+            return
         window = _saved_window(state_file, gui, set(_windows(wezterm, run).values()))
         spawned = _spawn(wezterm, ["--window-id", str(window)], directory, program, run) if window is not None \
             else None
@@ -175,10 +183,10 @@ def open_in_wezterm(directory: Path, wezterm: str | None = None, run: Callable =
             _remember(state_file, gui, spawned.stdout, wezterm, run)
             return
         state_file.unlink(missing_ok=True)  # a freshly started WezTerm has none of the old windows
-    try:
-        start([wezterm, "start", "--cwd", str(directory), "--", *program])
-    except OSError as exc:
-        raise SessionError(f"WezTerm isn't running and couldn't be started: {exc}") from exc
+        try:
+            start([wezterm, "start", "--cwd", str(directory), "--", *program])
+        except OSError as exc:
+            raise SessionError(f"WezTerm isn't running and couldn't be started: {exc}") from exc
 
 
 def _remember(state_file: Path, gui: str | None, spawn_stdout: str, wezterm: str, run: Callable) -> None:

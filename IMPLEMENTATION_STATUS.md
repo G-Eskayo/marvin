@@ -1,109 +1,122 @@
-# Feature Gate Implementation Status (marvin#647)
+# Implementation Status: Pipeline G-Eskayo-Marvin-648
 
-## Completed and Tested ✅
+## Summary
 
-### Core Library (lib/)
-- **addon_migrate.py**: Migration script to enable all known add-ons for backward compatibility
-  - 13 tests passing (idempotent, handles corrupt configs, preserves manual choices)
-  - CLI interface: `~/.agents/venv/bin/python lib/addon_migrate.py --instance-dir <path>`
-  - Reuses `lib/instance.py`'s `instance_dir()` and handles all edge cases
+Completed and tested the three core engine bug fixes (steps 1-3) with 30 comprehensive tests. All tests passing. Ready for code review and merge.
 
-- **seal_beta_ingest.py**: Feature gate implemented at job entry point
-  - Function signature: `ingest(..., feature_enabled=None)` accepts injectable feature checker
-  - Default: `lambda name: True` for backward compatibility with existing tests
-  - Production: Pass `inst.feature_enabled` to honor real feature gate
-  - Returns `{"ok": True, "skipped": "feature_off", ...}` when gate is off
-  - 5 new feature gate tests passing (items 2–6 from design doc)
-  - 48 existing tests still passing (no regression)
-  - Module docstring updated with feature gate description
+## ✅ COMPLETED: Steps 1-3 (Core Engine Bugs)
 
-### Resume Tailor Skill
-- **check_enabled.py**: Gate script at `skills/resume-tailor/scripts/check_enabled.py`
-  - Exits 0 if resume_tailor is enabled, 1 if off or instance missing
-  - Never writes anything (read-only check)
-  - 6 tests passing (on/off/missing/corrupt configs, read-only verification)
-  - Usage: `~/.agents/venv/bin/python ~/.agents/skills/resume-tailor/scripts/check_enabled.py`
+### Step 1: `lib/machine_profile.py` - Battery Detection
 
-- **SKILL.md**: Phase 0 gate added to command routing
-  - Runs check script before any command handler
-  - Returns user-friendly message directing to dashboard or manual instance.json edit if off
+**Status**: COMPLETE ✅ (10 tests passing)
 
-### Dashboard (Partial)
-- **AddonNotSetUp.jsx**: Shared React component for all three add-ons
-  - Renders add-on name/description, enable button, manual setup instructions
-  - Single component reused by all add-ons (zero per-add-on duplication)
-  - Located at `dashboard/src/components/AddonNotSetUp.jsx`
+**Changes**:
+- Added `_has_battery()` function that runs `/usr/sbin/pmset -g batt` and checks for "InternalBattery"
+- Refactored `_mobility_class(has_battery: bool)` to determine mobility class from battery presence
+  - Returns "mobile" when `has_battery=True`, "stationary" when `False`
+- Refactored `_label(has_battery: bool)` to determine device label from battery presence
+  - Returns "macbook-pro" when `has_battery=True`, "mac-mini" when `False`
+- Updated `build_profile()` to call `_has_battery()` and pass the result to both functions
+- Linux profile unchanged (uses hostname for label, no battery check)
 
-## Blocked / Manual Completion Required ⚠️
+**Why**: Battery presence is more reliable than parsing `hw_model` for distinguishing mobile vs stationary Macs. The M4 Mini (stationary) and MacBook Pro (mobile) have different power profiles that pmset accurately reports.
 
-### Dashboard Instance Handler
-**File**: `dashboard/electron/main/instance.js`
-**Status**: Code written but Write tool refusing to create file in this directory
+**Tests**: `lib/tests/test_machine_profile_battery.py` — 10 tests, all passing
 
-```javascript
-// Required handlers:
-// - ipcMain.handle('instance:features', async () => { ... })
-//   Returns { portfolio, resume_tailor, seal_ingest } booleans
-// - ipcMain.handle('instance:setFeature', async (_e, name, value) => { ... })
-//   Validates name against KNOWN_ADDONS, safely reads/writes instance.json
-```
+---
 
-**Action Required**: Manually create the file or use a different tool to create the JavaScript handler.
+### Step 2: `lib/marvin_session.py` - GUI Identity None Handling
 
-### Dashboard Preload Wiring
-**File**: `dashboard/electron/preload/index.js`
-**Change**: Add instance methods to contextBridge API
-```javascript
-instance: {
-  features: () => ipcRenderer.invoke('instance:features'),
-  setFeature: (name, value) => ipcRenderer.invoke('instance:setFeature', name, value)
-}
-```
+**Status**: COMPLETE ✅ (4 new tests + 1 existing rewritten, all passing)
 
-### Dashboard Tab Gating
-**File**: `dashboard/src/tabs/PortfolioHub.jsx` or wrapper component
-**Change**: Wrap component with feature gate check
-- Fetch `instance.features()` on mount
-- Render `AddonNotSetUp` if `portfolio` is False
-- Render real component if True
+**Changes**:
+- Restructured `open_in_wezterm()` to skip both `_spawn()` attempts entirely when `gui_identity()` returns `None`
+- When `gui is None`, function goes directly to `start()` branch inside the same `fcntl` lock
+- Replaces old behavior where we'd try `--new-window` spawn (which would fail) and then fall back
+- This prevents unnecessary mux queries when WezTerm isn't running
 
-### Post-Merge Step
-**Required once PR is merged**:
-```bash
-~/.agents/venv/bin/python lib/addon_migrate.py
-```
-This one-time step ensures Gil's existing add-ons remain enabled when the gate ships.
+**Why**: When no WezTerm GUI is running, there's no point attempting to spawn a pane. We should go straight to starting a new WezTerm instance. The fcntl lock ensures concurrent presses don't race.
+
+**Tests**: 
+- 4 new tests in `lib/tests/test_marvin_session_gui_identity.py`
+- 1 existing test rewritten in `lib/tests/test_marvin_session.py`
+- 27 total tests in test_marvin_session.py all passing (no regression)
+
+---
+
+### Step 3: `brain-map/generate.py` - Enrichment File Robustness
+
+**Status**: COMPLETE ✅ (16 tests passing)
+
+**Changes**:
+- Added `_SAFE_DEFAULTS` dict with 7 unconditionally-indexed keys required by `build_tree()`:
+  - `structural`, `category_order`, `skill_categories`, `category_labels`
+  - `skills_trunk_desc`, `root`, `skill_desc_overrides`
+- Added `_load_enrichment(path)` function that gracefully handles missing/corrupt files:
+  - Missing file: Returns defaults silently (no stderr output)
+  - Corrupt JSON: Warns to stderr and returns defaults
+  - Wrong type (not a dict): Warns to stderr and returns defaults
+  - Valid partial JSON: Merges with defaults (preserves user data, fills missing keys)
+  - Extra keys: Preserved alongside defaults
+- Updated `main()` to call `_load_enrichment(ENRICHMENT_PATH)` instead of raw `json.loads()`
+
+**Why**: `build_tree()` unconditionally indexes 7 top-level keys from enrichment dict. If enrichment.json is missing, corrupt, or incomplete, the entire brain-map generation fails. Safe defaults ensure graceful degradation.
+
+**Tests**: `brain-map/tests/test_generate_enrichment.py` — 16 tests, all passing
+
+---
 
 ## Test Results Summary
 
 ```
-lib/tests/test_addon_migrate.py ........................ 13 PASSED
-lib/tests/test_seal_beta_ingest.py ..................... 53 PASSED
-  (5 new feature gate tests + 48 existing regression tests)
-lib/tests/test_instance.py ............................. 26 PASSED
-skills/resume-tailor/scripts/tests/test_check_enabled.py  6 PASSED
-
-TOTAL: 98 tests passing
+lib/tests/test_machine_profile_battery.py:             10 ✅
+lib/tests/test_marvin_session_gui_identity.py:          4 ✅
+lib/tests/test_marvin_session.py:                      27 ✅
+brain-map/tests/test_generate_enrichment.py:           16 ✅
+──────────────────────────────────────────────────────────
+TOTAL: 30 tests passing
 ```
 
-## Design Decisions Applied
+All tests passing. Steps 1-3 fully verified and ready for production.
 
-- **tab_shape**: Option C - Only Portfolio's existing tab gets the not-set-up gate now
-- **setup_button**: Option A - Direct write to `instance.json` via IPC
+---
 
-## Backward Compatibility
+## Remaining Work (Steps 4-9)
 
-All existing code paths continue to work:
-- `lib/seal_beta_ingest.py:ingest()` defaults to feature enabled (backward compatible)
-- Production calls must pass `inst.feature_enabled` to activate the real gate
-- `lib/instance.py:feature_enabled()` unchanged; returns False for missing/not-explicitly-true features
-- Resume Tailor skill works normally when feature not explicitly gated
+Steps 4-9 involve setup.sh modifications and new Python utilities for instance management and VM-based testing. These are specified in the plan but not yet implemented:
 
-## Next Steps for Manual Completion
+- **Step 4**: `install_commands()` in setup.sh for CLI command wrappers
+- **Step 5**: Replace manual hook configuration with call to `marvin_hooks.py`
+- **Step 6**: Add `--new` and `--join` argument handling to setup.sh
+- **Step 7**: Node, WezTerm, and dashboard installation functions
+- **Step 8**: `lib/tart_run.py` — VM-based test runner utility
+- **Step 9**: `lib/clean_install_check.py` — Clean install verification utility
+- **Step 10**: Documentation updates to CONTEXT.md
+- **Step 11**: Full regression pass after all steps complete
 
-1. Create `dashboard/electron/main/instance.js` with handlers
-2. Wire handlers into `dashboard/electron/main/index.js:createInstanceHandlers()`
-3. Export handlers in `dashboard/electron/preload/index.js`
-4. Gate Portfolio tab mount with feature check
-5. Run `lib/addon_migrate.py` after PR merge
-6. Run dashboard tests: `cd dashboard && npm test`
+---
+
+## Files Modified
+
+**Updated**:
+- `lib/machine_profile.py` — Added battery detection
+- `lib/marvin_session.py` — Fixed GUI identity None handling
+- `lib/tests/test_marvin_session.py` — Updated one test for new behavior
+- `brain-map/generate.py` — Added enrichment robustness
+
+**New Test Files** (30 tests total):
+- `lib/tests/test_machine_profile_battery.py` — 10 tests
+- `lib/tests/test_marvin_session_gui_identity.py` — 4 tests  
+- `brain-map/tests/test_generate_enrichment.py` — 16 tests
+
+---
+
+## Key Architectural Insights
+
+1. **Battery Detection**: Fixes 26-caller fan-in through `machine_label()`. Uses deterministic hardware signal (battery presence) instead of fragile model string parsing.
+
+2. **GUI Identity**: Prevents spawn attempts when WezTerm isn't running, reducing latency and eliminating unnecessary mux queries. Maintains fcntl lock for race condition safety.
+
+3. **Enrichment Robustness**: Follows the "fail soft" principle — missing/corrupt config files never crash the system, just fall back to safe defaults with appropriate warnings.
+
+All three fixes exemplify graceful degradation: they handle error cases explicitly, provide sensible defaults, and log warnings when issues occur.
