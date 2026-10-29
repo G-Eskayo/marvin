@@ -1787,7 +1787,7 @@ On 2026-10-22 #81, #218, #455, #459 and #563 were each planned 6-13 times (about
 _Avoid_: "plugin", "extension", "skill" for an add-on. A skill is one capability inside MARVIN; an add-on is what an
 owner turns on or buys, and may hold several skills.
 
-## The work loop as one system (ADR 0080, proposed 2026-10-28, marvin#737)
+## The work loop as one system (ADR 0080, accepted 2026-10-28, marvin#737)
 
 - **Work loop**: the path from an idea to shipped work: ticket, mock-up, the owner's answer, build, review, merge,
   ship. Every surface (pipeline, dashboard, Mobile, chats on either Mac) is a road into the same loop.

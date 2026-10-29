@@ -2,7 +2,8 @@
 
 ## Status
 
-Proposed (2026-10-28, marvin#737). Waiting on the owner's Decisions on the PR that adds this file.
+Accepted (2026-10-28, marvin#737). The owner answered the Decisions on PR #740, taking the recommended option on
+each (recorded at https://github.com/G-Eskayo/marvin/pull/740#issuecomment-6476259750).
 
 ## Context
 
@@ -58,3 +59,16 @@ A rule written in a prompt or a memory note is advice. A rule held by one surfac
 - The loop test is the definition of "the loop works". A new step or surface adds its case to it.
 - The pieces already built or open become parts of this system, not separate fixes. Their places are in
   `docs/life-of-a-ticket.md`, section "The rules that always hold".
+
+## The owner's answers (PR #740)
+
+- **The rules:** I1–I6 as written above.
+- **Memory link:** a memory note points at the rule that prevents its mistake with the ADR section link
+  `adr:marvin/0080` and the rule's ID (I1–I6) in the note. No new entity kind: ADR 0079's kinds stay fixed.
+- **Stuck limits (I5):** a step MARVIN owns is re-dispatched after **30 min** without movement; a step the owner owns
+  gets one nudge after **4 h**; a scheduled job failing **3 runs in a row** turns Health red.
+- **Ship step (I4):** each project profile names its own ship step (Seal Speak: bump the build and upload to
+  TestFlight; the Seal site: publish to gh-pages; MARVIN: both Macs pull and restart), and the ticket closes with a
+  link to where the work is live.
+- **Order:** as in `docs/life-of-a-ticket.md`, section "The rules that always hold": I1 → I2 → the loop test → I4 → I5
+  → I6.

@@ -203,7 +203,7 @@ Several things happen automatically, in order:
 
 ---
 
-## The rules that always hold *(ADR 0080, proposed 2026-10-28, marvin#737)*
+## The rules that always hold *(ADR 0080, accepted 2026-10-28, marvin#737)*
 
 Every surface (the pipeline, the dashboard, Mobile, a chat on either Mac) is a different road into the same loop.
 A rule kept on one road is skipped by the others, so each rule below lives in **one place every road passes**, and
@@ -215,8 +215,8 @@ everything else calls it. The full reasoning is in [ADR 0080](adr/0080-the-work-
 | **I2 Askable questions** | Every question to you is in the dashboard's Decisions format | `bin/gh` |
 | **I3 Answers are acted on** | Your answer changes the same PR, gets a reply, and earlier looks stay viewable | the owner-decisions trigger |
 | **I4 A next step, always** | Every ticket and PR has one next owner and next action, through merge and ship | `next_step()`, derived, read by every screen |
-| **I5 Nothing stuck silently** | MARVIN's stuck steps restart, yours get one nudge, ownerless ones and failing jobs turn Health red | one liveness checker |
-| **I6 One truth** | A replaced decision updates repo and memory together; a recurring-mistake note links to its rule | memory writes + `memory_lint` |
+| **I5 Nothing stuck silently** | MARVIN's stuck steps restart after 30 min, yours get one nudge after 4 h, ownerless ones and a job failing 3 runs in a row turn Health red | one liveness checker |
+| **I6 One truth** | A replaced decision updates repo and memory together; a recurring-mistake note links to its rule (`adr:marvin/0080` + the rule's ID) | memory writes + `memory_lint` |
 
 **The loop test** walks a fake ticket from idea to shipped in a sandbox and fails if anything drops it. It is what
 "the loop works" means.
@@ -225,10 +225,10 @@ everything else calls it. The full reasoning is in [ADR 0080](adr/0080-the-work-
 
 | Ticket / PR | Rule | What happens to it |
 |---|---|---|
-| #735 / PR #736 (screenshot gate, pr-shots) | I1 | Merge as is: it is I1's choke point for chats and agents. |
+| #735 / PR #736 (screenshot gate, pr-shots) | I1 | Merged 2026-10-29: I1's choke point for chats and agents. |
 | #733 / PR #734 (stale images in the merge gate; a fix must reply) | I1, I3 | Rework: its image check calls `lib/pr_images.py` instead of a third copy. Keep the reply rule (I3). |
 | new: dashboard merges skip `bin/gh` | I1 | The merge server uses the one rule; `ui_evidence.js`'s copy goes. |
-| new: refuse Decisions that aren't machine-readable | I2 | Small addition to the same gate. |
+| #742 / PR #744: refuse Decisions that aren't machine-readable | I2 | Small addition to the same gate. |
 | #724 (owner-decisions scan reads GitHub) | I3 | Done (merged 2026-10-28). Becomes I3's backstop. |
 | PR #738 (feedback on the same PR, variations) | I3 | Kept as I3's design. |
 | new: `next_step()` and a ship step per project | I4 | The spine. The dashboard, Mobile and the pipeline read it. |
