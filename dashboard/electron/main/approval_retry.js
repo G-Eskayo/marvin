@@ -1,6 +1,6 @@
 // marvin#762: an approval no machine could take is retried when a merge machine comes back, without another click.
 // Triggered, never polled (CONTEXT "Triggers over polling"): a webhook starting announces itself (webhook-server
-// POST /merge-host-up, relayed to this dashboard as the 'merge-host' topic), this Mac waking or rejoining the network,
+// POST /merge-host-up, relayed to this dashboard as the 'merge-host' topic), this Mac waking or being unlocked,
 // and the dashboard starting. Each trigger runs one pass over the waiting approvals.
 //
 // A pass, oldest click first: ask GitHub whether the PR is still open (merged or closed by hand meanwhile = settled,

@@ -1,4 +1,4 @@
-import { app, BrowserWindow, ipcMain, dialog, session, shell, protocol, net, nativeImage, Notification } from 'electron'
+import { app, BrowserWindow, ipcMain, dialog, session, shell, protocol, net, nativeImage, Notification, powerMonitor } from 'electron'
 import { pathToFileURL } from 'url'
 import { instrumentIpc } from './timing.js'
 import { installDevSiteCors } from './dev_site_cors.js'
@@ -28,6 +28,10 @@ import { getDeviceStatuses } from './devices.js'
 import { getQueue, clearQueueCache } from './queue.js'
 import { getConcurrency, setConcurrency, scanNow } from './dispatch_concurrency.js'
 import { createMergeOps } from './merge_ops.js'
+import { createApprovalLedger } from './approval_ledger.js'
+import { createApprovalRetry } from './approval_retry.js'
+import { createApproveFlow } from './approve_flow.js'
+import { mergeMachines } from './merge_failover.js'
 import { readPrefs } from './prefs.js'
 import { guardApprove } from './approve_guard.js'
 import { recordRefusal } from '../../webhook-server/refusal_log.js'
@@ -41,6 +45,47 @@ const mergeOps = createMergeOps()
 function pushMergeOp(url, op) {
   if (op) mainWindow?.webContents.send('mr:mergeEvent', url, op)
 }
+// marvin#762: every Approve goes through one flow (approve_flow.js): recorded before it is sent (approval_ledger.js),
+// to the Mini first and to this Mac's own webhook when the Mini can't be reached (merge_failover.js), and retried by
+// itself when a Mac comes back (approval_retry.js, run on triggers only: a webhook announcing it started, this Mac
+// waking or being unlocked, the dashboard starting).
+const approvalLedger = createApprovalLedger()
+const approveFlow = createApproveFlow({
+  mergeOps,
+  ledger: approvalLedger,
+  machines: () => mergeMachines({ primaryUrl: MR_WEBHOOK_URL, explicit: !!process.env.MARVIN_MR_WEBHOOK_URL, primaryId: primaryDeviceId(), localId: resolveDeviceId() }),
+  // marvin#568: the webhook streams each stage as it happens; each one is folded into the op and pushed.
+  send: (url, target, opts) => approveMrStream(url, target, opts),
+  push: (url, op) => pushMergeOp(url, op),
+  // The Approve & Merge click is the decision. The native popup is opt-in (prefs.json: confirmMerge) -- the
+  // duplicate-start guard, the merge gate's retest and the base/order checks are what protect a stray click.
+  confirm: async ({ number, url }) => {
+    if (!readPrefs(join(app.getPath('userData'), 'prefs.json')).confirmMerge) return true
+    const { response } = await dialog.showMessageBox(mainWindow, {
+      type: 'warning',
+      buttons: ['Cancel', 'Merge PR'],
+      defaultId: 0,
+      cancelId: 0,
+      message: `Merge PR #${number}?`,
+      detail: `This fires the approval webhook and merges ${url} via gh pr merge. This can't be undone from here.`
+    })
+    return response === 1
+  },
+  // The list must not keep showing a PR that just merged: it leaves at once, and GitHub confirms in the background.
+  after: (url, result) => {
+    if (result?.merged) mrActions.merged(url)
+    else mrActions.reengaged(url)
+    clearReworkCache()
+  }
+})
+const approvalRetry = createApprovalRetry({
+  ledger: approvalLedger,
+  approve: (url, entry) => approveFlow(url, { number: entry.number, head: entry.head, retry: true }),
+  viewPr: (url) => viewPrState(url),
+  log: (line) => console.log(line)
+})
+const retryApprovals = (trigger) => { approvalRetry.run(trigger).catch((err) => appendError({ source: 'approval-retry', message: `Retrying saved approvals failed (${trigger})`, raw: err?.stack || err })) }
+
 // A merge running here whose PR GitHub now calls merged was merged on GitHub by hand: end it as "Merged on GitHub"
 // (merge_ops.githubChanged). Asked only on a change trigger, once per merging op; nothing while no merge runs.
 const viewPrState = async (url) => JSON.parse((await execFileAsync('gh', ['pr', 'view', url, '--json', 'state'])).stdout)
@@ -92,7 +137,7 @@ import { isEvidenceCapture, installCaptureGuard } from './capture_mode.js'
 import { adoptLoginShellPath, adoptSharedGhToken, useGhGate } from './path.js'
 import { postTicketInput } from './ticket_input.js'
 import { createImageLoader, mediaFileFor } from './pr_images.js'
-import { resolveServiceDefaults, resolveDeviceId, peerHosts } from './device_identity.js'
+import { resolveServiceDefaults, resolveDeviceId, peerHosts, primaryDeviceId } from './device_identity.js'
 import { createHelpersReader } from './chat_helpers.js'
 
 // The pipeline's screenshot copy runs unattended beside the real dashboard: log, never show a modal (#384).
@@ -998,42 +1043,9 @@ function registerMrReviewHandlers() {
       loadPrs: async () => prsForOrderCheck(await mrActions.approvePrs(url), sentBackTickets),
       record: recordRefusal
     })
-    if (!mergeOps.start(url, Date.now(), head)) return { merged: false, cancelled: true, alreadyMerging: true }
-    pushMergeOp(url, mergeOps.get(url))
-    try {
-      // The Approve & Merge click is the decision. The native popup is opt-in (prefs.json: confirmMerge) -- the
-      // duplicate-start guard above, the merge gate's retest and the base/order checks are what protect a stray click.
-      if (readPrefs(join(app.getPath('userData'), 'prefs.json')).confirmMerge) {
-        const { response } = await dialog.showMessageBox(mainWindow, {
-          type: 'warning',
-          buttons: ['Cancel', 'Merge PR'],
-          defaultId: 0,
-          cancelId: 0,
-          message: `Merge PR #${number}?`,
-          detail: `This fires the approval webhook and merges ${url} via gh pr merge. This can't be undone from here.`
-        })
-        if (response !== 1) {
-          mergeOps.cancel(url)
-          pushMergeOp(url, { state: 'idle' })
-          return { merged: false, cancelled: true }
-        }
-      }
-      // marvin#568: the webhook streams each stage as it happens; each one is folded into the op and pushed.
-      const result = await approveMrStream(url, MR_WEBHOOK_URL, { onEvent: (event) => pushMergeOp(url, mergeOps.event(url, event)) })
-      if (result?.interrupted) {
-        pushMergeOp(url, mergeOps.interrupt(url))
-        return { ...result, cancelled: false }
-      }
-      pushMergeOp(url, mergeOps.finish(url, result))
-      // The list must not keep showing a PR that just merged: it leaves at once, and GitHub confirms in the background.
-      if (result?.merged) mrActions.merged(url)
-      else mrActions.reengaged(url)
-      clearReworkCache()
-      return { ...result, cancelled: false }
-    } catch (err) {
-      pushMergeOp(url, mergeOps.fail(url, err.message))
-      throw err
-    }
+    // marvin#762: the click is recorded, sent to the Mini, and run on this Mac instead when the Mini can't be reached
+    // (approve_flow.js). Neither reachable: saved, said plainly, and retried when a Mac comes back.
+    return approveFlow(url, { number, head })
   })
 
   // The one read a card makes when it mounts (a merge already running, or how the last one ended); after that,
@@ -1085,6 +1097,9 @@ function registerMrReviewHandlers() {
       return { done: false, cancelled: true }
     }
     await denyMr({ prUrl: url, ticketNumber, action, reasons, comment }, MR_DENY_WEBHOOK_URL, postJson)
+    // A saved approval waiting for a Mac (marvin#762) is cancelled by Deny: it must not merge when one comes back.
+    approvalLedger.drop(url)
+    if (mergeOps.cancelQueued(url)) pushMergeOp(url, { state: 'idle' })
     mrActions.denied({ url, ticketNumber, action })
     return { done: true, cancelled: false }
   })
@@ -1165,6 +1180,9 @@ app.whenReady().then(() => {
         githubChanged(payload.source)
         mainWindow?.webContents.send('mr:refresh')
         checkMergedElsewhere(repoOfSource(payload.source))
+      } else if (topic === 'merge-host') {
+        // marvin#762: a merge machine's webhook just started (its own announcement, relayed by the webhook here).
+        retryApprovals(`merge-host-up:${payload.machine || 'unknown'}`)
       } else if (topic === 'merge') {
         // A merge's stage event from the webhook on this Mac (marvin#568): local state only, never a GitHub read.
         const m = payload.merge
@@ -1176,6 +1194,12 @@ app.whenReady().then(() => {
   app.on('activate', () => {
     if (BrowserWindow.getAllWindows().length === 0) createWindow()
   })
+
+  // marvin#762: saved approvals are retried on events, never on a timer: the dashboard starting, this Mac waking, and
+  // its screen being unlocked (the owner is back at it).
+  retryApprovals('startup')
+  powerMonitor.on('resume', () => retryApprovals('resume'))
+  powerMonitor.on('unlock-screen', () => retryApprovals('unlock'))
 })
 
 app.on('window-all-closed', () => {

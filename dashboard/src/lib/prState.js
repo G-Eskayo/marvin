@@ -21,9 +21,17 @@ export function describePrState(pr, { status = 'idle', errorMessage = null, prog
 
   if (status === 'approving') {
     // With the stage-by-stage view (marvin#568) the bar shows what is happening; the sentence only says it carries on.
-    return base('merging', 'working', 'Merging…', progress
+    // marvin#762: a merge that failed over to this Mac says so first, in the owner's words ("The Mac mini is offline…").
+    const said = errorMessage ? `${errorMessage} ` : ''
+    return base('merging', 'working', 'Merging…', said + (progress
       ? 'You can leave this screen; it carries on.'
-      : 'Merging. It is rebased and retested first only if main changed files this PR also changes. You can leave this screen; it carries on.', 'hidden', 'hidden')
+      : 'Merging. It is rebased and retested first only if main changed files this PR also changes. You can leave this screen; it carries on.'), 'hidden', 'hidden')
+  }
+
+  // marvin#762: no Mac could take the approval. It is saved and merges by itself when one comes back, so Approve is
+  // not offered again; Deny still is (it cancels the saved approval).
+  if (status === 'queued') {
+    return base('queued', 'working', 'Approved: waiting for a Mac to merge it', errorMessage || 'No Mac can merge right now. Your approval is saved and will merge by itself when one comes back.', 'hidden', 'enabled')
   }
 
   if (status === 'merged') {

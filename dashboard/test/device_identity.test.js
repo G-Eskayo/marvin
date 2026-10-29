@@ -8,7 +8,8 @@ import {
   primaryHostTailscaleName,
   isPrimaryHost,
   resolveServiceDefaults,
-  peerHosts
+  peerHosts,
+  primaryDeviceId
 } from '../electron/main/device_identity.js'
 
 const registryFixture = {
@@ -106,5 +107,20 @@ describe('peerHosts (#612: whose webhook servers to read)', () => {
   })
   it('a missing or unreadable registry has no peers', () => {
     expect(peerHosts(() => 'X', '/nonexistent/marvin-network.json')).toEqual([])
+  })
+})
+
+// marvin#762: the card and the plain-words failover message name the primary ("The Mac mini is offline, …").
+describe('primaryDeviceId', () => {
+  it('is the same device primaryHostTailscaleName picks', () => {
+    withRegistry(registryFixture, (networkPath) => {
+      expect(primaryDeviceId(networkPath)).toBe('mac-mini-1')
+    })
+  })
+  it('no registry, or no desktop: null', () => {
+    expect(primaryDeviceId('/nonexistent/marvin-network.json')).toBe(null)
+    withRegistry({ 'macbook-pro-1': registryFixture['macbook-pro-1'] }, (networkPath) => {
+      expect(primaryDeviceId(networkPath)).toBe(null)
+    })
   })
 })

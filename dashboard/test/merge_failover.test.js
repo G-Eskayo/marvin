@@ -10,6 +10,7 @@ import { createMergeOps } from '../electron/main/merge_ops.js'
 import { mergeMachines, approveOnAnyMachine, failoverNotice, noMachineReason } from '../electron/main/merge_failover.js'
 import { createApprovalLedger } from '../electron/main/approval_ledger.js'
 import { createApprovalRetry } from '../electron/main/approval_retry.js'
+import { createApproveFlow } from '../electron/main/approve_flow.js'
 
 // marvin#762: the Mac mini down must not mean every approval fails. These run real HTTP servers (the webhook's own
 // responder) and real closed ports, so "unreachable" is the operating system's answer, not a mocked error.
@@ -294,29 +295,89 @@ describe('acceptance: the Mini returning mid-merge does not merge twice', () => 
     })
     const mini = await serve(merging(miniCalls))
     const ops = createMergeOps()
-    const downMini = MINI(await closedPortUrl())
-    // The same function the IPC handler and the retry both use: start the op, record, send.
-    const approve = async (url, machines) => {
-      if (!ops.start(url)) return { alreadyMerging: true }
-      ledger.record(url)
-      try {
-        const { result } = await approveOnAnyMachine(url, machines, { send })
-        ledger.settle(url, 'merged'); ops.finish(url, result); return result
-      } catch (e) {
-        if (e.noMachine) { ledger.settle(url, 'queued'); ops.fail(url, e.message); return { queued: true } }
-        throw e
-      }
-    }
-    const click = approve(PR, [downMini, BOOK(book)])
+    let machines = [MINI(await closedPortUrl()), BOOK(book)]
+    // The real flow the IPC handler and the retry both use.
+    const approve = createApproveFlow({ mergeOps: ops, ledger, machines: () => machines, send: (u, url, o) => approveMrStream(u, url, { ...o, connectTimeoutMs: 300 }) })
+    const click = approve(PR, { number: 900 })
     while (!finishLocal) await new Promise((r) => setTimeout(r, 5))
     // The Mini is back: its startup announcement fires a retry pass. The click is mid-merge on the MacBook.
-    const retry = createApprovalRetry({ ledger, viewPr: async () => ({ state: 'OPEN' }), approve: (url) => approve(url, [MINI(mini), BOOK(book)]) })
+    machines = [MINI(mini), BOOK(book)]
+    const retry = createApprovalRetry({ ledger, viewPr: async () => ({ state: 'OPEN' }), approve: (url) => approve(url, { retry: true }) })
     await retry.run('merge-host-up')
     // A second click on the card while it merges is refused by the same op.
-    expect(await approve(PR, [MINI(mini), BOOK(book)])).toEqual({ alreadyMerging: true })
+    expect(await approve(PR)).toMatchObject({ alreadyMerging: true })
     finishLocal()
     expect((await click).merged).toBe(true)
     expect(bookCalls).toEqual([PR])
     expect(miniCalls).toEqual([])
+  })
+})
+
+describe('createApproveFlow: one approval from click to outcome', () => {
+  let dir, ledger, ops, pushed
+  beforeEach(() => { dir = mkdtempSync(path.join(tmpdir(), 'flow-')); ledger = createApprovalLedger(path.join(dir, 'a.json')); ops = createMergeOps(); pushed = [] })
+  afterEach(() => rmSync(dir, { recursive: true, force: true }))
+  const flow = (machines, extra = {}) => createApproveFlow({ mergeOps: ops, ledger, machines: () => machines, send: (u, url, o) => approveMrStream(u, url, { ...o, connectTimeoutMs: 300 }), push: (u, op) => op && pushed.push(op), ...extra })
+
+  it('the click is in the ledger before the request leaves', async () => {
+    let seenAtSend
+    const url = await serve((req, res) => { seenAtSend = ledger.get(PR); approveResponder(res, { streaming: true }).result(200, { merged: true }) })
+    await flow([MINI(url)])(PR, { number: 900, head: 'abc' })
+    expect(seenAtSend).toMatchObject({ url: PR, number: 900, head: 'abc', outcome: 'sending' })
+    expect(ledger.get(PR)).toMatchObject({ outcome: 'merged', machine: 'mac-mini-1' })
+  })
+
+  it('failover: the card gets the notice while it merges on the MacBook, and the ledger says which machine merged it', async () => {
+    const calls = []
+    const book = await serve(merging(calls))
+    const r = await flow([MINI(await closedPortUrl()), BOOK(book)])(PR)
+    expect(r.merged).toBe(true)
+    expect(pushed.some((op) => op.state === 'merging' && op.notice === 'The Mac mini is offline, merging on this MacBook Pro instead.')).toBe(true)
+    expect(ledger.get(PR)).toMatchObject({ outcome: 'merged', machine: 'macbook-pro-1' })
+    expect(ops.get(PR).state).toBe('merged')
+  })
+
+  it('both down: queued on the card with the reason, saved in the ledger as waiting, and the result says queued', async () => {
+    const r = await flow([MINI(await closedPortUrl()), BOOK(await closedPortUrl())])(PR)
+    expect(r).toMatchObject({ merged: false, queued: true, cancelled: false })
+    expect(r.reason).toMatch(/^Neither Mac can merge right now/)
+    expect(ops.get(PR)).toMatchObject({ state: 'queued', reason: r.reason })
+    expect(ledger.waiting().map((a) => a.url)).toEqual([PR])
+  })
+
+  it('a refusal is recorded as refused (not retried) and thrown to the card as before', async () => {
+    const url = await serve((req, res) => approveResponder(res, { streaming: true }).result(503, { code: 'GATE_INFRA', stage: 'gate', action: 'escalate', message: 'disk' }))
+    await expect(flow([MINI(url)])(PR)).rejects.toThrow(/GATE_INFRA/)
+    expect(ledger.get(PR).outcome).toBe('refused')
+    expect(ledger.waiting()).toEqual([])
+  })
+
+  it('the opt-in popup cancelled: nothing recorded, nothing sent', async () => {
+    const calls = []
+    const url = await serve(merging(calls))
+    const r = await flow([MINI(url)], { confirm: async () => false })(PR)
+    expect(r).toEqual({ merged: false, cancelled: true })
+    expect(ledger.get(PR)).toBe(null)
+    expect(calls).toEqual([])
+  })
+
+  it('a retry skips the popup (the click already happened)', async () => {
+    const calls = []
+    const url = await serve(merging(calls))
+    let asked = 0
+    await flow([MINI(url)], { confirm: async () => { asked++; return false } })(PR, { retry: true })
+    expect([asked, calls]).toEqual([0, [PR]])
+  })
+
+  it('end to end: both down, queued; the MacBook webhook comes back, its trigger merges it without a click', async () => {
+    let machines = [MINI(await closedPortUrl()), BOOK(await closedPortUrl())]
+    const approve = createApproveFlow({ mergeOps: ops, ledger, machines: () => machines, send: (u, url, o) => approveMrStream(u, url, { ...o, connectTimeoutMs: 300 }) })
+    expect((await approve(PR)).queued).toBe(true)
+    const calls = []
+    machines = [machines[0], BOOK(await serve(merging(calls)))]
+    await createApprovalRetry({ ledger, viewPr: async () => ({ state: 'OPEN' }), approve: (url) => approve(url, { retry: true }) }).run('merge-host-up')
+    expect(calls).toEqual([PR])
+    expect(ledger.get(PR)).toMatchObject({ outcome: 'merged', machine: 'macbook-pro-1', attempts: 2 })
+    expect(ops.get(PR).state).toBe('merged')
   })
 })

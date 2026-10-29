@@ -106,3 +106,24 @@ describe('the card subscribes; it does not poll (guard #556 checks the timers, t
     expect(actions).not.toMatch(/setTimeout|setInterval/)
   })
 })
+
+// marvin#762: the Mac mini down, in plain words on the card.
+describe('failover and queued approvals on the card', () => {
+  const pr = { number: 900, checks: { state: 'passing', failing: [], pending: [] } }
+  const NOTICE = 'The Mac mini is offline, merging on this MacBook Pro instead.'
+  const WHY = "Neither Mac can merge right now: the Mac mini is offline, and this MacBook Pro's merge service isn't running. Your approval is saved and will merge by itself when one comes back."
+
+  it('a merge failed over carries its notice; one without a notice reads as before', () => {
+    expect(statusFromOp({ state: 'merging', notice: NOTICE, progress: null })).toEqual({ status: 'approving', errorMessage: NOTICE, progress: null })
+    const v = describePrState(pr, { status: 'approving', errorMessage: NOTICE, progress: true })
+    expect(v).toMatchObject({ kind: 'merging', headline: 'Merging…', approve: 'hidden' })
+    expect(v.detail).toBe(`${NOTICE} You can leave this screen; it carries on.`)
+  })
+
+  it('queued: says why and that it will merge by itself; Approve hidden (it is already saved), Deny still there to cancel it', () => {
+    expect(statusFromOp({ state: 'queued', reason: WHY })).toMatchObject({ status: 'queued', errorMessage: WHY })
+    const v = describePrState(pr, { status: 'queued', errorMessage: WHY })
+    expect(v).toMatchObject({ kind: 'queued', headline: 'Approved: waiting for a Mac to merge it', approve: 'hidden', deny: 'enabled' })
+    expect(v.detail).toBe(WHY)
+  })
+})

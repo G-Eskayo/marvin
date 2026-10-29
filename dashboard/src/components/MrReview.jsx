@@ -181,14 +181,14 @@ const REWORK_TONE = {
 // the stage-by-stage progress. Exported for the tests.
 export function statusFromOp(m) {
   if (!m || !m.state || m.state === 'idle') return { status: 'idle', errorMessage: null, progress: null }
-  if (m.state === 'merging') return { status: 'approving', errorMessage: null, progress: m.progress || null }
+  if (m.state === 'merging') return { status: 'approving', errorMessage: m.notice || null, progress: m.progress || null }
   if (m.state === 'merged') return { status: 'merged', errorMessage: m.elsewhere ? m.reason || 'Merged on GitHub' : null, progress: m.progress || null }
   return { status: m.state, errorMessage: m.reason || null, progress: m.progress || null }
 }
-const MERGE_STATUSES = new Set(['approving', 'error', 'reengaged', 'interrupted', 'merged'])
+const MERGE_STATUSES = new Set(['approving', 'error', 'reengaged', 'interrupted', 'merged', 'queued'])
 
 export function ApproveDenyActions({ pr, onApproved, onDenied }) {
-  const [status, setStatus] = useState('idle') // idle | approving | error | reengaged | interrupted | merged
+  const [status, setStatus] = useState('idle') // idle | approving | error | reengaged | interrupted | merged | queued
   const [errorMessage, setErrorMessage] = useState(null)
   const [showDenyModal, setShowDenyModal] = useState(false)
   const [clearing, setClearing] = useState(null) // null | 'confirm' | 'working' | 'done' | { failed }
@@ -231,6 +231,12 @@ export function ApproveDenyActions({ pr, onApproved, onDenied }) {
       const result = await window.api.mr.approve({ number: pr.number, url: pr.url, head: pr.headRefOid })
       if (result.cancelled) {
         if (!result.alreadyMerging) setStatus('idle')
+        return
+      }
+      // No Mac could take it (marvin#762): it is saved and merges by itself when one comes back.
+      if (result.queued) {
+        setStatus('queued')
+        setErrorMessage(result.reason)
         return
       }
       // The webhook went away mid-merge (marvin#568): say so now; Approve again is safe.

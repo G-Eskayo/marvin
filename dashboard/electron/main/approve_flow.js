@@ -1,0 +1,47 @@
+import { approveOnAnyMachine } from './merge_failover.js'
+
+// One Approve, from the click (or a retry of a saved click) to its outcome (marvin#762). The IPC handler and the
+// retry both run this, so a retried approval is exactly a click: the same in-flight op (mergeOps.start refuses a PR
+// already merging here, which is what stops the Mini coming back from merging it a second time), the same record,
+// the same failover.
+//
+//   start the op -> confirm (clicks only, opt-in popup) -> record in the ledger -> send to the first machine that
+//   answers -> settle the ledger and the op with that answer. No machine: queued, said plainly, retried later.
+//
+// send(prUrl, url, { onEvent }) is approveMrStream's shape; push(url, op) forwards an op change to the card.
+export function createApproveFlow({ mergeOps, ledger, machines, send, push = () => {}, confirm = async () => true, after = () => {} }) {
+  return async function approve(url, { number = null, head = null, retry = false } = {}) {
+    if (!mergeOps.start(url, Date.now(), head)) return { merged: false, cancelled: true, alreadyMerging: true }
+    push(url, mergeOps.get(url))
+    if (!retry && !(await confirm({ number, url }))) {
+      mergeOps.cancel(url)
+      push(url, { state: 'idle' })
+      return { merged: false, cancelled: true }
+    }
+    ledger.record(url, { number, head })
+    try {
+      const { result, machine } = await approveOnAnyMachine(url, machines(), {
+        send: (prUrl, target) => send(prUrl, target, { onEvent: (event) => push(url, mergeOps.event(url, event)) }),
+        onSwitch: (notice) => push(url, mergeOps.notice(url, notice))
+      })
+      if (result?.interrupted) {
+        ledger.settle(url, 'interrupted', { machine: machine.id, reason: result.reason })
+        push(url, mergeOps.interrupt(url))
+        return { ...result, cancelled: false }
+      }
+      ledger.settle(url, result?.merged ? 'merged' : 'reengaged', { machine: machine.id, reason: result?.reason })
+      push(url, mergeOps.finish(url, result))
+      try { after(url, result) } catch { /* list bookkeeping never turns a merge into an error */ }
+      return { ...result, cancelled: false }
+    } catch (err) {
+      if (err?.noMachine) {
+        ledger.settle(url, 'queued', { reason: err.message })
+        push(url, mergeOps.queue(url, err.message))
+        return { merged: false, queued: true, reason: err.message, cancelled: false }
+      }
+      ledger.settle(url, 'refused', { machine: err?.machine?.id ?? null, reason: err?.message })
+      push(url, mergeOps.fail(url, err?.message))
+      throw err
+    }
+  }
+}

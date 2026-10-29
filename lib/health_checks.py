@@ -1529,6 +1529,88 @@ def check_brief_builder() -> dict:
     return _result(cid, label, "yellow", "No brief built yet today")
 
 
+# ── merge service (marvin#762) ───────────────────────────────────────────
+
+# Approvals go to the primary's webhook (the Mac mini) and, when it can't be reached, to this Mac's own
+# (dashboard/electron/main/merge_failover.js). This answers the same question the dashboard does on a click: which
+# machine takes the next approval. Each probe is one GET with a short timeout: any HTTP answer is "up".
+MERGE_PORT = 7878
+MERGE_PROBE_TIMEOUT_S = 3
+APPROVALS_PATH = HOME / ".claude" / "logs" / "approvals.json"
+_WORDS = {"mac": "Mac", "mini": "mini", "macbook": "MacBook", "pro": "Pro", "air": "Air", "studio": "Studio"}
+
+
+def machine_words(device_id: str | None) -> str:
+    """Same as the dashboard's machineLabel(): "mac-mini-1" -> "Mac mini", "macbook-pro-1" -> "MacBook Pro"."""
+    if not device_id:
+        return "Mac"
+    words = re.sub(r"-1$", "", device_id).split("-")
+    if not all(w in _WORDS or w.isdigit() for w in words):
+        return device_id
+    return " ".join(_WORDS.get(w, w) for w in words)
+
+
+def merge_machines() -> list[dict]:
+    """[{id, label, host, here}] in the order the dashboard tries them: the primary (first "desktop" in the registry,
+    as device_identity.js picks it), then this Mac. On the primary itself, only itself."""
+    registry = machine_profile._load_registry()
+    me = machine_profile.registry_id()
+    primary = next((i for i, info in registry.items() if (info or {}).get("kind") == "desktop"), None)
+    here = {"id": me, "label": machine_words(me), "host": "localhost", "here": True}
+    if not primary or primary == me:
+        return [here]
+    return [{"id": primary, "label": machine_words(primary), "host": registry[primary].get("tailscale_hostname") or primary, "here": False}, here]
+
+
+def merge_service_reachable(host: str, port: int = MERGE_PORT, timeout: float = MERGE_PROBE_TIMEOUT_S) -> bool:
+    import urllib.error
+    import urllib.request
+    try:
+        urllib.request.urlopen(f"http://{host}:{port}/merge-history", timeout=timeout).close()
+        return True
+    except urllib.error.HTTPError:
+        return True  # it answered
+    except (OSError, ValueError):
+        return False
+
+
+def waiting_approvals(path: Path | None = None) -> int:
+    """Approvals no machine could take, saved for a retry (dashboard/electron/main/approval_ledger.js)."""
+    try:
+        items = json.loads(Path(path or APPROVALS_PATH).read_text()).get("approvals") or []
+        return sum(1 for a in items if isinstance(a, dict) and a.get("outcome") == "queued")
+    except (OSError, ValueError, AttributeError):
+        return 0
+
+
+def merge_service_result(machines: list[dict], waiting: int = 0, reachable=merge_service_reachable) -> dict:
+    cid, label = "merge:service", "Merge service reachable"
+    def name(m):
+        return f"this {m['label']}" if m.get("here") else f"the {m['label']}"
+    up, down = None, []
+    for m in machines:
+        if reachable(m["host"], m.get("port", MERGE_PORT)):
+            up = m
+            break
+        down.append(m)
+    saved = f" {waiting} approval{'s' if waiting != 1 else ''} saved, they merge by themselves when one comes back." if waiting else ""
+    if up is None:
+        why = " and ".join(f"{name(m)}'s merge service isn't running" if m.get("here") else f"{name(m)} is offline" for m in down)
+        return _result(cid, label, "red", f"No Mac can merge: {why}.{saved}", value=None)
+    who = name(up)
+    who = who[0].upper() + who[1:]
+    if down:
+        offline = ", ".join(f"{name(m)}" for m in down)
+        detail = f"{offline[0].upper()}{offline[1:]} is offline; {name(up)} will merge approvals instead."
+    else:
+        detail = f"{who} will merge approvals."
+    return _result(cid, label, "yellow" if down or waiting else "green", detail + saved, value=up["id"])
+
+
+def check_merge_service() -> dict:
+    return merge_service_result(merge_machines(), waiting_approvals())
+
+
 def default_checks(reach: dict[str, str] | None = None, reach_results: list[dict] | None = None) -> list[tuple]:
     """Every check the sweep runs, in the order the Health tab shows them. `reach` maps machine:<id> -> severity from
     the reachability check, which runs first; `reach_results` are its rows, listed where they always appeared."""
@@ -1556,6 +1638,7 @@ def default_checks(reach: dict[str, str] | None = None, reach_results: list[dict
         ("memory:lint", "Memory links and index are sound", check_memory_lint, CHECK_BUDGET_S),
         ("seal:beta-ingest", "Seal Speak beta reports are picked up", check_seal_beta_ingest, CHECK_BUDGET_S),
         ("brief:builder", "Morning brief builder", check_brief_builder, CHECK_BUDGET_S),
+        ("merge:service", "Merge service reachable", check_merge_service, CROSS_MACHINE_BUDGET_S),
         ("cron", "Cron job logs", _cron_job_logs, CHECK_BUDGET_S),
         ("machine", "Machine reachability", lambda: list(reach_results or []), CHECK_BUDGET_S),
         ("repo:sync", "Repo sync", lambda: check_repo_sync_everywhere(reach), CROSS_MACHINE_BUDGET_S),

@@ -78,6 +78,26 @@ export function createMergeOps({ maxMergingMs = 45 * 60_000 } = {}) {
       ops.set(url, next)
       return next
     },
+    // marvin#762: the plain words for a merge that failed over ("The Mac mini is offline, merging on this MacBook Pro
+    // instead."), carried on the running op so the card shows them until it ends. Not merging = nothing changes.
+    notice(url, text, now = Date.now()) {
+      const o = live(url, now)
+      if (!o || o.state !== 'merging') return null
+      ops.set(url, { ...o, notice: text })
+      return ops.get(url)
+    },
+    // No machine could take the approval: it is saved (approval_ledger.js) and retried when one comes back.
+    queue(url, reason, now = Date.now()) {
+      if (mergedHere(url)) return ops.get(url)
+      const o = ops.get(url)
+      ops.set(url, { state: 'queued', reason, head: o?.head ?? null, progress: closeRunning(o?.progress, 'skipped', null, now), at: now })
+      return ops.get(url)
+    },
+    cancelQueued(url) {
+      if (ops.get(url)?.state !== 'queued') return false
+      ops.delete(url)
+      return true
+    },
     cancel(url) { ops.delete(url) },
     mergingUrls: () => [...ops].filter(([, o]) => o.state === 'merging').map(([url]) => url),
     get(url, now = Date.now(), head = null) {
