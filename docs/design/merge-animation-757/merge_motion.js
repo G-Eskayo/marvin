@@ -1,143 +1,139 @@
 // MR Review merge motion (marvin#757): the choreography only, no DOM. Every animation is a list of named phases
 // ({ name, start, end } in ms), so the prototype page plays them, the recorder seeks them frame by frame, and the tests
-// check the order (gap closes only after the card has gone, Reduce Motion never moves anything).
+// check the order. Round 2 follows the owner's answers on PR #761: everything stays in place and moves left to right
+// (out of Open, into Merged, new MRs coming in), a solid fill with a closing sweep a third of a card behind it, the
+// gap closes only once that sweep is done, about 1.3x slower, one at a time in the order GitHub confirms them.
 // A classic script, not a module, so the prototype opens straight from Finder (file://). It sets globalThis.MergeMotion.
 ;(function (root) {
   'use strict'
 
   // The website's blue: the brand blue (gileskayo.me brand.css --blue) with the live site's focus-glow halo
-  // (main.css: 0 0 8px rgba(102, 175, 233, .6)). Amber is the dashboard's "GitHub disagreed" tone.
+  // (main.css: 0 0 8px rgba(102, 175, 233, .6)).
   const BLUE = { core: '#198fd9', halo: 'rgba(102, 175, 233, 0.6)' }
-  const AMBER = '#f59e0b'
 
-  const TIMING = {
-    sweep: 560, // the blue band crosses the card
-    follow: 220, // the card starts after the band, so it reads as following it
-    slide: 460, // the card leaves
-    trail: 760, // the light trail fades out after it
-    close: 380, // the cards below move up
-    gapOpen: 320, // a space opens at the top of Merged
-    arrive: 460, // the card slides into it
-    splitPause: 220, // "a moment later": between leaving Open and the space opening in Merged
-    cascade: 160, // stagger between cards merged together
-    fade: 220, // Reduce Motion: the card fades out
-    settle: 200 // Reduce Motion: the cards below dissolve into their new places
+  // Round 1's timings, which the owner asked to slow to about 1.3x.
+  const SPEED = 1.3
+  const BASE = {
+    sweep: 560, // the fill crosses the card (and the closing sweep, at the same speed, a third behind)
+    close: 380, // the cards below fall together
+    gapOpen: 320, // a space opens where the card belongs
+    splitPause: 220, // split view: between leaving Open and the space opening in Merged
+    fade: 220 // Reduce Motion: the card fades out or in
   }
-
-  // Missed merges (inside an MR, a tab away, the dashboard asleep) replay on return only while it's recent and few.
-  const AWAY = { maxAwayMs: 10 * 60 * 1000, maxReplay: 3 }
+  const TIMING = Object.fromEntries(Object.entries(BASE).map(([k, v]) => [k, Math.round(v * SPEED)]))
+  // Reduce Motion's short move, as the owner chose it: 0.2 s, not slowed.
+  const REDUCED_MOVE = 200
+  // The closing sweep follows the fill by a third of the card.
+  const LAG = 1 / 3
 
   const at = (name, start, duration, extra) => Object.assign({ name, start, end: start + duration }, extra)
   const totalOf = (phases) => (phases.length ? Math.max(...phases.map((p) => p.end)) : 0)
   const shift = (phases, by) => phases.map((p) => Object.assign({}, p, { start: p.start + by, end: p.end + by }))
+  const tag = (phases, extra) => phases.map((p) => Object.assign({}, p, extra))
 
+  // Leaving, in place: the fill's leading edge crosses the card; the closing sweep follows a third of a card behind
+  // and leaves the space empty; once it is done, the cards below fall together.
   function leave(reduced) {
-    if (reduced) return [at('fade', 0, TIMING.fade), at('settle', TIMING.fade, TIMING.settle)]
-    const T = TIMING
-    const slide = at('slide', T.follow, T.slide)
-    // The gap starts closing as the card's last fifth leaves, so the list never sits with a hole in it, and nothing
-    // slides under a card that is still on screen.
-    const closeAt = slide.start + Math.round(0.8 * T.slide)
-    return [at('sweep', 0, T.sweep), slide, at('trail', T.follow, T.trail), at('close', closeAt, T.close)]
+    if (reduced) return [at('fade', 0, TIMING.fade), at('close', TIMING.fade, REDUCED_MOVE)]
+    const S = TIMING.sweep, lag = Math.round(S * LAG)
+    return [at('fill', 0, S), at('clear', lag, S), at('close', lag + S, TIMING.close)]
   }
 
-  function arrival(reduced) {
-    if (reduced) return [at('fadeIn', 0, TIMING.fade)]
-    const T = TIMING
-    return [at('gapOpen', 0, T.gapOpen), at('arrive', T.gapOpen, T.arrive), at('sweep', T.gapOpen, T.sweep, { reverse: true })]
+  // Coming in: the space opens where the card belongs; the fill sweeps across it and the card shows behind the fill,
+  // a third of a card back. The mirror of leave().
+  function enter(reduced) {
+    if (reduced) return [at('gapOpen', 0, REDUCED_MOVE), at('fadeIn', REDUCED_MOVE, TIMING.fade)]
+    const G = TIMING.gapOpen, S = TIMING.sweep, lag = Math.round(S * LAG)
+    return [at('gapOpen', 0, G), at('fill', G, S), at('reveal', G + lag, S)]
   }
 
-  // Arriving in Merged. On its own tab it slides in from the right; in the split view it carries on from the side it
-  // left Open (the left edge of the Merged column) unless the owner picks the right.
-  function planArrival({ layout = 'list', reduced = false, splitEntry = 'left' } = {}) {
-    const phases = arrival(reduced)
-    return { entry: layout === 'split' ? splitEntry : 'right', phases, total: totalOf(phases) }
+  function planEnter({ reduced = false } = {}) {
+    const phases = enter(reduced)
+    return { direction: 'ltr', phases, total: totalOf(phases) }
   }
 
-  // Leaving Open. List: out to the left. Split: out to the right, then the Merged column opens a space and takes it.
-  function planMerge({ layout = 'list', reduced = false, splitEntry = 'left' } = {}) {
-    const out = leave(reduced).map((p) => Object.assign(p, { column: 'open' }))
+  // Arriving in Merged: the same motion, from the left, on its own tab and in the split view alike.
+  const planArrival = ({ reduced = false } = {}) => planEnter({ reduced })
+
+  // Leaving Open. Split view: then, a moment later, the Merged column opens a space and the card comes in from the
+  // left, so the whole trip reads as one path left to right.
+  function planMerge({ layout = 'list', reduced = false } = {}) {
+    const out = tag(leave(reduced), { column: 'open' })
     let phases = out
     if (layout === 'split') {
-      const leftAt = reduced ? out[0].end : out.find((p) => p.name === 'slide').end
-      const into = shift(arrival(reduced), leftAt + (reduced ? 0 : TIMING.splitPause)).map((p) => Object.assign(p, { column: 'merged' }))
-      phases = out.concat(into)
+      const gone = reduced ? out[0].end : out.find((p) => p.name === 'clear').end
+      phases = out.concat(tag(shift(enter(reduced), gone + (reduced ? 0 : TIMING.splitPause)), { column: 'merged' }))
     }
-    return { exit: layout === 'split' ? 'right' : 'left', entry: layout === 'split' ? splitEntry : null, phases, total: totalOf(phases) }
+    return { direction: 'ltr', phases, total: totalOf(phases) }
   }
 
-  // Several merges at once. cascade: staggered top to bottom, one gap close at the end. together: all at once.
-  // sequence: each in full, gap closed, before the next. Reduce Motion: one fade for all.
-  function planBatch(keys, { mode = 'cascade', layout = 'list', reduced = false } = {}) {
-    if (!keys.length) return { cards: [], phases: [], total: 0 }
-    if (reduced) {
-      const phases = planMerge({ layout, reduced }).phases
-      return { cards: keys.map((key) => ({ key, offset: 0 })), phases, total: totalOf(phases) }
+  // Where a card coming in belongs: after every item that sorts before it or level with it, so it never jumps ahead
+  // of one already there. O(n) time, O(1) space.
+  function placeOf(items, item, compare) {
+    let i = 0
+    while (i < items.length && compare(items[i], item) <= 0) i++
+    return i
+  }
+
+  // Several merges: one at a time, each in full with its gap closed before the next, in the order GitHub confirmed
+  // them (`at`, ms), not the order of the list. One confirmed after the last has finished starts when it's confirmed.
+  // O(n log n) time for the sort, O(n) space.
+  function planQueue(events, { layout = 'list', reduced = false } = {}) {
+    if (!events.length) return { cards: [], phases: [], total: 0 }
+    const one = planMerge({ layout, reduced })
+    const order = events.map((e, i) => ({ e, i })).sort((a, b) => a.e.at - b.e.at || a.i - b.i).map((x) => x.e)
+    const cards = []
+    let free = 0
+    for (const e of order) {
+      const offset = Math.max(e.at, free)
+      cards.push({ key: e.key, offset })
+      free = offset + one.total
     }
-    const single = planMerge({ layout })
-    if (mode === 'sequence') {
-      const cards = keys.map((key, i) => ({ key, offset: i * single.total }))
-      const phases = cards.flatMap((c) => shift(single.phases, c.offset).map((p) => Object.assign(p, { key: c.key })))
-      return { cards, phases, total: totalOf(phases) }
-    }
-    const step = mode === 'together' ? 0 : TIMING.cascade
-    const cards = keys.map((key, i) => ({ key, offset: i * step }))
-    const own = single.phases.filter((p) => p.name !== 'close')
-    const phases = cards.flatMap((c) => shift(own, c.offset).map((p) => Object.assign(p, { key: c.key })))
-    const close = single.phases.find((p) => p.name === 'close')
-    phases.push(shift([close], cards[cards.length - 1].offset)[0])
+    const phases = cards.flatMap((c) => tag(shift(one.phases, c.offset), { key: c.key }))
     return { cards, phases, total: totalOf(phases) }
   }
 
-  // A merge arrives. The list on screen plays it now; otherwise it waits (once) for the list to be shown again.
+  // Nothing plays until GitHub confirms the merge, so a card never has to come back. Approve puts the card in
+  // `waiting` (it shows its usual merge progress); GitHub's answer either plays it or leaves it where it always was.
+  const initialGate = () => ({ waiting: [], done: [] })
+  function onMergeEvent(state, { type, key }) {
+    const waiting = state.waiting.filter((k) => k !== key)
+    if (type === 'approved') return { state: Object.assign({}, state, { waiting: waiting.concat(key) }), play: [] }
+    if (type === 'refused') return { state: Object.assign({}, state, { waiting }), play: [], refused: key }
+    if (type === 'confirmed') {
+      if (state.done.includes(key)) return { state: Object.assign({}, state, { waiting }), play: [] }
+      return { state: Object.assign({}, state, { waiting, done: state.done.concat(key) }), play: [key] }
+    }
+    return { state, play: [] }
+  }
+
+  // A confirmed merge. The list on screen plays it now; otherwise it waits (once) for the list to be shown again.
   function routeMerge(state, key) {
     if (state.listVisible) return { state, play: [key] }
     const pending = state.pending.includes(key) ? state.pending : state.pending.concat(key)
     return { state: Object.assign({}, state, { pending }), play: [] }
   }
 
-  // The list is shown again (back from an MR, back to the tab, the dashboard woke). Policies:
-  // replay-recent (default): replay if away briefly and few were missed, else show the result with a count;
-  // replay-all: always replay; show-result: never replay. `focus` is the MR you were inside: its slide-out always
-  // plays on the way back (#757 point 2), whatever the policy and however long you read it.
-  function onListShown(state, { now, policy = 'replay-recent', focus = null } = {}) {
+  // The list is shown again (back from an MR, back to the tab, the dashboard woke). Merges you missed just show
+  // the result, with a count. `focus` is the MR you were inside: it still plays its leave on the way back.
+  function onListShown(state, { focus = null } = {}) {
     const pending = state.pending || []
-    const next = Object.assign({}, state, { listVisible: true, pending: [], hiddenSince: null })
-    if (!pending.length) return { state: next, play: [], settled: [], note: null }
-    const mine = pending.includes(focus) ? [focus] : []
-    const others = pending.filter((k) => k !== focus)
-    const recent = now - (state.hiddenSince || 0) <= AWAY.maxAwayMs && others.length <= AWAY.maxReplay
-    const replay = policy === 'replay-all' || (policy === 'replay-recent' && recent)
-    if (replay || !others.length) return { state: next, play: pending, settled: [], note: null }
-    return { state: next, play: mine, settled: others, note: `${others.length} merged while you were away` }
+    const next = Object.assign({}, state, { listVisible: true, pending: [] })
+    const play = pending.includes(focus) ? [focus] : []
+    const settled = pending.filter((k) => k !== focus)
+    return { state: next, play, settled, note: settled.length ? `${settled.length} merged while you were away` : null }
   }
 
-  // Where the merged card is relative to what you're looking at. Off screen it leaves without playing; above you,
-  // the page shifts by its height so your place holds.
-  function scrollPlan({ top, height, gap, scrollTop, viewport }) {
-    if (top + height <= scrollTop) return { where: 'above', play: false, scrollDelta: -(height + gap) }
+  // Where the change is relative to what you're looking at. Off screen it happens without playing; above you, the
+  // page shifts by the card's height (up for one leaving, down for one coming in) so your place holds.
+  function scrollPlan({ top, height, gap, scrollTop, viewport, change = 'leave' }) {
+    if (top + height <= scrollTop) return { where: 'above', play: false, scrollDelta: (change === 'enter' ? 1 : -1) * (height + gap) }
     if (top >= scrollTop + viewport) return { where: 'below', play: false, scrollDelta: 0 }
     return { where: 'in', play: true, scrollDelta: 0 }
   }
 
-  // A swipe (#756) lands t ms into a plan. finish: jump to the end now and navigate; wait: navigate when it ends.
-  function interrupt(plan, t, policy = 'finish') {
-    if (policy === 'wait') return { seekTo: null, navigateIn: Math.max(0, plan.total - t) }
-    return { seekTo: plan.total, navigateIn: 0 }
-  }
+  // A swipe (#756) lands mid-plan: the animation jumps to its end and the swipe goes now.
+  const interrupt = (plan) => ({ seekTo: plan.total, navigateIn: 0 })
 
-  // GitHub refused a merge the screen already showed (local-first): the card comes back the way it went, with an
-  // amber pulse, next to the existing "GitHub disagreed" notice.
-  function planReturn({ layout = 'list', reduced = false } = {}) {
-    const entry = layout === 'split' ? 'right' : 'left'
-    if (reduced) {
-      const phases = [at('fadeIn', 0, TIMING.fade), at('pulse', TIMING.fade, 600, { tone: 'amber' })]
-      return { entry, phases, total: totalOf(phases) }
-    }
-    const T = TIMING
-    const phases = [at('gapReopen', 0, T.close), at('slideBack', T.close, T.slide), at('pulse', T.close + T.slide, 700, { tone: 'amber' })]
-    return { entry, phases, total: totalOf(phases) }
-  }
-
-  root.MergeMotion = { BLUE, AMBER, TIMING, AWAY, planMerge, planArrival, planBatch, routeMerge, onListShown, scrollPlan, interrupt, planReturn }
+  root.MergeMotion = { BLUE, SPEED, BASE, TIMING, LAG, planMerge, planEnter, planArrival, placeOf, planQueue, initialGate, onMergeEvent, routeMerge, onListShown, scrollPlan, interrupt }
 })(typeof globalThis !== 'undefined' ? globalThis : window)

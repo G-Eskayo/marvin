@@ -1,121 +1,225 @@
 import { describe, it, expect } from 'vitest'
-// The #757 mock-up's choreography (docs/design/merge-animation-757/). A classic script so the prototype page opens
-// straight from Finder (file://); it puts its API on globalThis. It moves to src/lib once the owner approves the motion.
+// The #757 mock-up's choreography (docs/design/merge-animation-757/), round 2: the owner's answers on PR #761.
+// A classic script so the prototype page opens straight from Finder (file://); it puts its API on globalThis.
+// It moves to src/lib once the owner approves the motion.
 import '../../docs/design/merge-animation-757/merge_motion.js'
 
 const M = globalThis.MergeMotion
-const phase = (plan, name) => plan.phases.find((p) => p.name === name)
-const MOVING = ['sweep', 'slide', 'trail', 'close', 'gapOpen', 'arrive', 'slideBack', 'gapReopen']
+const phase = (plan, name, extra = {}) => plan.phases.find((p) => p.name === name && Object.entries(extra).every(([k, v]) => p[k] === v))
+const SWEEPS = ['fill', 'clear', 'reveal']
 
-describe('planMerge: leaving Open in the list', () => {
+describe('the pace: about 1.3x the first round', () => {
+  it('every timing is the round-1 timing times 1.3', () => {
+    expect(M.SPEED).toBe(1.3)
+    for (const [k, base] of Object.entries(M.BASE)) expect(M.TIMING[k]).toBe(Math.round(base * 1.3))
+  })
+
+  it('a single merge in the list takes about 1.3x round 1 (1.1 s), so 1.3 to 1.6 s', () => {
+    const total = M.planMerge({}).total
+    expect(total).toBeGreaterThanOrEqual(1300)
+    expect(total).toBeLessThanOrEqual(1600)
+  })
+})
+
+describe('planMerge: leaving Open, in place', () => {
   const plan = M.planMerge({ layout: 'list' })
+  const fill = phase(plan, 'fill'), clear = phase(plan, 'clear'), close = phase(plan, 'close')
 
-  it('sweeps, then the card follows the sweep out to the left', () => {
-    expect(plan.exit).toBe('left')
-    expect(phase(plan, 'sweep').start).toBe(0)
-    expect(phase(plan, 'slide').start).toBeGreaterThan(0)
-    expect(phase(plan, 'slide').start).toBeLessThan(phase(plan, 'sweep').end)
+  it('runs left to right, like everything else on the path', () => {
+    expect(plan.direction).toBe('ltr')
   })
 
-  it('leaves a trail that outlasts the card', () => {
-    expect(phase(plan, 'trail').end).toBeGreaterThan(phase(plan, 'slide').end)
+  it('the card never moves sideways: there is no slide', () => {
+    expect(phase(plan, 'slide')).toBeUndefined()
+    expect(phase(plan, 'trail')).toBeUndefined()
   })
 
-  it('closes the gap only once the card is mostly gone, so nothing slides under it', () => {
-    const slide = phase(plan, 'slide')
-    expect(phase(plan, 'close').start).toBeGreaterThanOrEqual(slide.start + 0.8 * (slide.end - slide.start))
+  it('a solid fill crosses the card, and the closing sweep follows it a third of a card behind', () => {
+    expect(fill.start).toBe(0)
+    expect(clear.start).toBe(Math.round(fill.end * M.LAG))
+    expect(M.LAG).toBeCloseTo(1 / 3)
+    // Same speed, so the blue band stays a third of the card wide all the way across.
+    expect(clear.end - clear.start).toBe(fill.end - fill.start)
   })
 
-  it('reports a total that covers every phase', () => {
-    expect(plan.total).toBe(Math.max(...plan.phases.map((p) => p.end)))
+  it('the band never fills the whole card: the closing sweep starts before the fill reaches the far edge', () => {
+    expect(clear.start).toBeLessThan(fill.end)
   })
 
-  it('has no arrival in the list layout: Merged is another tab', () => {
-    expect(phase(plan, 'arrive')).toBeUndefined()
-  })
-})
-
-describe('planArrival: arriving in Merged', () => {
-  it('opens a space at the top, then slides in from the right on the Merged tab', () => {
-    const plan = M.planArrival({ layout: 'list' })
-    expect(plan.entry).toBe('right')
-    expect(phase(plan, 'gapOpen').start).toBe(0)
-    expect(phase(plan, 'arrive').start).toBeGreaterThanOrEqual(phase(plan, 'gapOpen').end)
+  it('the cards below fall together only once the closing sweep is complete', () => {
+    expect(close.start).toBe(clear.end)
+    expect(plan.total).toBe(close.end)
   })
 
-  it('in the split view enters from the side it left by default, and from the right when chosen', () => {
-    expect(M.planArrival({ layout: 'split' }).entry).toBe('left')
-    expect(M.planArrival({ layout: 'split', splitEntry: 'right' }).entry).toBe('right')
+  it('every phase is on the Open column', () => {
+    expect(plan.phases.every((p) => p.column === 'open')).toBe(true)
   })
 })
 
-describe('planMerge: split view', () => {
+describe('planEnter: an MR coming in (to Open or to Merged)', () => {
+  const plan = M.planEnter({})
+  const gap = phase(plan, 'gapOpen'), fill = phase(plan, 'fill'), reveal = phase(plan, 'reveal')
+
+  it('opens the space first, then the fill sweeps in left to right', () => {
+    expect(plan.direction).toBe('ltr')
+    expect(gap.start).toBe(0)
+    expect(fill.start).toBe(gap.end)
+  })
+
+  it('the card shows behind the fill, a third of a card back, at the same speed', () => {
+    expect(reveal.start - fill.start).toBe(Math.round((fill.end - fill.start) * M.LAG))
+    expect(reveal.end - reveal.start).toBe(fill.end - fill.start)
+    expect(plan.total).toBe(reveal.end)
+  })
+
+  it('arriving in Merged is the same motion', () => {
+    expect(M.planArrival({}).phases).toEqual(plan.phases)
+    expect(M.planArrival({ layout: 'split' }).direction).toBe('ltr')
+  })
+})
+
+describe('placeOf: the space opens where the MR belongs', () => {
+  const byNumber = (a, b) => b.n - a.n // newest first, as an example order
+  const list = [{ n: 760 }, { n: 752 }, { n: 744 }, { n: 731 }]
+
+  it('in the middle', () => {
+    expect(M.placeOf(list, { n: 748 }, byNumber)).toBe(2)
+  })
+
+  it('at the top and at the bottom', () => {
+    expect(M.placeOf(list, { n: 799 }, byNumber)).toBe(0)
+    expect(M.placeOf(list, { n: 700 }, byNumber)).toBe(4)
+  })
+
+  it('into an empty list', () => {
+    expect(M.placeOf([], { n: 1 }, byNumber)).toBe(0)
+  })
+
+  it('after equal items, so it never jumps ahead of one already there', () => {
+    expect(M.placeOf([{ n: 5 }, { n: 5 }], { n: 5 }, byNumber)).toBe(2)
+  })
+})
+
+describe('planMerge: split view, one linear path', () => {
   const plan = M.planMerge({ layout: 'split' })
+  const out = plan.phases.filter((p) => p.column === 'open'), into = plan.phases.filter((p) => p.column === 'merged')
 
-  it('slides right out of Open', () => {
-    expect(plan.exit).toBe('right')
+  it('leaves Open left to right, and comes into Merged from the left', () => {
+    expect(plan.direction).toBe('ltr')
+    expect(out.length).toBeGreaterThan(0)
+    expect(into.length).toBeGreaterThan(0)
   })
 
-  it('opens the space in Merged a moment after the card has left Open', () => {
-    const gap = plan.phases.find((p) => p.name === 'gapOpen' && p.column === 'merged')
-    expect(gap.start).toBeGreaterThan(phase(plan, 'slide').end)
-    expect(gap.start - phase(plan, 'slide').end).toBe(M.TIMING.splitPause)
-  })
-
-  it('slides the card into the space only after it has opened', () => {
-    const gap = plan.phases.find((p) => p.name === 'gapOpen')
-    const arrive = plan.phases.find((p) => p.name === 'arrive')
-    expect(arrive.start).toBeGreaterThanOrEqual(gap.end)
+  it('the space in Merged opens a moment after the closing sweep finishes in Open', () => {
+    const clear = out.find((p) => p.name === 'clear'), gap = into.find((p) => p.name === 'gapOpen')
+    expect(gap.start - clear.end).toBe(M.TIMING.splitPause)
   })
 })
 
-describe('Reduce Motion: a simple fade', () => {
+describe('Reduce Motion: fade, then a short 0.2 s close', () => {
   for (const layout of ['list', 'split']) {
-    it(`nothing moves in the ${layout} layout`, () => {
+    it(`no sweep in the ${layout} layout; the gap closes in 0.2 s after the fade`, () => {
       const plan = M.planMerge({ layout, reduced: true })
-      expect(plan.phases.filter((p) => MOVING.includes(p.name))).toEqual([])
-      expect(phase(plan, 'fade')).toBeDefined()
-      expect(plan.total).toBeLessThanOrEqual(500)
+      expect(plan.phases.filter((p) => SWEEPS.includes(p.name))).toEqual([])
+      const fade = phase(plan, 'fade'), close = phase(plan, 'close')
+      expect(close.start).toBe(fade.end)
+      expect(close.end - close.start).toBe(200)
     })
   }
 
-  it('arrival and a correction fade too', () => {
-    expect(M.planArrival({ reduced: true }).phases.map((p) => p.name)).toEqual(['fadeIn'])
-    expect(M.planReturn({ reduced: true }).phases.filter((p) => MOVING.includes(p.name))).toEqual([])
+  it('coming in mirrors it: the space opens in 0.2 s, then the card fades in', () => {
+    const plan = M.planEnter({ reduced: true })
+    expect(plan.phases.map((p) => p.name)).toEqual(['gapOpen', 'fadeIn'])
+    expect(phase(plan, 'gapOpen').end).toBe(200)
   })
 })
 
-describe('planBatch: several merges at once', () => {
-  const keys = ['a', 'b', 'c']
+describe('planQueue: several merges, one at a time, in the order GitHub confirms them', () => {
+  const one = M.planMerge({}).total
 
-  it('cascade staggers the cards and closes the gap once, after the last one leaves', () => {
-    const plan = M.planBatch(keys, { mode: 'cascade' })
-    expect(plan.cards.map((c) => c.offset)).toEqual([0, M.TIMING.cascade, 2 * M.TIMING.cascade])
-    const closes = plan.phases.filter((p) => p.name === 'close')
-    expect(closes).toHaveLength(1)
-    const lastSlide = Math.max(...plan.phases.filter((p) => p.name === 'slide').map((p) => p.end))
-    expect(closes[0].start).toBeGreaterThanOrEqual(lastSlide - 0.2 * M.TIMING.slide)
+  it('plays in confirmation order, not list order', () => {
+    const plan = M.planQueue([{ key: 'a', at: 900 }, { key: 'b', at: 0 }, { key: 'c', at: 300 }])
+    expect(plan.cards.map((c) => c.key)).toEqual(['b', 'c', 'a'])
   })
 
-  it('together starts every card at once', () => {
-    expect(M.planBatch(keys, { mode: 'together' }).cards.every((c) => c.offset === 0)).toBe(true)
+  it('each plays in full, gap closed, before the next starts', () => {
+    const plan = M.planQueue([{ key: 'a', at: 0 }, { key: 'b', at: 10 }, { key: 'c', at: 20 }])
+    expect(plan.cards.map((c) => c.offset)).toEqual([0, one, 2 * one])
+    for (const [i, c] of plan.cards.entries()) {
+      if (!i) continue
+      const prev = plan.cards[i - 1].key
+      expect(phase(plan, 'close', { key: prev }).end).toBeLessThanOrEqual(c.offset)
+    }
   })
 
-  it('one at a time plays each in full, gap closed, before the next', () => {
-    const plan = M.planBatch(keys, { mode: 'sequence' })
-    const single = M.planMerge({}).total
-    expect(plan.cards.map((c) => c.offset)).toEqual([0, single, 2 * single])
-    expect(plan.phases.filter((p) => p.name === 'close')).toHaveLength(3)
+  it('one confirmed after the last has finished starts when it is confirmed, not earlier', () => {
+    const plan = M.planQueue([{ key: 'a', at: 0 }, { key: 'b', at: one + 5000 }])
+    expect(plan.cards[1].offset).toBe(one + 5000)
   })
 
-  it('under Reduce Motion is one fade for all, whatever the mode', () => {
-    const plan = M.planBatch(keys, { mode: 'sequence', reduced: true })
-    expect(plan.cards.every((c) => c.offset === 0)).toBe(true)
-    expect(plan.phases.filter((p) => p.name === 'fade')).toHaveLength(1)
+  it('ties keep the order they came in', () => {
+    expect(M.planQueue([{ key: 'x', at: 0 }, { key: 'y', at: 0 }]).cards.map((c) => c.key)).toEqual(['x', 'y'])
   })
 
-  it('an empty batch plays nothing', () => {
-    expect(M.planBatch([], {}).total).toBe(0)
+  it('every phase carries its card key, and no two cards overlap', () => {
+    const plan = M.planQueue([{ key: 'a', at: 0 }, { key: 'b', at: 0 }])
+    expect(plan.phases.every((p) => p.key)).toBe(true)
+    const endA = Math.max(...plan.phases.filter((p) => p.key === 'a').map((p) => p.end))
+    const startB = Math.min(...plan.phases.filter((p) => p.key === 'b').map((p) => p.start))
+    expect(startB).toBeGreaterThanOrEqual(endA)
+  })
+
+  it('under Reduce Motion it is still one at a time', () => {
+    const r = M.planMerge({ reduced: true }).total
+    expect(M.planQueue([{ key: 'a', at: 0 }, { key: 'b', at: 0 }], { reduced: true }).cards.map((c) => c.offset)).toEqual([0, r])
+  })
+
+  it('does not change the events it was given', () => {
+    const events = [{ key: 'a', at: 5 }, { key: 'b', at: 0 }]
+    M.planQueue(events)
+    expect(events.map((e) => e.key)).toEqual(['a', 'b'])
+  })
+
+  it('an empty queue plays nothing', () => {
+    expect(M.planQueue([]).total).toBe(0)
+  })
+})
+
+describe('onMergeEvent: nothing plays until GitHub confirms', () => {
+  const s0 = M.initialGate()
+
+  it('Approve alone plays nothing; the card waits with its merge progress', () => {
+    const r = M.onMergeEvent(s0, { type: 'approved', key: 'a' })
+    expect(r.play).toEqual([])
+    expect(r.state.waiting).toEqual(['a'])
+  })
+
+  it('GitHub confirming plays it', () => {
+    const r1 = M.onMergeEvent(s0, { type: 'approved', key: 'a' })
+    const r2 = M.onMergeEvent(r1.state, { type: 'confirmed', key: 'a' })
+    expect(r2.play).toEqual(['a'])
+    expect(r2.state.waiting).toEqual([])
+  })
+
+  it('GitHub refusing plays nothing: the card never moved, so nothing has to come back', () => {
+    const r1 = M.onMergeEvent(s0, { type: 'approved', key: 'a' })
+    const r2 = M.onMergeEvent(r1.state, { type: 'refused', key: 'a' })
+    expect(r2.play).toEqual([])
+    expect(r2.state.waiting).toEqual([])
+    expect(r2.refused).toBe('a')
+  })
+
+  it('a merge made elsewhere (auto-merge, the other Mac) arrives already confirmed and plays', () => {
+    expect(M.onMergeEvent(s0, { type: 'confirmed', key: 'z' }).play).toEqual(['z'])
+  })
+
+  it('a duplicate confirmation does not play twice', () => {
+    const r1 = M.onMergeEvent(s0, { type: 'confirmed', key: 'a' })
+    expect(M.onMergeEvent(r1.state, { type: 'confirmed', key: 'a' }).play).toEqual([])
+  })
+
+  it('ignores events it does not know, and leaves the state alone', () => {
+    expect(M.onMergeEvent(s0, { type: 'nonsense', key: 'a' })).toMatchObject({ play: [], state: s0 })
   })
 })
 
@@ -126,10 +230,10 @@ describe('deferral: inside an MR, or the dashboard asleep', () => {
     expect(r.state.pending).toEqual([])
   })
 
-  it('holds the slide-out while you are inside an MR, and plays it when you go back', () => {
-    const r = M.routeMerge({ listVisible: false, pending: [], hiddenSince: 1000 }, 'a')
+  it('holds the leave while you are inside an MR, and plays it when you go back', () => {
+    const r = M.routeMerge({ listVisible: false, pending: [] }, 'a')
     expect(r.play).toEqual([])
-    const back = M.onListShown(r.state, { now: 5000 })
+    const back = M.onListShown(r.state, { focus: 'a' })
     expect(back.play).toEqual(['a'])
     expect(back.state.pending).toEqual([])
   })
@@ -139,47 +243,26 @@ describe('deferral: inside an MR, or the dashboard asleep', () => {
     expect(s.pending).toEqual(['a'])
   })
 
-  it('after a long sleep shows the result with a count instead of replaying', () => {
-    const state = { listVisible: false, pending: ['a', 'b'], hiddenSince: 0 }
-    const back = M.onListShown(state, { now: M.AWAY.maxAwayMs + 1 })
+  it('merges you missed always just show the result, with the count, however short the time away', () => {
+    const back = M.onListShown({ listVisible: false, pending: ['a', 'b'] }, {})
     expect(back.play).toEqual([])
     expect(back.settled).toEqual(['a', 'b'])
     expect(back.note).toBe('2 merged while you were away')
   })
 
-  it('too many missed merges also just shows the result', () => {
-    const pending = Array.from({ length: M.AWAY.maxReplay + 1 }, (_, i) => `k${i}`)
-    const back = M.onListShown({ listVisible: false, pending, hiddenSince: 0 }, { now: 10 })
-    expect(back.play).toEqual([])
-    expect(back.settled).toHaveLength(pending.length)
-  })
-
-  it('the other policies: always replay, or never', () => {
-    const state = { listVisible: false, pending: ['a'], hiddenSince: 0 }
-    expect(M.onListShown(state, { now: 1e9, policy: 'replay-all' }).play).toEqual(['a'])
-    expect(M.onListShown(state, { now: 1, policy: 'show-result' }).play).toEqual([])
-  })
-
-  it('the MR you were inside always plays on the way back, however long you read it', () => {
-    const state = { listVisible: false, pending: ['a', 'b'], hiddenSince: 0 }
-    const back = M.onListShown(state, { now: M.AWAY.maxAwayMs * 5, focus: 'b' })
+  it('the MR you were inside still plays on the way back; the others are counted', () => {
+    const back = M.onListShown({ listVisible: false, pending: ['a', 'b'] }, { focus: 'b' })
     expect(back.play).toEqual(['b'])
     expect(back.settled).toEqual(['a'])
     expect(back.note).toBe('1 merged while you were away')
   })
 
-  it('the MR you were inside plays even under "just show the result"', () => {
-    const back = M.onListShown({ listVisible: false, pending: ['a'], hiddenSince: 0 }, { now: 1, policy: 'show-result', focus: 'a' })
-    expect(back).toMatchObject({ play: ['a'], settled: [], note: null })
-  })
-
   it('nothing pending, nothing to do', () => {
-    const back = M.onListShown({ listVisible: false, pending: [], hiddenSince: 0 }, { now: 1 })
-    expect(back).toMatchObject({ play: [], settled: [], note: null })
+    expect(M.onListShown({ listVisible: false, pending: [] }, {})).toMatchObject({ play: [], settled: [], note: null })
   })
 })
 
-describe('scrollPlan: scrolled far down the list', () => {
+describe('scrollPlan: the list changes length out of view, never under your eyes', () => {
   const base = { height: 120, gap: 16, scrollTop: 2000, viewport: 600 }
 
   it('a card on screen plays normally and the page does not move', () => {
@@ -190,41 +273,37 @@ describe('scrollPlan: scrolled far down the list', () => {
     expect(M.scrollPlan({ ...base, top: 1950 }).where).toBe('in')
   })
 
-  it('a card above you leaves silently and the page keeps your place', () => {
+  it('a card leaving above you goes silently and the page shifts up by it, so your place holds', () => {
     expect(M.scrollPlan({ ...base, top: 100 })).toEqual({ where: 'above', play: false, scrollDelta: -136 })
   })
 
-  it('a card below you leaves silently and nothing shifts', () => {
+  it('a card coming in above you arrives silently and the page shifts down by it', () => {
+    expect(M.scrollPlan({ ...base, top: 100, change: 'enter' })).toEqual({ where: 'above', play: false, scrollDelta: 136 })
+  })
+
+  it('below you, nothing shifts either way', () => {
     expect(M.scrollPlan({ ...base, top: 2700 })).toEqual({ where: 'below', play: false, scrollDelta: 0 })
+    expect(M.scrollPlan({ ...base, top: 2700, change: 'enter' })).toEqual({ where: 'below', play: false, scrollDelta: 0 })
+  })
+
+  it('a card ending exactly at the top edge is above you', () => {
+    expect(M.scrollPlan({ ...base, top: 2000 - 120 }).where).toBe('above')
   })
 })
 
 describe('interrupt: a swipe (#756) mid-animation', () => {
   const plan = M.planMerge({})
 
-  it('finish: jumps to the end state and lets the swipe go now', () => {
-    expect(M.interrupt(plan, 300, 'finish')).toEqual({ seekTo: plan.total, navigateIn: 0 })
-  })
-
-  it('wait: the swipe goes once the animation ends', () => {
-    expect(M.interrupt(plan, 300, 'wait')).toEqual({ seekTo: null, navigateIn: plan.total - 300 })
-  })
-
-  it('after the end there is nothing to wait for', () => {
-    expect(M.interrupt(plan, plan.total + 50, 'wait').navigateIn).toBe(0)
+  it('the animation finishes at once and the swipe goes now', () => {
+    expect(M.interrupt(plan, 300)).toEqual({ seekTo: plan.total, navigateIn: 0 })
   })
 })
 
-describe('planReturn: a merge GitHub then refuses', () => {
-  it('reopens the gap and slides the card back from the side it left', () => {
-    const plan = M.planReturn({ layout: 'list' })
-    expect(plan.entry).toBe('left')
-    expect(phase(plan, 'slideBack').start).toBeGreaterThanOrEqual(phase(plan, 'gapReopen').end)
-    expect(phase(plan, 'pulse').tone).toBe('amber')
-  })
-
-  it('in the split view it comes back from the right', () => {
-    expect(M.planReturn({ layout: 'split' }).entry).toBe('right')
+describe('the round-1 options the owner did not pick are gone', () => {
+  it('no cascade or together batches, no slide-back, no replay policies', () => {
+    expect(M.planBatch).toBeUndefined()
+    expect(M.planReturn).toBeUndefined()
+    expect(M.AWAY).toBeUndefined()
   })
 })
 
