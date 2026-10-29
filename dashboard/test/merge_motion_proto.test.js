@@ -72,9 +72,25 @@ describe('planEnter: an MR coming in (to Open or to Merged)', () => {
     expect(plan.total).toBe(reveal.end)
   })
 
-  it('arriving in Merged is the same motion', () => {
-    expect(M.planArrival({}).phases).toEqual(plan.phases)
-    expect(M.planArrival({ layout: 'split' }).direction).toBe('ltr')
+  it('arriving on the Merged tab is the same motion, but right to left, like turning from page to page', () => {
+    const tab = M.planArrival({})
+    expect(tab.phases).toEqual(plan.phases)
+    expect(tab.direction).toBe('rtl')
+    expect(M.planArrival({ layout: 'list', reduced: true }).direction).toBe('rtl')
+  })
+
+  it('in the split view it comes into Merged from the left, carrying on the trip out of Open', () => {
+    const split = M.planArrival({ layout: 'split' })
+    expect(split.direction).toBe('ltr')
+    expect(split.phases).toEqual(plan.phases)
+  })
+
+  it('a new MR coming into Open sweeps in left to right', () => {
+    expect(M.planEnter({}).direction).toBe('ltr')
+  })
+
+  it('an unknown layout is refused rather than guessed', () => {
+    expect(() => M.planArrival({ layout: 'grid' })).toThrow(/layout/)
   })
 })
 

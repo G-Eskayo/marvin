@@ -1,8 +1,9 @@
 // MR Review merge motion (marvin#757): the choreography only, no DOM. Every animation is a list of named phases
 // ({ name, start, end } in ms), so the prototype page plays them, the recorder seeks them frame by frame, and the tests
-// check the order. Round 2 follows the owner's answers on PR #761: everything stays in place and moves left to right
-// (out of Open, into Merged, new MRs coming in), a solid fill with a closing sweep a third of a card behind it, the
-// gap closes only once that sweep is done, about 1.3x slower, one at a time in the order GitHub confirms them.
+// check the order. Round 2 follows the owner's answers on PR #761: everything stays in place; a card leaves Open left to
+// right, new MRs come into Open left to right, and a card arrives on the Merged tab right to left (page to page), or
+// from the left in the split view (one path across the window). A solid fill with a closing sweep a third of a card
+// behind it, the gap closes only once that sweep is done, about 1.3x slower, one at a time as GitHub confirms them.
 // A classic script, not a module, so the prototype opens straight from Finder (file://). It sets globalThis.MergeMotion.
 ;(function (root) {
   'use strict'
@@ -52,8 +53,14 @@
     return { direction: 'ltr', phases, total: totalOf(phases) }
   }
 
-  // Arriving in Merged: the same motion, from the left, on its own tab and in the split view alike.
-  const planArrival = ({ reduced = false } = {}) => planEnter({ reduced })
+  // Arriving in Merged: the same motion. On its own tab it comes in right to left, so leaving Open (left to right) and
+  // arriving in Merged read like turning from one page to the next. In the split view it comes in from the left,
+  // carrying on the trip out of the Open column beside it.
+  const ARRIVAL = { list: 'rtl', split: 'ltr' }
+  function planArrival({ layout = 'list', reduced = false } = {}) {
+    if (!(layout in ARRIVAL)) throw new Error(`planArrival: unknown layout "${layout}"`)
+    return Object.assign(planEnter({ reduced }), { direction: ARRIVAL[layout] })
+  }
 
   // Leaving Open. Split view: then, a moment later, the Merged column opens a space and the card comes in from the
   // left, so the whole trip reads as one path left to right.
