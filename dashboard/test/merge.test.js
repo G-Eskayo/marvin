@@ -187,7 +187,7 @@ describe('mergePr', () => {
 
     // marvin's gate finishes a rebase whose only conflicts are its generated files (#225)
     // the gate's own exec (gateExec: its abort signal, no per-command limit), wrapping this one
-    expect(rebaseAndRetestFn).toHaveBeenCalledWith('pipeline/g-eskayo/marvin#5', expect.any(Function), expect.any(String), expect.any(Function), 'main', expect.any(Function), null, expect.any(Function))
+    expect(rebaseAndRetestFn).toHaveBeenCalledWith('pipeline/g-eskayo/marvin#5', expect.any(Function), expect.any(String), expect.any(Function), 'main', expect.any(Function), null, expect.any(Function), undefined, null)
     expect(exec).toHaveBeenCalledWith('gh', ['pr', 'merge', 'https://github.com/G-Eskayo/marvin/pull/71', '--merge'])
     expect(reengage).not.toHaveBeenCalled()
     expect(result).toEqual({ merged: true, reengaged: false, reason: null })
@@ -782,7 +782,7 @@ describe('mergePr for a project with a profile', () => {
     const shouldGateMerge = vi.fn().mockResolvedValue({ gate: true, headRefName: 'pipeline/g-eskayo/clarity-captions#7', body: 'Closes G-Eskayo/clarity-captions#7' })
     const rebaseAndRetestFn = vi.fn().mockResolvedValue({ ok: true })
     await mergePr(CC_PR, exec, noopRebuild, noopRedispatch, shouldGateMerge, rebaseAndRetestFn, vi.fn(), vi.fn(), { gateContext: async () => CTX })
-    expect(rebaseAndRetestFn).toHaveBeenCalledWith('pipeline/g-eskayo/clarity-captions#7', expect.any(Function), CTX.clone, CTX.runTests, 'main', CTX.resolveConflicts, null, expect.any(Function))
+    expect(rebaseAndRetestFn).toHaveBeenCalledWith('pipeline/g-eskayo/clarity-captions#7', expect.any(Function), CTX.clone, CTX.runTests, 'main', CTX.resolveConflicts, null, expect.any(Function), undefined, null)
   })
 
   it('records the ticket timeline under the project, not under marvin\'s same-numbered ticket', async () => {

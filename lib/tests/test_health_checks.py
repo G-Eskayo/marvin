@@ -1417,3 +1417,58 @@ def test_job_placement_reflects_the_new_ownership(monkeypatch):
     assert hc.JOB_PLACEMENT.get("research-colony-fallback") == "laptop"
     assert hc.JOB_PLACEMENT.get("morning-brief") == "mini"
     assert hc.JOB_PLACEMENT.get("morning-brief-fallback") == "laptop"
+
+
+# ── a low disk result kicks off the sweep's rebuildable trims (2026-10-28), trigger-based: no loop of its own ─────
+
+def _disk(dev, sev, detail=None):
+    return {"id": f"disk:space@{dev}", "label": f"Disk space -- {dev}", "severity": sev,
+            "detail": detail or "2 GiB free of 228 (1%)"}
+
+
+def test_a_low_disk_result_runs_first_aid_on_that_mac_only(tmp_path):
+    ran = []
+    now = datetime(2026, 10, 28, 12, tzinfo=timezone.utc)
+    checks = [_disk("mini", "red"), _disk("laptop", "green", "200 GiB free of 460 (43%)"), _disk("air", "yellow", "60 GiB free of 460 (13%)")]
+    out = hc.react_to_low_disk(checks, run=lambda dev: ran.append(dev) or [{"ok": True, "changed": True, "detail": "freed 1 MiB"}],
+                               stamp_path=tmp_path / "s.json", now=now)
+    assert sorted(ran) == ["air", "mini"]
+    assert {o["device"] for o in out} == {"air", "mini"}
+
+
+@pytest.mark.parametrize("detail", ["machine unreachable (red) -- unverifiable", "could not read machine state: boom",
+                                    "cannot check while the machine is asleep", ""])
+def test_an_unmeasured_disk_result_never_triggers_a_trim(tmp_path, detail):
+    ran = []
+    checks = [{"id": "disk:space@mini", "severity": "yellow", "detail": detail}, {"id": "disk:space@x", "severity": "asleep", "detail": detail}]
+    hc.react_to_low_disk(checks, run=lambda dev: ran.append(dev), stamp_path=tmp_path / "s.json")
+    assert ran == []
+
+
+def test_it_runs_at_most_once_an_hour_per_mac_and_again_after(tmp_path):
+    ran = []
+    t0 = datetime(2026, 10, 28, 12, tzinfo=timezone.utc)
+    stamp = tmp_path / "s.json"
+    run = lambda dev: ran.append(dev) or []
+    hc.react_to_low_disk([_disk("mini", "red")], run=run, stamp_path=stamp, now=t0)
+    hc.react_to_low_disk([_disk("mini", "red")], run=run, stamp_path=stamp, now=t0 + timedelta(minutes=15))
+    assert ran == ["mini"]
+    hc.react_to_low_disk([_disk("mini", "red")], run=run, stamp_path=stamp, now=t0 + timedelta(minutes=61))
+    assert ran == ["mini", "mini"]
+
+
+def test_a_failing_first_aid_or_a_corrupt_stamp_never_breaks_the_health_check(tmp_path):
+    stamp = tmp_path / "s.json"
+    for garbage in ("{not json", "[1, 2]", '{"mini": "yesterday"}'):
+        stamp.write_text(garbage)
+        out = hc.react_to_low_disk([_disk("mini", "red")], run=lambda dev: 1 / 0, stamp_path=stamp,
+                                   now=datetime(2026, 10, 28, 12, tzinfo=timezone.utc))
+        assert out[0]["device"] == "mini" and out[0]["ok"] is False and "ZeroDivisionError" in out[0]["detail"]
+
+
+def test_the_default_runs_the_registered_step_on_that_mac(monkeypatch, tmp_path):
+    import purpose_metrics as pm
+    seen = []
+    monkeypatch.setattr(pm, "first_aid_everywhere", lambda name, only=None: seen.append((name, only)) or [{"ok": True, "changed": False, "detail": "x", "mac": "mini"}])
+    hc.react_to_low_disk([_disk("mini", "red")], stamp_path=tmp_path / "s.json")
+    assert seen == [("disk-clear-rebuildable", {"mini"})]

@@ -370,7 +370,16 @@ FIRST_AID: dict[str, tuple[Callable[[], dict], str]] = {
     "code-sync-drop-contained-stash": (lambda: _code_sync_drop_contained_stash(),
                                        "drop leftover stashes whose every file already matches HEAD (#706's check)"),
     "code-sync-rerun": (lambda: _code_sync_rerun(), "re-run the failed code sync for each stuck repo"),
+    # A nearly full disk (2026-10-28): the cleanup sweep's own rebuildable trims, nothing it doesn't already delete.
+    # Run by the merge gate's disk check and by the health check's low-disk result.
+    "disk-clear-rebuildable": (lambda: _disk_clear_rebuildable(),
+                               "remove old aerial videos (keep the newest) and disk_trim's rebuildable caches"),
 }
+
+
+def _disk_clear_rebuildable() -> dict:
+    import cleanup_sweep
+    return cleanup_sweep.clear_rebuildable()
 
 
 def first_aid_here(name: str) -> dict:

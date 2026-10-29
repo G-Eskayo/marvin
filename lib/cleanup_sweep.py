@@ -585,6 +585,45 @@ def run_daily_sweep(
             "worktrees_for_review": len(worktrees["review"]), "simulators_removed": len(simulators["removed"])}
 
 
+def clear_rebuildable() -> dict:
+    """First aid for a nearly full disk (2026-10-28: macOS's aerial wallpaper refilled the Mac mini between daily
+    sweeps, 3-8 GB a day, and two Approves were refused). Runs only the trims this sweep already makes on disposable,
+    rebuildable files, through the same functions: old aerial videos (trim_aerial_videos, keep the newest) and
+    disk_trim's allowlisted caches (deny-first, and only below its own free-space floor). No rule of its own, and none
+    of the other sweeps (claims, worktrees, simulators). Single flight with the daily sweep (same lock): while that
+    runs, this returns at once and touches nothing. Called through purpose_metrics.FIRST_AID "disk-clear-rebuildable"
+    by the merge gate's disk check and the health check's low-disk result. Logged to OUTPUT_PATH when it freed
+    anything. Returns {"changed", "freed_bytes", "detail"}."""
+    import fcntl
+    LOCK_PATH.parent.mkdir(parents=True, exist_ok=True)
+    with open(LOCK_PATH, "a") as lock:
+        try:
+            fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        except OSError:
+            return {"changed": False, "freed_bytes": 0, "detail": "the cleanup sweep is already running on this Mac"}
+        notes = []
+        try:
+            aerials = trim_aerial_videos()
+        except OSError as exc:
+            aerials, _ = 0, notes.append(f"aerial videos failed: {type(exc).__name__}")
+        caches = 0
+        try:
+            import disk_trim
+            r = disk_trim.trim_with_logging(dry_run=False)
+            kb = r.get("total_kb_freed", 0) if isinstance(r, dict) else 0
+            caches = kb * 1024 if isinstance(kb, int) and not isinstance(kb, bool) and kb > 0 else 0
+        except Exception as exc:  # noqa: BLE001 -- a broken cache trim must not stop the video trim's result
+            notes.append(f"caches failed: {type(exc).__name__}")
+    freed = aerials + caches
+    mib = lambda n: f"{n // 2**20} MiB"  # noqa: E731
+    detail = f"freed {mib(freed)} (aerial videos {mib(aerials)}, caches {mib(caches)})" + (f"; {'; '.join(notes)}" if notes else "")
+    if freed:
+        OUTPUT_PATH.parent.mkdir(parents=True, exist_ok=True)
+        existing = OUTPUT_PATH.read_text() if OUTPUT_PATH.exists() else "# MR pipeline cleanup sweep\n\n"
+        OUTPUT_PATH.write_text(existing + f"\n## {datetime.now(timezone.utc).isoformat()}\n\n- First aid (disk nearly full): {detail}\n")
+    return {"changed": freed > 0, "freed_bytes": freed, "detail": detail}
+
+
 def main() -> dict:
     """launchd entry point, single flight (#586, the #457 main-health pattern): a sweep still running (say, stuck in a
     size walk) makes the next one return {"busy": True} at once instead of queueing. The flock dies with its process,

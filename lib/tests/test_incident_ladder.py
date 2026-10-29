@@ -587,3 +587,12 @@ def test_only_the_tickets_own_pipeline_prs_merged_since_the_trip_count(monkeypat
            {"number": 6, "head": {"ref": "pipeline/o/r#707"}, "merged_at": "2026-11-05T00:00:00Z"}, "junk"]
     monkeypatch.setattr(gh, "_api", lambda *a: json.dumps(prs))
     assert gh.merged_prs_for(707, since) == [1, 6]
+
+
+def test_disk_first_aid_is_registered_and_runs_the_sweeps_own_step(monkeypatch):
+    import cleanup_sweep
+    assert "disk-clear-rebuildable" in pm.FIRST_AID
+    assert pm._SAFE_NAME.fullmatch("disk-clear-rebuildable")
+    monkeypatch.setattr(cleanup_sweep, "clear_rebuildable", lambda: {"changed": True, "freed_bytes": 5, "detail": "freed 0 MiB"})
+    r = pm.first_aid_here("disk-clear-rebuildable")
+    assert r == {"step": "disk-clear-rebuildable", "ok": True, "changed": True, "detail": "freed 0 MiB"}

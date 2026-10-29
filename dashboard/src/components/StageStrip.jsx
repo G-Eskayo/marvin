@@ -29,8 +29,9 @@ function Segment({ segment, onClick, isRunning }) {
   const displayStatus = segment.status === 'needs-rebase' ? 'needs rebase' : segment.status
   const tooltip = [
     `${STAGE_LABEL[segment.stage]} · ${displayStatus}`,
+    segment.cause && `Cause: ${segment.cause}`,
     segment.remediation && `Remediation: ${segment.remediation}`,
-    segment.detail && `${segment.detail.slice(0, 100)}${segment.detail.length > 100 ? '…' : ''}`
+    !segment.cause && segment.detail && `${segment.detail.slice(0, 100)}${segment.detail.length > 100 ? '…' : ''}`
   ]
     .filter(Boolean)
     .join('\n')
@@ -48,10 +49,10 @@ function Segment({ segment, onClick, isRunning }) {
       {isRunning && segment.elapsed !== null && (
         <span className="text-[10px] text-opacity-70">{formatElapsedMs(segment.elapsed)}</span>
       )}
-      {hoverDetail && segment.remediation && (
+      {hoverDetail && (segment.cause || segment.remediation) && (
         <div className="absolute bottom-full left-0 mb-1 whitespace-nowrap rounded bg-neutral-900 px-2 py-1 text-xs text-neutral-200 shadow-lg">
-          {segment.remediation.slice(0, 80)}
-          {segment.remediation.length > 80 ? '…' : ''}
+          {(segment.cause || segment.remediation).slice(0, 100)}
+          {(segment.cause || segment.remediation).length > 100 ? '…' : ''}
         </div>
       )}
     </button>

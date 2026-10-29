@@ -2,7 +2,7 @@ import { readFileSync } from 'fs'
 import os from 'os'
 import path from 'path'
 import { createServer } from 'http'
-import { mergePr, baselineFailsOnMain, mergesAhead, execWithGroupTimeout } from './merge.js'
+import { mergePr, baselineFailsOnMain, mergesAhead, execWithGroupTimeout, runDiskFirstAid } from './merge.js'
 import { snapshotExec } from './pr_snapshot.js'
 import { createMergeTracker, createInflightStore, takeInterruptedMerges, recordMergeDuration, estimateMergeMs, machineLoad, approveResponder, wantsStream } from './merge_progress.js'
 import { resolveDeviceId } from '../electron/main/device_identity.js'
@@ -219,7 +219,9 @@ const server = createServer(async (req, res) => {
       const result = await mergePr(payload.pr_url, snapshotExec(payload.pr_url, execWithGroupTimeout), undefined, undefined, undefined, undefined, undefined, undefined, {
         baselineFails: (names) => baselineFailsOnMain(names),
         progress: tracker ? tracker.progress : undefined,
-        loadNow: () => ({ ...machineLoad(), id: machineId })
+        loadNow: () => ({ ...machineLoad(), id: machineId }),
+        // A nearly full disk gets the cleanup sweep's rebuildable trims once before the gate refuses (2026-10-28).
+        diskFirstAid: () => runDiskFirstAid()
       })
       tracker?.finish(result)
       if (result?.merged) appendMerge(payload.pr_url, payload.by === 'auto' ? 'auto' : 'you')

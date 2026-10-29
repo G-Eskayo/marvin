@@ -192,4 +192,24 @@ describe('stage_strip', () => {
       })
     })
   })
+
+  // 2026-10-28: a GATE_INFRA failure used to show only the generic "infrastructure failed" text; the gate now records
+  // the cause after the code, and the strip carries it.
+  describe('cause', () => {
+    const at = new Date().toISOString()
+    it('a failed stage carries the words after its code as the cause', () => {
+      const seg = deriveStageStrip([{ stage: 'gate', status: 'failed', timestamp: at,
+        detail: "GATE_INFRA: The Mac mini's disk is nearly full (1.6 GB free, the check needs 5.0 GB)" }]).find((s) => s.stage === 'gate')
+      expect(seg.code).toBe('GATE_INFRA')
+      expect(seg.cause).toBe("The Mac mini's disk is nearly full (1.6 GB free, the check needs 5.0 GB)")
+      expect(seg.remediation).toBe(REMEDIATION_BY_CODE.GATE_INFRA)
+    })
+    it('no cause for a bare code, a code-less detail, a passed stage or junk', () => {
+      const one = (e) => deriveStageStrip([{ stage: 'gate', timestamp: at, ...e }]).find((s) => s.stage === 'gate').cause
+      expect(one({ status: 'failed', detail: 'GATE_INFRA: ' })).toBeNull()
+      expect(one({ status: 'failed', detail: 'something broke' })).toBeNull()
+      expect(one({ status: 'failed', detail: undefined })).toBeNull()
+      expect(one({ status: 'passed', detail: 'GATE_INFRA: x' })).toBeNull()
+    })
+  })
 })
