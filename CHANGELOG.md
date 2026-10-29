@@ -1,5 +1,7 @@
 # Changelog
 
+- Dashboard: opening an MR or doc jumps to the bottom of the page ([#759](https://github.com/G-Eskayo/marvin/pull/759))
+
 - helper-tab: start helpers in labelled, grouped WezTerm tabs (not Terminal) ([#754](https://github.com/G-Eskayo/marvin/pull/754))
 
 - Merge gate on a nearly full disk: name the cause instead of GATE_INFRA ([#745](https://github.com/G-Eskayo/marvin/pull/745))
