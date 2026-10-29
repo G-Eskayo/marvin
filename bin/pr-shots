@@ -1,0 +1,3 @@
+#!/bin/sh
+# pr-shots: pin screenshots into this branch's PR by full commit SHA (marvin #735). See lib/pr_shots.py.
+exec /usr/bin/python3 -I "$(dirname "$(readlink -f "$0")")/../lib/pr_shots.py" "$@"

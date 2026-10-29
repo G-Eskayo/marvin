@@ -427,10 +427,12 @@ def test_default_open_pr_marks_dev_evidence_na_for_a_non_ui_ticket(monkeypatch):
 def test_default_open_pr_includes_screenshot_reference_for_a_ui_ticket(monkeypatch):
     calls = []
 
+    sha = "b" * 40
+
     def fake_run(cmd, **kwargs):
         calls.append(cmd)
         class R:
-            stdout = "https://github.com/G-Eskayo/marvin/pull/99\n"
+            stdout = (sha if cmd[:2] == ["gh", "api"] else "https://github.com/G-Eskayo/marvin/pull/99") + "\n"
             returncode = 0
         return R()
 
@@ -443,8 +445,11 @@ def test_default_open_pr_includes_screenshot_reference_for_a_ui_ticket(monkeypat
     }
     mrr._default_open_pr("G-Eskayo/marvin#1", "pipeline/ticket-1", comparison, dev_evidence=dev_evidence)
 
-    body = calls[0][calls[0].index("--body") + 1]
-    assert "![Screenshot](https://github.com/G-Eskayo/marvin/blob/pipeline/ticket-1/docs/evidence/pipeline-ticket-1.png?raw=true)" in body  # #374: a PR body cannot show a repo-relative image
+    assert calls[0] == ["gh", "api", "repos/G-Eskayo/marvin/commits/pipeline%2Fticket-1", "-q", ".sha"]
+    create = next(c for c in calls if c[:3] == ["gh", "pr", "create"])
+    body = create[create.index("--body") + 1]
+    # #374: a PR body can't show a repo-relative image; #735: pinned to the pushed commit, not the branch
+    assert f"![Screenshot](https://raw.githubusercontent.com/G-Eskayo/marvin/{sha}/docs/evidence/pipeline-ticket-1.png)" in body
     assert "Live screenshot captured from the running app." in body
 
 
