@@ -132,6 +132,7 @@
 <p class="caption" id="caption"></p>
 <div class="wrap"><div class="stage" id="stage"></div></div>
 
+<script src="vendor/motion-14.8.0.js"></script>
 <script src="merge_motion.js"></script>
 <script>
 'use strict'
@@ -166,7 +167,13 @@ const MERGED = [
 // ---------- small helpers ----------
 const $ = (s, r = document) => r.querySelector(s)
 const clamp = (x) => Math.max(0, Math.min(1, x))
-const ease = { out: (x) => 1 - Math.pow(1 - x, 3), io: (x) => (x < 0.5 ? 4 * x * x * x : 1 - Math.pow(-2 * x + 2, 3) / 2), sweep: (x) => 0.5 - Math.cos(Math.PI * x) / 2 }
+// The motion's easing comes from Motion (motion.dev, vendored in vendor/, MIT), the tool the build will use. The gap
+// opening and closing is a Motion spring with no bounce, so cards settle without overshooting into each other; the
+// sweep is Motion's easeInOut. A spring sampled at a fixed time is a pure function of t, so seeking still works.
+// `out` is only for the stand-ins (the merge progress bar, notices), which the build keeps as they are today.
+const SPRING = Motion.spring({ keyframes: [0, 1], visualDuration: 1, bounce: 0 })
+const SPRING_END = SPRING.next(1000).value
+const ease = { out: (x) => 1 - Math.pow(1 - x, 3), io: (x) => (x >= 1 ? 1 : SPRING.next(x * 1000).value / SPRING_END), sweep: Motion.easeInOut }
 const bell = (x) => (x <= 0 || x >= 1 ? 0 : Math.sin(Math.PI * x))
 const prog = (ph, t) => (ph ? clamp((t - ph.start) / Math.max(1, ph.end - ph.start)) : 0)
 const find = (phases, name, extra = {}) => phases.find((p) => p.name === name && Object.entries(extra).every(([k, v]) => p[k] === v))
@@ -230,12 +237,15 @@ function leaveFx(slot, phases, t, full) {
 }
 // Coming in: the space opens where the card belongs, the fill sweeps across it, and the card shows behind the fill.
 // Reduce Motion: the space opens in 0.2 s, then the card fades in.
-function enterFx(slot, phases, t, full) {
+// `dir` is the plan's direction: 'ltr' (into Open, into Merged in the split view) or 'rtl' (onto the Merged tab, page
+// to page), which mirrors the same edges.
+function enterFx(slot, phases, t, full, dir = 'ltr') {
   const el = slot.firstElementChild, fadeIn = find(phases, 'fadeIn')
   slot.style.height = full * ease.io(prog(find(phases, 'gapOpen'), t)) + 'px'
   if (fadeIn) { el.style.opacity = prog(fadeIn, t); wipe(el, 0, 100, 0, 0); return }
   const [r, f] = edges(find(phases, 'fill'), find(phases, 'reveal'), t)
-  wipe(el, 0, f, r, f)
+  if (dir === 'rtl') wipe(el, 100 - r, 100, 100 - f, 100 - r)
+  else wipe(el, 0, f, r, f)
 }
 
 // ---------- scenes ----------
@@ -365,8 +375,8 @@ const SCENES = {
   },
 
   arrive: {
-    title: '6. Arriving in Merged: a space opens at the top, the fill sweeps it in from the left',
-    caption: 'On the Merged tab the merged MR comes in the same way a new MR comes into Open: a space opens at the top, and the fill sweeps across it left to right with the row showing behind it.',
+    title: '6. Arriving in Merged: a space opens at the top, the fill sweeps it in from the right',
+    caption: 'On the Merged tab the merged MR comes in the way a new MR comes into Open, but from the right: a space opens at the top, and the fill sweeps across it right to left with the row showing behind it. It left Open moving right, so it reads like turning to the next page.',
     build(stage, o) {
       const sc = chrome(stage, { toggle: 'merged', openCount: 3 })
       const pr = PRS[1], fresh = { n: pr.n, t: pr.t, m: 'marvin · 14:02 · you' }
@@ -374,7 +384,7 @@ const SCENES = {
         ${rowHtml(fresh)}${MERGED.map(rowHtml).join('')}</div>`
       const slot = sc.querySelector('.slot')
       const plan = shifted(M.planArrival({ reduced: o.reduced }), LEAD)
-      return { total: plan.total + HOLD, render(t) { enterFx(slot, plan.phases, t, ROW) } }
+      return { total: plan.total + HOLD, render(t) { enterFx(slot, plan.phases, t, ROW, plan.direction) } }
     }
   },
 
@@ -392,7 +402,7 @@ const SCENES = {
       const outPh = plan.phases.filter((p) => p.column === 'open'), inPh = plan.phases.filter((p) => p.column === 'merged')
       return { total: plan.total + HOLD, render(t) {
         leaveFx(slot, outPh, t, CARD_SPLIT)
-        enterFx(into, inPh, t, ROW)
+        enterFx(into, inPh, t, ROW, M.planArrival({ layout: 'split' }).direction)
         setCount(stage, t >= goneAt(outPh) ? 3 : 4)
       } }
     }
@@ -433,7 +443,7 @@ const SCENES = {
       const plan = shifted(M.planArrival({ reduced: o.reduced }), LEAD)
       const TAG = plan.total + 150
       return { total: TAG + 400 + HOLD, render(t) {
-        enterFx(slot, plan.phases, t, ROW)
+        enterFx(slot, plan.phases, t, ROW, plan.direction)
         tag.style.opacity = clamp((t - TAG) / (o.reduced ? 220 : 400))
       } }
     }
