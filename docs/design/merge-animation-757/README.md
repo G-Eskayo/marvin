@@ -1,45 +1,65 @@
 # MR Review merge motion: mock-up (marvin#757)
 
-**Status: mock-up for approval. The real dashboard is unchanged.** Once the owner answers the Decisions on the PR,
-the motion gets built into `MrReview.jsx` / `MrHistory.jsx`, and `merge_motion.js` moves to `dashboard/src/lib/`.
+**Status: mock-up for approval, round 2. The real dashboard is unchanged.** Round 2 follows the owner's answers on PR
+#761. Once the motion is approved it gets built into `MrReview.jsx` / `MrHistory.jsx` with Motion (motion.dev,
+vendored, for spring easing), and `merge_motion.js` moves to `dashboard/src/lib/`.
 
 ## Run it
 
 Open `index.html` in Chrome (straight from Finder; no server, no build). Pick a scene and press **Play**, or drag the
-scrubber to step through it. Use the controls to switch between dark and light, normal and Reduce Motion, and the
-alternative for each decision. Reduce Motion starts on if macOS has it on.
+scrubber to step through it. Switch between dark and light, and normal and Reduce Motion. Reduce Motion starts on if
+macOS has it on. There are no other switches: the owner picked one answer for each round-1 question.
+
+## The motion
+
+- **One path, left to right.** A card leaves Open left to right, comes into Merged from the left, and a new MR comes
+  into Open left to right too. In the split view that reads as one trip across the window.
+- **In place.** Leaving: a solid blue fill crosses the card, and the closing sweep follows a third of a card behind it
+  and leaves the space empty. The card never slides. Once the sweep is done, the cards below fall together.
+- **Coming in** is the mirror: a space opens where the card belongs, the fill sweeps across it, and the card shows
+  behind the fill.
+- **About 1.3x slower** than round 1: a single merge takes about 1.5 s.
+- **Nothing plays until GitHub confirms the merge.** While it waits the card shows the merge progress bar it shows
+  today. A refusal leaves the card where it always was.
+- **One at a time, in the order GitHub confirms them**, each in full with its gap closed before the next.
+- **Reduce Motion:** fade, then the gap closes with a 0.2 s move. Coming in: the space opens in 0.2 s, then a fade.
 
 ## The scenes
 
 | # | Scene | What it shows |
 |---|---|---|
-| 1 | `single` | Leaving Open: the blue band crosses the card right to left, the card follows it out left with a light trail, the cards below close the gap |
-| 2 | `detail` | You're inside the MR when it merges: a plain "✓ Merged" line replaces the buttons; the slide-out plays when you go back |
-| 3 | `arrive` | Arriving in Merged: a space opens at the top and the row slides in from the right |
-| 4 | `split` | Open beside Merged: out of Open to the right, a moment later into a space at the top of Merged |
-| 5 | `batch` | Three merges at once (cascade, one-at-a-time, together) |
-| 6 | `revert` | GitHub refuses a merge the screen already showed: the card comes back, amber pulse, "GitHub disagreed" notice |
-| 7 | `scrolled` | Scrolled far down: a card above you leaves silently and your place holds; one on screen plays as usual |
-| 8 | `away` | Back after the dashboard slept: the result with a count, or a replay |
-| 9 | `swipe` | A swipe back (#756) half-way through |
+| 1 | `single` | Leaving Open: the fill and the closing sweep, in place, then the gap closes |
+| 2 | `incoming` | A new MR comes in: the space opens where it belongs, the fill sweeps it in |
+| 3 | `hold` | Approve: the card waits with its merge progress until GitHub confirms, then the sweep plays |
+| 4 | `refused` | GitHub refuses: the card never moved; the existing "GitHub disagreed" notice says why |
+| 5 | `detail` | Inside the MR when it merges: a plain "✓ Merged" line; the sweep plays when you go back |
+| 6 | `arrive` | Arriving in Merged: a space opens at the top, the fill sweeps the row in from the left |
+| 7 | `split` | Open beside Merged: out of Open left to right, a moment later into Merged from the left |
+| 8 | `queue` | Three merges confirmed out of list order: one at a time, in confirmation order |
+| 9 | `reverted` | A revert PR merges; the original's Merged row gets a "reverted by #N" tag |
+| 10 | `scrolled` | Scrolled far down: a card leaving above you and one coming in above you both keep your place |
+| 11 | `away` | Back after the dashboard slept: the result, with "N merged while you were away" |
+| 12 | `swipe` | A swipe back (#756) half-way through: the animation finishes at once |
+
+The dashed labels in the corners of the recordings are notes for whoever watches (the theme and motion setting, and
+what GitHub just did). They aren't dashboard UI.
 
 ## How it's made
 
-- `merge_motion.js` holds the choreography with no DOM: every motion is a list of named phases (`sweep`, `slide`,
-  `trail`, `close`, `gapOpen`, `arrive`, `fade`…) with start and end times, plus the edge-case rules (batching,
-  deferral while you're elsewhere, scroll anchoring, swipe interrupts, refusals). Tests are in
-  `dashboard/test/merge_motion_proto.test.js`. They check the order of the phases (the gap closes only once the card
-  has mostly gone) and that nothing moves under Reduce Motion.
+- `merge_motion.js` holds the choreography with no DOM: every motion is a list of named phases (`fill`, `clear`,
+  `reveal`, `close`, `gapOpen`, `fade`, `fadeIn`) with start and end times, plus the rules: where a new card goes
+  (`placeOf`), the queue in confirmation order (`planQueue`), the GitHub confirmation gate (`onMergeEvent`), holding a
+  merge while you're elsewhere (`routeMerge`, `onListShown`), scroll anchoring both ways (`scrollPlan`) and the swipe
+  interrupt. Tests are in `dashboard/test/merge_motion_proto.test.js`.
 - `index.html` draws each frame as a pure function of time, so live play, the scrubber and the recording all match.
+  The band's two edges come from one eased trip, so it stays a third of the card wide all the way across.
 - `record.mjs` seeks frame by frame in headless Chrome at 25 fps, and ffmpeg builds one 2×2 GIF and MP4 per scene
-  (dark | dark Reduce Motion / light | light Reduce Motion), plus one GIF per alternative:
-  `node docs/design/merge-animation-757/record.mjs <outDir> [scene …]`.
+  (dark | dark Reduce Motion / light | light Reduce Motion): `node docs/design/merge-animation-757/record.mjs <outDir> [scene …]`.
 
 ## The blue
 
-The sweep uses the website's brand blue `#198fd9` (gileskayo.me `brand.css` `--blue`) with the live site's focus-glow
-halo, `0 0 8px rgba(102, 175, 233, .6)` (`main.css`). The Seal Speak site has no blue glow (its glows are teal,
-`#1F998B` / `#4FB3A9`), so the halo comes from gileskayo.me.
+The fill uses the website's brand blue `#198fd9` (gileskayo.me `brand.css` `--blue`) with the live site's focus-glow
+halo, `0 0 8px rgba(102, 175, 233, .6)` (`main.css`).
 
 ## Light theme
 
