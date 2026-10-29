@@ -1,7 +1,7 @@
 // Records the #757 mock-up: every scene in dark and light, at normal motion and with Reduce Motion, frame-exact.
 // The page renders each frame as a pure function of t, so this seeks t frame by frame (no real-time capture, no
-// dropped frames) and ffmpeg assembles the result: one 2x2 GIF + MP4 per scene (dark/light x normal/reduced), and one
-// single-pane recording per alternative the Decisions ask about.
+// dropped frames) and ffmpeg assembles the result: one 2x2 GIF + MP4 per scene (dark/light x normal/reduced).
+// Round 2 has no alternatives to record: the owner picked one answer for each.
 //
 //   node docs/design/merge-animation-757/record.mjs [outDir] [scene ...]
 //
@@ -23,14 +23,7 @@ const W = 860
 const H = 540
 const out = path.resolve(process.argv[2] || path.join(here, 'media'))
 const only = process.argv.slice(3)
-const ALL = ['single', 'detail', 'arrive', 'split', 'batch', 'revert', 'scrolled', 'away', 'swipe']
-const ALTERNATIVES = [
-  ['batch-sequence', { scene: 'batch', batch: 'sequence' }],
-  ['batch-together', { scene: 'batch', batch: 'together' }],
-  ['split-entry-right', { scene: 'split', splitEntry: 'right' }],
-  ['away-replay-all', { scene: 'away', away: 'replay-all' }],
-  ['swipe-wait', { scene: 'swipe', swipe: 'wait' }]
-]
+const ALL = ['single', 'incoming', 'hold', 'refused', 'detail', 'arrive', 'split', 'queue', 'reverted', 'scrolled', 'away', 'swipe']
 mkdirSync(out, { recursive: true })
 const work = mkdtempSync(path.join(tmpdir(), 'merge-757-'))
 const ff = (...args) => execFileSync('ffmpeg', ['-hide_banner', '-loglevel', 'error', '-y', ...args], { stdio: 'inherit' })
@@ -77,13 +70,6 @@ try {
       '-c:v', 'libx264', '-pix_fmt', 'yuv420p', '-crf', '20', grid)
     gif(grid, path.join(out, `${scene}.gif`), 1200)
     console.log(`${scene}: ${longest.toFixed(1)} s`)
-  }
-  if (!only.length) {
-    for (const [name, o] of ALTERNATIVES) {
-      const [mp4] = await take(name, o)
-      gif(mp4, path.join(out, `${name}.gif`), 860)
-      console.log(`${name}`)
-    }
   }
 } finally {
   await browser.close()
