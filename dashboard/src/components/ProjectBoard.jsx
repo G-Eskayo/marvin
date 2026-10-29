@@ -10,6 +10,7 @@ import Markdown from './Markdown.jsx'
 import IssueBody from './IssueBody.jsx'
 import Related, { useRelated } from './Related.jsx'
 import CompletedView from './CompletedView.jsx'
+import { useScrollPlace } from './ScrollPlaces.jsx'
 import StageStrip from './StageStrip.jsx'
 import { GoalHeader, useGoals } from './ProjectGoals.jsx'
 
@@ -588,6 +589,9 @@ export default function ProjectBoard({ onOpenMr, onOpenDocs, onOpenTicket, nav }
       off()
     }
   }, [repo])
+
+  // Each board keeps its place; a ticket opens at its top and Back returns to the card you clicked (#755).
+  useScrollPlace('activity-board', selected ? `ticket:${repo}#${selected.number}` : `${repo}|${view}`)
 
   if (boards === null && !error) return <div className="p-6 text-neutral-500">Loading…</div>
   if (boards && boards.length === 0) {

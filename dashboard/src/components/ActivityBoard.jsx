@@ -1,4 +1,5 @@
 import { useEffect, useState } from 'react'
+import { useScrollPlace } from './ScrollPlaces.jsx'
 import ProjectBoard from './ProjectBoard.jsx'
 import DashboardHome from './DashboardHome.jsx'
 import ActivityBanner from './ActivityBanner.jsx'
@@ -13,6 +14,7 @@ import ProjectsProgressView from './ProjectGoals.jsx'
 // the autonomous agents' live status is in the Health tab ("Autonomous agents").
 export default function ActivityBoard({ onOpenMr, onOpenDocs, onOpenTicket, onOpenProject, nav }) {
   const [view, setView] = useState('home')
+  useScrollPlace('activity-view', view) // the projects home and the board each keep their place (#755)
 
   useEffect(() => {
     if (nav?.tab === 'activity' && nav.repo) {

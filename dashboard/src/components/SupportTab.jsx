@@ -1,4 +1,5 @@
 import { useEffect, useState } from 'react'
+import { useScrollArea } from './ScrollPlaces.jsx'
 import Markdown from './Markdown.jsx'
 
 // The Support tab (ADR 0073), on both sides of a support link, showing the same conversation:
@@ -313,6 +314,8 @@ export default function SupportTab({ api = window.api.support, triggers = window
   const [expanded, setExpanded] = useState({})
   const [selected, setSelected] = useState(null)
   const [thread, setThread] = useState(null)
+  // The conversation pane opens each request's thread where it was last left, or at its top (#755).
+  const threadPane = useScrollArea('support-thread', selected ? `${selected.repo}#${selected.number}` : '')
   const [draft, setDraft] = useState('')
   const [check, setCheck] = useState('')
   const [busy, setBusy] = useState(false)
@@ -398,7 +401,7 @@ export default function SupportTab({ api = window.api.support, triggers = window
           <p className="px-3 text-xs text-amber-400">Couldn’t reach {errors.map(([repo]) => repo).join(', ')}. Showing the last saved state.</p>
         )}
       </div>
-      <div className="overflow-auto">
+      <div ref={threadPane.ref} className="overflow-auto">
         {!selected && <p className="text-sm text-neutral-500">Pick a request to see the conversation.</p>}
         {selected && !thread && !message && <p className="text-sm text-neutral-500">Loading the conversation…</p>}
         {selected && !thread && message && <p className="text-sm text-red-400">{message.text}</p>}
