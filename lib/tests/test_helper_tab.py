@@ -163,3 +163,56 @@ def test_install_refuses_a_config_it_cannot_place_safely(tmp_path):
     with pytest.raises(ValueError):
         ht.install_wezterm(cfg, tmp_path / "helper_tabs.lua")
     assert cfg.read_text() == "return { font_size = 14 }\n"
+
+
+# ── disk (marvin#765): check space before a helper starts, tidy its downloads when it ends ───────────────────
+
+def test_launch_refuses_before_opening_a_tab_when_the_disk_is_too_full(monkeypatch, capsys):
+    import disk_triggers
+    seen = []
+    monkeypatch.setattr(disk_triggers, "preflight",
+                        lambda what, **k: seen.append(what) or {"ok": False, "message": f"Not starting {what}: 2.0 GB free"})
+    monkeypatch.setattr(ht, "_list_panes", lambda: pytest.fail("no tab may open on a full disk"))
+    monkeypatch.setenv("HELPER_TAB_QUIET", "1")
+    monkeypatch.delenv("HELPER_TAB_SKIP_DISK_CHECK", raising=False)
+    assert ht.launch("Seal Speak", "#60 split", ["true"], "/tmp") == ht.DISK_REFUSED_RC
+    assert seen == ["helper Seal Speak: #60 split"]
+    assert "Not starting helper Seal Speak: #60 split" in capsys.readouterr().err
+
+
+def test_launch_goes_ahead_when_the_preflight_passes(monkeypatch):
+    import disk_triggers
+    monkeypatch.setattr(disk_triggers, "preflight", lambda what, **k: {"ok": True, "message": ""})
+    monkeypatch.delenv("HELPER_TAB_SKIP_DISK_CHECK", raising=False)
+    opened = []
+    monkeypatch.setattr(ht, "_list_panes", lambda: opened.append(1) or [pane(1, 1, 1)])
+    monkeypatch.setattr(ht.subprocess, "run", lambda *a, **k: subprocess.CompletedProcess(a, 0, stdout="9\n"))
+    assert ht.launch("G", "w", ["true"], "/tmp") == 0
+    assert opened
+
+
+def test_the_disk_check_can_be_skipped_on_purpose(monkeypatch):
+    import disk_triggers
+    monkeypatch.setattr(disk_triggers, "preflight", lambda *a, **k: pytest.fail("skipped on purpose"))
+    monkeypatch.setenv("HELPER_TAB_SKIP_DISK_CHECK", "1")
+    monkeypatch.setattr(ht, "_list_panes", lambda: [pane(1, 1, 1)])
+    monkeypatch.setattr(ht.subprocess, "run", lambda *a, **k: subprocess.CompletedProcess(a, 0, stdout="9\n"))
+    assert ht.launch("G", "w", ["true"], "/tmp") == 0
+
+
+def test_the_helper_is_told_where_the_download_cache_is(tmp_path):
+    out = _run_wrapper(tmp_path, ["sh", "-c", 'printf "%s" "$MARVIN_DOWNLOAD_CACHE"'])
+    assert out.stdout.startswith(str(tmp_path / ".cache" / "marvin-downloads"))
+
+
+def test_the_helpers_exit_enforces_the_download_cap_without_changing_its_exit_code(monkeypatch, tmp_path):
+    import download_cache
+    calls = []
+    monkeypatch.setattr(download_cache, "enforce_cap", lambda **k: calls.append(1) or {"removed": [], "freed_bytes": 0})
+    monkeypatch.setenv("HELPER_TAB_QUIET", "1")
+    monkeypatch.setenv("HELPER_TAB_JOBS_DIR", str(tmp_path / "jobs"))
+    monkeypatch.delenv("WEZTERM_PANE", raising=False)
+    assert ht.run_helper("G", "w", ["sh", "-c", "exit 4"]) == 4
+    assert calls == [1]
+    monkeypatch.setattr(download_cache, "enforce_cap", lambda **k: 1 / 0)
+    assert ht.run_helper("G", "w", ["true"]) == 0   # a broken trim never changes the helper's result

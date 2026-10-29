@@ -374,12 +374,21 @@ FIRST_AID: dict[str, tuple[Callable[[], dict], str]] = {
     # Run by the merge gate's disk check and by the health check's low-disk result.
     "disk-clear-rebuildable": (lambda: _disk_clear_rebuildable(),
                                "remove old aerial videos (keep the newest) and disk_trim's rebuildable caches"),
+    # marvin#765: run on every Mac by the merge server after each merge (disk_triggers.py after-merge).
+    "disk-clean-merged-worktrees": (lambda: _disk_clean_merged_worktrees(),
+                                    "remove merged PRs' worktrees (none with uncommitted work or a process inside) "
+                                    "and their Xcode build products"),
 }
 
 
 def _disk_clear_rebuildable() -> dict:
     import cleanup_sweep
     return cleanup_sweep.clear_rebuildable()
+
+
+def _disk_clean_merged_worktrees() -> dict:
+    import disk_triggers
+    return disk_triggers.merged_worktrees_step()
 
 
 def first_aid_here(name: str) -> dict:

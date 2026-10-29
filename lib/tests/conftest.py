@@ -300,3 +300,13 @@ def _isolate_history_store(tmp_path_factory, monkeypatch):
     d = tmp_path_factory.mktemp("history-store")
     monkeypatch.setattr(history_store, "DB_PATH", d / "var" / "marvin.db")
     monkeypatch.setattr(history_store, "OLD_DB_PATH", d / "claude" / "history.db")
+
+
+@pytest.fixture(autouse=True)
+def _isolate_disk_triggers(tmp_path_factory, monkeypatch):
+    # marvin#765: the trigger log and the download cache are real files under ~/.claude and ~/.cache; never from a test.
+    import disk_triggers
+    import download_cache
+    d = tmp_path_factory.mktemp("disk-triggers")
+    monkeypatch.setattr(disk_triggers, "LOG_PATH", d / "disk-triggers.jsonl")
+    monkeypatch.setattr(download_cache, "CACHE_DIR", d / "marvin-downloads")

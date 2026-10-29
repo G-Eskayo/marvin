@@ -79,17 +79,24 @@ def wrapper_script(command: list[str], group: str, title: str, on_exit: str | No
 
 def run_helper(group: str, title: str, command: list[str], on_exit: str | None = None) -> int:
     """Run the command in this tab, then fire everything its exit triggers. The recording steps are best-effort:
-    none of them may change the helper's own exit code."""
+    none of them may change the helper's own exit code. The helper is told where downloads go
+    ($MARVIN_DOWNLOAD_CACHE), and its exit puts that cache back under its cap (marvin#765)."""
     sys.path.insert(0, str(HERE.parent))
+    import download_cache
     import job_events
     jobs_dir = Path(os.environ["HELPER_TAB_JOBS_DIR"]) if os.environ.get("HELPER_TAB_JOBS_DIR") else None
     rc = 1
     try:
+        env = {**os.environ, "MARVIN_DOWNLOAD_CACHE": str(download_cache.cache_dir())}
         with job_events.job_run(job_name(group, title), f"{group}: {title}", jobs_dir) as run:
-            rc = subprocess.run(command).returncode
+            rc = subprocess.run(command, env=env).returncode
             if rc:
                 run.fail(f"exited with status {rc}")
     except Exception:  # noqa: BLE001 -- job_run re-raises nothing we need; the exit code is what matters
+        pass
+    try:
+        download_cache.enforce_cap()
+    except Exception:  # noqa: BLE001 -- tidying must never change the helper's result
         pass
     state = "done" if rc == 0 else "failed"
     pane = os.environ.get("WEZTERM_PANE")
@@ -111,8 +118,32 @@ def _list_panes() -> list[dict] | None:
     return json.loads(r.stdout) if r.returncode == 0 and r.stdout.strip() else None
 
 
+DISK_REFUSED_RC = 2
+
+
+def disk_ok(group: str, title: str) -> bool:
+    """marvin#765: check free space before a helper starts (lanes start each line through here too). Below the merge
+    gate's floor the reclaim runs first; still too low, the helper is refused in plain words, on stderr and as a
+    notification (a lane's next line starts from the previous helper's exit, with nobody watching).
+    HELPER_TAB_SKIP_DISK_CHECK=1 skips it on purpose."""
+    if os.environ.get("HELPER_TAB_SKIP_DISK_CHECK") == "1":
+        return True
+    sys.path.insert(0, str(HERE.parent))
+    import disk_triggers
+    r = disk_triggers.preflight(f"helper {group}: {title}")
+    if r["ok"]:
+        return True
+    print(f"helper-tab: {r['message']}", file=sys.stderr)
+    if not os.environ.get("HELPER_TAB_QUIET"):
+        import notify
+        notify.notify(f"{group}: not started, disk nearly full", title)
+    return False
+
+
 def launch(group: str, title: str, command: list[str], cwd: str, on_exit: str | None = None) -> int:
     running = tab_title(group, title, "running")  # validates before anything opens
+    if not disk_ok(group, title):
+        return DISK_REFUSED_RC
     argv = ["zsh", "-lc", wrapper_script(command, group, title, on_exit)]
     panes = _list_panes()
     window = pick_window(panes or [])

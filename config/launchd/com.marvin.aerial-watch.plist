@@ -1,0 +1,43 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!-- marvin#765 item 1, one of the owner's two options: trim macOS's aerial wallpaper videos the moment the folder grows
+     (keep the newest), instead of once a day. It does nothing while config/disk_triggers.json "aerial_watch_trim" is
+     false, which it stays until the owner answers the Decision on the PR. Not installed anywhere yet (job_catalog says
+     "none"). To install on a Mac: cp this to ~/Library/LaunchAgents/ and `launchctl bootstrap gui/$(id -u) <that file>`.
+     Log: ~/.claude/logs/disk-triggers.jsonl. -->
+<plist version="1.0">
+<dict>
+    <key>Label</key>
+    <string>com.marvin.aerial-watch</string>
+    <key>ProgramArguments</key>
+    <array>
+        <string>/Users/gileskayo/.agents/venv/bin/python</string>
+        <string>/Users/gileskayo/.agents/lib/disk_triggers.py</string>
+        <string>aerial-watch</string>
+    </array>
+    <key>WatchPaths</key>
+    <array>
+        <string>/Users/gileskayo/Library/Application Support/com.apple.wallpaper/aerials/videos</string>
+    </array>
+    <!-- a video arrives as many writes: run at most once a minute -->
+    <key>ThrottleInterval</key>
+    <integer>60</integer>
+    <key>EnvironmentVariables</key>
+    <dict>
+        <key>HOME</key>
+        <string>/Users/gileskayo</string>
+        <key>PATH</key>
+        <string>/Users/gileskayo/.local/bin:/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/Users/gileskayo/.agents/venv/bin</string>
+    </dict>
+    <key>ProcessType</key>
+    <string>Background</string>
+    <key>LowPriorityIO</key>
+    <true/>
+    <key>Nice</key>
+    <integer>10</integer>
+    <key>StandardOutPath</key>
+    <string>/Users/gileskayo/.claude/logs/aerial-watch.log</string>
+    <key>StandardErrorPath</key>
+    <string>/Users/gileskayo/.claude/logs/aerial-watch-error.log</string>
+</dict>
+</plist>
