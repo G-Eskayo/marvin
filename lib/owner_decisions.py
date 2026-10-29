@@ -7,10 +7,10 @@ has answered sits there, and the wrap-up still listed it under "Needs Gil".
 
 A PR is **waiting on MARVIN** when its latest owner Decisions comment (authored by the repo owner's account; the
 dashboard posts as Gil) has not been followed by
-  - a commit on the PR (committed after the comment), or
   - an owner-account reply carrying ADDRESSED_MARKER (agents post as the same account, so a plain later comment
     proves nothing: the 06:15 "Owner idea" note on #577 was not an answer), or
   - a completed follow-up ticket for that same comment.
+A commit alone no longer counts (marvin #733): it tells the owner nothing, so the follow-up asks for the reply.
 Once it has waited GRACE_HOURS (default 4; MARVIN_DECISIONS_GRACE_HOURS overrides), the hourly ticket scan files ONE
 follow-up ticket "Act on owner decisions on PR #N" (ready-for-agent, label owner-decisions), so the existing
 dispatch machinery acts on it. The follow-up is closed again when the PR is addressed or closes. The dashboard's
@@ -151,10 +151,11 @@ def pr_status(pr: dict, now: datetime, grace: float, completed_comments: set[int
         return None
     since = _ts(latest["createdAt"])
     last_commit = _ts(pr.get("last_commit_at"))
+    # A commit alone tells the owner nothing (marvin #733: on clarity-captions #155 he couldn't tell whether the
+    # screenshots were redone), so only a marked reply or a completed follow-up counts; the commit is noted for the ask.
+    committed_since = bool(last_commit and last_commit > since)
     by = None
-    if last_commit and last_commit > since:
-        by = "commit"
-    elif any(_login(c) == owner and ADDRESSED_MARKER in (c.get("body") or "") and _ts(c["createdAt"]) > since
+    if any(_login(c) == owner and ADDRESSED_MARKER in (c.get("body") or "") and _ts(c["createdAt"]) > since
              for c in comments):
         by = "reply"
     elif latest.get("databaseId") in completed_comments:
@@ -164,6 +165,7 @@ def pr_status(pr: dict, now: datetime, grace: float, completed_comments: set[int
             "branch": pr.get("headRefName") or "", "comment_id": latest.get("databaseId"),
             "comment_url": latest.get("url") or "", "since": latest["createdAt"], "question": parsed["question"],
             "malformed": parsed["malformed"], "texts": parsed["texts"], "addressed_by": by, "age_hours": age,
+            "committed_since": committed_since,
             "overdue": by is None and age >= grace}
 
 
@@ -250,23 +252,29 @@ def followup_title(number: int) -> str:
 def followup_body(s: dict) -> str:
     quoted = "\n".join(f"> {line}" for t in s["texts"] for line in str(t).strip().splitlines()) or "> (no notes)"
     ask = ("**The owner asked a question.** Answer it on the PR. " if s["question"] else "")
+    state = ("The PR already has commits since then, but no reply says what they changed, so the owner can't tell. "
+             "Check whether they carry out every choice, finish what they don't, and post the reply."
+             if s.get("committed_since") else "Nothing has acted on them: no commit and no reply.")
     return f"""<!-- marvin:owner-decisions pr={s['number']} comment={s['comment_id']} since={s['since']} question={'yes' if s['question'] else 'no'} -->
 ## What to build
 
-The owner submitted Decisions on PR #{s['number']} {s['title']} ({s['url']}) at {s['since']}, and nothing has acted on
-them for {s['age_hours']:.0f} hours: no commit on the PR and no reply. {ask}Record: {s['comment_url']}
+The owner submitted Decisions on PR #{s['number']} {s['title']} ({s['url']}) at {s['since']}, {s['age_hours']:.0f} hours
+ago. {state} {ask}Record: {s['comment_url']}
 
 {quoted}
 
 Read the whole Decisions comment and the PR. Carry out the chosen options on the PR's branch (`{s['branch']}`) where you
 can; if the work belongs in a new PR, link PR #{s['number']} from it. Answer every question the owner asked in a PR
-comment that contains `{ADDRESSED_MARKER}`. If the answer needs the owner to choose again, give him a Decisions section
-(docs/agents/decisions-format.md), never a question in prose.
+comment that contains `{ADDRESSED_MARKER}`. The reply says what changed (with the commit), and whether the screenshots
+were retaken and pinned to that commit, or why not (for example "the look didn't change, so the images stand"). If the
+answer needs the owner to choose again, give him a Decisions section (docs/agents/decisions-format.md), never a question
+in prose.
 
 ## Acceptance criteria
 
 - [ ] Every chosen option is carried out or, if it can't be, the reply says why.
 - [ ] Every owner question is answered in a reply on PR #{s['number']} carrying the addressed marker.
+- [ ] The reply says what changed and whether the screenshots were retaken and pinned to the new commit, or why not.
 
 ## How we'll try to break it
 
@@ -349,7 +357,7 @@ def sync(repos, now: datetime | None = None, run=subprocess.run, dry_run: bool =
             filed.append({"repo": s["repo"], "pr": s["number"], "result": _file(s, run, dry_run)})
     for (repo, pr), items in open_fu.items():
         s = by_pr.get((repo, pr))
-        if s and s["addressed_by"] in ("commit", "reply"):
+        if s and s["addressed_by"] == "reply":
             why = f"PR #{pr} was addressed (a {s['addressed_by']} after the decisions)."
         elif (repo, pr) not in open_prs and data["complete"]:
             why = f"PR #{pr} is no longer open."

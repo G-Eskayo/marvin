@@ -166,10 +166,13 @@ describe('waitingOn: an older PR stuck on its own blocker does not hold up the n
 
 describe('prsForOrderCheck marks PRs stuck on their own, so the Approve click agrees with the card', () => {
   const ui = (n, files, body = 'no pictures', extra = {}) => ({ ...pr(n, files), body, ...extra })
-  it('a UI change without images is blocked; with an image it is not', async () => {
-    const [a, b] = await prsForOrderCheck([ui(1, ['dashboard/src/components/X.jsx']), ui(2, ['dashboard/src/components/X.jsx'], '![s](https://x/y.png)')], async () => new Set())
+  it('a UI change without images, or with images not pinned to a commit (#733), is blocked; pinned images are not', async () => {
+    const pinned = '![s](https://raw.githubusercontent.com/G-Eskayo/marvin/' + 'a'.repeat(40) + '/y.png)'
+    const [a, b, c] = await prsForOrderCheck([ui(1, ['dashboard/src/components/X.jsx']), ui(2, ['dashboard/src/components/X.jsx'], pinned),
+      ui(3, ['dashboard/src/components/X.jsx'], '![s](https://x/y.png)')], async () => new Set())
     expect(a.blocked).toMatch(/images/)
     expect(b.blocked).toBeNull()
+    expect(c.blocked).toMatch(/images/)
   })
   it('failing checks, a vague ask and open decisions block; pending checks do not', async () => {
     const failing = ui(1, ['lib/a.py'], 'x', { statusCheckRollup: [{ name: 't', status: 'COMPLETED', conclusion: 'FAILURE' }] })

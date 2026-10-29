@@ -1,7 +1,7 @@
 import { MARVIN_REPO, prKey, canMergeFromDashboard, repoFromPrUrl } from './mr_repos.js'
 import { waitingOn, baseProblem } from './pr_order.js'
 import { ciState, checkRuns } from '../../webhook-server/ci_status.js'
-import { uiFiles, hasImage } from '../../webhook-server/ui_evidence.js'
+import { uiFiles, hasImage, unpinnedImages } from '../../webhook-server/ui_evidence.js'
 import { parsePrImages } from './pr_images.js'
 import { summarizeDecisions, vagueness } from '../../webhook-server/decisions.js'
 
@@ -256,14 +256,18 @@ export async function prsForOrderCheck(prs, sentBackTickets, uiPathsFor = () => 
   return markBlocked(markSentBack(prs, keys), uiPathsFor)
 }
 
-// A UI change whose description shows no image (marvin #374): {files} for the card, or null. Only judged when the list
+// A UI change whose description shows no image (marvin #374), or only unpinned ones (#733): {files, unpinned?} for the card, or null. Only judged when the list
 // carried the PR's files (the light list for the status dot doesn't), so a missing field never flags a PR.
 function needsImages(pr, uiPathsFor) {
   if (!Array.isArray(pr.files)) return null
   let own = []
   try { own = uiPathsFor(pr.repo || MARVIN_REPO) || [] } catch { own = [] }
   const files = uiFiles(pr.files.map((f) => f?.path), own)
-  return files.length && !hasImage(pr.body || '') ? { files } : null
+  if (!files.length) return null
+  if (!hasImage(pr.body || '')) return { files }
+  // Images linked by branch name may be old copies (marvin #733). Staleness needs GitHub calls, so only the gate checks it.
+  const unpinned = unpinnedImages(pr.body || '')
+  return unpinned.length ? { files, unpinned } : null
 }
 
 export async function listPipelinePrs(listOpenPrs, { canMerge = canMergeFromDashboard, sentBackTickets = null, reworkStatus = null, rebaseStatus = null, closedTickets = null, autoMergeShadow = null, uiPathsFor = () => [] } = {}) {
