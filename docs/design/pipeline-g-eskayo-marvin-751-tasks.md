@@ -1,0 +1,11 @@
+1. Fetch PR #738's current head and comments one more time immediately before writing (re-read-before-acting check, item 2 above); confirm nothing changed since this plan was drafted.
+2. On a worktree of `feat/737-review-feedback-variations`, edit `docs/design/737-review-variations.md`:
+   - Update the `Status:` line to note the design is paused and folded into #737, decisions recorded for later.
+   - Refine §2 "Where the list lives" with the owner's `store` note (collapsible, don't clutter the PR).
+   - Refine §3 "The mock-up" layout description per the owner's `layout` note: side-by-side only for directly-related images; otherwise collapsed at the bottom; current round stays first/foremost.
+   - Add a new §4 "Redesigning the PR/MR card and board" answering `changes`, naming the real components it would touch (`dashboard/src/components/MrReview.jsx`'s `PrCard`/`OpenPrs`, `MrDetail.jsx`'s `Section`/`PrImages`, the `ReviewCard` collapse pattern from `SafetyReviews.jsx`) and the three open tradeoffs as Decisions (see above) — design only, no code.
+3. Commit that doc-only change on the PR branch (satisfies "carried out where you can"; also registers as the "commit after the decisions comment" signal `owner_decisions.py` checks for) and push without force.
+4. Append the fresh `## Decisions` section (card-density / board-ownership / variations-scope) to PR #738's body, replacing the now-answered section, per `docs/agents/decisions-format.md`.
+5. Post the reply comment on PR #738 containing `<!-- marvin:decisions-addressed -->` that: states plainly why none of the five original chosen options are being built now (paused per the owner's own comment + issue #737's reframe); answers `changes` concretely (summary + link to new §4); surfaces the restated `trigger` note ambiguity and names which reading today's design already satisfies; points to the new Decisions section for the three new open questions.
+6. Verify via `lib/owner_decisions.py waiting` (or equivalent `pr_status` check) that PR #738 no longer shows as waiting on MARVIN.
+7. Leave issue #751 to close itself per its own "closes itself once PR #738 is addressed or closed" footer (`owner_decisions.sync`) — do not manually close it.
