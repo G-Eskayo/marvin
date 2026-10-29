@@ -11,6 +11,8 @@ import { spawn, execFileSync } from 'node:child_process'
 import { createServer } from 'node:http'
 import path from 'node:path'
 import fs from 'node:fs'
+import os from 'node:os'
+import { MARVIN_REPO } from '../electron/main/mr_repos.js'
 import { captureLaunchEnv } from '../src/lib/screenshot_capture.js'
 import { freePort } from '../src/lib/cdp_capture.js'
 import { approveResponder, wantsStream } from '../webhook-server/merge_progress.js'
@@ -18,7 +20,7 @@ import { approveResponder, wantsStream } from '../webhook-server/merge_progress.
 const APP = path.resolve(import.meta.dirname, '..')
 const [OUT] = process.argv.slice(2)
 const HOME = process.env.HOME
-if (!OUT || !HOME || HOME === '/Users/gileskayo' || !HOME.includes('sandbox')) {
+if (!OUT || !HOME || HOME === os.userInfo().homedir || !HOME.includes('sandbox')) {
   console.error('usage: HOME=<a sandbox dir, path containing "sandbox"> node merge_failover_evidence.mjs <out-dir>')
   process.exit(1)
 }
@@ -35,8 +37,8 @@ fs.writeFileSync(path.join(HOME, '.claude', 'marvin-network.json'), JSON.stringi
 // ---- the PR list ----
 const TITLES = { 701: 'Health: flag a backup that has not run for a day', 702: 'Docs: search finds words inside PDF files' }
 const prs = Object.entries(TITLES).map(([n, title]) => ({
-  repo: 'G-Eskayo/marvin', number: Number(n), title, url: `https://github.com/G-Eskayo/marvin/pull/${n}`,
-  body: `Closes #${Number(n) - 100}\n\nSmall change.`, files: [{ path: `lib/change_${n}.py` }], baseRefName: 'main', headRefName: `pipeline/g-eskayo/marvin#${Number(n) - 100}`,
+  repo: MARVIN_REPO, number: Number(n), title, url: `https://github.com/${MARVIN_REPO}/pull/${n}`,
+  body: `Closes #${Number(n) - 100}\n\nSmall change.`, files: [{ path: `lib/change_${n}.py` }], baseRefName: 'main', headRefName: `pipeline/${MARVIN_REPO.toLowerCase()}#${Number(n) - 100}`,
   headRefOid: String(n).padStart(40, '0'), mergeable: 'MERGEABLE',
   statusCheckRollup: [{ __typename: 'CheckRun', name: 'Dashboard unit tests', workflowName: 'CI', status: 'COMPLETED', conclusion: 'SUCCESS', startedAt: new Date(Date.now() - 600_000).toISOString(), completedAt: new Date(Date.now() - 480_000).toISOString() }]
 }))
