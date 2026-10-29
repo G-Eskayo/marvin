@@ -24,6 +24,7 @@ const __dirname = path.dirname(fileURLToPath(import.meta.url))
 const REPO_PATH = path.resolve(__dirname, '..', '..')
 const REBUILD_SCRIPT = path.resolve(__dirname, '..', 'scripts', 'rebuild_and_install.sh')
 const TICKET_PIPELINE_SCRIPT = path.resolve(__dirname, '..', '..', 'lib', 'ticket_pipeline.py')
+const DISK_TRIGGERS_SCRIPT = path.resolve(__dirname, '..', '..', 'lib', 'disk_triggers.py')
 const VENV_PYTHON = path.resolve(__dirname, '..', '..', 'venv', 'bin', 'python')
 const PROFILE_SCRIPT = path.resolve(__dirname, '..', '..', 'lib', 'project_profile.py')
 const GENERATED_SCRIPT = path.resolve(__dirname, '..', '..', 'lib', 'generated_paths.py')
@@ -580,7 +581,7 @@ async function mergePrUnqueued(
   prUrl,
   exec = execWithGroupTimeout,
   rebuild = triggerRebuildIfDashboardChanged,
-  redispatch = triggerTicketPipeline,
+  redispatch = triggerAfterMerge,
   shouldGateMerge = _defaultShouldGateMerge,
   rebaseAndRetestFn = rebaseAndRetest,
   reengage = sendFeedback,
@@ -831,4 +832,19 @@ export async function triggerRebuildIfDashboardChanged(prUrl, exec = execFileAsy
 // touched, it's about a machine having freed up.
 export function triggerTicketPipeline(spawnFn = spawn) {
   spawnFn(VENV_PYTHON, [TICKET_PIPELINE_SCRIPT], { detached: true, stdio: 'ignore' }).unref()
+}
+
+// marvin#765: a merge is also when the space its work used can come back. Every Mac removes the worktrees of merged
+// PRs (wherever they are, ~/Developer/<repo>-<n> included) and their Xcode build products; anything with uncommitted
+// work, a process inside, or commits the PR lacks is kept (lib/disk_triggers.py). Fire-and-forget, like the scan.
+export function triggerDiskCleanup(spawnFn = spawn) {
+  spawnFn(VENV_PYTHON, [DISK_TRIGGERS_SCRIPT, 'after-merge'], { detached: true, stdio: 'ignore' }).unref()
+}
+
+// What a merge starts once the other open PRs are checked: the pipeline scan and the disk cleanup. Each is started on
+// its own, so one failing to spawn never stops the other.
+export function triggerAfterMerge(spawnFn = spawn) {
+  for (const start of [triggerTicketPipeline, triggerDiskCleanup]) {
+    try { start(spawnFn) } catch (e) { console.error(`[post-merge] ${start.name}: ${String(e?.message || e).slice(0, 200)}`) }
+  }
 }
