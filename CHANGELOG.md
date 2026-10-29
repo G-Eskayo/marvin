@@ -1,5 +1,7 @@
 # Changelog
 
+- helper-tab: start helpers in labelled, grouped WezTerm tabs (not Terminal) ([#754](https://github.com/G-Eskayo/marvin/pull/754))
+
 - Merge gate on a nearly full disk: name the cause instead of GATE_INFRA ([#745](https://github.com/G-Eskayo/marvin/pull/745))
 
 - calibrate() returns lowest labeled score instead of risk-controlled max, and tau never recalculates after new labels ([#703](https://github.com/G-Eskayo/marvin/pull/703))
