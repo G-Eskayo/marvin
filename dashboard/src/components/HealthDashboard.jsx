@@ -1,4 +1,5 @@
 import { useEffect, useState } from 'react'
+import { useScrollPlace, useScrollAreaControl } from './ScrollPlaces.jsx'
 import HealthDrilldown from './HealthDrilldown.jsx'
 import AgentsPanel from './AgentsPanel.jsx'
 import ProjectReadinessPanel from './ProjectReadinessPanel.jsx'
@@ -149,6 +150,9 @@ export default function HealthDashboard({ nav }) {
   const [refreshing, setRefreshing] = useState(false)
   const [view, setView] = useState('checks')
   const [focus, setFocus] = useState(null) // { id, at }: the check to scroll to and flash once (#433)
+  // Each view (checks, agents…) keeps its place; a check opens at its top and Back returns to it (#755).
+  useScrollPlace('health-view', selected ? `check:${selected.id}` : view)
+  const scrollArea = useScrollAreaControl()
   // A click on the header's working indicator lands on the agents list.
   useEffect(() => {
     if (nav?.tab === 'health' && nav.view) setView(nav.view)
@@ -160,6 +164,7 @@ export default function HealthDashboard({ nav }) {
     if (!focus || !status || view !== 'checks') return
     const card = document.querySelector(`[data-check-id="${CSS.escape(focus.id)}"]`)
     if (card) {
+      scrollArea?.cancelRestore()
       card.scrollIntoView({ block: 'center', behavior: 'smooth' })
       card.animate([{ boxShadow: '0 0 0 2px #ff6a1f, 0 0 22px #ff6a1f99' }, { boxShadow: '0 0 0 2px #ff6a1f, 0 0 22px #ff6a1f99', offset: 0.35 }, { boxShadow: '0 0 0 0 transparent' }], { duration: 1600, easing: 'ease-out' })
     }

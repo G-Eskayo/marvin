@@ -27,6 +27,7 @@ export const ALLOWLIST = {
   'src/components/ProjectBoard.jsx': { interval: [1, 'the 60 s backstop + coverage guard CONTEXT.md names (trigger-misses.jsonl)'] },
   'src/components/ResourcesPanel.jsx': { interval: [1, 'resource samples from the 30 s collector files; no trigger exists, no GitHub'] },
   'src/components/TicketAgentsPanel.jsx': { interval: [1, 'backstop 60 s over local ticket-agent state files; no network'] },
+  'src/lib/scroll_places.js': { ttl: [1, 'cutoff on a scroll restore driven by ResizeObserver events (3 s), so a late refresh never moves the page; no timer'] },
   'src/lib/cdp_capture.js': { 'timeout-loop': [3, 'bounded wait for a local Electron CDP port/window to appear; no event exists'] },
   // Main process.
   'electron/main/boards.js': { ttl: [2, 'cache bounds: cross-project 30 min safety net cleared by change pings (#318); evidence 5 min'] },

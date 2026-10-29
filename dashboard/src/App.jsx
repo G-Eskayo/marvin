@@ -13,6 +13,7 @@ import ActivityHover from '@components/ActivityHover.jsx'
 import SupportTab from '@components/SupportTab.jsx'
 import ItButton from '@components/ItButton.jsx'
 import { visibleTabs } from './lib/tabs.js'
+import { ScrollArea, useScrollArea } from '@components/ScrollPlaces.jsx'
 
 
 const DOT_COLOR = {
@@ -52,6 +53,8 @@ export default function App() {
   const [reviewStatus, setReviewStatus] = useState(null)
   const [healthOverall, setHealthOverall] = useState(null)
   const [support, setSupport] = useState({ role: null, badge: 0 })
+  // Each tab, and each list or item inside it, opens where it was last left, or at its top (#755).
+  const main = useScrollArea('main', activeTab)
 
   // Support link (ADR 0073): the role decides the tab or the IT button; the count comes from the saved cache and
   // refreshes when support.py rewrites it.
@@ -150,22 +153,24 @@ export default function App() {
           </ActivityHover>
         </div>
       </header>
-      <main className="flex-1 overflow-auto">
-        {activeTab === 'metrics' ? (
-          <MetricsPage />
-        ) : activeTab === 'mr-review' ? (
-          <MrReview nav={nav} onOpenDocs={(projectId, path) => navigate('docs', { projectId, path })} onOpenBoard={(repo) => navigate('activity', { repo })} onOpenTicket={(repo, number) => navigate('activity', { repo, ticketNumber: number })} />
-        ) : activeTab === 'health' ? (
-          <HealthDashboard nav={nav} />
-        ) : activeTab === 'docs' ? (
-          <DocsExplorer nav={nav} onOpenBoard={(repo) => navigate('activity', { repo })} onOpenTicket={(repo, number) => navigate('activity', { repo, ticketNumber: number })} onOpenPr={(repo, number) => navigate('mr-review', { prKey: `${repo}#${number}` })} />
-        ) : activeTab === 'support' ? (
-          <SupportTab nav={nav} />
-        ) : activeTab === 'portfolio' ? (
-          <PortfolioHubGate />
-        ) : (
-          <ActivityBoard nav={nav} onOpenMr={(prKey) => navigate('mr-review', { prKey })} onOpenDocs={(projectId, path) => navigate('docs', { projectId, path })} onOpenTicket={(repo, number) => navigate('activity', { repo, ticketNumber: number })} onOpenProject={(repo) => navigate('activity', { repo })} />
-        )}
+      <main ref={main.ref} className="flex-1 overflow-auto">
+        <ScrollArea value={main.area}>
+          {activeTab === 'metrics' ? (
+            <MetricsPage />
+          ) : activeTab === 'mr-review' ? (
+            <MrReview nav={nav} onOpenDocs={(projectId, path) => navigate('docs', { projectId, path })} onOpenBoard={(repo) => navigate('activity', { repo })} onOpenTicket={(repo, number) => navigate('activity', { repo, ticketNumber: number })} />
+          ) : activeTab === 'health' ? (
+            <HealthDashboard nav={nav} />
+          ) : activeTab === 'docs' ? (
+            <DocsExplorer nav={nav} onOpenBoard={(repo) => navigate('activity', { repo })} onOpenTicket={(repo, number) => navigate('activity', { repo, ticketNumber: number })} onOpenPr={(repo, number) => navigate('mr-review', { prKey: `${repo}#${number}` })} />
+          ) : activeTab === 'support' ? (
+            <SupportTab nav={nav} />
+          ) : activeTab === 'portfolio' ? (
+            <PortfolioHubGate />
+          ) : (
+            <ActivityBoard nav={nav} onOpenMr={(prKey) => navigate('mr-review', { prKey })} onOpenDocs={(projectId, path) => navigate('docs', { projectId, path })} onOpenTicket={(repo, number) => navigate('activity', { repo, ticketNumber: number })} onOpenProject={(repo) => navigate('activity', { repo })} />
+          )}
+        </ScrollArea>
       </main>
     </div>
   )

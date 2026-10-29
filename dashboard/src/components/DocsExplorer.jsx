@@ -1,5 +1,6 @@
 import { memo, useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import FileView from './FileView.jsx'
+import { useScrollArea } from './ScrollPlaces.jsx'
 import Related, { useRelated } from './Related.jsx'
 import { extractOutline } from '../lib/docs_text.js'
 import { isNotebookPath, notebookToMarkdown } from '../lib/ipynb.js'
@@ -720,6 +721,9 @@ export default function DocsExplorer({ nav, onOpenBoard, onOpenTicket, onOpenPr 
   // The board line shows where the project's tickets stand, on the overview and the Deliverables grid.
   const selectedProject = cache.repos.find((r) => r.id === selectedRepo)
   const view = mainView({ chips, selection: sel, searching: showResults })
+  // The reading pane opens each doc, file, folder or result list where it was last left, or at its top (#755); before,
+  // a doc opened at the last one's offset, often its bottom.
+  const pane = useScrollArea('docs', showResults ? `results:${query}` : `${selectedRepo}|${view}|${sel?.type || ''}:${sel?.path || ''}`)
   const projectLevel = view === 'overview' || view === 'grid'
   useEffect(() => {
     setBoardSummary(null)
@@ -753,6 +757,7 @@ export default function DocsExplorer({ nav, onOpenBoard, onOpenTicket, onOpenPr 
 
   function jumpToHeading(index) {
     const el = scrollRef.current?.querySelectorAll(HEADING_SELECTOR)[index]
+    pane.area.cancelRestore()
     el?.scrollIntoView({ block: 'start', behavior: 'smooth' })
   }
 
@@ -1070,7 +1075,7 @@ export default function DocsExplorer({ nav, onOpenBoard, onOpenTicket, onOpenPr 
             </div>
           </div>
         )}
-        <div className="flex-1 overflow-auto">
+        <div ref={pane.ref} className="flex-1 overflow-auto">
           {!showResults && source && selectedRepo && (
             <p className="flex items-center gap-1 border-b border-neutral-900 px-6 py-1 text-[11px] text-neutral-600">
               {sourceText()}

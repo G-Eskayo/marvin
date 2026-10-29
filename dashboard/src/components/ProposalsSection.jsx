@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useState } from 'react'
+import { useScrollArea } from './ScrollPlaces.jsx'
 import { SNOOZE_OPTIONS, defaultBackup, doneMessage, prettyDate, untilArgs } from '../lib/proposals_view.js'
 
 // MR Review → Proposals (#102, ADR 0068): big north-star ideas, written for a lay reader, each one actionable.
@@ -223,6 +224,8 @@ function DoneRow({ item }) {
 }
 
 export function ProposalsView({ state, api, onDone, onRetry, done = [] }) {
+  // The list scrolls in its own box: switching to Open or Merged and back returns to the same proposal (#755).
+  const box = useScrollArea('proposals')
   if (state.kind === 'loading') return <div className="p-6 text-sm text-neutral-500">Loading proposals…</div>
   if (state.kind === 'error') {
     return (
@@ -238,7 +241,7 @@ export function ProposalsView({ state, api, onDone, onRetry, done = [] }) {
   }
   const { proposals, problems } = state
   return (
-    <div className="h-full overflow-y-auto p-6">
+    <div ref={box.ref} className="h-full overflow-y-auto p-6">
       <p className="mb-4 text-sm text-neutral-500">Big ideas MARVIN thinks are worth your time, each tied to a north star.</p>
       {problems.length > 0 && (
         <div role="alert" className="mb-4 max-w-4xl rounded-lg border border-amber-700 bg-amber-950/40 px-4 py-3 text-sm text-amber-200" data-problems>

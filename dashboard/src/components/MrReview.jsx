@@ -7,6 +7,7 @@ import { toggleLabel } from '../lib/proposals_view.js'
 import { describePrState } from '../lib/prState.js'
 import StageStrip from './StageStrip.jsx'
 import MrDetail from './MrDetail.jsx'
+import { useScrollPlace } from './ScrollPlaces.jsx'
 import CheckProgress from './CheckProgress.jsx'
 import MergeProgress from './MergeProgress.jsx'
 import { opForHead } from '../lib/merge_progress.js'
@@ -519,6 +520,8 @@ export default function MrReview(props) {
     window.api.proposals?.list?.().then((r) => { if (live && r?.ok) setProposalCount(r.proposals.length) }).catch(() => {})
     return () => { live = false }
   }, [])
+  // Open, Merged and Proposals each keep their place; a merged PR opens at its top and Back returns to it (#755).
+  useScrollPlace('mr-view', historyPr ? `merged:${historyPr.url}` : view)
   if (historyPr) {
     return <MrDetail pr={historyPr} onBack={() => setHistoryPr(null)} onOpenDocs={props.onOpenDocs} onOpenBoard={props.onOpenBoard} onOpenTicket={props.onOpenTicket} />
   }
@@ -650,6 +653,9 @@ function OpenPrs({ nav, onOpenDocs, onOpenBoard, onOpenTicket, onCount }) {
       })
       .catch(() => {})
   }
+
+  // An open PR opens at its top; Back lands exactly where you clicked in the list (#755).
+  useScrollPlace('mr-open-pr', selected ? `pr:${selected.key}` : null)
 
   if (selected) {
     return (

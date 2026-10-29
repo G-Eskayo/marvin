@@ -1,4 +1,5 @@
 import { useEffect, useState } from 'react'
+import { useScrollPlace } from './ScrollPlaces.jsx'
 import SubsystemDrilldown from './SubsystemDrilldown.jsx'
 
 function formatTimestamp(iso) {
@@ -69,6 +70,9 @@ export default function MetricsScorecard() {
       cancelled = true
     }
   }, [])
+
+  // A subsystem opens at its top; Back returns to the same place in the scorecard (#755).
+  useScrollPlace('metrics-subsystem', selected ? `subsystem:${selected}` : null)
 
   if (selected) {
     return <SubsystemDrilldown subsystem={selected} onBack={() => setSelected(null)} />
