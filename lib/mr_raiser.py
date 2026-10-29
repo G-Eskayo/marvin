@@ -26,12 +26,29 @@ from typing import Callable
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from mr_notification import notify_mr_ready as _default_notify_mr_ready  # noqa: E402
 import machine_profile  # noqa: E402
+import instance  # noqa: E402
 
-# Gil authors every pipeline commit and MARVIN co-authors it: the ideas and direction are his, so the history
-# should read as Gil guiding MARVIN, even where MARVIN wrote the code (2026-10-14). Pinned here rather than read
-# from git config, which differs per machine and per repo and left the pipeline's history half one, half the other.
-AUTHOR = "Gil Eskayo <145878126+G-Eskayo@users.noreply.github.com>"
+# The owner authors every pipeline commit and MARVIN co-authors it: the ideas and direction are theirs, so the
+# history should read as the owner guiding MARVIN. Tries git config user.name/user.email first (per-machine,
+# per-repo, respects local overrides); falls back to the hardcoded default.
+FALLBACK_AUTHOR = "Gil Eskayo <145878126+G-Eskayo@users.noreply.github.com>"
 CO_AUTHOR = "Co-Authored-By: MARVIN <marvin@marvin.dev>"
+
+
+def _get_author(worktree_path: Path | None = None) -> str:
+    """Get the commit author from git config (user.name and user.email), or fall back to the hardcoded default."""
+    try:
+        cwd = worktree_path if worktree_path else None
+        name_result = subprocess.run(["git", "config", "user.name"], cwd=cwd, capture_output=True, text=True, timeout=5)
+        email_result = subprocess.run(["git", "config", "user.email"], cwd=cwd, capture_output=True, text=True, timeout=5)
+        if name_result.returncode == 0 and email_result.returncode == 0:
+            name = name_result.stdout.strip()
+            email = email_result.stdout.strip()
+            if name and email:
+                return f"{name} <{email}>"
+    except (OSError, subprocess.SubprocessError):
+        pass
+    return FALLBACK_AUTHOR
 
 
 def _current_branch(worktree_path: Path) -> str:
@@ -84,8 +101,9 @@ def _commit_and_push(worktree_path: Path, ticket_ref: str) -> str:
         ["git", "status", "--porcelain"], cwd=worktree_path, check=True, capture_output=True, text=True,
     ).stdout
     if status.strip():
+        author = _get_author(worktree_path)
         subprocess.run(
-            ["git", "commit", f"--author={AUTHOR}", "-m", _subject(ticket_ref), "-m", CO_AUTHOR],
+            ["git", "commit", f"--author={author}", "-m", _subject(ticket_ref), "-m", CO_AUTHOR],
             cwd=worktree_path, check=True, capture_output=True,
         )
     # A ticket sent back and re-dispatched is rebuilt from the current main under the SAME branch name, while
@@ -265,6 +283,7 @@ def raise_mr(
     disk before this call, since it's committed as part of the same
     `git add -A` this function makes. Returns
     {"raised", "pr_url", "reason"}."""
+    instance.require_configured()
     if not execution_result["passing"]:
         return {
             "raised": False,

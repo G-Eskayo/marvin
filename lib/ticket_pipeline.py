@@ -57,11 +57,12 @@ import project_catalog  # noqa: E402
 import ticket_evidence  # noqa: E402
 import project_onboard  # noqa: E402
 import dispatch_concurrency  # noqa: E402
+import instance  # noqa: E402
 
 VENV_PYTHON = str(Path.home() / ".agents" / "venv" / "bin" / "python")
 RUN_TICKET_SCRIPT = str(Path.home() / ".agents" / "lib" / "run_ticket.py")
 
-REPO = "G-Eskayo/marvin"
+REPO = instance.tickets_repo()
 LOG_PREFIX = "[ticket-pipeline]"
 
 SCAN_LOCK_PATH = Path.home() / ".claude" / "dispatch" / "scan.lock"
@@ -527,7 +528,7 @@ def _live_runs() -> set[tuple[str, int]] | None:
 
 
 def _auto_merge_shadow(step) -> None:
-    """ADR 0064 (#341): what auto-merge would do with each open PR, recorded until Gil switches it on."""
+    """ADR 0064 (#341): what auto-merge would do with each open PR, recorded until the owner switches it on."""
     try:
         import auto_merge_shadow
         seen = auto_merge_shadow.run()
@@ -814,6 +815,7 @@ def _select_for_profile(profile: dict, settings: dict | None = None, taken: dict
 
 
 def main() -> None:
+    instance.require_configured()
     dry_run = "--dry-run" in sys.argv
     if dry_run:  # a preview records nothing
         _scan(lambda *a, **k: None, dry_run=True)

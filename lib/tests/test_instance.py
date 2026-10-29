@@ -206,3 +206,48 @@ def test_the_ratchet_catches_a_quoted_owner_but_not_a_comment(tmp_path):
     assert COMMENT.match("    # see G-Eskayo/marvin#21")
     assert COMMENT.match("  // G-Eskayo/marvin")
     assert not IDENTITY.search('msg = "Gilbert and Gilda"')
+
+
+# ── is_configured() and require_configured() guards ──────────────────────────────────────────────────────────────
+
+def test_configured_when_a_real_github_origin_exists(at):
+    """A fork or personal clone is configured: we know whose repo this is."""
+    at(origin="https://github.com/pat-example/marvin.git", config={})
+    assert instance.is_configured() is True
+
+
+def test_configured_when_engine_repo_is_explicitly_set(at):
+    """Even with no origin, an explicit engine_repo in instance.json counts as configured."""
+    at(origin=None, config={"engine_repo": "pat-example/marvin"})
+    assert instance.is_configured() is True
+
+
+def test_configured_when_owner_is_explicitly_set(at):
+    """An explicit owner in instance.json counts as configured."""
+    at(origin=None, config={"owner": "pat-example"})
+    assert instance.is_configured() is True
+
+
+def test_configured_when_tickets_repo_is_explicitly_set(at):
+    """An explicit tickets_repo in instance.json counts as configured."""
+    at(origin=None, config={"tickets_repo": "pat-example/marvin-instance"})
+    assert instance.is_configured() is True
+
+
+def test_not_configured_when_only_upstream_fallback_applies(at):
+    """The bare UPSTREAM fallback (no origin, no instance.json overrides) does not count as configured."""
+    at(origin=None, config={})
+    assert instance.is_configured() is False
+
+
+def test_require_configured_raises_when_not_configured(at):
+    """require_configured() raises NotConfiguredError if not configured."""
+    at(origin=None, config={})
+    with pytest.raises(instance.NotConfiguredError):
+        instance.require_configured()
+
+
+def test_require_configured_passes_when_configured(at):
+    """require_configured() returns normally when configured."""
+    at(origin="https://github.com/pat-example/marvin.git")
+    instance.require_configured()  # Should not raise

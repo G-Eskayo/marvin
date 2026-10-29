@@ -54,6 +54,33 @@ export function featureEnabled(name) {
   return !!f && typeof f === 'object' && !Array.isArray(f) && f[name] === true
 }
 
+export function isConfigured() {
+  // True iff the instance is explicitly configured (not using the bare UPSTREAM fallback).
+  // Configured means: a real GitHub origin resolves, or instance.json sets engine_repo/owner/tickets_repo.
+  const { origin, config } = load()
+  if (origin !== null) return true
+  return !!str('engine_repo') || !!str('owner') || !!str('tickets_repo')
+}
+
+export class NotConfiguredError extends Error {
+  constructor(message) {
+    super(message)
+    this.name = 'NotConfiguredError'
+  }
+}
+
+export function requireConfigured() {
+  // Raise NotConfiguredError if the instance is not configured.
+  // Call this as a guard at the start of any writer (ticket claim, MR raise, etc.)
+  // that needs to know whose repo to write to.
+  if (!isConfigured()) {
+    throw new NotConfiguredError(
+      'MARVIN is not configured. Set up ~/.agents/instance/instance.json with ' +
+      'engine_repo, owner, or tickets_repo, or clone a fork (not G-Eskayo/marvin).'
+    )
+  }
+}
+
 // The support link (ADR 0073): { role: 'helped' | 'helper' | null, repos } from instance.json's "support" block.
 export const support = () => supportRole(load().config)
 

@@ -42,12 +42,13 @@ from pathlib import Path
 from typing import Callable
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
+import instance  # noqa: E402
 
 LABEL = "purpose-metric"
 MISSED_LABEL = "missed-purpose"
 BUG_LABEL = "bug"
 OUTCOME_HEADING = "## Outcome check"
-REPOS = ("G-Eskayo/marvin",)
+REPOS = (instance.tickets_repo(),)
 SSH_OPTS = ["-o", "ConnectTimeout=5", "-o", "BatchMode=yes", "-o", "StrictHostKeyChecking=accept-new"]
 
 
@@ -639,6 +640,7 @@ def labelled_issues(repo: str, name: str) -> list[dict]:
 
 
 def run(now: datetime | None = None, ladder_step: Callable | None = None) -> list[dict]:
+    instance.require_configured()
     now = now or datetime.now(timezone.utc)
     import incident_ladder
     ladder_step = ladder_step or incident_ladder.step

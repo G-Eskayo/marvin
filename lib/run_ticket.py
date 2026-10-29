@@ -31,8 +31,9 @@ import ticket_stages as ts  # noqa: E402
 import redispatch_trigger  # noqa: E402
 import ticket_policy  # noqa: E402
 from datetime import datetime, timedelta, timezone  # noqa: E402
+import instance  # noqa: E402
 
-REPO = "G-Eskayo/marvin"
+REPO = instance.tickets_repo()
 FAILURE_MARKER = "Automated implementation did not pass verification"
 TIMEOUT_MARKER = "Automated verification timed out"
 MODEL_MARKER = "The model service was unavailable"
@@ -248,6 +249,7 @@ def _drop_build_output(worktree_path, profile: dict | None) -> None:
 
 
 def run(issue_number: int, repo: str = REPO) -> dict:
+    instance.require_configured()
     ticket_ref = f"{repo}#{issue_number}"
     other = repo != REPO
     # marvin's path is called exactly as it always was; another project's calls carry its repo so its

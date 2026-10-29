@@ -101,6 +101,41 @@ describe('instance', () => {
     process.env.MARVIN_ENGINE_DIR = '/x/engine'
     expect(inst.instanceDir()).toBe(path.join('/x/engine', 'instance'))
   })
+
+  it('is configured when a real GitHub origin exists', () => {
+    at({ origin: 'https://github.com/pat-example/marvin.git', config: {} })
+    expect(inst.isConfigured()).toBe(true)
+  })
+
+  it('is configured when engine_repo is explicitly set', () => {
+    at({ origin: null, config: { engine_repo: 'pat-example/marvin' } })
+    expect(inst.isConfigured()).toBe(true)
+  })
+
+  it('is configured when owner is explicitly set', () => {
+    at({ origin: null, config: { owner: 'pat-example' } })
+    expect(inst.isConfigured()).toBe(true)
+  })
+
+  it('is configured when tickets_repo is explicitly set', () => {
+    at({ origin: null, config: { tickets_repo: 'pat-example/marvin-instance' } })
+    expect(inst.isConfigured()).toBe(true)
+  })
+
+  it('is not configured when only the upstream fallback applies', () => {
+    at({ origin: null, config: {} })
+    expect(inst.isConfigured()).toBe(false)
+  })
+
+  it('requireConfigured throws when not configured', () => {
+    at({ origin: null, config: {} })
+    expect(() => inst.requireConfigured()).toThrow(inst.NotConfiguredError)
+  })
+
+  it('requireConfigured passes when configured', () => {
+    at({ origin: 'https://github.com/pat-example/marvin.git' })
+    expect(() => inst.requireConfigured()).not.toThrow()
+  })
 })
 
 describe('dashboard readers point at the instance (ADR 0071 step 2)', () => {

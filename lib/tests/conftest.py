@@ -290,3 +290,18 @@ def _isolate_node_modules_cache(tmp_path_factory, monkeypatch):
     import node_modules_seed
     monkeypatch.setattr(node_modules_seed, "CACHE_ROOT", tmp_path_factory.mktemp("node-modules-cache"))
     monkeypatch.setattr(node_modules_seed, "_runtime", lambda: "node-test")
+
+
+@pytest.fixture(autouse=True)
+def _default_configured_instance(tmp_path_factory, monkeypatch):
+    # ADR 0071 step 2: every test gets a temp configured instance by default so that ~90 existing test files
+    # don't break when is_configured() guards are added (step 4). The fixture creates instance.json with
+    # {"engine_repo": "G-Eskayo/marvin"}, making is_configured() return true and tickets_repo() return the
+    # upstream that every existing test expects. test_instance.py's own at() fixture overrides this per-test.
+    import json
+    import instance
+    inst_dir = tmp_path_factory.mktemp("configured-instance")
+    config = {"engine_repo": "G-Eskayo/marvin"}
+    (inst_dir / "instance.json").write_text(json.dumps(config))
+    monkeypatch.setenv("MARVIN_INSTANCE_DIR", str(inst_dir))
+    instance.reset()

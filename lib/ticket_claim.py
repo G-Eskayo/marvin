@@ -34,9 +34,10 @@ from typing import Callable
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from machine_profile import machine_label  # noqa: E402
 from sandbox_orchestration import execute_ticket as _default_execute  # noqa: E402
+import instance  # noqa: E402
 
 MAX_QUEUE = 3
-REPO = "G-Eskayo/marvin"
+REPO = instance.tickets_repo()
 
 
 def _claim_label(machine_id: str) -> str:
@@ -104,6 +105,7 @@ def claim_next_ticket(
     """Claim the highest-priority (lowest issue number) unclaimed
     ready-for-agent ticket, if this machine is under its queue cap.
     Returns the claimed issue number, or None if nothing was claimed."""
+    instance.require_configured()
     list_claimed = list_claimed or _default_list_claimed
     list_unclaimed_ready = list_unclaimed_ready or _default_list_unclaimed_ready
     add_claim_label = add_claim_label or _default_add_claim_label
@@ -139,6 +141,7 @@ def run_claim_cycle(
 ) -> dict:
     """Cron entry point: claim a ticket if capacity allows, then hand it to
     sandbox orchestration automatically. Returns {"claimed", "execution_result"}."""
+    instance.require_configured()
     machine_id = machine_id or machine_label()
     claim = claim or claim_next_ticket
     execute = execute or (lambda ticket_ref: _default_execute(ticket_ref, ticket_ref, measure=lambda wt: {}))

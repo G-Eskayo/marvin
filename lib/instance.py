@@ -56,9 +56,12 @@ def _str(key: str) -> str | None:
 @lru_cache(maxsize=1)
 def _origin_repo() -> str | None:
     try:
-        url = subprocess.run(["git", "-C", str(ENGINE_DIR), "remote", "get-url", "origin"],
-                             capture_output=True, text=True, timeout=5).stdout.strip()
-    except (OSError, subprocess.SubprocessError):
+        result = subprocess.run(["git", "-C", str(ENGINE_DIR), "remote", "get-url", "origin"],
+                             capture_output=True, text=True, timeout=5)
+        if result is None:
+            return None
+        url = result.stdout.strip()
+    except (OSError, subprocess.SubprocessError, AttributeError):
         return None
     m = _GITHUB.search(url)
     return f"{m.group(1)}/{m.group(2)}" if m else None
@@ -79,6 +82,38 @@ def tickets_repo() -> str:
 def feature_enabled(name: str) -> bool:
     features = _config().get("features")
     return isinstance(features, dict) and features.get(name) is True
+
+
+def is_configured() -> bool:
+    """True iff the instance is explicitly configured (not using the bare UPSTREAM fallback).
+
+    Configured means: a real GitHub origin resolves, or instance.json sets engine_repo/owner/tickets_repo.
+    A bare fork of G-Eskayo/marvin (the UPSTREAM) without any instance.json override is not configured.
+    """
+    # If we have a real git origin, we're configured (it's not UPSTREAM).
+    if _origin_repo() is not None:
+        return True
+    # If instance.json sets any of these, we're configured.
+    config = _config()
+    return bool(_str("engine_repo") or _str("owner") or _str("tickets_repo"))
+
+
+class NotConfiguredError(Exception):
+    """Raised when instance.require_configured() is called on an unconfigured instance."""
+    pass
+
+
+def require_configured() -> None:
+    """Raise NotConfiguredError if the instance is not configured.
+
+    Call this as a guard at the start of any writer (ticket claim, MR raise, etc.)
+    that needs to know whose repo to write to.
+    """
+    if not is_configured():
+        raise NotConfiguredError(
+            "MARVIN is not configured. Set up ~/.agents/instance/instance.json with "
+            "engine_repo, owner, or tickets_repo, or clone a fork (not G-Eskayo/marvin)."
+        )
 
 
 def reset() -> None:

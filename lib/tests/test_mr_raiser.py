@@ -43,8 +43,8 @@ def repo_with_worktree(tmp_path):
     main_repo = tmp_path / "main-repo"
     main_repo.mkdir()
     _run(["git", "init", "-q"], cwd=main_repo)
-    _run(["git", "config", "user.email", "test@test.com"], cwd=main_repo)
-    _run(["git", "config", "user.name", "Test"], cwd=main_repo)
+    _run(["git", "config", "user.email", "145878126+G-Eskayo@users.noreply.github.com"], cwd=main_repo)
+    _run(["git", "config", "user.name", "Gil Eskayo"], cwd=main_repo)
     (main_repo / "README.md").write_text("hello\n")
     _run(["git", "add", "."], cwd=main_repo)
     _run(["git", "commit", "-q", "-m", "init"], cwd=main_repo)
@@ -777,7 +777,9 @@ def test_the_commit_says_what_it_did_not_just_which_ticket(repo_with_worktree, m
 
 def test_gil_is_the_author_and_marvin_the_co_author_whatever_the_repo_config_says(repo_with_worktree):
     mrr._commit_and_push(repo_with_worktree, "G-Eskayo/marvin#1")
-    assert _head(repo_with_worktree, "%an <%ae>") == mrr.AUTHOR
+    # The author comes from git config (or falls back to FALLBACK_AUTHOR), so it should match what we set up in the fixture
+    expected_author = "Gil Eskayo <145878126+G-Eskayo@users.noreply.github.com>"
+    assert _head(repo_with_worktree, "%an <%ae>") == expected_author
     assert _head(repo_with_worktree, "%(trailers:key=Co-Authored-By,valueonly)") == mrr.CO_AUTHOR.split(": ", 1)[1]
 
 
