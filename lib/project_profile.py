@@ -244,7 +244,8 @@ def playbook_notes(profile: dict) -> str:
         return ""
     pb = load_playbook(profile["playbook"], profile.get("playbook_variant"))
     title = pb["name"] + (f", {pb['variant']} variant" if pb.get("variant") else "")
-    captures = bool(((profile.get("evidence") or {}).get("dev") or {}).get("ios_simulator"))
+    dev = (profile.get("evidence") or {}).get("dev") or {}
+    captures = bool(dev.get("ios_simulator") or dev.get("macos_app"))
     lines = [f"{PLAYBOOK_MARKER}{title} (generated from {pb.get('doc', 'config/playbooks/' + pb['name'] + '.json')}; "
              "change the playbook, not this text) ---",
              "What each of your stages needs before it moves on (the line under a stage says what this run can and can't do):"]
@@ -525,7 +526,7 @@ class Measurer:
 
     def evidence(self, worktree: Path | None = None) -> tuple[dict | None, dict]:
         """(test_results, dev_evidence) in the shapes mr_raiser formats into the PR body. With a worktree and an
-        evidence.dev.ios_simulator config, a UI change is screenshotted in the simulator (marvin #374)."""
+        evidence.dev.ios_simulator or .macos_app config, a UI change is screenshotted (marvin #374, #727)."""
         tests = [t for t in self.report["tiers"] if t.get("ran") and "total" in t]
         test_results = None
         if tests:
@@ -533,19 +534,22 @@ class Measurer:
                             "failed": sum(t["failed"] for t in tests), "total": sum(t["total"] for t in tests)}
         evidence = self.profile.get("evidence") or {}
         dev_cfg = evidence.get("dev") or {}
-        if worktree is not None and dev_cfg.get("ios_simulator"):
+        kind = next((k for k in ("ios_simulator", "macos_app") if dev_cfg.get(k)), None)
+        if worktree is not None and kind:
             import evidence_capture as ec
             changed = ec.ui_files(ec.changed_files(Path(worktree), self.profile.get("base_branch", "main")), evidence.get("ui_paths", []))
             if not changed:
                 return test_results, {"na": True, "reason": "no UI change"}
+            capture = ec.capture_ios_simulator if kind == "ios_simulator" else ec.capture_macos_app  # macOS: marvin #727
             try:
-                shots = ec.capture_ios_simulator(Path(worktree), dev_cfg["ios_simulator"])
+                shots = capture(Path(worktree), dev_cfg[kind])
             except (ValueError, RuntimeError, OSError, subprocess.SubprocessError) as e:
                 # Never fails the ticket (a broken driver stalled the pipeline on 2026-10-07); the PR says why, and the
                 # dashboard refuses Approve on a UI change with no image (NO_UI_EVIDENCE), so it can't slip through.
                 return test_results, {"na": False, "error": f"capture failed: {e}"[:400]}
+            where = "iOS Simulator" if kind == "ios_simulator" else "macOS (drawn by the app itself)"
             return test_results, {"na": False, "screenshots": shots,
-                                  "description": f"iOS Simulator screenshots of the changed app ({', '.join(changed[:3])}{'…' if len(changed) > 3 else ''})."}
+                                  "description": f"{where} screenshots of the changed app ({', '.join(changed[:3])}{'…' if len(changed) > 3 else ''})."}
         reason = dev_cfg.get("na", "no dev-environment capture configured for this project")
         return test_results, {"na": True, "reason": reason}
 
