@@ -28,6 +28,8 @@ committed (see `.gitignore`).
 
 ## Run
 
+### Main bench (Claude vs profiles)
+
 ```bash
 profiles/setup.sh                             # build the clean profile from keychain
 python3 bench.py tasks/task-002-recall        # one task, both profiles
@@ -42,6 +44,22 @@ Results print a comparison table and save to `results/<task>-<stamp>.json`.
 `--repeat N` saves all N raw runs to JSON; the table shows mean ± σ across them.
 `--judge` calls claude as an LLM judge after each run; failing runs print the
 judge's rationale inline. Both substring and judge scores are shown side by side.
+
+### Local agent spike (opencode + Ollama live)
+
+```bash
+~/.agents/venv/bin/python bench/local_agent_spike.py qwen2.5:7b           # spike on default tickets
+~/.agents/venv/bin/python bench/local_agent_spike.py qwen2.5:14b --energy # with powermetrics sampling
+~/.agents/venv/bin/python bench/local_agent_spike.py qwen2.5:7b --tickets-file ~/.agents/bench-tickets.json
+~/.agents/venv/bin/python -m pytest bench/tests/test_local_agent_spike.py -v  # run tests
+```
+
+Runs a live spike: replays selected tickets from merged PRs, executes them against
+a local opencode + Ollama endpoint (requires both installed and running), measures energy (optional via `--energy` flag, requires sudo and powermetrics), scores pass/fail gates, and appends results to `RESULTS.md`.
+
+The spike creates isolated git worktrees at each ticket's base commit, runs opencode in
+that historical context with the PR's body as the prompt, measures energy consumption if
+requested, and scores whether the agent's output passes the defined gate criteria.
 
 ## Task format
 
