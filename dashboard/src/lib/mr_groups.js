@@ -182,15 +182,17 @@ export function diffGroups(before, after) {
 
 // The helper tab working on a PR (helper-tab titles: "● <group> · <title>", marvin#753). tabs: [{ state, group, title }]
 // as helper_tab.parse_title gives them. A match is "#<PR or ticket number>" as a whole number in the title, in a tab
-// whose group is this project's name. A running tab wins over a finished one.
+// whose group is one of this project's names (a name or a list: catalog id, catalog name, the name helpers are started
+// under). A running tab wins over a finished one.
 const MARKS = { running: '●', done: '✓', failed: '✗' }
 const norm = (s) => String(s || '').toLowerCase().split(/\s+/).filter(Boolean).join(' ')
 
-export function helperFor(pr, projectName, tabs) {
+export function helperFor(pr, projectNames, tabs) {
   if (!Array.isArray(tabs) || !tabs.length) return null
+  const names = new Set((Array.isArray(projectNames) ? projectNames : [projectNames]).map(norm))
   const nums = [pr.number, pr.ticketRef].filter((n) => n != null).map(String)
   const has = (title, n) => new RegExp(`#${n}(?!\\d)`).test(title)
-  const mine = tabs.filter((t) => norm(t.group) === norm(projectName) && nums.some((n) => has(t.title, n)))
+  const mine = tabs.filter((t) => names.has(norm(t.group)) && nums.some((n) => has(t.title, n)))
   if (!mine.length) return null
   const t = mine.find((x) => x.state === 'running') || mine[mine.length - 1]
   return { state: t.state, label: `${MARKS[t.state] || '●'} ${t.group} · ${t.title}` }

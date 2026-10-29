@@ -309,6 +309,10 @@ describe('helperFor: which helper tab owns a PR, by the helper-tab title (marvin
     const t = [{ state: 'failed', group: 'MARVIN', title: '#9 first try' }, { state: 'running', group: 'MARVIN', title: '#9 second try' }]
     expect(helperFor(pr(9), 'MARVIN', t).label).toBe('● MARVIN · #9 second try')
   })
+  it('takes several names for a project (catalog id, catalog name, the helper group name)', () => {
+    expect(helperFor(pr(216, { repo: 'G-Eskayo/clarity-captions' }), ['clarity-captions', 'Seal Speak'], [{ state: 'done', group: 'Seal Speak', title: '#216 wire' }]).state).toBe('done')
+    expect(helperFor(pr(216, { repo: 'G-Eskayo/clarity-captions' }), ['clarity-captions'], [{ state: 'done', group: 'Seal Speak', title: '#216 wire' }])).toBe(null)
+  })
   it('no tabs (WezTerm not running): no owner shown', () => {
     expect(helperFor(pr(9), 'MARVIN', null)).toBe(null)
   })
