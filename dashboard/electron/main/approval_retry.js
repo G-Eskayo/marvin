@@ -3,7 +3,7 @@
 // POST /merge-host-up, relayed to this dashboard as the 'merge-host' topic), this Mac waking or being unlocked,
 // and the dashboard starting. Each trigger runs one pass over the waiting approvals.
 //
-// A pass, oldest click first: ask GitHub whether the PR is still open (merged or closed by hand meanwhile = settled,
+// A pass, oldest click first: ask GitHub whether the PR is still open (merged or closed by hand meanwhile = concluded,
 // never sent again; GitHub unreachable = leave it for the next trigger), then send it through the same approve path a
 // click uses (start the op, record, fail over). The first one that finds no machine ends the pass: the rest would
 // only fail the same way. A trigger during a pass runs one more pass after it, never two at once.
@@ -20,8 +20,8 @@ export function createApprovalRetry({ ledger, approve, viewPr, log = () => {} })
         log(`[approval-retry] ${trigger}: can't check ${entry.url} on GitHub (${err?.message || err}); left queued`)
         continue
       }
-      if (state === 'MERGED') { ledger.settle(entry.url, 'merged-elsewhere', { reason: 'merged on GitHub while it waited' }); continue }
-      if (state === 'CLOSED') { ledger.settle(entry.url, 'closed', { reason: 'closed on GitHub while it waited' }); continue }
+      if (state === 'MERGED') { ledger.conclude(entry.url, 'merged-elsewhere', { reason: 'merged on GitHub while it waited' }); continue }
+      if (state === 'CLOSED') { ledger.conclude(entry.url, 'closed', { reason: 'closed on GitHub while it waited' }); continue }
       tried++
       log(`[approval-retry] ${trigger}: retrying the approval of ${entry.url} (clicked ${new Date(entry.clickedAt).toISOString()})`)
       let result

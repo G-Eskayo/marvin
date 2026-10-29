@@ -54,7 +54,7 @@ export function createApprovalLedger(file = APPROVALS_PATH, { now = Date.now, ca
         outcome: 'sending', machine: null, reason: null, attempts: (prev && WAITING.has(prev.outcome) ? prev.attempts || 1 : 0) + 1, updatedAt: t
       }))
     },
-    settle(url, outcome, { machine = null, reason = null } = {}) {
+    conclude(url, outcome, { machine = null, reason = null } = {}) {
       return update(url, (prev) => prev && { ...prev, outcome, machine, reason: reason == null ? null : String(reason).slice(0, 500), updatedAt: now() })
     },
     drop(url) { update(url, () => null) },

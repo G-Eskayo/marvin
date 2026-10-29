@@ -6,7 +6,7 @@ import { approveOnAnyMachine } from './merge_failover.js'
 // the same failover.
 //
 //   start the op -> confirm (clicks only, opt-in popup) -> record in the ledger -> send to the first machine that
-//   answers -> settle the ledger and the op with that answer. No machine: queued, said plainly, retried later.
+//   answers -> conclude the ledger and the op with that answer. No machine: queued, said plainly, retried later.
 //
 // send(prUrl, url, { onEvent }) is approveMrStream's shape; push(url, op) forwards an op change to the card.
 export function createApproveFlow({ mergeOps, ledger, machines, send, push = () => {}, confirm = async () => true, after = () => {} }) {
@@ -25,21 +25,21 @@ export function createApproveFlow({ mergeOps, ledger, machines, send, push = () 
         onSwitch: (notice) => push(url, mergeOps.notice(url, notice))
       })
       if (result?.interrupted) {
-        ledger.settle(url, 'interrupted', { machine: machine.id, reason: result.reason })
+        ledger.conclude(url, 'interrupted', { machine: machine.id, reason: result.reason })
         push(url, mergeOps.interrupt(url))
         return { ...result, cancelled: false }
       }
-      ledger.settle(url, result?.merged ? 'merged' : 'reengaged', { machine: machine.id, reason: result?.reason })
+      ledger.conclude(url, result?.merged ? 'merged' : 'reengaged', { machine: machine.id, reason: result?.reason })
       push(url, mergeOps.finish(url, result))
       try { after(url, result) } catch { /* list bookkeeping never turns a merge into an error */ }
       return { ...result, cancelled: false }
     } catch (err) {
       if (err?.noMachine) {
-        ledger.settle(url, 'queued', { reason: err.message })
+        ledger.conclude(url, 'queued', { reason: err.message })
         push(url, mergeOps.queue(url, err.message))
         return { merged: false, queued: true, reason: err.message, cancelled: false }
       }
-      ledger.settle(url, 'refused', { machine: err?.machine?.id ?? null, reason: err?.message })
+      ledger.conclude(url, 'refused', { machine: err?.machine?.id ?? null, reason: err?.message })
       push(url, mergeOps.fail(url, err?.message))
       throw err
     }

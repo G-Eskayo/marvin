@@ -160,11 +160,11 @@ describe('approval ledger: every click is written down before it is sent', () =>
   beforeEach(() => { dir = mkdtempSync(path.join(tmpdir(), 'ledger-')); file = path.join(dir, 'approvals.json') })
   afterEach(() => rmSync(dir, { recursive: true, force: true }))
 
-  it('record -> sending, settle -> outcome; it survives a restart (a new ledger on the same file)', () => {
+  it('record -> sending, conclude -> outcome; it survives a restart (a new ledger on the same file)', () => {
     const a = createApprovalLedger(file, { now: () => 1000 })
     a.record(PR, { number: 900, head: 'abc' })
     expect(JSON.parse(readFileSync(file, 'utf8')).approvals[0]).toMatchObject({ url: PR, number: 900, head: 'abc', clickedAt: 1000, outcome: 'sending' })
-    a.settle(PR, 'queued', { reason: 'both down' })
+    a.conclude(PR, 'queued', { reason: 'both down' })
     const b = createApprovalLedger(file)
     expect(b.get(PR)).toMatchObject({ outcome: 'queued', reason: 'both down', clickedAt: 1000 })
     expect(b.waiting().map((x) => x.url)).toEqual([PR])
@@ -172,16 +172,16 @@ describe('approval ledger: every click is written down before it is sent', () =>
 
   it('only approvals no machine took are waiting: a refusal or a merge is not retried', () => {
     const a = createApprovalLedger(file)
-    a.record(PR); a.settle(PR, 'refused', { reason: 'tests failed' })
-    a.record(PR2); a.settle(PR2, 'merged', { machine: 'mac-mini-1' })
+    a.record(PR); a.conclude(PR, 'refused', { reason: 'tests failed' })
+    a.record(PR2); a.conclude(PR2, 'merged', { machine: 'mac-mini-1' })
     expect(a.waiting()).toEqual([])
   })
 
   it('waiting is oldest click first', () => {
     let t = 0
     const a = createApprovalLedger(file, { now: () => ++t })
-    a.record(PR2); a.settle(PR2, 'queued')
-    a.record(PR); a.settle(PR, 'queued')
+    a.record(PR2); a.conclude(PR2, 'queued')
+    a.record(PR); a.conclude(PR, 'queued')
     expect(a.waiting().map((x) => x.url)).toEqual([PR2, PR])
   })
 
@@ -194,11 +194,11 @@ describe('approval ledger: every click is written down before it is sent', () =>
     expect(createApprovalLedger(path.join(dir, 'missing', 'x.json')).waiting()).toEqual([])
   })
 
-  it('bounded: old settled entries are dropped past the cap, waiting ones never are', () => {
+  it('bounded: old concluded entries are dropped past the cap, waiting ones never are', () => {
     let t = 0
     const a = createApprovalLedger(file, { now: () => ++t, cap: 3 })
-    a.record(PR); a.settle(PR, 'queued')
-    for (let i = 0; i < 6; i++) { const u = `https://github.com/G-Eskayo/marvin/pull/${i}`; a.record(u); a.settle(u, 'merged') }
+    a.record(PR); a.conclude(PR, 'queued')
+    for (let i = 0; i < 6; i++) { const u = `https://github.com/G-Eskayo/marvin/pull/${i}`; a.record(u); a.conclude(u, 'merged') }
     const all = JSON.parse(readFileSync(file, 'utf8')).approvals
     expect(all.length).toBeLessThanOrEqual(4)
     expect(a.waiting().map((x) => x.url)).toEqual([PR])
@@ -206,7 +206,7 @@ describe('approval ledger: every click is written down before it is sent', () =>
 
   it('drop removes a waiting approval (Deny cancels it)', () => {
     const a = createApprovalLedger(file)
-    a.record(PR); a.settle(PR, 'queued')
+    a.record(PR); a.conclude(PR, 'queued')
     a.drop(PR)
     expect(a.waiting()).toEqual([])
   })
@@ -216,12 +216,12 @@ describe('approval retry: a saved approval merges when a machine comes back, wit
   let dir, ledger
   beforeEach(() => { dir = mkdtempSync(path.join(tmpdir(), 'retry-')); ledger = createApprovalLedger(path.join(dir, 'approvals.json')) })
   afterEach(() => rmSync(dir, { recursive: true, force: true }))
-  const queued = (...urls) => urls.forEach((u) => { ledger.record(u); ledger.settle(u, 'queued') })
+  const queued = (...urls) => urls.forEach((u) => { ledger.record(u); ledger.conclude(u, 'queued') })
 
   it('the trigger retries each waiting approval once, through the same approve path, oldest first', async () => {
     queued(PR, PR2)
     const sent = []
-    const retry = createApprovalRetry({ ledger, viewPr: async () => ({ state: 'OPEN' }), approve: async (url) => { sent.push(url); ledger.settle(url, 'merged'); return { merged: true } } })
+    const retry = createApprovalRetry({ ledger, viewPr: async () => ({ state: 'OPEN' }), approve: async (url) => { sent.push(url); ledger.conclude(url, 'merged'); return { merged: true } } })
     const r = await retry.run('merge-host-up')
     expect(sent).toEqual([PR, PR2])
     expect(r).toMatchObject({ tried: 2 })
@@ -237,7 +237,7 @@ describe('approval retry: a saved approval merges when a machine comes back, wit
     expect(ledger.waiting().map((x) => x.url)).toEqual([PR, PR2])
   })
 
-  it('a PR merged or closed meanwhile (by hand on GitHub) is settled, never sent again', async () => {
+  it('a PR merged or closed meanwhile (by hand on GitHub) is concluded, never sent again', async () => {
     queued(PR, PR2)
     const sent = []
     const states = { [PR]: 'MERGED', [PR2]: 'CLOSED' }
@@ -261,7 +261,7 @@ describe('approval retry: a saved approval merges when a machine comes back, wit
     queued(PR)
     let calls = 0, release
     const gate = new Promise((r) => (release = r))
-    const retry = createApprovalRetry({ ledger, viewPr: async () => ({ state: 'OPEN' }), approve: async (url) => { calls++; await gate; ledger.settle(url, 'merged') } })
+    const retry = createApprovalRetry({ ledger, viewPr: async () => ({ state: 'OPEN' }), approve: async (url) => { calls++; await gate; ledger.conclude(url, 'merged') } })
     const a = retry.run('merge-host-up')
     const b = retry.run('resume')
     const c = retry.run('online')
@@ -273,7 +273,7 @@ describe('approval retry: a saved approval merges when a machine comes back, wit
   it('an approve that throws (a gate refusal) does not stop the rest', async () => {
     queued(PR, PR2)
     const sent = []
-    const retry = createApprovalRetry({ ledger, viewPr: async () => ({ state: 'OPEN' }), approve: async (url) => { sent.push(url); if (url === PR) { ledger.settle(url, 'refused'); throw new Error('tests failed') } ledger.settle(url, 'merged') } })
+    const retry = createApprovalRetry({ ledger, viewPr: async () => ({ state: 'OPEN' }), approve: async (url) => { sent.push(url); if (url === PR) { ledger.conclude(url, 'refused'); throw new Error('tests failed') } ledger.conclude(url, 'merged') } })
     await retry.run('merge-host-up')
     expect(sent).toEqual([PR, PR2])
   })
