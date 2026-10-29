@@ -244,7 +244,7 @@ function enterFx(slot, phases, t, full, dir = 'ltr') {
   slot.style.height = full * ease.io(prog(find(phases, 'gapOpen'), t)) + 'px'
   if (fadeIn) { el.style.opacity = prog(fadeIn, t); wipe(el, 0, 100, 0, 0); return }
   const [r, f] = edges(find(phases, 'fill'), find(phases, 'reveal'), t)
-  if (dir === 'rtl') wipe(el, 100 - r, 100, 100 - f, 100 - r)
+  if (dir === 'rtl') wipe(el, 100 - f, 100, 100 - f, 100 - r)
   else wipe(el, 0, f, r, f)
 }
 
