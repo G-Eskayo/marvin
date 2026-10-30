@@ -1,5 +1,7 @@
 # Changelog
 
+- Health never noticed mac-mini-2012's mirror failing for 4 days: read the box's sync state from the Mini ([#913](https://github.com/G-Eskayo/marvin/pull/913))
+
 - The Mac mini can't see the other Macs: Tailscale lookup is app-only, and a probe that can't run reads as 'everyone offline' ([#890](https://github.com/G-Eskayo/marvin/pull/890))
 
 - Disk keeps filling on the Mini: the cleanup can't reach GitHub over ssh, the merge gate leaks temp clones, pytest temp dirs pile up ([#880](https://github.com/G-Eskayo/marvin/pull/880))
