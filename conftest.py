@@ -23,6 +23,9 @@ import real_home_guard  # noqa: E402  (pure: reads no HOME-derived constants)
 
 import pytest  # noqa: E402
 
+# Tests declare the tools they need (@pytest.mark.requires_tool("rg")); a missing one is infra, not a red test (#826).
+pytest_plugins = ["tool_requirements"]
+
 REAL_HOME = real_home_guard.real_home()
 
 # The portfolio tests (main-health only) find that repo through the real catalog under ~/.claude; resolve it once,
