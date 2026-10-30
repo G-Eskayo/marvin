@@ -24,7 +24,7 @@ vi.mock('../webhook-server/changelog.js', () => ({ applyVersionBump: vi.fn().moc
 
 import { execFile, execFileSync } from 'child_process'
 import { promisify } from 'util'
-import { mkdtempSync, rmSync, writeFileSync } from 'fs'
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'fs'
 import { tmpdir } from 'os'
 import path from 'path'
 import {
@@ -643,7 +643,7 @@ describe('rebaseAndRetest', () => {
 })
 
 describe('_defaultRunTests', () => {
-  it('installs dashboard dependencies before running vitest', async () => {
+  it('installs dashboard dependencies before running the dashboard check', async () => {
     // Found live 2026-10-01 (PR #119's actual merge attempt): a
     // `git worktree add` scratch checkout has no dashboard/node_modules
     // at all, so `npx vitest run` hard-failed with a dependency-
@@ -658,11 +658,46 @@ describe('_defaultRunTests', () => {
 
     await _defaultRunTests('/repo', exec)
 
-    const dashboardCalls = calls.filter((c) => c.cwd === '/repo/dashboard')
-    const installIndex = dashboardCalls.findIndex((c) => c.cmd === 'npm' && c.args[0] === 'install')
-    const vitestIndex = dashboardCalls.findIndex((c) => c.cmd === 'npx' && c.args[0] === 'vitest')
+    const installIndex = calls.findIndex((c) => c.cwd === '/repo/dashboard' && c.cmd === 'npm' && c.args[0] === 'install')
+    const vitestIndex = calls.findIndex((c) => c.cmd === 'bash' && c.args.join(' ') === '.github/run-check.sh dashboard')
     expect(installIndex).toBeGreaterThanOrEqual(0)
     expect(vitestIndex).toBeGreaterThan(installIndex)
+  })
+
+  it('#826: installs first, then runs every check the required list gives the gate, through the runner CI uses, in list order', async () => {
+    const root = mkdtempSync(path.join(tmpdir(), 'rc-'))
+    try {
+      mkdirSync(path.join(root, '.github'))
+      writeFileSync(path.join(root, '.github', 'required-checks.json'), JSON.stringify({ checks: [
+        { id: 'rules', name: 'Rules', command: ['python', 'lib/rules.py'] },
+        { id: 'scan', name: 'Secret scan', where: 'ci' },
+        { id: 'unit', name: 'Unit', cwd: 'web', install: 'npm', command: ['npx', 'vitest', 'run'], parser: 'vitest' }
+      ] }))
+      const calls = []
+      const exec = vi.fn(async (cmd, args, opts) => { calls.push([cmd, args.join(' '), opts?.cwd, opts?.env]); return { stdout: '', stderr: '' } })
+      const cache = { seed: vi.fn(async () => {}), store: vi.fn(async () => {}) }
+      await _defaultRunTests(root, exec, undefined, async () => [], cache)
+      expect(calls.map(([c, a, cwd]) => `${c} ${a} @${path.relative(root, cwd) || '.'}`)).toEqual([
+        'npm install @web', 'bash .github/run-check.sh rules @.', 'bash .github/run-check.sh unit @.'
+      ])
+      // `python` in a check means the venv's interpreter, and every check runs with the gate's marker.
+      const env = calls.find(([c]) => c === "bash")[3]
+      expect(env.PATH.split(path.delimiter)[0]).toMatch(/venv[/\\]bin$/)
+      expect(env.MARVIN_MERGE_GATE).toBe('1')
+    } finally {
+      rmSync(root, { recursive: true, force: true })
+    }
+  })
+
+  it('#826: a broken list fails the gate loudly instead of running nothing', async () => {
+    const root = mkdtempSync(path.join(tmpdir(), 'rc-'))
+    try {
+      mkdirSync(path.join(root, '.github'))
+      writeFileSync(path.join(root, '.github', 'required-checks.json'), '{"checks": []}')
+      await expect(_defaultRunTests(root, vi.fn(async () => ({ stdout: '' })))).rejects.toThrow(/required-checks.json/)
+    } finally {
+      rmSync(root, { recursive: true, force: true })
+    }
   })
 
   it('#687: seeds node_modules from the cache before npm install and stores the result after, in the dashboard dir', async () => {

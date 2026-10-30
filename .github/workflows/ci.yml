@@ -1,7 +1,8 @@
 name: CI
 
-# The dashboard's unit tests on every PR and on main. The Python suite (lib/tests) is not run here yet: it needs a
-# pinned requirements file (chromadb, sentence-transformers, torch) and some tests read machine-local state.
+# Runs exactly the required checks in .github/required-checks.json (marvin#826): one job per check, named as the list
+# names it, each running `.github/run-check.sh <id>`, the same runner MARVIN's merge gate uses. Branch protection on
+# main requires these names. lib/tests/test_required_checks.py fails if this file and the list drift apart.
 on:
   pull_request:
   push:
@@ -12,13 +13,33 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  python-tests:
+    # macOS, like the Macs that run MARVIN: some tests use macOS tools (plutil, launchctl's file formats).
+    name: Python tests
+    runs-on: macos-15
+    timeout-minutes: 40
+    env:
+      MARVIN_MERGE_GATE: "1" # leave out the tests that read another repo's data, as the gate does
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+          cache-dependency-path: requirements-ci.txt
+      - run: python -m pip install -r requirements-ci.txt
+      - name: Tools the tests declare (ripgrep)
+        run: brew install ripgrep
+      - name: Git identity for tests that commit in temp repos
+        run: git config --global user.name ci && git config --global user.email ci@example.invalid && git config --global init.defaultBranch main
+      - run: .github/run-check.sh python
+
   dashboard-tests:
     name: Dashboard unit tests
     runs-on: ubuntu-latest
     timeout-minutes: 15
-    defaults:
-      run:
-        working-directory: dashboard
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
@@ -27,7 +48,8 @@ jobs:
           cache: npm
           cache-dependency-path: dashboard/package-lock.json
       - run: npm ci --ignore-scripts --no-audit --no-fund
-      - run: npx vitest run
+        working-directory: dashboard
+      - run: .github/run-check.sh dashboard
 
   secret-scan:
     # ADR 0071: the server-side gate. Scans only the commits this PR or push adds, with gitleaks and with the same
