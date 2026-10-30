@@ -394,6 +394,35 @@ def test_the_real_script_dry_run_restarts_nothing_and_reads_no_password(tmp_path
     assert not calls.exists()
 
 
+# marvin#623: the token's age came from BSD `stat -f %m`, which GNU stat (the Linux box) reads as "file system
+# info for %m" and fails. Each fake below speaks only one dialect and answers with the real mtime.
+_GNU_STAT = """#!/bin/sh
+[ "$1" = -c ] && [ "$2" = %Y ] || { echo "stat: cannot read file system information for '$2'" >&2; exit 1; }
+exec python3 -c 'import os,sys; print(int(os.stat(sys.argv[1]).st_mtime))' "$3"
+"""
+_BSD_STAT = """#!/bin/sh
+[ "$1" = -f ] && [ "$2" = %m ] || { echo "stat: illegal option -- ${1#-}" >&2; exit 1; }
+exec python3 -c 'import os,sys; print(int(os.stat(sys.argv[1]).st_mtime))' "$3"
+"""
+
+
+@pytest.mark.parametrize("dialect", [_GNU_STAT, _BSD_STAT], ids=["gnu-stat", "bsd-stat"])
+@pytest.mark.parametrize("age_s, verdict", [(0, "go token: fresh"), (600, "a real run would refuse")])
+def test_the_token_age_is_read_with_either_stat_dialect(tmp_path, dialect, age_s, verdict):
+    bindir = tmp_path / "bin"
+    bindir.mkdir()
+    (bindir / "stat").write_text(dialect)
+    (bindir / "stat").chmod(0o755)
+    token = tmp_path / "go"
+    token.write_text("x")
+    t = datetime.now().timestamp() - age_s
+    os.utime(token, (t, t))
+    r = subprocess.run([str(LIB.parent / "bin" / "marvin-authrestart"), "--dry-run"], capture_output=True, text=True,
+                       timeout=30, env={"PATH": f"{bindir}:/usr/bin:/bin", "MARVIN_RESET_GO_TOKEN": str(token)})
+    assert r.returncode == 0, r.stderr
+    assert verdict in r.stdout, r.stdout + r.stderr
+
+
 def _fake_root_env(tmp_path, password, token_age_s=0):
     """Fake fdesetup/security for the script's real path, run as this (non-root) user. fdesetup records its argv,
     environment and stdin; security hands out `password` like the System keychain would."""

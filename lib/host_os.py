@@ -40,13 +40,23 @@ def tailscale_bin_or_default() -> str:
     return tailscale_bin() or (MAC_TAILSCALE if os_name() == "macos" else LINUX_TAILSCALE)
 
 
-def memory_dir() -> Path:
+# lsof: /usr/sbin on macOS, /usr/bin on Debian/Kali (mac-mini-2012). Absolute, for the same bare-PATH reason as tailscale.
+LSOF_CANDIDATES = ["/usr/sbin/lsof", "/usr/bin/lsof"]
+
+
+def lsof_bin() -> str | None:
+    """Absolute path to lsof, or None. The cleanup sweep asks it what live processes use before removing anything;
+    a Mac-only path made every folder on the Linux box read as unused (marvin#911)."""
+    return next((p for p in LSOF_CANDIDATES if os.access(p, os.X_OK)), None) or shutil.which("lsof")
+
+
+def memory_dir(home: Path | None = None) -> Path:
     """MARVIN's memory folder on this machine.
 
     The synced ~/.claude/settings.json names it in `autoMemoryDirectory` as the Macs' absolute path. Re-root the part
     after `.claude/` under THIS machine's ~/.claude, so mac-mini-2012 (home /home/marvin) reads the same synced memory
     the Macs write. A missing, malformed or out-of-tree setting falls back to Claude Code's own default for this home."""
-    home = Path.home()
+    home = Path.home() if home is None else Path(home)
     claude = home / ".claude"
     default = claude / "projects" / str(home).replace("/", "-") / "memory"
     try:

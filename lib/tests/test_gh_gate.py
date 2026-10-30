@@ -151,7 +151,9 @@ def test_two_gate_copies_on_path_make_one_real_call_and_one_log_line(tmp_path):
 def test_a_gate_reached_from_inside_a_gate_with_no_real_gh_fails_at_once(tmp_path):
     # Only gate copies on PATH and no real gh anywhere: say so and stop, never loop.
     other = _gate_copy(tmp_path, "worktree-bin")
-    env = {"PATH": f"{other}:{GATE.parent}:/usr/bin:/bin", "HOME": str(tmp_path), "GH_GATE_NO_BUDGET": "1"}
+    # No /usr/bin or /bin on PATH: a machine with a real gh there (the Linux box's apt gh, marvin#623) would otherwise
+    # hand the gate a real gh. The gate's shebang is absolute, so it needs nothing else from PATH.
+    env = {"PATH": f"{other}:{GATE.parent}", "HOME": str(tmp_path), "GH_GATE_NO_BUDGET": "1"}
     p = subprocess.run([str(other / "gh"), "pr", "list"], capture_output=True, text=True, env=env, timeout=30)
     if gg.find_real_gh("/nonexistent"):  # a real gh is installed in a fallback location on this Mac: one call to it
         assert len((tmp_path / ".claude" / "logs" / "gh-calls.jsonl").read_text().splitlines()) == 1

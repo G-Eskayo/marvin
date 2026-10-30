@@ -28,7 +28,7 @@ def _drop_my_violations(request):
 def test_the_per_test_timeout_plugin_is_installed_and_set(request):
     assert request.config.pluginmanager.hasplugin("timeout"), (
         "pytest-timeout is not installed in this venv, so a hung test would hold the merge gate with no name: "
-        "run ~/.agents/venv/bin/python -m pip install pytest-timeout pytest-xdist (setup.sh does this)")
+        "install ~/.agents/requirements-test.txt (setup.sh does this; the Linux box: config/mac-mini-2012/README.md)")
     assert float(request.config.getini("timeout")) == 120
 
 
@@ -72,6 +72,28 @@ def test_subprocesses_inherit_the_temp_home():
 def _has(cmd):
     from shutil import which
     return which(cmd) is not None
+
+
+def test_the_test_home_links_the_memory_folder_settings_name_even_on_another_home(tmp_path):
+    """marvin#623: on the Linux box (home /home/marvin) the synced settings name the Macs' memory folder
+    (-Users-gileskayo). host_os.memory_dir() re-roots that under the box's ~/.claude, so the test home must link that
+    same folder, not projects/-home-marvin/memory, or every test that reads MEMORY.md fails with FileNotFoundError."""
+    import json
+    real = tmp_path / "home" / "marvin"
+    mem = real / ".claude" / "projects" / "-Users-someone" / "memory"
+    mem.mkdir(parents=True)
+    (mem / "MEMORY.md").write_text("# Memory Index\n")
+    (real / ".claude" / "settings.json").write_text(json.dumps(
+        {"autoMemoryDirectory": "/Users/someone/.claude/projects/-Users-someone/memory"}))
+    assert "projects/-Users-someone/memory" in rhg.read_through(real)
+    home = rhg.make_test_home(real, parent=str(tmp_path))
+    assert (home / ".claude" / "projects" / "-Users-someone" / "memory" / "MEMORY.md").read_text() == "# Memory Index\n"
+
+
+def test_without_a_memory_setting_the_test_home_links_this_homes_default_memory(tmp_path):
+    real = tmp_path / "home" / "marvin"
+    (real / ".claude").mkdir(parents=True)
+    assert f"projects/{str(real).replace('/', '-')}/memory" in rhg.read_through(real)
 
 
 def test_make_test_home_mirrors_everything_but_claude(tmp_path):
@@ -210,12 +232,24 @@ def test_a_disarmed_guard_lets_writes_through():
 
 # ---- du on the real home ----
 
+def test_the_harness_plugins_are_declared_once_and_every_setup_path_installs_that_file():
+    """marvin#623: the Linux box's venv was built from a pip freeze and missed pytest-timeout. One declaration, and
+    both setup paths (setup.sh on the Macs, the box runbook with uv) install from it."""
+    root = Path(__file__).resolve().parents[2]
+    declared = {line.split(">")[0].split("=")[0].strip() for line in (root / "requirements-test.txt").read_text().splitlines()
+                if line.strip() and not line.startswith("#")}
+    assert {"pytest", "pytest-timeout", "pytest-xdist"} <= declared
+    assert "-r \"$AGENTS_DIR/requirements-test.txt\"" in (root / "setup.sh").read_text()
+    assert "-r ~/.agents/requirements-test.txt" in (root / "config" / "mac-mini-2012" / "README.md").read_text()
+
+
 def test_du_on_the_real_home_is_refused_at_once():
     import disk_ledger
     with pytest.raises(AssertionError, match="du on the real home"):
         disk_ledger._default_du_kb(REAL / "Documents")
     with pytest.raises(AssertionError, match="du on the real home"):
-        disk_ledger._default_du_kb(Path.home() / "Library" / "Caches")  # through the mirror's symlink
+        # Through the mirror's symlink. ~/.agents exists on every MARVIN machine; ~/Library does not on Linux (marvin#623).
+        disk_ledger._default_du_kb(Path.home() / ".agents" / "lib")
 
 
 def test_du_on_a_temp_folder_still_runs(tmp_path):

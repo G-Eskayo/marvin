@@ -1,0 +1,8 @@
+{
+  "name": "health-check",
+  "description": "Health sweep (lib/health_checks.py): runs every check and writes the Health tab's status file",
+  "command": ["~/.agents/venv/bin/python", "~/.agents/lib/health_checks.py"],
+  "schedule": {"every_s": 900, "at_load": true},
+  "env": {"HOME": "~", "PATH": "~/.local/bin:/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:~/.agents/venv/bin"},
+  "log": "health-check"
+}

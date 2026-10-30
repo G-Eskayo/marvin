@@ -1,0 +1,6 @@
+# The test harness every machine that runs MARVIN's suite needs (pytest.ini sets `timeout = 120`, the gate runs -n).
+# lib/tests/test_test_harness.py fails, naming this file, on a venv without them. Installed by setup.sh (pip) and by
+# the Linux box runbook (uv; its venv has no pip): config/mac-mini-2012/README.md. marvin#623.
+pytest>=9.1
+pytest-timeout>=2.4
+pytest-xdist>=3.8

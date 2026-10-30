@@ -210,3 +210,16 @@ def test_an_unreadable_plan_state_bills_the_plan(tmp_path):
     assert r["log"][-1]["why"] == "plan-first"
 
 
+def test_the_task_record_is_valid_json_with_a_live_pid_under_macos_bash(tmp_path):
+    """Found 2026-10-30: macOS's /bin/bash is 3.2, which has no $BASHPID, so every record read `"pid": }`, the reader
+    skipped it, others-running always said 0 and no overflow build ever billed the credit."""
+    home = tmp_path / "home"
+    (home / ".claude").mkdir(parents=True)
+    script = td._build_wrapper_script(f'cat "$HOME/.claude/dispatch/tasks/t9.json" > "{tmp_path}/rec"; echo "$$" > "{tmp_path}/pid"',
+                                      "t9", "lbl", "dev")
+    path = tmp_path / "wrapper.sh"
+    path.write_text(script)
+    subprocess.run(["/bin/bash", str(path)], env={"HOME": str(home), "PATH": "/usr/bin:/bin"},
+                   capture_output=True, text=True, timeout=30)
+    record = json.loads((tmp_path / "rec").read_text())
+    assert record["pid"] == int((tmp_path / "pid").read_text())

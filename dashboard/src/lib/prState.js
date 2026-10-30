@@ -11,7 +11,7 @@
 // click it is stale as soon as the state changes, so it is never shown as an error.
 const MIRRORED_REFUSALS = /^(SENT_BACK|CI_PENDING|CI_FAILED|WRONG_BASE|NO_UI_EVIDENCE|IMAGES_UNPINNED|IMAGES_STALE|DECISIONS_PENDING|DECISIONS_UNSTRUCTURED)\b/
 
-export function describePrState(pr, { status = 'idle', errorMessage = null, progress = false } = {}) {
+export function describePrState(pr, { status = 'idle', errorMessage = null, progress = false, machine = null } = {}) {
   const ci = pr.checks || { state: 'none', failing: [], pending: [] }
   const waiting = pr.waitingOn || []
   const base = (kind, tone, headline, detail, approve, deny, extra = {}) => ({ kind, tone, headline, detail, approve, deny, actions: [], note: null, rework: null, checkProgress: false, ...extra })
@@ -34,7 +34,15 @@ export function describePrState(pr, { status = 'idle', errorMessage = null, prog
     return base('queued', 'working', 'Approved: waiting for a Mac to merge it', errorMessage || 'No Mac can merge right now. Your approval is saved and will merge by itself when one comes back.', 'hidden', 'enabled')
   }
 
+  // marvin#940: the merge machine refused it for memory and queued it; it merges there by itself when pressure drops.
+  // The owner's words for the headline (2026-10-30); the detail is that machine's own message.
+  if (status === 'waiting-memory') {
+    return base('queued', 'working', `Approved: waiting for memory on the ${machine || 'Mac mini'}`, errorMessage || 'It merges by itself when memory pressure drops.', 'hidden', 'enabled')
+  }
+
   if (status === 'merged') {
+    // marvin#940: merged on a backup Mac (the Mini was short of memory): say which, and flag another OS.
+    if (machine) return base('merged', 'ready', 'Merged', `Merged on ${machine}.${errorMessage ? ` ${errorMessage}` : ''}`, 'hidden', 'hidden')
     return errorMessage
       ? base('merged', 'ready', 'Merged on GitHub', 'It was merged on GitHub by hand while the dashboard was merging it, so the dashboard stopped following its merge.', 'hidden', 'hidden')
       : base('merged', 'ready', 'Merged', null, 'hidden', 'hidden')

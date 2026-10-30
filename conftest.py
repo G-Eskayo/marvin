@@ -45,6 +45,39 @@ WRITE_GUARD = real_home_guard.install_write_guard(real_home_guard.protected_root
                                                   resolve_under=(str(TEST_HOME / ".claude"),))
 
 
+# marvin#940: one test run at a time on this machine, merges first (lib/test_slot.py). A whole-suite or parallel run
+# waits here for the slot before collecting anything and holds it to the end; one file or one test never waits. The
+# controller decides once; xdist workers, the tests and anything they start inherit MARVIN_TEST_SLOT and pass through,
+# so no test ever queues on the machine's real slot. Inside the merge gate the slot is already held.
+_TEST_SLOT = None
+
+
+def pytest_configure(config):
+    global _TEST_SLOT
+    import test_slot
+    if hasattr(config, "workerinput"):
+        return
+    if os.environ.get(test_slot.HELD_ENV):
+        os.environ[test_slot.DIR_ENV] = str(TEST_HOME / ".cache" / "marvin" / "test-slot")
+        return
+    n = getattr(config.option, "numprocesses", None)
+    if test_slot.is_heavy(list(config.args), n not in (None, 0), cwd=config.invocation_params.dir):
+        _TEST_SLOT = test_slot.slot("pytest " + " ".join(config.args)[:60],
+                                    say=lambda t: print(f"test-slot: {t}", file=sys.stderr, flush=True))
+        _TEST_SLOT.__enter__()
+    else:
+        os.environ[test_slot.HELD_ENV] = "pytest (small run, not queued)"
+    # From here on the tests see a slot of their own: no test waits on, or reads, the machine's real merges and runs.
+    os.environ[test_slot.DIR_ENV] = str(TEST_HOME / ".cache" / "marvin" / "test-slot")
+
+
+def pytest_unconfigure(config):
+    global _TEST_SLOT
+    if _TEST_SLOT is not None:
+        _TEST_SLOT.__exit__(None, None, None)
+        _TEST_SLOT = None
+
+
 @pytest.hookimpl(hookwrapper=True)
 def pytest_runtest_makereport(item, call):
     outcome = yield

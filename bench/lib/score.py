@@ -25,7 +25,7 @@ def parse_stream(stdout: str) -> dict:
             continue
 
     tool_uses = []
-    result_event = None
+    result_event: dict = {}
     for ev in events:
         if ev.get("type") == "assistant":
             for block in ev.get("message", {}).get("content", []):
@@ -34,18 +34,18 @@ def parse_stream(stdout: str) -> dict:
         elif ev.get("type") == "result":
             result_event = ev
 
-    u = (result_event or {}).get("usage", {}) or {}
+    u = result_event.get("usage", {}) or {}
     input_tok = u.get("input_tokens", 0) or 0
     output_tok = u.get("output_tokens", 0) or 0
     cache_create = u.get("cache_creation_input_tokens", 0) or 0
     cache_read = u.get("cache_read_input_tokens", 0) or 0
 
     return {
-        "is_error": (result_event or {}).get("is_error"),
-        "result_text": (result_event or {}).get("result", ""),
-        "num_turns": (result_event or {}).get("num_turns", 0),
-        "duration_ms": (result_event or {}).get("duration_ms", 0),
-        "cost_usd": (result_event or {}).get("total_cost_usd", 0.0),
+        "is_error": result_event.get("is_error"),
+        "result_text": result_event.get("result", ""),
+        "num_turns": result_event.get("num_turns", 0),
+        "duration_ms": result_event.get("duration_ms", 0),
+        "cost_usd": result_event.get("total_cost_usd", 0.0),
         # token/context cost
         "input_tokens": input_tok,
         "output_tokens": output_tok,

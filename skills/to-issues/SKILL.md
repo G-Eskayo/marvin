@@ -68,6 +68,14 @@ For each approved slice, publish a new issue to the issue tracker. Use the issue
 Publish issues in dependency order (blockers first) so you can reference real issue identifiers in the "Blocked by" field.
 
 <issue-template>
+## Task and purpose
+
+Three short lines, first in every ticket. They're there to steer whoever builds it, not to explain it in full:
+
+- **Task:** what done looks like, in one sentence.
+- **Purpose:** why it matters now: what breaks, what it costs or what it unblocks.
+- **North star:** which one it serves (`docs/north-stars.md`: 1 resources, 2 phone OS, 3 human experience, 4 tool for tools) and how, in a clause. Say so if one argues against it.
+
 ## Parent
 
 A reference to the parent issue on the issue tracker (if the source was an existing issue, otherwise omit this section).

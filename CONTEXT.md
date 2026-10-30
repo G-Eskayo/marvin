@@ -371,6 +371,11 @@ then) — a real, current fragility, not a hypothetical one.
   metrics-comparison (see Verification/trust mechanism above) = measurement, the MR = the write-up,
   Gil's approve/deny = peer review. Not just a metaphor — it's the actual justification for why the
   sandbox and the metrics-comparison step both exist as hard requirements, not nice-to-haves.
+- **Answers are the approval** (decided with Gil, 2026-10-30): a PR that asks for Decisions has one button, named by
+  the answers. All answers match what's built: **Merge with these answers** (saves them and merges in one press). Any
+  answer changes something, or a note is typed: **Send back with answers** (MARVIN rebuilds; the PR returns as a
+  normal review). A mock-up or plan PR, with nothing to merge: **Send answers**, laid out like a ballot. The option
+  that was built is pre-selected on screen but never ticked in the PR until Gil presses the button.
 
 ## Auto-merge (designed 2026-10-09, #332, ADR 0064)
 
@@ -538,6 +543,59 @@ ever been closed unmerged. Gil approves almost everything; the wait is the cost.
   you" column, worst first, with the live map. Whether the column sits over the map or below it is still open.
 - **Leaf node**: the outermost parts on the map (files, functions, sub-agents). They light when touched, the same as
   any other part.
+- **Listening sign**: the map's mark that it is still hearing from the parts that report to it. When a producer
+  stops reporting, its part goes grey ("not hearing from it"), so a quiet system and a deaf one never look the same.
+- **Peer watch**: the Macs check on each other, over the link they already share (Tailscale), on triggers, never on
+  a timer: each sends a word when something changes and when it goes to sleep, and a Mac that goes quiet without
+  saying so is flagged by the other. It is how Vitals stays independent of the Mac it runs on.
+- **Stale verdict**: the verdict line carries its age, and turns amber once it is older than the sweep should allow.
+  A verdict is never trusted past its age.
+- **Common cause**: failures that share one root (main is red, so every build fails) fold into one row in "what
+  needs you" ("main is red · 15 builds blocked"), with the blocked parts under it. The map still marks each one.
+- **Unstable**: a check that keeps flipping between passing and failing. It shows amber as unstable instead of
+  blinking, so the map's motion stays truthful.
+- **Stage view**: the map and Vitals as shown to someone else (a demo, a screen share). Names of tickets, files and
+  private projects are hidden; only shapes, colours and activity show.
+- **Fix work** (and the budget lines): an auto fix is not new work. It passes the hard line, because a fix is often
+  what frees room for work (clearing a cache, freeing memory).
+- **Reversible** (of an auto fix): every auto fix leaves a record of what it changed and an undo. A fix that can't
+  be undone fully is not auto; it is one tap.
+- **Throttle badge**: the badge an interactive session shows while it is throttled, with its step, so a slowdown
+  never looks like a bug.
+- **Hand work**: work Gil does outside the pipeline (a push, closing a ticket). Vitals counts it and clears the
+  reds it resolves, the same as pipeline work.
+- **Watcher cost**: what the map and Vitals themselves use (CPU, GPU, memory). Shown in Energy like any other part,
+  never hidden.
+- **Not enough data yet**: the state of a measure that has no baseline or history (a new install has no paid baseline
+  and doesn't know its plan's limits). Never shown as 0% or as healthy.
+- **Menu bar meter**: a small MARVIN item in the macOS menu bar, there from login whether or not the dashboard is
+  open. In the bar: this Mac's CPU and GPU as two tiny live bars and a dot in the Vitals verdict colour. Clicked:
+  every Mac's CPU, GPU, memory and thermal, its top processes, any Mac asleep or gone quiet, and a way into Vitals.
+  It reads the same numbers as Vitals, so the two never disagree.
+- **Dead and stuck** (of a worker): **dead** means its process ended without finishing; it is red at once. **Stuck**
+  means alive but with no **progress** (its log or transcript grew, a commit landed, it moved stage) for longer than
+  its limit: a builder or chat helper 15 min (amber) and 45 min (red), a spawned agent 10 and 30, a scheduled job 3x
+  and 6x its usual run. **Can't tell** (its Mac is asleep or out of reach) is grey, never red.
+- **Progress check**: when a worker reaches a limit, MARVIN looks at it before calling it stuck (is it running tests,
+  using CPU, talking to the network). If it is really working, it goes back to green and its limit starts again. A check can reset a worker at most
+  twice without real progress; the third time it goes amber anyway ("busy but not advancing").
+- **Dismiss and mute**: **dismissing** a red item clears that one occurrence; if the same failure happens again it
+  comes back red, marked "seen before". **Muting** keeps a known failure quiet until an end date, and the mute itself
+  shows in Vitals. Neither ever hides a failure invisibly.
+- **Recurring issue**: a failure that keeps coming back. Vitals counts every occurrence so recurring ones can be traced
+  to their root and fixed. The third dismissal of the same failure becomes a decision: fix the root, mute it, or
+  retire the check.
+- **Shared truth**: one owner per kind of thing, not "the Mini wins". GitHub owns PRs, tickets, claims and its call
+  allowance (each Mac only holds a copy; the newer read wins). The Mac mini owns merges and the shared sync repo.
+  Each Mac owns its own load, tokens, sessions and failures. Whether a Mac is alive is owned by the others. Each Mac
+  pushes its own activity to the others as it happens, so every map shows the same work with no hub.
+- **Mac state**: **awake**; **asleep** or **off** (it said so before it went: calm, with "last seen", never an
+  error); **gone quiet** (it dropped off without a word). A laptop that is asleep or off is never shown as dead or
+  failing. Only an always-on machine (the Mac mini) turns red, and only after a grace period.
+- **Machine health**: each computer's own load (CPU, GPU, memory, thermal) shown in Vitals per Mac. It belongs to
+  MARVIN's health because the point is for the computers to work together as one; work should go to whichever Mac
+  has room, and to the GPU where it can.
+
 
 ## Health monitoring (in design, 2026-10-01)
 
@@ -1882,3 +1940,20 @@ owner turns on or buys, and may hold several skills.
   line is advice and doesn't count for a second occurrence.
 _Avoid_: calling a fix to one surface (the dashboard, a session prompt) "fixed" when the same state can be reached
 another way.
+
+## Merges under memory pressure (built 2026-10-30, marvin#940)
+
+- **Test slot**: a machine's one place to run tests (`lib/test_slot.py`). The merge gate, the after-merge full suite
+  (main-health) and helpers' whole-suite or parallel runs take it one at a time; one test file never waits. Workers
+  are sized to free memory, not cores.
+- **Merges first**: a merge is marked on the machine from the Approve to its end. While one is marked or queued for
+  memory, other test runs wait for it and new helpers are queued (memory guard); nothing running is stopped.
+- **Waiting for memory**: an approval the merge Mac refused for memory and queued. It is kept (approval ledger outcome
+  `waiting-memory`), runs there by itself when pressure drops, and its card says "Approved: waiting for memory on the
+  Mac mini". Not a failure.
+- **Backup merge machine**: a later machine in the merge list (the MacBook; the Linux box for MARVIN PRs, #945) that
+  takes a merge when the Mini can't for memory, only if it says it is fit (awake, on power, at home, idle:
+  `GET /merge-ready`) and only after the Mini dropped its queued copy (`POST /merge-forget`). The card names the Mac
+  that merged and flags tests run on another OS.
+_Avoid_: "failed" for an approval that waits for memory; "idle" meaning the owner is away (here it means the machine
+runs no merge or test of its own and its memory is normal).
