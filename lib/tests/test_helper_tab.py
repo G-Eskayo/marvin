@@ -216,3 +216,61 @@ def test_the_helpers_exit_enforces_the_download_cap_without_changing_its_exit_co
     assert calls == [1]
     monkeypatch.setattr(download_cache, "enforce_cap", lambda **k: 1 / 0)
     assert ht.run_helper("G", "w", ["true"]) == 0   # a broken trim never changes the helper's result
+
+
+# ── memory (marvin#845): refuse and queue at warn or critical, start the next queued one on exit ─────────────
+
+def _disk_ok(monkeypatch):
+    import disk_triggers
+    monkeypatch.setattr(disk_triggers, "preflight", lambda what, **k: {"ok": True, "message": ""})
+    monkeypatch.delenv("HELPER_TAB_SKIP_DISK_CHECK", raising=False)
+
+
+def test_launch_under_memory_pressure_opens_no_tab_and_queues_the_same_launch(monkeypatch, capsys):
+    import memory_guard
+    _disk_ok(monkeypatch)
+    seen = []
+    monkeypatch.setattr(memory_guard, "guard", lambda what, argv, cwd, **k: seen.append((what, argv, cwd)) or
+                        {"ok": False, "queued": True, "message": f"The Mac mini's memory is under pressure, so {what} waits."})
+    monkeypatch.setattr(ht, "_list_panes", lambda: pytest.fail("no tab may open under memory pressure"))
+    monkeypatch.setenv("HELPER_TAB_QUIET", "1")
+    rc = ht.launch("Seal Speak", "#60 split", ["make", "build"], "/tmp/x", on_exit="zsh lane.sh f 3")
+    assert rc == ht.MEMORY_REFUSED_RC
+    what, argv, cwd = seen[0]
+    assert what == "Seal Speak: #60 split" and cwd == "/tmp/x"
+    # The queued item is this same launch, --on-exit included, so a lane carries on from it when it finally runs.
+    assert argv[-7:] == ["--cwd", "/tmp/x", "--on-exit", "zsh lane.sh f 3", "--", "make", "build"]
+    assert argv[argv.index("--group") + 1] == "Seal Speak" and argv[argv.index("--title") + 1] == "#60 split"
+    assert "memory is under pressure, so Seal Speak: #60 split waits" in capsys.readouterr().err
+
+
+def test_launch_with_normal_memory_goes_ahead(monkeypatch):
+    import memory_guard
+    _disk_ok(monkeypatch)
+    monkeypatch.setattr(memory_guard, "guard", lambda *a, **k: {"ok": True, "queued": False, "message": ""})
+    monkeypatch.setattr(ht, "_list_panes", lambda: [pane(1, 1, 1)])
+    monkeypatch.setattr(ht.subprocess, "run", lambda *a, **k: subprocess.CompletedProcess(a, 0, stdout="9\n"))
+    assert ht.launch("G", "w", ["true"], "/tmp") == 0
+
+
+def test_a_full_disk_is_refused_before_memory_is_read(monkeypatch):
+    import disk_triggers
+    import memory_guard
+    monkeypatch.setattr(disk_triggers, "preflight", lambda what, **k: {"ok": False, "message": "full"})
+    monkeypatch.setattr(memory_guard, "guard", lambda *a, **k: pytest.fail("disk refused first: nothing queued"))
+    monkeypatch.delenv("HELPER_TAB_SKIP_DISK_CHECK", raising=False)
+    monkeypatch.setenv("HELPER_TAB_QUIET", "1")
+    assert ht.launch("G", "w", ["true"], "/tmp") == ht.DISK_REFUSED_RC
+
+
+def test_the_helpers_exit_starts_the_next_queued_one_without_changing_its_exit_code(monkeypatch, tmp_path):
+    import memory_guard
+    kicks = []
+    monkeypatch.setattr(memory_guard, "kick", lambda: kicks.append(1))
+    monkeypatch.setenv("HELPER_TAB_QUIET", "1")
+    monkeypatch.setenv("HELPER_TAB_JOBS_DIR", str(tmp_path / "jobs"))
+    monkeypatch.delenv("WEZTERM_PANE", raising=False)
+    assert ht.run_helper("G", "w", ["sh", "-c", "exit 5"]) == 5
+    assert kicks == [1]
+    monkeypatch.setattr(memory_guard, "kick", lambda: 1 / 0)
+    assert ht.run_helper("G", "w", ["true"]) == 0

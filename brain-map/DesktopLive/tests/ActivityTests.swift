@@ -38,18 +38,18 @@ check(odd?.keys.sorted() == ["skill"], "wrong types dropped: \(String(describing
 check(argument(activityCall(line: #"{"skill":"tdd","ok":1}"#))?["ok"] == nil, "a number is not a boolean")
 
 // A hostile skill name arrives as plain data: the call is still exactly one triggerActivity(...) of JSON.
-let evil = activityCall(line: #"{"skill":"x'); window.pwned = 1; ('"}"#)
-check(argument(evil)?["skill"] as? String == "x'); window.pwned = 1; ('", "hostile text stays text: \(evil ?? "nil")")
-
-// #843: activity.jsonl is trimmed to its last 500 lines on every write, so once it is full the count never grows
-// and the old count-based reader saw nothing new again. New lines are the ones after the last line seen.
-let capped: [String] = (0..<500).map { #"{"skill":"MARVIN","ts":\#($0)}"# }
-let trimmed: [String] = Array(capped.dropFirst()) + [#"{"skill":"tdd","ts":500}"#]
-check(newActivityLines(trimmed, after: capped.last) == [#"{"skill":"tdd","ts":500}"#], "a full, trimmed file still yields its new line")
-check(newActivityLines(trimmed, after: trimmed.last).isEmpty, "nothing new is nothing")
-check(newActivityLines(["a", "b"], after: "zzz") == ["a", "b"], "the last line seen is gone: all new")
-check(newActivityLines([], after: "b").isEmpty, "an emptied file yields nothing")
-check(newActivityLines(["a"], after: nil) == ["a"], "nothing seen yet: all new")
+let evilID = "x\"); window.pwned=1; (\""
+let evilDoc = String(data: try! JSONSerialization.data(withJSONObject: ["workers": [["id": evilID]]]), encoding: .utf8)!
+if let js = workCall(text: evilDoc), let open = js.range(of: "window.applyWork("), js.hasSuffix(");") {
+    let body = String(js[open.upperBound..<js.index(js.endIndex, offsetBy: -2)])
+    let back = (try? JSONSerialization.jsonObject(with: Data(body.utf8))) as? [String: Any]
+    check(((back?["workers"] as? [[String: Any]])?.first?["id"] as? String) == evilID, "a hostile id arrives as plain text")
+} else { check(false, "hostile work.json not passed through as data") }
+let tjs = treeCall(text: #"{"tree":{"id":"MARVIN"},"synapses":[],"work":{"tree":{"id":"W"},"synapses":[]}}"#) ?? ""
+check(tjs.hasPrefix(#"if (window.updateTreeData) window.updateTreeData({"id":"MARVIN"}, [], {"#) && tjs.contains(#""id":"W""#),
+      "work passed as the third argument: \(tjs)")
+check(treeCall(text: #"{"tree":{},"synapses":[]}"#)?.hasSuffix(", null);") == true, "no work: null")
+check(treeCall(text: "{") == nil, "unparseable tree data: nil (the host reloads)")
 
 if failures > 0 { print("\(failures) failure(s)"); exit(1) }
 print("ActivityTests: all passed")

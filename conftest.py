@@ -42,6 +42,9 @@ if not os.environ.get("MARVIN_MERGE_GATE") and not os.environ.get("MARVIN_PORTFO
 
 TEST_HOME = real_home_guard.make_test_home(REAL_HOME)
 os.environ["HOME"] = str(TEST_HOME)
+# marvin#845: the memory guard reads this Mac's live pressure before heavy work starts. Pinned to normal so no test
+# passes or fails with the machine's memory (the Mini runs the suite while it is busy); test_memory_guard unpins it.
+os.environ["MARVIN_MEMORY_PRESSURE_LEVEL"] = "normal"
 atexit.register(shutil.rmtree, TEST_HOME, True)  # removes the links, never what they point to
 WRITE_GUARD = real_home_guard.install_write_guard(real_home_guard.protected_roots(REAL_HOME),
                                                   resolve_under=(str(TEST_HOME / ".claude"),))

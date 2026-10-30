@@ -1363,6 +1363,20 @@ import job_events  # noqa: E402  (run log shown in the dashboard's Health tab)
 
 
 @job_events.reported("code-sync-push", "Code sync (git pull/push)")
+def peer_care_after_sync(action: str, repo: Path, spawn=subprocess.Popen) -> None:
+    """marvin#847 (design #769 section 3, "heartbeat missing"): the end of each engine pull (mirror on the 2012) checks the peers this
+    machine watches. It adds no clock: it rides the sync that runs anyway. Detached, so a slow probe (or a wake that
+    waits two minutes) never holds the sync up; a failure to start it never breaks the sync."""
+    if action not in ("pull", "mirror") or Path(repo).expanduser().resolve() != DEFAULT_REPO.expanduser().resolve():
+        return
+    script = Path(__file__).resolve().parent / "peer_care.py"
+    try:
+        spawn([sys.executable, str(script), "check-all", "--trigger", "code-sync"], start_new_session=True,
+              stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    except OSError:
+        pass
+
+
 def main() -> None:
     if len(sys.argv) not in (2, 3) or sys.argv[1] not in ("push", "pull", "mirror"):
         print("usage: code_sync.py {push|pull|mirror} [repo-path]", file=sys.stderr)
@@ -1380,6 +1394,7 @@ def main() -> None:
         if (nested / ".git").exists():
             job_events.step(f"{sys.argv[1]} {nested}")
             action(nested)
+        peer_care_after_sync(sys.argv[1], repo)
 
 
 if __name__ == "__main__":

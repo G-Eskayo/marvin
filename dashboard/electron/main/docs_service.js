@@ -1,4 +1,6 @@
-import { existsSync } from 'fs'
+import { existsSync, readFileSync, realpathSync, statSync } from 'fs'
+import path from 'path'
+import { sniffMime } from './pr_images.js'
 import { listRepoDocTree, fetchFileContent, searchableText } from './docs.js'
 import { listLocalTree, readLocalFile, localFileStates } from './docs_local.js'
 import { UNSORTED_ID } from './deliverables.js'
@@ -20,7 +22,10 @@ const copyAge = (copy) => ({ savedAt: copy?.savedAt ?? null, checkedAt: copy?.ch
 export { UNSORTED_ID }
 // `onStatesChanged(id)`: the uncommitted/unpushed badges (local `git status`, 75-100 ms) are read after the tree is
 // drawn, from the last-known states; when they differ, this is called so the open view redraws them in place.
-export function createDocsService({ getCatalog, exec, readMaster, fallbackRepos = () => [], saved = null, deliverables = null, onStatesChanged = () => {}, midWork = () => false }) {
+// `loadRemoteImage(url)` (pr_images.js's signed-in loader) fetches a GitHub-only project's images: a plain <img> on
+// raw.githubusercontent.com 404s for a private repo.
+export const MAX_DOC_IMAGE_BYTES = 15 * 1024 * 1024 // the same cap as PR and outbox images
+export function createDocsService({ getCatalog, exec, readMaster, fallbackRepos = () => [], saved = null, deliverables = null, onStatesChanged = () => {}, midWork = () => false, loadRemoteImage = null }) {
   const lastStates = new Map() // dir -> { path: state }
   const statesInflight = new Map()
   function refreshStates(id, dir) {
@@ -127,6 +132,45 @@ export function createDocsService({ getCatalog, exec, readMaster, fallbackRepos 
     return fetchFileContent(exec, ghName(rec), filePath)
   }
 
+  // An image a doc embeds (#539), resolved the way GitHub does: against the doc's own folder, with a leading '/' meaning
+  // the repo root. A path that isn't found beside the doc is tried from the repo root too, which is how older docs wrote
+  // them. Read from the local clone (so uncommitted images show), else through `loadRemoteImage`. Never outside the repo.
+  async function image(id, docPath, src) {
+    const no = (reason) => ({ ok: false, reason })
+    if (typeof src !== 'string' || !src.trim()) return no('no image path')
+    if (/^([a-z][a-z0-9+.-]*:|\/\/)/i.test(src)) return no('not a repo image')
+    let clean
+    try {
+      clean = decodeURIComponent(src.split(/[?#]/)[0])
+    } catch {
+      return no('bad image path')
+    }
+    const rec = id === MASTER_ID ? null : find(id)
+    if (!rec) return no('unknown project')
+    const inside = (p) => p !== '..' && !p.startsWith('../') && !path.posix.isAbsolute(p)
+    const fromRoot = path.posix.normalize(clean.replace(/^\/+/, ''))
+    const besideDoc = path.posix.normalize(path.posix.join(path.posix.dirname(String(docPath || '')), clean))
+    const candidates = [...new Set(clean.startsWith('/') ? [fromRoot] : [besideDoc, fromRoot])].filter(inside)
+    if (!candidates.length) return no('outside the repo')
+    const dir = dirOf(rec)
+    if (dir) {
+      let why = null // the most telling reason: a file that exists but isn't usable beats "not found"
+      for (const rel of candidates) {
+        const r = readRepoImage(dir, rel)
+        if (r.ok) return r
+        if (!why || why.reason === 'not found') why = r
+      }
+      return why
+    }
+    if (!rec.repo || !loadRemoteImage) return no(`no copy of ${rec.name} on this Mac`)
+    let last = no('not found')
+    for (const rel of candidates) {
+      last = await loadRemoteImage(`https://raw.githubusercontent.com/${rec.repo}/HEAD/${rel.split('/').map(encodeURIComponent).join('/')}`)
+      if (last?.ok) return last
+    }
+    return last || no('not found')
+  }
+
   // The first heading of each doc, for the project overview's summary cards. Reads local files or the saved copy only.
   async function headings(id, paths) {
     const out = {}
@@ -199,5 +243,24 @@ export function createDocsService({ getCatalog, exec, readMaster, fallbackRepos 
 
   const localDirs = () => (catalog()?.projects || []).map(dirOf).filter(Boolean)
 
-  return { repos, tree, content, headings, revalidate, localDocs, githubIndexRepos, localDirs, freshenTargets, idle }
+  return { repos, tree, content, image, headings, revalidate, localDocs, githubIndexRepos, localDirs, freshenTargets, idle }
+}
+
+// One image file inside a local clone: the real path (symlinks resolved) must stay inside the clone, and the bytes must
+// be an image under the size cap.
+function readRepoImage(dir, rel) {
+  const no = (reason) => ({ ok: false, reason })
+  try {
+    const root = realpathSync(dir)
+    const full = realpathSync(path.join(root, rel))
+    if (full !== root && !full.startsWith(root + path.sep)) return no('outside the repo')
+    const { size } = statSync(full)
+    if (size > MAX_DOC_IMAGE_BYTES) return no(`too large (${Math.round(size / 1048576)} MB)`)
+    const buf = readFileSync(full)
+    const mime = sniffMime(buf, rel)
+    if (!mime || !mime.startsWith('image/')) return no('not an image')
+    return { ok: true, mime, dataUrl: `data:${mime};base64,${buf.toString('base64')}` }
+  } catch (err) {
+    return no(err?.code === 'ENOENT' ? 'not found' : String(err?.message || err))
+  }
 }

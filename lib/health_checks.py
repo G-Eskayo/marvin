@@ -1048,6 +1048,9 @@ if [ -f "$TRIG" ]; then echo "disk_triggers=$(tail -300 "$TRIG" | /usr/bin/tr '\
 LASTCHK="$HOME/.claude/logs/disk-last-check"
 if [ -f "$LASTCHK" ]; then echo "disk_last_check=$(cat "$LASTCHK")"; fi
 /bin/df -k "$HOME" | /usr/bin/awk -v t="$(date +%s)" 'NR==2 {print t " " $4}' > "$LASTCHK" 2>/dev/null
+# marvin#845: the kernel's memory pressure level, what the memory guard holds back and what it refused/resumed today
+MG="$HOME/.agents/lib/memory_guard.py"
+if [ -f "$MG" ]; then echo "memory_guard=$("$HOME/.agents/venv/bin/python" "$MG" status 2>/dev/null | /usr/bin/tail -1)"; fi
 '''.replace("__ETIME_AWK__", _ETIME_AWK)
 
 
@@ -1111,7 +1114,17 @@ def parse_machine_state(text: str) -> dict:
             "disk_triggers": [l for l in raw.get("disk_triggers", "").strip().split("\x1f") if l.strip()],
             "disk_last_check": _parse_last_check(raw.get("disk_last_check", "")),
             "jobs": [j for j in raw.get("jobs", "").strip().split(",") if j],
-            "job_exits": _parse_job_exits(raw.get("job_exits", ""))}
+            "job_exits": _parse_job_exits(raw.get("job_exits", "")),
+            "memory_guard": _parse_memory_guard(raw.get("memory_guard", ""))}
+
+
+def _parse_memory_guard(text: str) -> dict | None:
+    """memory_guard.py status's one JSON line, or None when it is missing or unreadable (then no card)."""
+    try:
+        v = json.loads(text.strip())
+    except (ValueError, TypeError):
+        return None
+    return v if isinstance(v, dict) else None
 
 
 def _parse_job_exits(text: str) -> list[tuple[str, int | None, int]]:
@@ -1201,6 +1214,27 @@ def forecast_days_to_critical(ledger: list[dict], critical_kb: int = 15 * 104857
     return (sev, days_forecast, detail)
 
 
+def memory_pressure(mg: dict | None) -> tuple[str, str] | None:
+    """(severity, detail) for the memory:pressure card from memory_guard.py status (marvin#845), or None.
+    Red at critical, yellow at warn or when work still waits at normal (the notification should have started it)."""
+    if not mg or not mg.get("level"):
+        return None
+    level, waiting = mg["level"], [str(w) for w in mg.get("waiting") or []]
+    sev = "red" if level == "critical" else "yellow" if level == "warn" or waiting else "green"
+    swap = mg.get("swap_used")
+    parts = [f"Pressure {level}" + (f", {swap / 2**30:.1f} GB of swap in use" if swap else "")]
+    if waiting:
+        parts.append(f"{len(waiting)} waiting: {', '.join(waiting[:5])}" + (" ..." if len(waiting) > 5 else ""))
+    refused, resumed = len(mg.get("refused_24h") or []), int(mg.get("resumed_24h") or 0)
+    if refused or resumed:
+        parts.append(f"{refused} refused and {resumed} resumed in 24 h")
+    parts.append("nothing was stopped to make room" if refused or waiting else "new helpers start")
+    detail = "; ".join(parts)
+    if sev == "yellow" and level == "normal":
+        detail += " -- the queue starts on the next pressure change or finished job; `memory_guard.py drain` starts one now"
+    return sev, detail
+
+
 def evaluate_machine_state(state: dict, now: datetime) -> list[tuple[str, str, str]]:
     """[(check_key, severity, detail)] for one machine. The dashboard app is a native
     build that only rebuilds where a merge happened, so it silently drifts behind the
@@ -1262,6 +1296,9 @@ def evaluate_machine_state(state: dict, now: datetime) -> list[tuple[str, str, s
         if forecast:
             sev, days, detail = forecast
             out.append(("disk:headroom", sev, detail))
+    memory = memory_pressure(state.get("memory_guard"))
+    if memory:
+        out.append(("memory:pressure", *memory))
     if state.get("job_exits"):
         # A running job's status is its previous instance's (a KeepAlive restart shows -15), so only idle jobs count.
         failed = [(label, status) for label, pid, status in state["job_exits"] if pid is None and status != 0]
@@ -1371,6 +1408,13 @@ def check_recent_errors(reachability: dict[str, str], local=_local_errors, remot
     return results, groups
 
 
+MACHINE_STATE_LABELS = {
+    "dashboard:build": "Dashboard app build", "webhook:build": "Webhook server build", "auth:gh": "GitHub credential",
+    "desktoplive:running": "Desktop brain-map background", "jobs:placement": "Scheduled jobs vs. placement",
+    "disk:space": "Disk space", "disk:headroom": "Disk headroom forecast", "jobs:exit": "Scheduled jobs' last run",
+    "memory:pressure": "Memory pressure"}
+
+
 def check_machine_state_everywhere(reachability: dict[str, str], runner=_run_machine_state) -> list[dict]:
     results = []
     me = machine_profile.registry_id()
@@ -1378,9 +1422,7 @@ def check_machine_state_everywhere(reachability: dict[str, str], runner=_run_mac
         (dev, info.get("tailscale_hostname"), reachability.get(f"machine:{dev}", "yellow"))
         for dev, info in machine_profile.remote_macs().items()   # Mac-only state (dashboard, launchd); ADR 0069
     ]
-    labels = {"dashboard:build": "Dashboard app build", "webhook:build": "Webhook server build", "auth:gh": "GitHub credential",
-              "desktoplive:running": "Desktop brain-map background", "jobs:placement": "Scheduled jobs vs. placement",
-              "disk:space": "Disk space", "disk:headroom": "Disk headroom forecast", "jobs:exit": "Scheduled jobs' last run"}
+    labels = MACHINE_STATE_LABELS
     for dev, host, reach in devices:
         if reach == "asleep":
             for key, label in labels.items():

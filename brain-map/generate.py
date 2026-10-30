@@ -9,6 +9,7 @@ Live (always current):
   - ~/.claude/marvin-network.json (devices) — registered cross-machine devices (ADR 0020)
   - ~/.agents/dashboard/src/App.jsx (TABS)  — the dashboard's tabs (ADR 0049)
   - ~/.claude/catalog/projects.*.json       — active and recent projects (ADR 0049)
+  - workers for the ?layout=work mock-up (#854): helper run logs, ticket stages, the job catalog (scripts/work_view.py)
 
 Hand-maintained: ./enrichment.json — prose descriptions, non-skill nodes (ChromaDB
 collections, exo/task-dispatch), category grouping, and optional overrides for any
@@ -37,6 +38,7 @@ from pathlib import Path
 # Import data_flow for feeds threads
 sys.path.insert(0, str(Path(__file__).parent / "scripts"))
 import connections  # noqa: E402
+import work_view  # noqa: E402  (#854: the Work half)
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "lib"))
 import instance  # noqa: E402
 import data_flow  # noqa: E402
@@ -602,6 +604,103 @@ def all_synapses(manifest: dict, enrichment: dict, tree: dict, warn=None) -> lis
     return [s for s in synapses if s["a"] in ids and s["b"] in ids]
 
 
+# ── Body and Work (#854, mock-up behind ?layout=work) ───────────────────
+# Body: today's branches regrouped into the Vitals regions (enrichment.json body_regions). Work: one node per
+# project with its workers (scripts/work_view.py). Built from a copy of today's tree, which comes out unchanged.
+
+def _strip_code(node: dict) -> dict:
+    """A copy without code layers: the page copies them from today's tree by id, so they're not embedded twice."""
+    out = {k: v for k, v in node.items() if k not in ("code", "children", "pos")}
+    out["children"] = [_strip_code(c) for c in node.get("children", [])]
+    return out
+
+
+def _recolour(node: dict, cat: str) -> None:
+    node["cat"] = cat
+    for c in node.get("children", []):
+        _recolour(c, cat)
+
+
+def _region_cat(name: str) -> str:
+    return "region-" + re.sub(r"[^a-z0-9]+", "-", name.lower()).strip("-")
+
+
+def build_work_tree(tree: dict, enrichment: dict, work: dict, synapses: list[dict]) -> tuple[dict, list[dict]]:
+    """(the Body and Work tree, today's threads re-pointed at it). O(nodes + threads + workers)."""
+    import work_view  # noqa: PLC0415  (brain-map/scripts, on sys.path above)
+    spec = enrichment["body_regions"]
+    place, replaced = spec.get("place", {}), set(spec.get("replaced_by_work", []))
+    regions = {r["name"]: {"id": "region:" + r["name"], "name": r["name"], "cat": _region_cat(r["name"]),
+                           "desc": r.get("brain", ""), "children": [], "expandable": False, "expanded": True}
+               for r in spec["regions"]}
+    cat_colors = {_region_cat(r["name"]): {"label": r["name"], "brain": r.get("brain", ""), "color": r["color"]}
+                  for r in spec["regions"]}
+    cat_colors["work"] = dict(spec["work_color"])
+    default = spec["default"]
+
+    def pull_placed(node: dict) -> list[tuple[str, dict]]:
+        """Detach any descendant `place` names, wherever it sits, so it lands in its own region."""
+        moved, kept = [], []
+        for c in node["children"]:
+            if c["id"] in place:
+                moved.append((place[c["id"]], c))
+            else:
+                moved.extend(pull_placed(c))
+                kept.append(c)
+        node["children"] = kept
+        return moved
+
+    body_ids: set = set()
+    for trunk in (_strip_code(t) for t in tree.get("children", [])):
+        if trunk["id"] in replaced:
+            continue
+        for region, node in pull_placed(trunk) + [(place.get(trunk["id"], default), trunk)]:
+            target = regions.get(region) or regions[default]
+            _recolour(node, target["cat"])
+            target["children"].append(node)
+            collect_ids(node, body_ids)
+    body_ids |= {r["id"] for r in regions.values()}
+
+    # Projects keep today's ids (a name shared with a body node gets "project:"), so their threads still land.
+    def node_id_of(p):
+        return p["name"] if p["name"] not in body_ids else "project:" + p["name"]
+    old_agents = {c["id"] for t in tree.get("children", []) if t["id"] == "Autonomous Agents" for c in t["children"]}
+    work_half = work_view.work_trunk(work.get("projects", []), work.get("workers", []), node_id_of)
+    renamed = {}
+    for proj in work_half["children"]:
+        for w in proj["children"]:
+            if w["worker"].get("kind") == "job" and w["name"] in old_agents:
+                w["codeFrom"] = w["name"]
+                renamed[w["name"]] = w["id"]
+    body = {"id": "half:body", "name": "Body", "cat": "root", "desc": "What MARVIN is made of, by Vitals region",
+            "children": list(regions.values()), "expandable": False, "expanded": True}
+    _recolour(work_half, "work")  # one hue for everything MARVIN is working on
+    root = {"id": tree["id"], "cat": "root", "desc": tree.get("desc", ""), "expandable": False, "expanded": True,
+            "children": [body, work_half], "catColors": cat_colors}
+    attach_halves_layout(root)
+
+    all_ids: set = set()
+    collect_ids(root, all_ids)
+    out = []
+    for s in synapses:
+        s2 = {**s, "a": renamed.get(s["a"], s["a"]), "b": renamed.get(s["b"], s["b"])}
+        if s2["a"] in all_ids and s2["b"] in all_ids:
+            out.append(s2)
+    return root, out
+
+
+def default_layout(enrichment: dict) -> str:
+    """The one layout switch the browser page and both wallpaper hosts follow (?layout= overrides it in a browser)."""
+    v = (enrichment.get("body_regions") or {}).get("default_layout")
+    return v if v in ("today", "work") else "today"
+
+
+def tree_data(tree: dict, synapses: list, work_tree: dict, work_synapses: list, layout: str) -> dict:
+    """tree-data.json: what the wallpaper hosts push into the page on regeneration. `work` is the Body and Work
+    layout, so a wallpaper showing it updates the same way the browser page does."""
+    return {"tree": tree, "synapses": synapses, "work": {"tree": work_tree, "synapses": work_synapses}, "layout": layout}
+
+
 # ── precomputed layout (#183, ADR 0049) ─────────────────────────────────
 # The dendrite layout the page used to compute in the browser, done here
 # instead so it's the same every run and the browser runs no layout. Covers
@@ -679,6 +778,27 @@ def _spread(pos: dict, fixed: str, max_rounds: int = 200) -> None:
                 moved = True
         if not moved:
             return
+
+
+def attach_halves_layout(root: dict) -> None:
+    """Body to the left of the root and Work to the right (the sphere layout would stack two trunks top and bottom),
+    each half's branches laid out the same way as today's map. Deterministic, like compute_layout."""
+    out: dict = {root["id"]: (0, 0, 0)}
+    for i, half in enumerate(root.get("children", [])):
+        dir_ = (-1.0, 0.0, 0.0) if i % 2 == 0 else (1.0, 0.0, 0.0)
+        _layout_branch(half, _scale(dir_, SEG[0]), dir_, 1, out)
+    _spread(out, fixed=root["id"])
+    # The page turns the view about the origin; centre the two halves' extent on it (Body is the larger half), so
+    # neither runs off the side. The root itself stays at the origin, where the page always draws it.
+    xs = [p[0] for i, p in out.items() if i != root["id"]]
+    shift = (min(xs) + max(xs)) / 2 if xs else 0
+    out = {i: (p if i == root["id"] else (p[0] - shift, p[1], p[2])) for i, p in out.items()}
+
+    def walk(n: dict) -> None:
+        n["pos"] = [round(c, 2) for c in out[n["id"]]]
+        for c in n.get("children", []):
+            walk(c)
+    walk(root)
 
 
 def attach_layout(tree: dict) -> None:
@@ -887,6 +1007,11 @@ def main() -> None:
     attach_layout(tree)
     attach_code_layers(tree)
     synapses = all_synapses(manifest, enrichment, tree)
+    # #854 mock-up: the Body and Work layout, shown only with ?layout=work. work.json is its live half (the page
+    # re-reads it on the activity poll; lib/work_nudge.py rewrites it when a helper or builder starts or stops).
+    work = work_view.live_doc()
+    work_view.write(work_view.OUT_PATH, work)
+    work_tree, work_synapses = build_work_tree(tree, enrichment, work, synapses)
 
     template = TEMPLATE_PATH.read_text(encoding="utf-8")
 
@@ -908,9 +1033,19 @@ def main() -> None:
         template, flags=re.DOTALL,
     )
 
+    work_js = ("var workTree = " + json.dumps(work_tree, ensure_ascii=False) + ";\n  var workSynapses = "
+               + json.dumps(work_synapses, ensure_ascii=False) + ";\n  var DEFAULT_LAYOUT = "
+               + json.dumps(default_layout(enrichment)) + ";")
+    template = re.sub(
+        r"/\*__WORK_START__\*/.*?/\*__WORK_END__\*/",
+        lambda _m: "/*__WORK_START__*/\n  " + work_js + "\n  /*__WORK_END__*/",
+        template, flags=re.DOTALL,
+    )
+
     OUTPUT_PATH.write_text(template, encoding="utf-8")
     TREE_DATA_PATH.write_text(
-        json.dumps({"tree": tree, "synapses": synapses}, ensure_ascii=False), encoding="utf-8"
+        json.dumps(tree_data(tree, synapses, work_tree, work_synapses, default_layout(enrichment)), ensure_ascii=False),
+        encoding="utf-8",
     )
     n_skills = len(manifest["index"])
     n_agents = len(discover_recurring_agents())

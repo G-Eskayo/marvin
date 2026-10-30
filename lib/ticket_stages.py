@@ -28,6 +28,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 import machine_profile  # noqa: E402
 
 STAGES_DIR = Path.home() / ".claude" / "logs" / "ticket-stages"
+DEFAULT_STAGES_DIR = STAGES_DIR  # only stages written here are real ones the map's Work half hears about (#854)
 
 VALID_STAGES = {"claimed", "planning", "executing", "verifying", "gate", "mutation", "merging", "versioning", "rebuilding", "done"}
 VALID_STATUSES = {"started", "passed", "failed"}
@@ -113,7 +114,18 @@ def record_stage(
     events = read_stages(ticket_number, repo)
     events.append(event)
     path.write_text(json.dumps(events, indent=2))
+    if STAGES_DIR == DEFAULT_STAGES_DIR:
+        try:
+            _nudge_work()
+        except Exception:  # noqa: BLE001 -- the map being behind must never fail a pipeline stage
+            pass
     return event
+
+
+def _nudge_work() -> None:
+    """A builder started, moved or finished: tell the map's Work half (#854, lib/work_nudge.py)."""
+    import work_nudge  # noqa: PLC0415
+    work_nudge.nudge()
 
 
 def read_stages(ticket_number: int, repo: str | None = None) -> list[dict]:

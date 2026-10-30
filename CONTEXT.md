@@ -480,6 +480,19 @@ ever been closed unmerged. Gil approves almost everything; the wait is the cost.
   API credit, GitHub's hourly calls, our own machines' idle compute), where unused is waste. A **capacity** is space
   that must stay free (disk, memory, thermal headroom), where nearly full is a stall about to happen. Flow means
   budgets near their limit and capacities below their safe line.
+- **Soft line and hard line** (of a budget): at about 90% (soft line) MARVIN sheds low-priority background work;
+  at about 99% (hard line) it starts nothing new and lets running work finish. Interactive sessions are throttled
+  too, after background work and in steps: at the soft line their sub-agents and mechanical steps move to a
+  cheaper model and a one-line notice shows; near 95% they warn before starting anything big and offer to queue it
+  or run it on the API credit; at the hard line a big task needs Gil's yes. Nothing is cut off mid-task.
+- **Pace** (of a budget that expires, like the API credit or the weekly plan limit): projected spend to the reset
+  date. Under pace, queued work is pulled forward; over pace, it is slowed, so the budget lands near its limit.
+- **Fix level**: every fix Vitals offers is one of three. **Auto**: low-risk, reversible, touches only MARVIN's own
+  state; MARVIN runs it at once and reports it. **One tap**: a button Gil presses (spends a budget, touches another
+  project, or is hard to undo). **Decision**: a real choice with options. An auto fix that fails twice drops to one
+  tap, with the reason.
+- **ROI** (for MARVIN): measured by the north stars, as Independence and Flow over time, not as a separate hours
+  ratio.
 - **Monitored system**: MARVIN, plus anything MARVIN is connected to: work MARVIN does on a project (its
   pipeline, agents and helpers), and products MARVIN runs or keeps updated (the portfolio site, whose purpose is to
   stay current with what we're working on). A product that runs on its own with no tie to MARVIN is *not* one:
@@ -508,12 +521,17 @@ ever been closed unmerged. Gil approves almost everything; the wait is the cost.
   agent a session spawned, a scheduled job. Different from the **Autonomous Agents** branch of today's map, which is
   only the scheduled jobs.
 - **Worker lifecycle on the map**: a worker shows only while it runs. One that finishes cleanly leaves at once (its
-  history is in Activity). One that dies stays red until a retry passes or Gil dismisses it. Scheduled jobs follow
+  history is in Activity). One that dies stays red until a retry passes, its ticket closes or its PR merges, or Gil
+  dismisses it: the map shows what is actually unresolved, never settled history. Scheduled jobs follow
   the same rule: visible while running, red if they failed, otherwise not shown. Nothing fades.
 - **The map as background**: the live map is the backdrop of MARVIN, not a page you open. The desktop wallpaper and
   the dashboard show the same map, kept identical, and Vitals sits on top of it.
 - **Map colour**: each region and the Work half has its own clearly different hue, so a colour says what a part is
   without a legend. Red (failure) and amber (missed purpose) are reserved. Brightness shows activity.
+  **Shape** is a second cue for every part (what kind of thing it is), whatever the colour, because it reads
+  faster.
+- **Vitals tab layout**: a verdict line (healthy or how many things need Gil, Independence, Flow) and a "what needs
+  you" column, worst first, with the live map. Whether the column sits over the map or below it is still open.
 - **Leaf node**: the outermost parts on the map (files, functions, sub-agents). They light when touched, the same as
   any other part.
 
@@ -1464,6 +1482,7 @@ A profile can declare `"generated": [{"path", "unless"?, "regenerate"?}]` (`lib/
 - **A GATE_INFRA refusal names its cause** (2026-10-28, after Approve on #600 and #739 was refused with a generic line while the Mac mini had 1.6 GB free): `failure.js` `infraCause` turns each GATE_INFRA signature into one plain sentence ("The Mac mini's disk is nearly full (1.6 GB free, the check needs 5.0 GB)"), with the machine's label derived from its device id. That sentence is the refusal's message (dashboard, MR Review, the webhook log, the refusal record) and the gate stage's detail after the code, which the stage strip shows as the **cause** ahead of the code's generic remediation. The code stays GATE_INFRA.
 - **First aid before a disk refusal**: when the gate's disk check (`MIN_GATE_FREE_BYTES`) fails, it runs the registered first-aid step `disk-clear-rebuildable` (`purpose_metrics.FIRST_AID`, which calls `cleanup_sweep.clear_rebuildable`: the sweep's own aerial-video keep-newest and `disk_trim`'s allowlisted caches, nothing else, single flight with the daily sweep) once per approve, measures again, and goes on if there is room now. The refusal says first aid ran and what it freed. The same step runs when the health check (already scheduled) reports a measured yellow/red `disk:space` for a Mac, at most once an hour per Mac (`health_checks.react_to_low_disk`): a trigger on an existing measurement, not a new loop.
 - **Disk triggers** (marvin#765, `lib/disk_triggers.py`): cleanup hangs on the events that use the space, not only the daily sweep. **Pre-flight**: `helper-tab` (and so every lane line) checks free space before a helper starts; below the gate's floor (5 GB, same as #690) it runs the reclaim once (first aid's trims, merged PRs' worktrees, the download cache's cap), then starts or refuses in plain words. **After a merge**: the merge server's default after-merge step starts the pipeline scan and `disk_triggers.py after-merge`, which runs the first-aid step `disk-clean-merged-worktrees` on every Mac: worktrees of merged PRs, found through each clone's `git worktree list` (so `~/Developer/<repo>-<n>` too), are removed with their Xcode DerivedData; uncommitted or untracked work, a process inside, or commits the merged PR lacks keep it. **Download cache** (`lib/download_cache.py`, `~/.cache/marvin-downloads`, `$MARVIN_DOWNLOAD_CACHE` in every helper): capped (`config/disk_triggers.json`), least recently used first, never a pinned entry (`pin NAME --pid`) or one still being written; enforced after each fetch, when a helper ends, and in the reclaim. **Aerial videos**: a `WatchPaths` job (`com.marvin.aerial-watch`) trims the moment the folder grows, behind `aerial_watch_trim` (off until the owner chooses item 1). Every trigger logs to `~/.claude/logs/disk-triggers.jsonl`; Health `disk:activity@<mac>` shows what work wrote since the last check and what the triggers freed, yellow when work was refused for space.
+- **Memory guard** (marvin#845, `lib/memory_guard.py`): no new heavy work while the kernel's memory pressure (`kern.memorystatus_vm_pressure_level`) is at warn or critical, and **nothing is ever stopped to make room**. It checks in `helper-tab` (so every lane line), the ticket pipeline before it claims, `task_dispatch` for work it runs on this Mac, and the merge gate before a rebase + retest (`MEMORY_PRESSURE`, action retry). A refusal says it in plain words ("The Mac mini's memory is under pressure, so #N waits"), tells the owner once, and queues the same launch in `~/.claude/memory-guard/queue/` (oldest first, one per key). **Resuming** is event-driven, one item per trigger: a helper's, a dispatched task's or a merge's end runs `kick`; a check at normal with work queued starts the watcher; the watcher holds a `DISPATCH_SOURCE_TYPE_MEMORYPRESSURE` source, but measured live on the Mini (2026-10-30) macOS sent a small listener no note at all, so it also watches the queue directory and ends once the queue is empty. Health `memory:pressure@<mac>` shows the level, what waits and what was refused and resumed in 24 h (the phone reads the same Health status). Log: `~/.claude/logs/memory-guard.jsonl`.
 - **Failure families seen in `pipeline-failures.jsonl` on 2026-10-05:** base moved/conflicts (NOT_MERGEABLE x8, REBASE_CONFLICT x7, UNKNOWN "base branch was modified" x3), executor timeouts (claude-timeout x7), finance-os test runs producing no output (x9), gate test failures (x2). Prior art: GitHub's merge queue is NOT available on personal-account repos; bors-ng / Zuul (serialise, test on the latest base) and Renovate (recreate conflicted PRs from the new base) are the models this pipeline now imitates.
 
 ## Timeouts, empty finance-os runs, and the merge popup (2026-10-05)

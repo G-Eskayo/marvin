@@ -131,6 +131,7 @@ contextBridge.exposeInMainWorld('api', {
     refresh: () => ipcRenderer.invoke('docs:refresh'),
     tree: (repo) => ipcRenderer.invoke('docs:tree', repo),
     content: (repo, path) => ipcRenderer.invoke('docs:content', repo, path),
+    image: (repo, docPath, src) => ipcRenderer.invoke('docs:image', repo, docPath, src),
     revalidate: (repo) => ipcRenderer.invoke('docs:revalidate', repo),
     freshen: () => ipcRenderer.invoke('docs:freshen'),
     headings: (repo, paths) => ipcRenderer.invoke('docs:headings', repo, paths),

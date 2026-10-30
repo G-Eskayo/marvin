@@ -1,0 +1,250 @@
+<!doctype html>
+<!-- marvin#847 Health card mock-up: one card per Mac for the nightly reset and the recovery between the Mac mini and
+     the 2012 mini. A mock-up for approval: the real dashboard is unchanged. Open straight from Finder, or with
+     ?scene=<id>&view=grid|detail. Styles copy the dashboard's CheckCard / HealthDrilldown (Tailwind neutral, dark). -->
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Health card mock-up (marvin#847)</title>
+<style>
+  :root { color-scheme: dark; font-family: -apple-system, BlinkMacSystemFont, "SF Pro Text", "Helvetica Neue", sans-serif; }
+  body { margin: 0; background: #0a0a0a; color: #e5e5e5; }
+  .page { padding: 24px; max-width: 1100px; }
+  .note { border: 1px dashed #525252; color: #a3a3a3; font-size: 11px; padding: 4px 8px; border-radius: 4px; display: inline-block; margin-bottom: 14px; }
+  .tabs { display: flex; gap: 4px; margin-bottom: 16px; }
+  .tab { padding: 4px 12px; font-size: 14px; border-radius: 4px; color: #737373; }
+  .tab.on { background: #262626; color: #fff; }
+  .summary { display: flex; gap: 12px; align-items: center; margin-bottom: 16px; }
+  .pill { display: flex; align-items: center; gap: 8px; border-radius: 6px; border: 1px solid; padding: 6px 12px; font-size: 14px; font-weight: 500; }
+  .muted { color: #737373; font-size: 12px; }
+  .grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 12px; }
+  @media (max-width: 1023px) { .grid { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
+  @media (max-width: 639px) { .grid { grid-template-columns: 1fr; } }
+  .card { display: flex; flex-direction: column; gap: 8px; border: 1px solid; border-radius: 8px; padding: 16px; text-align: left; min-width: 0; }
+  .card.context { opacity: .45; }
+  .card.new { outline: 1px dashed #7dd3fc; outline-offset: 3px; }
+  .head { display: flex; align-items: center; gap: 8px; }
+  .dot { width: 10px; height: 10px; border-radius: 99px; flex-shrink: 0; }
+  .card h3 { margin: 0; font-size: 14px; font-weight: 500; color: #fff; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .card p { margin: 0; font-size: 12px; line-height: 1.45; overflow-wrap: anywhere; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
+  .red { background: #450a0a; border-color: #7f1d1d; } .red .dot { background: #ef4444; } .red p, .red-t { color: #fca5a5; }
+  .yellow { background: #451a03; border-color: #78350f; } .yellow .dot { background: #f59e0b; } .yellow p, .yellow-t { color: #fcd34d; }
+  .green { background: #022c22; border-color: #064e3b; } .green .dot { background: #10b981; } .green p, .green-t { color: #6ee7b7; }
+  .asleep { background: #082f49; border-color: #0c4a6e; } .asleep .dot { background: #38bdf8; } .asleep p, .asleep-t { color: #7dd3fc; }
+  .back { font-size: 14px; color: #a3a3a3; margin-bottom: 16px; }
+  h2 { margin: 0 0 4px; font-family: ui-monospace, Menlo, monospace; font-size: 18px; color: #fff; }
+  .id { font-size: 12px; color: #737373; margin: 0 0 16px; }
+  .box { border: 1px solid #262626; background: #171717; border-radius: 8px; padding: 16px; margin-top: 16px; }
+  .box h4 { margin: 0 0 10px; font-size: 11px; text-transform: uppercase; letter-spacing: .06em; color: #737373; font-weight: 500; }
+  dl { display: grid; grid-template-columns: max-content 1fr; gap: 10px 24px; margin: 0; font-size: 14px; }
+  dt { color: #737373; } dd { margin: 0; color: #e5e5e5; }
+  .guards { list-style: none; margin: 0; padding: 0; font-size: 13px; display: grid; gap: 6px; }
+  .guards li { display: flex; gap: 8px; align-items: baseline; }
+  .ok { color: #34d399; } .hold { color: #fbbf24; } .no { color: #f87171; } .off { color: #737373; }
+  .nights { display: flex; gap: 6px; flex-wrap: wrap; }
+  .night { width: 92px; border-radius: 6px; border: 1px solid #262626; padding: 6px 8px; font-size: 11px; color: #a3a3a3; }
+  .night b { display: block; font-size: 12px; font-weight: 500; margin-bottom: 2px; }
+  .steps { list-style: none; margin: 0; padding: 0; font-size: 13px; display: grid; gap: 6px; }
+  .steps li { display: flex; gap: 10px; align-items: baseline; }
+  .steps .t { color: #737373; font-family: ui-monospace, Menlo, monospace; font-size: 12px; min-width: 44px; }
+  code { font-family: ui-monospace, Menlo, monospace; font-size: 12px; background: #262626; padding: 1px 5px; border-radius: 4px; color: #d4d4d4; }
+  .btns { display: flex; gap: 8px; margin-top: 12px; }
+  .btn { border: 1px solid #404040; background: #262626; color: #e5e5e5; border-radius: 6px; padding: 6px 12px; font-size: 13px; }
+  .two { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; }
+  @media (max-width: 899px) { .two { grid-template-columns: 1fr; } }
+  .two .box { margin-top: 0; }
+</style>
+</head>
+<body>
+<div class="page" id="root"></div>
+<script>
+// Every scene is the same two cards (one per Mac, owner's answer `fix-log` on #769) in a different night. The words
+// come from what nightly_reset.py and peer_care.py actually record (job_events, the night's state file, the incident).
+const CONTEXT = [
+  { label: 'Mac mini', sev: 'green', detail: 'Online over Tailscale · 41 ms' },
+  { label: 'Code graph is current', sev: 'green', detail: 'Rebuilt after the last merge' },
+  { label: 'Disk space', sev: 'yellow', detail: '14 GB free on the Mac mini (94% full)' },
+]
+const SETUP_DONE = { script: true, unlock: true, twelve: true, ethernet: true, plug: false }
+const SETUP_TODAY = { script: false, unlock: false, twelve: false, ethernet: false, plug: false }
+
+const SCENES = {
+  quiet: {
+    title: 'A quiet night: both Macs restarted, and came back with nobody typing',
+    setup: SETUP_DONE,
+    mini: { sev: 'green', detail: 'Restarted 00:41 last night, back in 2 min · the 2012 mini is watching · no incidents',
+      verdict: 'Next reset tonight at 00:30', guards: 'clear',
+      nights: ['restarted', 'restarted', 'skipped:you were up', 'restarted', 'restarted', 'restarted', 'restarted'],
+      incident: null },
+    book: { sev: 'green', detail: 'Restarted 02:33 last night · home, on power',
+      nights: ['restarted', 'away', 'restarted', 'restarted', 'away', 'restarted', 'restarted'] },
+  },
+  today: {
+    title: 'Today, before your setup steps: nothing switched on yet, so the Mac mini skips every night',
+    setup: SETUP_TODAY,
+    mini: { sev: 'yellow', detail: "Skipped last night: the 2012 mini is offline, so the Mac mini stayed up. 5 setup steps waiting on you",
+      verdict: "Tonight: will skip unless the 2012 mini is back", guards: 'peer-down',
+      nights: ['–', '–', '–', '–', '–', 'skipped:no watcher', 'tonight'],
+      incident: null },
+    book: { sev: 'yellow', detail: "Skipped last night: the restart script isn't installed yet (one-line setup)",
+      nights: ['–', '–', '–', '–', '–', 'skipped:no setup', 'tonight'] },
+  },
+  waiting: {
+    title: "Tonight, you're still up: the reset waits, re-checking every 15 minutes until 05:00",
+    setup: SETUP_DONE,
+    mini: { sev: 'green', detail: 'Tonight: waiting for you (last input 3 min ago) · next check 01:15 · skips at 05:00',
+      verdict: 'Waiting for you, next check 01:15', guards: 'owner',
+      nights: ['restarted', 'restarted', 'restarted', 'restarted', 'restarted', 'restarted', 'tonight'],
+      incident: null },
+    book: { sev: 'green', detail: 'Restarted 02:31 last night · home, on power',
+      nights: ['restarted', 'restarted', 'away', 'restarted', 'restarted', 'restarted', 'restarted'] },
+  },
+  notice: {
+    title: 'Five minutes before: the notice is out on the Mac mini and the phone (Postpone, Skip tonight)',
+    setup: SETUP_DONE,
+    mini: { sev: 'green', detail: 'Restarting at 00:35 (notice sent 00:30) · Postpone or Skip tonight',
+      verdict: 'Restarting at 00:35', guards: 'clear', buttons: true,
+      nights: ['restarted', 'restarted', 'restarted', 'restarted', 'restarted', 'restarted', 'tonight'],
+      incident: null },
+    book: { sev: 'green', detail: 'Next reset 02:30 · home, on power', nights: ['restarted', 'restarted', 'restarted', 'away', 'restarted', 'restarted', 'restarted'] },
+  },
+  helper: {
+    title: 'A helper is still running: the reset waits for it to exit (never a kill), not on a clock',
+    setup: SETUP_DONE,
+    mini: { sev: 'green', detail: 'Tonight: waiting for helper Seal: #60 and an Xcode build to finish · skips at 05:00',
+      verdict: 'Waiting for 2 jobs to finish', guards: 'work',
+      nights: ['restarted', 'restarted', 'skipped:helper ran past 05:00', 'restarted', 'restarted', 'restarted', 'tonight'],
+      incident: null },
+    book: { sev: 'green', detail: 'Restarted 02:30 last night · home, on power', nights: ['restarted', 'restarted', 'restarted', 'restarted', 'restarted', 'away', 'restarted'] },
+  },
+  incident: {
+    title: 'After a crash: the 2012 mini found the Mac mini at the unlock screen, and is on attempt 2 of 3',
+    setup: SETUP_DONE,
+    mini: { sev: 'yellow', detail: 'Down since 14:31 · at the FileVault unlock screen · the 2012 mini is fixing it: attempt 2 of 3',
+      verdict: 'Down: recovery in progress', guards: 'down',
+      nights: ['restarted', 'restarted', 'restarted', 'restarted', 'restarted', 'restarted', 'restarted'],
+      incident: { state: 'locked', attempts: 2, steps: [
+        ['14:31', 'trigger', 'Tailscale says the Mac mini went offline'],
+        ['14:31', 'probe', 'locked: port 22 open, password only (pre-boot sshd)'],
+        ['14:31', 'fix 1 of 3', 'unlock over SSH: password accepted, still at the unlock screen 2 min later'],
+        ['14:47', 'trigger', 'code-sync run: heartbeat missing'],
+        ['14:47', 'fix 2 of 3', 'unlock over SSH…'],
+      ] } },
+    book: { sev: 'green', detail: 'Restarted 02:31 last night · home, on power', nights: ['restarted', 'restarted', 'restarted', 'restarted', 'away', 'restarted', 'restarted'] },
+  },
+  needsyou: {
+    title: 'Three tries failed: the card turns red and you were told once, on every device',
+    setup: { ...SETUP_DONE, plug: false },
+    mini: { sev: 'red', detail: 'Needs you: not responding after 3 tries (network card answers, nothing else). Hold the power button',
+      verdict: 'Down: waiting for you', guards: 'down',
+      nights: ['restarted', 'restarted', 'restarted', 'restarted', 'restarted', 'restarted', 'restarted'],
+      incident: { state: 'hung', attempts: 3, told: '15:02', steps: [
+        ['14:31', 'trigger', 'Tailscale says the Mac mini went offline'],
+        ['14:31', 'probe', 'hung: ARP answers, port 22 closed'],
+        ['14:31', 'fix 1 of 3', "tell you (no smart plug yet, so nothing can power-cycle it)"],
+        ['14:47', 'probe', 'still hung'],
+        ['15:02', 'gave up', 'after 3 attempts; told you on the Mac mini, the MacBook and the phone'],
+      ] } },
+    book: { sev: 'green', detail: 'Restarted 02:31 last night · home, on power', nights: ['restarted', 'restarted', 'restarted', 'restarted', 'restarted', 'restarted', 'restarted'] },
+  },
+  away: {
+    title: 'The MacBook is out of the house: it skips its reset, shown as away (blue), not as a problem',
+    setup: SETUP_DONE,
+    mini: { sev: 'green', detail: 'Restarted 00:38 last night, back in 2 min · the 2012 mini is watching · no incidents',
+      verdict: 'Next reset tonight at 00:30', guards: 'clear',
+      nights: ['restarted', 'restarted', 'restarted', 'restarted', 'restarted', 'restarted', 'restarted'], incident: null },
+    book: { sev: 'asleep', detail: "Skipped last night: not at home · resets only at home and on power",
+      nights: ['restarted', 'restarted', 'away', 'away', 'restarted', 'away', 'away'] },
+  },
+}
+
+const q = new URLSearchParams(location.search)
+const sceneId = q.get('scene') || 'today'
+const view = q.get('view') || 'grid'
+const S = SCENES[sceneId]
+const esc = (s) => String(s).replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]))
+
+function card(label, sev, detail, cls = '') {
+  return `<div class="card ${sev} ${cls}"><div class="head"><span class="dot"></span><h3>${esc(label)}</h3></div><p>${esc(detail)}</p></div>`
+}
+
+function nightChip(n, i) {
+  const days = ['Thu', 'Fri', 'Sat', 'Sun', 'Mon', 'Tue', 'Wed']
+  const [kind, why] = n.split(':')
+  const map = { restarted: ['ok', 'Restarted'], away: ['off', 'Away'], skipped: ['hold', 'Skipped'], tonight: ['off', 'Tonight'], '–': ['off', '–'] }
+  const [c, word] = map[kind] || ['off', kind]
+  return `<div class="night"><b class="${c}">${word}</b>${days[i]}${why ? ` · ${esc(why)}` : ''}</div>`
+}
+
+function guards(kind) {
+  const rows = [
+    ['owner', 'You at the keyboard, a video, Screen Sharing, SSH logins', kind === 'owner' ? 'hold' : 'ok', kind === 'owner' ? 'last input 3 min ago: re-check at 01:15' : 'idle 2 h'],
+    ['work', 'Helpers, builds, tests, merges', kind === 'work' ? 'hold' : 'ok', kind === 'work' ? 'helper Seal: #60, an Xcode build: waits for them to exit' : 'none running'],
+    ['peer', 'A watcher is up (the 2012 mini)', kind === 'peer-down' ? 'no' : 'ok', kind === 'peer-down' ? "offline since 29 Oct 01:14: stays up, so one machine is always up" : 'online'],
+    ['script', 'The restart script is installed', S.setup.script ? 'ok' : 'no', S.setup.script ? 'comes back with nobody typing' : "not yet: it won't do a plain restart"],
+  ]
+  if (kind === 'down') return '<p class="muted">Not tonight\'s question: the Mac mini is down. Recovery is below.</p>'
+  const mark = { ok: '✓', hold: '…', no: '✕' }
+  return `<ul class="guards">${rows.map(([, what, st, why]) => `<li><span class="${st}">${mark[st]}</span><span>${esc(what)}</span><span class="muted">${esc(why)}</span></li>`).join('')}</ul>`
+}
+
+function setupList(s) {
+  const items = [
+    [s.script, 'Planned restart without the password screen', 'at each Mac, once:', 'sudo ~/.agents/bin/marvin-reset-setup'],
+    [s.twelve, 'The 2012 mini back online', 'needs you at it', null],
+    [s.unlock, 'Remote unlock from the 2012 mini', 'on the 2012, once:', 'sudo ~/.agents/bin/marvin-peer-unlock-setup mac-mini-1 gileskayo@192.168.0.41'],
+    [s.ethernet, 'Mac mini on Ethernet, address reserved', 'switches on Wake-on-LAN', null],
+    [s.plug, 'A smart plug with a local API', 'switches on the power cycle for a hang', null],
+  ]
+  return `<ul class="guards">${items.map(([done, what, how, cmd]) => `<li><span class="${done ? 'ok' : 'off'}">${done ? '✓' : '○'}</span><span>${esc(what)}</span><span class="muted">${done ? 'on' : esc(how)}${!done && cmd ? ` <code>${esc(cmd)}</code>` : ''}</span></li>`).join('')}</ul>`
+}
+
+function detail() {
+  const m = S.mini
+  const inc = m.incident
+  return `
+  <div class="back">← Back to all checks</div>
+  <h2>Mac mini: resets and recovery</h2>
+  <p class="id">care:mac-mini-1</p>
+  <dl class="box" style="margin-top:0">
+    <dt>Status</dt><dd class="${m.sev}-t">${esc(m.verdict)}</dd>
+    <dt>Reset slot</dt><dd>00:30, skipped if it can't start by 05:00</dd>
+    <dt>Watched by</dt><dd>the 2012 mini ${S.setup.twelve ? '(online)' : '<span class="no">(offline)</span>'}</dd>
+    <dt>Last checked</dt><dd>${inc ? '29 Oct 2026, 14:47' : '30 Oct 2026, 00:31'}</dd>
+  </dl>
+  ${m.buttons ? `<div class="box"><h4>Tonight's notice</h4><p style="margin:0;font-size:14px">Restarting the Mac mini at 00:35 for its nightly reset.</p><div class="btns"><span class="btn">Postpone 30 min</span><span class="btn">Skip tonight</span></div></div>` : ''}
+  <div class="two" style="margin-top:16px">
+    <div class="box"><h4>Tonight's guards</h4>${guards(m.guards)}</div>
+    <div class="box"><h4>Waiting on you</h4>${setupList(S.setup)}</div>
+  </div>
+  <div class="box"><h4>Last 7 nights</h4><div class="nights">${m.nights.map(nightChip).join('')}</div></div>
+  <div class="box"><h4>Recovery</h4>${inc
+    ? `<p style="margin:0 0 10px;font-size:14px" class="${m.sev}-t">Incident: ${esc(inc.state)} · attempt ${inc.attempts} of 3${inc.told ? ` · you were told at ${inc.told}` : ''}</p>
+       <ul class="steps">${inc.steps.map(([t, k, d]) => `<li><span class="t">${t}</span><span class="muted" style="min-width:80px">${esc(k)}</span><span>${esc(d)}</span></li>`).join('')}</ul>`
+    : '<p class="muted" style="margin:0">No incidents in the last 7 days. Every probe and fix also shows in the Activity tab as <code>peer-care-mac-mini-1</code>.</p>'}
+  </div>`
+}
+
+function grid() {
+  const counts = { red: 0, yellow: 0 }
+  ;[S.mini.sev, S.book.sev, ...CONTEXT.map((c) => c.sev)].forEach((s) => { if (counts[s] !== undefined) counts[s]++ })
+  const worst = counts.red ? 'red' : counts.yellow ? 'yellow' : 'green'
+  const word = { red: `${counts.red} broken`, yellow: `${counts.yellow} degraded`, green: 'All healthy' }[worst]
+  return `
+  <div class="tabs"><span class="tab on">Checks</span><span class="tab">Agents</span><span class="tab">Projects</span><span class="tab">Safety</span></div>
+  <div class="summary"><span class="pill ${worst}"><span class="dot"></span><span class="${worst}-t">${word}</span></span><span class="muted">Checked 00:31 · 46 checks</span></div>
+  <div class="grid">
+    ${card('Mac mini: resets and recovery', S.mini.sev, S.mini.detail, 'new')}
+    ${card('MacBook Pro: nightly reset', S.book.sev, S.book.detail, 'new')}
+    ${CONTEXT.map((c) => card(c.label, c.sev, c.detail, 'context')).join('')}
+  </div>`
+}
+
+document.getElementById('root').innerHTML =
+  `<div class="note">Mock-up · scene “${esc(sceneId)}”: ${esc(S.title)}. Dashed outline = the new cards; faded = existing cards, for context.</div>` +
+  (view === 'detail' ? detail() : grid())
+window.__ready = true
+</script>
+</body>
+</html>

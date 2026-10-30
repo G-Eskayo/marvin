@@ -358,7 +358,7 @@ function Outline({ content, onJump }) {
   )
 }
 
-function DocViewer({ content: rawContent, path, loading, error, scrollRef, onJump, ctx, onLink, rel, onTicket, onDoc, onPr, after = null, related = true }) {
+function DocViewer({ content: rawContent, path, loading, error, scrollRef, onJump, ctx, onLink, rel, onTicket, onDoc, onPr, after = null, related = true, loadImage }) {
   // A notebook is converted to markdown here, so the outline, the heading jump and the renderer all see the same text.
   const content = useMemo(() => (rawContent !== null && isNotebookPath(path) ? notebookToMarkdown(rawContent) : rawContent), [rawContent, path])
   if (error) return <div className="p-6 text-red-400">Failed to load: {error}</div>
@@ -374,7 +374,7 @@ function DocViewer({ content: rawContent, path, loading, error, scrollRef, onJum
     <div className="flex">
       <div ref={scrollRef} className="min-w-0 max-w-3xl flex-1 p-6">
         {/* The shared file viewer (#402): same renderer as the Files tab, and inline images open the full-size viewer. */}
-        <FileView key={path} file={{ kind: 'markdown', content, name: path, path }} markdown={{ ctx, onLink }} />
+        <FileView key={path} file={{ kind: 'markdown', content, name: path, path }} loadImage={loadImage} markdown={{ ctx, onLink }} />
         {after}
         {related && <Related rel={rel} onTicket={onTicket} onDoc={onDoc} onPr={onPr} />}
       </div>
@@ -994,6 +994,7 @@ export default function DocsExplorer({ nav, onOpenBoard, onOpenTicket, onOpenPr 
       )
     }
     const overview = view === 'overview' && selectedRepo !== MASTER_ID
+    // Relative images come from the doc's own folder, read on this Mac or fetched signed in (#539).
     return (
       <DocViewer
         content={content}
@@ -1004,6 +1005,7 @@ export default function DocsExplorer({ nav, onOpenBoard, onOpenTicket, onOpenPr 
         onJump={jumpToHeading}
         ctx={docCtx}
         onLink={onLink}
+        loadImage={selectedRepo && selectedPath ? (src) => window.api.docs.image(selectedRepo, selectedPath, src) : undefined}
         rel={rel}
         onTicket={onOpenTicket}
         onDoc={openDoc}

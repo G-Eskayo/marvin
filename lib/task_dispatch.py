@@ -50,6 +50,7 @@ class DispatchResult:
     output: str | None = None
     stderr: str | None = None
     error: str | None = None
+    waiting: bool = False   # refused under memory pressure and queued to run when it drops (marvin#845)
 
 
 def _tailscale_online_hosts() -> set[str]:
@@ -210,7 +211,8 @@ DISPATCH_STATE_EOF
 trap 'rm -f "$0" {tasks_dir}/{task_id}.json; cat > {state} << 'DISPATCH_IDLE_EOF'
 {idle_json}
 DISPATCH_IDLE_EOF
-(cd "$HOME/.agents" && "$HOME/.agents/venv/bin/python" -m lib.dispatch_concurrency refresh-summary)' EXIT
+(cd "$HOME/.agents" && "$HOME/.agents/venv/bin/python" -m lib.dispatch_concurrency refresh-summary)
+"$HOME/.agents/venv/bin/python" "$HOME/.agents/lib/memory_guard.py" kick >/dev/null 2>&1' EXIT
 export PATH="$HOME/.local/bin:/opt/homebrew/bin:/usr/local/bin:$PATH"
 if [ -f "$HOME/.claude/.oauth-token" ]; then
   export CLAUDE_CODE_OAUTH_TOKEN="$(cat "$HOME/.claude/.oauth-token")"
@@ -232,11 +234,14 @@ fi
 
 def dispatch(command: str, target: str | None = None, mode: str = "sync",
              timeout: int = 300, task_label: str | None = None, ticket: str | None = None,
-             repo: str | None = None, need: str | None = None) -> DispatchResult:
+             repo: str | None = None, need: str | None = None, queue_argv: list[str] | None = None) -> DispatchResult:
     """Run `command` on an available device. mode: "sync" (wait, capture
     output) or "async" (fire-and-forget, returns immediately). Fails loud,
     no automatic retry on a different machine. Optional ticket/repo metadata are stored
-    in the task record for tracking and UI display."""
+    in the task record for tracking and UI display.
+    Work for this Mac first passes the memory guard (marvin#845): at warn or critical pressure it is refused with a
+    plain message; given `queue_argv` (a command that re-runs this dispatch) that is queued until pressure drops and
+    the result says `waiting`. Nothing running is stopped."""
     selected = select_machine(target, need=need)
     if selected is None:
         tag = _normalise_need(need)
@@ -245,8 +250,13 @@ def dispatch(command: str, target: str | None = None, mode: str = "sync",
         return DispatchResult(ok=False, error=reason)
 
     device_id, info = selected
-    task_id = str(uuid.uuid4())[:8]
     label = task_label or command[:60]
+    if info["is_self"]:
+        import memory_guard
+        held = memory_guard.guard(label, queue_argv, str(Path.home()))
+        if not held["ok"]:
+            return DispatchResult(ok=False, device_id=device_id, error=held["message"], waiting=bool(held["queued"]))
+    task_id = str(uuid.uuid4())[:8]
     script = _build_wrapper_script(command, task_id, label, device_id, ticket=ticket, repo=repo)
 
     if info["is_self"]:
@@ -317,8 +327,10 @@ def main() -> None:
     ap.add_argument("--needs", default=None, help="work tag the job needs, e.g. quarantine or test (default: general)")
     args = ap.parse_args()
 
+    # Async work under memory pressure waits for it to drop; the same command line runs again then (marvin#845).
+    rerun = [sys.executable, str(Path(__file__).resolve()), *sys.argv[1:]] if args.async_mode else None
     result = dispatch(args.command, target=args.target, mode="async" if args.async_mode else "sync", timeout=args.timeout,
-                      need=args.needs)
+                      need=args.needs, queue_argv=rerun)
     if result.ok:
         print(f"[dispatch] ran on {result.device_id}", file=sys.stderr)
         if result.output is not None:
@@ -326,6 +338,9 @@ def main() -> None:
         if result.stderr is not None:
             print(result.stderr, end="", file=sys.stderr)
         sys.exit(0)
+    elif result.waiting:
+        print(f"[dispatch] WAITING: {result.error}", file=sys.stderr)
+        sys.exit(3)
     else:
         print(f"[dispatch] FAILED: {result.error}", file=sys.stderr)
         sys.exit(1)

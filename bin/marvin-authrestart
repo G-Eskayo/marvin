@@ -1,0 +1,79 @@
+#!/bin/bash
+# marvin-authrestart: the planned restart that comes back up without anyone typing the FileVault password
+# (marvin#847, owner decision `credential` on #769, ADR 0081).
+#
+# Installed by marvin-reset-setup as /usr/local/libexec/marvin-authrestart (root:wheel 0755). It is the only thing
+# sudoers lets the owner's account run as root with no password, and it takes no arguments but --dry-run, so a caller
+# can trigger a restart but can't point it anywhere or read anything.
+#
+# It reads the password from a System keychain item only root can read and pipes it straight into
+# `fdesetup authrestart -inputplist` with printf (a shell builtin): never in argv, the environment or a file.
+# It refuses unless the nightly reset wrote its go token in the last minute (nightly_reset.py, right after its
+# guards passed), so a stray call does nothing.
+#
+#   marvin-authrestart --dry-run   check what can be checked, say what would happen, restart nothing, read no password
+set -uo pipefail
+
+SERVICE="marvin-filevault"
+KEYCHAIN="/Library/Keychains/System.keychain"
+FRESH_S=60
+DRY=0
+case "${1:-}" in
+  --dry-run) DRY=1 ;;
+  "") ;;
+  *) echo "usage: marvin-authrestart [--dry-run]" >&2; exit 64 ;;
+esac
+
+if [ "$(id -u)" -eq 0 ]; then
+  PATH=/usr/bin:/bin:/usr/sbin:/sbin          # root never runs the caller's PATH
+  user="${SUDO_USER:-}"
+  home=$(dscl . -read "/Users/$user" NFSHomeDirectory 2>/dev/null | awk '{print $2}')
+  token="$home/.claude/logs/nightly-reset/go"
+else
+  token="${MARVIN_RESET_GO_TOKEN:-$HOME/.claude/logs/nightly-reset/go}"   # tests only: as non-root fdesetup refuses anyway
+fi
+
+say() { echo "marvin-authrestart: $*"; }
+
+fresh=0
+if [ -f "$token" ]; then
+  age=$(( $(date +%s) - $(stat -f %m "$token") ))
+  [ "$age" -ge 0 ] && [ "$age" -le "$FRESH_S" ] && fresh=1
+fi
+
+if [ "$DRY" -eq 1 ]; then
+  say "dry run: nothing will restart and no password is read"
+  if [ "$fresh" -eq 1 ]; then say "go token: fresh ($token)"; else say "go token: missing or older than ${FRESH_S}s, a real run would refuse"; fi
+  if [ "$(id -u)" -eq 0 ]; then
+    say "running as root via sudo for ${user:-?}"
+    if security find-generic-password -s "$SERVICE" "$KEYCHAIN" >/dev/null 2>&1; then
+      say "keychain item $SERVICE: present in the System keychain"
+    else
+      say "keychain item $SERVICE: missing; run marvin-reset-setup"
+    fi
+    say "FileVault authrestart supported: $(fdesetup supportsauthrestart 2>/dev/null || echo unknown)"
+  else
+    say "not root: a real run goes through sudo -n /usr/local/libexec/marvin-authrestart"
+  fi
+  say "would run: fdesetup authrestart -inputplist (password from the System keychain, on stdin)"
+  exit 0
+fi
+
+# MARVIN_AUTHRESTART_TEST lets the tests drive this path as a normal user with fake fdesetup/security on PATH. It is
+# ignored as root, and as a normal user the real fdesetup refuses authrestart, so it can't restart anything.
+[ "$(id -u)" -eq 0 ] || [ "${MARVIN_AUTHRESTART_TEST:-}" = 1 ] || { say "must run as root (sudo -n /usr/local/libexec/marvin-authrestart)" >&2; exit 77; }
+[ "$fresh" -eq 1 ] || { say "refusing: the nightly reset's guards didn't pass in the last ${FRESH_S}s" >&2; exit 75; }
+[ "$(fdesetup supportsauthrestart 2>/dev/null)" = "true" ] || { say "refusing: this Mac doesn't support authrestart" >&2; exit 69; }
+
+acct=$(security find-generic-password -s "$SERVICE" "$KEYCHAIN" 2>/dev/null | sed -n 's/^ *"acct"<blob>="\(.*\)"$/\1/p')
+pw=$(security find-generic-password -s "$SERVICE" -w "$KEYCHAIN" 2>/dev/null) || pw=""
+[ -n "$acct" ] && [ -n "$pw" ] || { say "refusing: no $SERVICE item in the System keychain; run marvin-reset-setup" >&2; exit 78; }
+
+xml() { local s=$1; s=${s//&/&amp;}; s=${s//</&lt;}; s=${s//>/&gt;}; printf '%s' "$s"; }
+rm -f "$token"                                    # one restart per token
+say "restarting now (fdesetup authrestart)"
+printf '<?xml version="1.0" encoding="UTF-8"?>\n<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">\n<plist version="1.0"><dict><key>Username</key><string>%s</string><key>Password</key><string>%s</string></dict></plist>\n' \
+  "$(xml "$acct")" "$(xml "$pw")" | fdesetup authrestart -inputplist
+rc=$?
+pw=""
+exit $rc
