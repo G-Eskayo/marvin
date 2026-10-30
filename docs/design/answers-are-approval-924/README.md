@@ -49,57 +49,9 @@ The dashed controls and the caption line at the top are notes for whoever looks 
 
 ## Decisions
 <!-- marvin:decisions -->
-### label-merge: The button when every answer matches what's built
-- [ ] Merge with these answers
-- [ ] Merge with my answers
-- [ ] Answer and merge
-
-### label-send-back: The button when an answer differs or a note is typed
-- [ ] Send back with answers
-- [ ] Send back to rebuild
-- [ ] Send my answers back
-
-### label-send: The button on a mock-up or plan PR
-- [ ] Send answers
-- [ ] Send my answers
-- [ ] Submit ballot
-
-### label-disabled: The button while a required one is unanswered
-- [ ] Answer N more (for example "Answer 1 more")
-- [ ] N left to answer
-- [ ] Answer the decisions first
-
-### not-yet-sent: How a pre-selected built option shows before it's sent
-- [ ] Dashed green outline, lighter fill, and the words "Built here · not yet sent" (solid once sent or picked by you)
-- [ ] Solid green like a pick, with only the words "not yet sent"
-- [ ] Grey outline with a small "built" dot, no tick, until you pick it
-
-### built-tag: Mark which option was built on options that aren't picked
-- [ ] Yes: a small "Built here" under the option, picked or not (as in scene b's Glide)
-- [ ] Only on the option while it's pre-selected
-
-### reason-line: The line beside the button that says why it's named that
-- [ ] One plain sentence naming the question and the answers (for example: You picked “Dive” for “Hand-off into the start screen”; what's built is “Glide”. MARVIN rebuilds it.)
-- [ ] A short tag only, like "1 change" or "1 note"
-- [ ] No line: the button's name is enough
-
-### button-colours: The colour of each button
-- [ ] Merge blue (like Approve & Merge today), Send back amber outline, Send answers green (like Submit decisions today), off grey
-- [ ] All green, like Submit decisions today
-
-### ballot-look: How a mock-up or plan PR's card looks
-- [ ] A ballot: titled "Ballot" with a "Mock-up · nothing to merge" tag, numbered questions ("1 of 3"), one option per row with a round mark (square for pick any), one wide button, and the evidence sections hidden
-- [ ] The same card as a code PR, only the button differs
-- [ ] A ballot, but keep the Images, Test Results and other sections below it
-
-### header-line: What the top right of the PR says, now Approve & Merge is gone from there
-- [ ] "Your answers decide it" with "The button under the Decisions names what happens.", and Deny stays
-- [ ] Keep an Approve & Merge button at the top too, doing the same as the one button
-- [ ] Nothing but Deny
-
-### merge-failed: When the answers saved but the merge failed
-- [ ] The line says "Your answers are saved. The merge failed: (why)." and the button reads "Try the merge again"
-- [ ] Show today's "The last merge attempt failed" at the top, and keep "Merge with these answers" as the button
+### look: The wording and look in the mock-up (button names, "Built here · not yet sent", the line beside the button, the colours, the ballot)
+- [ ] Keep it all as shown
+- [ ] Keep it, with the changes in my note
 
 ### unbuilt-answer: Answering a question that nothing was built for (on a code PR)
 - [ ] Send back: MARVIN builds that answer first (scene e after a pick)
@@ -109,6 +61,12 @@ The dashed controls and the caption line at the top are notes for whoever looks 
 - [ ] Send back, the same as a note: MARVIN reads it first
 - [ ] Merge, and pass the written answer on as a follow-up
 
-### markers: How the description marks "built here" and a mock-up or plan PR
-- [ ] "(built here)" at the end of the option line, and "<!-- marvin:decisions plan -->" in place of the usual marker line for a mock-up or plan
-- [ ] "[built]" at the start of the option line, and a "(plan)" flag on the Decisions heading
+### merge-failed: When the answers saved but the merge failed
+- [ ] The line says "Your answers are saved. The merge failed: (why)." and the button reads "Try the merge again"
+- [ ] Show today's "The last merge attempt failed" at the top, and keep "Merge with these answers" as the button
+
+### header-line: The top right of the PR, now Approve & Merge moves under the Decisions
+- [ ] Only Deny stays, with "Your answers decide it"
+- [ ] Keep an Approve & Merge button at the top too, doing the same as the one button
+
+(The other wording choices fold into "look". The description markers are "(built here)" at the end of an option line and `<!-- marvin:decisions plan -->` for a mock-up or plan PR.)
