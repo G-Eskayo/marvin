@@ -18,7 +18,7 @@
     "slots": 1,
     "memory_mb": 6144,
     "vcpus": 6,
-    "timeout_s": 5400,
+    "timeout_s": 9000,
     "reserve_mb": 3072
   }
 }

@@ -1160,7 +1160,7 @@ def test_build_only_prints_one_parseable_line_and_does_no_bookkeeping(monkeypatc
     assert e.value.code == 0 and did == []
     lines = [l for l in capsys.readouterr().out.splitlines() if l.startswith(rt.BUILD_OUTCOME_PREFIX)]
     data = json.loads(lines[-1][len(rt.BUILD_OUTCOME_PREFIX):])
-    assert data["timed_out"] and len(data["reason"]) == 2000 and len(data["findings"]) == 50 and "worktree" not in data
+    assert data["timed_out"] and len(data["reason"]) <= 2000 and data["reason"].endswith("r" * 50) and len(data["findings"]) == 50 and "worktree" not in data
 
 
 @pytest.mark.parametrize("argv", [["--build-only"], ["--build-only", "1", "2"], ["--build-only", "nope"]])
@@ -1178,3 +1178,8 @@ def test_run_is_still_build_then_settle(monkeypatch):
     monkeypatch.setenv("MARVIN_RUN_ID", "rid")
     rt.run(20)
     assert seen == [(20, {"raised": True, "pr_url": "u", "reason": None}, {"repo": rt.REPO, "run_id": "rid"})]
+
+
+def test_a_long_reason_keeps_its_end_where_the_cause_is():
+    line = rt.build_only_line({"raised": False, "reason": "Command [huge prompt " + "x" * 9000 + "] timed out after 900 seconds"}, [])
+    assert line.rstrip().endswith('"findings": []}') and "timed out after 900 seconds" in line and "Command [huge" in line

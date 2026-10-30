@@ -507,3 +507,7 @@ def test_the_vm_ignores_only_the_tests_that_need_the_private_claude_folder():
     for bad in (0, 9, True, "4; id"):
         with pytest.raises(ValueError):
             bb.vm_command("G-Eskayo/marvin#7", SHA, "abc123def456", workers=bad)
+
+
+def test_the_vm_gives_the_model_steps_longer_on_the_slow_box():
+    assert f"MARVIN_STEP_TIMEOUT_SCALE={bb.STEP_SCALE}" in bb.vm_command("G-Eskayo/marvin#7", SHA, "abc123def456")

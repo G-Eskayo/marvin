@@ -506,6 +506,7 @@ def start(ref: str, run_id: str) -> bool:
 # Test files that need the private ~/.claude, which a build VM never gets: ignored in both the baseline and the verify, so
 # the comparison stays fair. test_find_file skips itself once this PR's change to it is on main; then drop it here.
 VM_PYTEST_IGNORE = ("lib/tests/test_find_file.py",)
+STEP_SCALE = 2.5   # the planner and executor get 2.5 x 900 s in a box VM (sandbox_orchestration.step_timeout)
 
 
 def vm_command(ref: str, sha: str, run_id: str, workers: int = 4) -> str:
@@ -516,6 +517,7 @@ def vm_command(ref: str, sha: str, run_id: str, workers: int = 4) -> str:
         raise ValueError("bad ticket, engine commit or run id")
     return "; ".join([
         'export PATH="$HOME/.local/bin:/usr/local/bin:$PATH" DISABLE_AUTOUPDATER=1 MARVIN_BOX_BUILD=1 '
+        f"MARVIN_STEP_TIMEOUT_SCALE={STEP_SCALE} "
         f"MARVIN_RUN_ID={run_id} PYTEST_ADDOPTS={shlex.quote(' '.join(['-n', str(workers), *('--ignore=' + f for f in VM_PYTEST_IGNORE)]))}",
         # git asks gh for the bot token (GH_TOKEN); repo and global config stay untouched
         "export GIT_CONFIG_COUNT=2 GIT_CONFIG_KEY_0=credential.helper GIT_CONFIG_VALUE_0= "
@@ -527,7 +529,9 @@ def vm_command(ref: str, sha: str, run_id: str, workers: int = 4) -> str:
         'GIT_AUTHOR_EMAIL="$uid+$login@users.noreply.github.com" GIT_COMMITTER_EMAIL="$uid+$login@users.noreply.github.com"',
         f'cd "$HOME/.agents" && git fetch -q origin {sha} && git checkout -q --detach {sha} || '
         f'{{ echo "{REFUSED_PREFIX}engine-sha"; exit 0; }}',
-        f'exec "$HOME/.agents/venv/bin/python" lib/run_ticket.py --build-only {shlex.quote(ref)}',
+        f'"$HOME/.agents/venv/bin/python" lib/run_ticket.py --build-only {shlex.quote(ref)}; rc=$?',
+        # the model steps' own records (kind, exit cause, duration, tokens), for whoever reads the run log on the Mac
+        'tail -n 6 "$HOME/.claude/logs/launches.jsonl" 2>/dev/null | sed "s/^/LAUNCH /"; exit $rc',
     ])
 
 

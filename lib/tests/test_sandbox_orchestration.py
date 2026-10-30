@@ -1589,3 +1589,14 @@ def test_a_named_branch_gets_the_same_isolated_worktree_from_origin_main(git_rep
     wt2 = so._create_worktree(git_repo, "unused", branch="auto-fix/2026-10-26")   # same day again
     assert (wt2 / "README.md").read_text() == "hello\n"
     assert any("auto-fix/2026-10-26" in r for r in _rescue_refs(git_repo))
+
+
+@pytest.mark.parametrize("value,expected", [(None, 900), ("2.5", 2250), ("1", 900), ("0.1", 900), ("9", 900),
+                                            ("nan", 900), ("abc", 900), ("", 900)])
+def test_step_timeouts_scale_only_within_one_to_four(monkeypatch, value, expected):
+    import sandbox_orchestration as so
+    if value is None:
+        monkeypatch.delenv(so.STEP_SCALE_ENV, raising=False)
+    else:
+        monkeypatch.setenv(so.STEP_SCALE_ENV, value)
+    assert so.step_timeout(900) == expected

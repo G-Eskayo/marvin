@@ -412,7 +412,9 @@ def build_only_line(outcome: dict, findings: list[str]) -> str:
     """The one line `--build-only` prints for box_build to read: the outcome's own keys, JSON-safe."""
     keep = {k: outcome.get(k) for k in ("raised", "pr_url", "reason", "env_missing", "timed_out", "model_unavailable",
                                        "too_vague") if k in outcome}
-    keep["reason"] = None if keep.get("reason") is None else str(keep["reason"])[:2000]
+    reason = None if keep.get("reason") is None else str(keep["reason"])
+    # Head and tail: an exception's cause is at its end (a 900 s prompt in a command line hid it, marvin #951).
+    keep["reason"] = reason if reason is None or len(reason) <= 2000 else f"{reason[:600]} [...] {reason[-1390:]}"
     return BUILD_OUTCOME_PREFIX + json.dumps({**keep, "findings": [str(f)[:500] for f in findings][:50]})
 
 
