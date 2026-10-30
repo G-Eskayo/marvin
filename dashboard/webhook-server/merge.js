@@ -1,7 +1,7 @@
 import { execFile, spawn } from 'child_process'
 import { promisify } from 'util'
 import { mkdtemp, rm, statfs, readdir, lstat } from 'fs/promises'
-import { readdirSync } from 'fs'
+import { readdirSync, readFileSync } from 'fs'
 import { tmpdir } from 'os'
 import path from 'path'
 import { classifyFailure, summarizeGateFailure, withRetry, MergeFailure, refusal } from './failure.js'
@@ -18,12 +18,14 @@ import { checkOpenPrs } from './post_merge_rebase.js'
 import { applyVersionBump } from './changelog.js'
 import { createCountParser, gateExtension, machineLoad } from './merge_progress.js'
 import { machineLabel } from '../src/lib/merge_progress.js'
+import { holdTestSlot, TEST_SLOT_SCRIPT } from './test_slot.js'
 
 const execFileAsync = promisify(execFile)
 const __dirname = path.dirname(fileURLToPath(import.meta.url))
 const REPO_PATH = path.resolve(__dirname, '..', '..')
 const REBUILD_SCRIPT = path.resolve(__dirname, '..', 'scripts', 'rebuild_and_install.sh')
 const TICKET_PIPELINE_SCRIPT = path.resolve(__dirname, '..', '..', 'lib', 'ticket_pipeline.py')
+const MERGE_BACKUP_SCRIPT = path.resolve(__dirname, '..', '..', 'lib', 'merge_backup.py')
 const DISK_TRIGGERS_SCRIPT = path.resolve(__dirname, '..', '..', 'lib', 'disk_triggers.py')
 const MEMORY_GUARD_SCRIPT = path.resolve(__dirname, '..', '..', 'lib', 'memory_guard.py')
 const VENV_PYTHON = path.resolve(__dirname, '..', '..', 'venv', 'bin', 'python')
@@ -169,48 +171,103 @@ export function countTestFiles(dir) {
 
 const noProgress = () => {}
 
-// The Python suite runs in parallel (pytest-xdist, `-n auto`): 327 s serial vs 47 s on the M4's 10 cores, same 2,685
-// tests, measured 2026-10-21. A machine without the plugin runs it serially and says so in the log, never fails on it.
-// One `python -c` per gate run (~0.1 s); not cached, so installing the plugin takes effect on the next run.
-export async function pytestParallelArgs(python = VENV_PYTHON, run = execFileAsync, log = console.warn) {
+// The Python suite runs in parallel (pytest-xdist): 327 s serial vs 47 s on the M4's 10 cores, same 2,685 tests,
+// measured 2026-10-21. A machine without the plugin runs it serially and says so in the log, never fails on it.
+// marvin#940: as many workers as fit in free memory now (lib/test_slot.py workers), not one per core: on 2026-10-30 the
+// gate's `-n auto` workers were part of what filled the Mini's memory. An unreadable count is `-n auto`, as before.
+// Two `python` calls per gate run (~0.2 s); not cached, so installing the plugin takes effect on the next run.
+export async function pytestParallelArgs(python = VENV_PYTHON, run = execFileAsync, log = console.warn, slotScript = TEST_SLOT_SCRIPT) {
   try {
     await run(python, ['-c', 'import xdist'])
-    return ['-n', 'auto']
   } catch {
     try { log(`[merge-gate] pytest-xdist is not installed in ${python}: running the Python suite serially (slower). Fix: ${python} -m pip install pytest-xdist`) } catch { /* logging never breaks the gate */ }
     return []
   }
+  try {
+    const n = parseInt(String((await run(python, [slotScript, 'workers']))?.stdout || '').trim(), 10)
+    if (n > 0) return ['-n', String(n)]
+  } catch { /* unreadable: the old default */ }
+  return ['-n', 'auto']
 }
 
-export async function _defaultRunTests(cwd, exec, progress = noProgress, parallelArgs = pytestParallelArgs, cache = nodeModulesCache) {
-  const dashboardDir = path.join(cwd, 'dashboard')
+// The checks the gate runs: the repo's own required list (.github/required-checks.json, lib/required_checks.py,
+// marvin#826), the one GitHub CI runs too, minus the CI-only ones. Read from the checkout under test, else the engine's
+// own copy (a test's fake checkout). A list that exists but is broken throws: the gate must never run nothing.
+export function gateChecks(cwd) {
+  for (const dir of [cwd, REPO_PATH]) {
+    let text
+    try { text = readFileSync(path.join(dir, '.github', 'required-checks.json'), 'utf8') } catch { continue }
+    let checks
+    try { checks = JSON.parse(text).checks } catch (e) { throw new Error(`.github/required-checks.json is not valid JSON: ${e.message}`) }
+    if (!Array.isArray(checks) || !checks.length) throw new Error('.github/required-checks.json lists no checks')
+    return checks.filter((c) => (c.where || 'both') === 'both').map((c) => ({ cwd: '.', parser: 'exit-code', ...c }))
+  }
+  throw new Error('no .github/required-checks.json: the gate does not know which checks to run')
+}
+
+// What the progress line calls a check: the runners' own words where the stage UI already used them.
+const CHECK_DETAIL = { pytest: 'Python', vitest: 'Dashboard' }
+
+// base: the branch the PR is tested against. Each check then runs only what the PR's change can affect (marvin#826:
+// run-check.sh skips a check none of whose paths changed; lib/affected_tests.py picks the Python tests). No base runs
+// everything.
+export { holdTestSlot }
+
+export async function _defaultRunTests(cwd, exec, progress = noProgress, parallelArgs = pytestParallelArgs, cache = nodeModulesCache, base = null, holdSlot = holdTestSlot) {
+  const checks = gateChecks(cwd)
+  // `python` in a check is the venv's interpreter: its bin goes first on PATH.
+  const PATH = [path.dirname(VENV_PYTHON), process.env.PATH].filter(Boolean).join(path.delimiter)
+  const baseEnv = { ...process.env, PATH, MARVIN_MERGE_GATE: '1' }
+  if (base) baseEnv.MARVIN_BASE = `origin/${base}`
+  else delete baseEnv.MARVIN_BASE
   // Each output chunk is a heartbeat for the gate's time limit; the parsers turn the runners' own lines into counts.
   const watch = (runner, label, totalFiles = 0) => {
     const parse = createCountParser(runner, { totalFiles, onCount: (count) => progress('tests', 'running', { detail: label, count }) })
     return (chunk) => { progress('tests', 'output'); parse(chunk) }
   }
-  // npm install first (marvin#568), so the stages read in order: Installing, then Tests (Python, then Dashboard).
+  // Installs first (marvin#568), so the stages read in order: Installing, then Tests.
   progress('installing', 'running')
-  // Found live 2026-10-01 (PR #119's merge attempt): a `git worktree add`
-  // scratch checkout has no dashboard/node_modules at all -- `npx vitest
-  // run` hard-fails with a dependency-resolution error wall that has
-  // nothing to do with the PR's own code, and the webhook relayed that
-  // wall verbatim as the re-engagement reason. npm install is slower than
-  // reusing the real checkout's node_modules, but a scratch worktree is a
-  // separate filesystem location so nothing can be shared/symlinked in
-  // safely without risking the exact collision this isolation exists to
-  // avoid. (#687: a copy-on-write clone is that safe way: the copy shares the cache's blocks but is its own files.)
-  await cache.seed(dashboardDir)
-  await exec('npm', ['install'], { cwd: dashboardDir, onOutput: () => progress('installing', 'output') })
-  await cache.store(dashboardDir)
+  for (const c of checks.filter((c) => c.install === 'npm')) {
+    // Nothing to install for a check this PR doesn't affect (a Python-only PR skips the dashboard's npm install).
+    // Anything but a plain "false" installs: an unclear answer must not leave a check without its packages.
+    const answer = await exec('bash', ['.github/run-check.sh', c.id, '--affected'], { cwd, env: baseEnv }).catch(() => ({ stdout: '' }))
+    if (String(answer?.stdout || '').trim() === 'false') continue
+    // Found live 2026-10-01 (PR #119's merge attempt): a `git worktree add` scratch checkout has no node_modules at
+    // all, and `npx vitest run` hard-fails with a dependency-resolution wall that has nothing to do with the PR.
+    // A scratch worktree is its own filesystem location, so nothing is symlinked in; (#687) a copy-on-write clone of
+    // the cache is the safe way to start warm: the copy shares the cache's blocks but is its own files.
+    const dir = path.join(cwd, c.cwd)
+    await cache.seed(dir)
+    await exec('npm', ['install'], { cwd: dir, onOutput: () => progress('installing', 'output') })
+    await cache.store(dir)
+  }
   progress('installing', 'done')
   const parallel = await parallelArgs()
-  progress('tests', 'running', { detail: parallel.length ? 'Python' : 'Python (serial: pytest-xdist missing)', logDetail: !parallel.length })
-  // MARVIN_MERGE_GATE: tests that read ANOTHER repo's data (the portfolio figures) stay out of a PR's gate; they run in the
-  // main-branch health check instead (lib/main_health.py).
-  await exec(VENV_PYTHON, ['-m', 'pytest', '-q', ...parallel], { cwd, env: { ...process.env, MARVIN_MERGE_GATE: '1' }, onOutput: watch('pytest', 'Python') })
-  progress('tests', 'running', { detail: 'Dashboard', logDetail: true })
-  await exec('npx', ['vitest', 'run'], { cwd: dashboardDir, onOutput: watch('vitest', 'Dashboard', countTestFiles(path.join(dashboardDir, 'test'))) })
+  // marvin#940: one test run at a time on this machine, a merge first in line; the checks below see MARVIN_TEST_SLOT,
+  // so their own check (conftest.py, vitest.config.js) passes straight through instead of waiting for us. The worker
+  // count sized to free memory reaches both runners through MARVIN_TEST_WORKERS (lib/affected_tests.py, vitest.config.js).
+  const slot = await holdSlot(['hold', '--merge', '--what', 'merge gate'])
+  const slotEnv = { ...baseEnv, MARVIN_TEST_SLOT: 'merge gate' }
+  if (/^\d+$/.test(parallel[1] || '')) slotEnv.MARVIN_TEST_WORKERS = parallel[1]
+  else delete slotEnv.MARVIN_TEST_WORKERS
+  try {
+    for (const c of checks) {
+      let label = CHECK_DETAIL[c.parser] || c.name
+      // MARVIN_MERGE_GATE (in baseEnv): tests that read ANOTHER repo's data (the portfolio figures) stay out of a PR's
+      // gate; they run in the main-branch health check instead (lib/main_health.py).
+      if (c.parser === 'pytest') {
+        if (!parallel.length) label = `${label} (serial: pytest-xdist missing)`
+        progress('tests', 'running', { detail: label, logDetail: !parallel.length })
+      } else {
+        progress('tests', 'running', { detail: label, logDetail: true })
+      }
+      const total = c.parser === 'vitest' ? countTestFiles(path.join(cwd, c.cwd, 'test')) : 0
+      const runner = c.parser === 'pytest' || c.parser === 'vitest' ? c.parser : null
+      await exec('bash', ['.github/run-check.sh', c.id], { cwd, env: slotEnv, onOutput: runner ? watch(runner, CHECK_DETAIL[c.parser], total) : () => progress('tests', 'output') })
+    }
+  } finally {
+    await slot.release()
+  }
 }
 
 // Rebases headRef onto origin/main inside a throwaway scratch worktree --
@@ -450,7 +507,7 @@ export async function rebaseAndRetest(headRef, exec = execFileAsync, repoPath = 
     progress('rebasing', 'done')
     let flaky = null
     try {
-      await runTests(scratchDir, exec, progress)
+      await runTests(scratchDir, exec, progress, undefined, undefined, base)
     } catch (err) {
       const reason = `Tests failed after rebasing onto main:\n\n${testOutputOf(err)}`
       const names = rerun ? await rerunnable(reason, scratchDir, base, exec) : []
@@ -528,7 +585,8 @@ export async function defaultGateContext(repo, exec = execFileAsync) {
     // The same measuring code the pipeline uses, so "passes the gate" means what "passes verification" means.
     runTests: async (cwd, run, progress = noProgress) => {
       progress('tests', 'running', { detail: name })
-      await run(VENV_PYTHON, [PROFILE_SCRIPT, 'verify', repo, cwd], { onOutput: () => progress('tests', 'output') })
+      // MARVIN_BASE: the project's checks run only what the PR affects, as its CI does (marvin#826).
+      await run(VENV_PYTHON, [PROFILE_SCRIPT, 'verify', repo, cwd], { env: { ...process.env, MARVIN_BASE: `origin/${info.base_branch}` }, onOutput: () => progress('tests', 'output') })
     },
     resolveConflicts: generatedResolver(repo, exec),
     // The project's own UI paths, added to ui_evidence.js's defaults (marvin #374).
@@ -993,10 +1051,11 @@ export function triggerTicketPipeline(spawnFn = spawn) {
 // work, a process inside, or commits the PR lacks is kept (lib/disk_triggers.py). Fire-and-forget, like the scan.
 // marvin#845: ask lib/memory_guard.py before the gate's heavy work. Refused (exit 3), this same Approve is queued as a
 // POST to this Mac's webhook, to run when macOS reports memory pressure back at normal. Any other failure: go ahead.
+// marvin#940: the queued POST says `by: 'memory-queue'`, so its end tells the dashboards (they show it waiting).
 export async function memoryGuardCheck(prUrl, port, exec = execFileAsync) {
   const what = `PR #${prNumberOf(prUrl) ?? '?'}`
   const approve = ['/usr/bin/curl', '-sS', '-X', 'POST', '-H', 'Content-Type: application/json',
-    '--data', JSON.stringify({ pr_url: prUrl, by: 'you' }), `http://127.0.0.1:${port}/approve`]
+    '--data', JSON.stringify({ pr_url: prUrl, by: 'memory-queue' }), `http://127.0.0.1:${port}/approve`]
   try {
     await exec(VENV_PYTHON, [MEMORY_GUARD_SCRIPT, 'check', '--what', what, '--key', `merge:${prUrl}`, '--', ...approve], { timeout: 30_000 })
     return { ok: true }
@@ -1009,9 +1068,46 @@ export async function memoryGuardCheck(prUrl, port, exec = execFileAsync) {
   }
 }
 
+// marvin#940: a merge of this PR is starting (a second Approve, a retry from a dashboard): its copy queued for memory,
+// if any, is dropped, so the queue never runs it again. True when one was there. Never fails a merge.
+export async function forgetQueuedMerge(prUrl, exec = execFileAsync) {
+  try {
+    const { stdout } = await exec(VENV_PYTHON, [MEMORY_GUARD_SCRIPT, 'forget', '--key', `merge:${prUrl}`], { timeout: 30_000 })
+    return JSON.parse(String(stdout || '').trim().split('\n').pop()).forgotten === true
+  } catch {
+    return false
+  }
+}
+
+// marvin#940 part 4: is this machine fit to merge in the Mini's place (GET /merge-ready)? lib/merge_backup.py answers
+// { ready, why, machine, os }; a check that fails is "not fit", so a dashboard never sends a merge on a guess.
+export async function readMergeReady(repo, exec = execFileAsync) {
+  try {
+    const { stdout } = await exec(VENV_PYTHON, [MERGE_BACKUP_SCRIPT, 'ready', '--repo', String(repo || '')], { timeout: 30_000 })
+    return JSON.parse(String(stdout || '').trim().split('\n').pop())
+  } catch (e) {
+    return { ready: false, why: [`it couldn't check itself (${String(e?.message || e).slice(0, 100)})`], machine: null, os: null }
+  }
+}
+
 // marvin#845: a merge ending is a trigger to start the next item queued for memory (a no-op when nothing waits).
 export function kickMemoryGuard(spawnFn = spawn) {
   try { spawnFn(VENV_PYTHON, [MEMORY_GUARD_SCRIPT, 'kick'], { detached: true, stdio: 'ignore' }).unref() } catch { /* never breaks a merge */ }
+}
+
+// marvin#940 (merges first): a merge is marked on this machine (lib/test_slot.py merges.lock) from the Approve to its
+// end, so new helpers wait while it runs (memory_guard.py) and other test runs let it go first. The mark is let go
+// before the kick, so the drain the kick starts already sees the merge over. A mark that can't be taken never stops
+// the merge; the merge's own error comes through unchanged.
+export async function withMergeMark(merge, { hold = holdTestSlot, kick = kickMemoryGuard } = {}) {
+  let mark = null
+  try { mark = await hold(['hold-merge']) } catch { /* unmarked: the merge goes ahead */ }
+  try {
+    return await merge()
+  } finally {
+    try { await mark?.release() } catch { /* the holder ends with this process anyway */ }
+    kick()
+  }
 }
 
 export function triggerDiskCleanup(spawnFn = spawn) {

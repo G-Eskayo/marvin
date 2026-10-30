@@ -24,7 +24,7 @@ vi.mock('../webhook-server/changelog.js', () => ({ applyVersionBump: vi.fn().moc
 
 import { execFile, execFileSync } from 'child_process'
 import { promisify } from 'util'
-import { mkdtempSync, rmSync, writeFileSync } from 'fs'
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'fs'
 import { tmpdir } from 'os'
 import path from 'path'
 import {
@@ -477,7 +477,7 @@ describe('rebaseAndRetest with generated-file conflict resolution', () => {
         return { ok: true }
       })
       const runTests = vi.fn().mockResolvedValue(undefined)
-      const result = await rebaseAndRetest('feature', realExec, repoDir, runTests, 'main', resolve)
+      const result = await rebaseAndRetest('feature', realExec, repoDir, runTests, 'main', resolve, null, undefined, plentyOfDisk)
       expect(result).toEqual({ ok: true })
       expect(resolve).toHaveBeenCalledTimes(1)
       expect(runTests).toHaveBeenCalledTimes(1)
@@ -493,7 +493,7 @@ describe('rebaseAndRetest with generated-file conflict resolution', () => {
       const before = currentRemoteSha(repoDir, 'feature')
       const resolve = vi.fn().mockResolvedValue({ ok: false, reason: 'conflicts in files that are not generated: src.js' })
       const runTests = vi.fn()
-      const result = await rebaseAndRetest('feature', realExec, repoDir, runTests, 'main', resolve)
+      const result = await rebaseAndRetest('feature', realExec, repoDir, runTests, 'main', resolve, null, undefined, plentyOfDisk)
       expect(result.ok).toBe(false)
       expect(result.reason).toContain('not generated: src.js')
       expect(runTests).not.toHaveBeenCalled()
@@ -536,7 +536,7 @@ describe('rebaseAndRetest when GitHub fails the push', () => {
     try {
       const before = currentRemoteSha(repoDir, 'feature')
       const runTests = vi.fn().mockResolvedValue(undefined)
-      const result = await rebaseAndRetest('feature', flakyPush(2), repoDir, runTests, 'main', undefined, async () => {})
+      const result = await rebaseAndRetest('feature', flakyPush(2), repoDir, runTests, 'main', undefined, async () => {}, undefined, plentyOfDisk)
       expect(result).toEqual({ ok: true })
       expect(runTests).toHaveBeenCalledTimes(1)
       expect(currentRemoteSha(repoDir, 'feature')).not.toBe(before)
@@ -547,7 +547,7 @@ describe('rebaseAndRetest when GitHub fails the push', () => {
     const { root, repoDir } = featureFixture()
     try {
       const runTests = vi.fn().mockResolvedValue(undefined)
-      await expect(rebaseAndRetest('feature', flakyPush(99), repoDir, runTests, 'main', undefined, async () => {}))
+      await expect(rebaseAndRetest('feature', flakyPush(99), repoDir, runTests, 'main', undefined, async () => {}, undefined, plentyOfDisk))
         .rejects.toMatchObject({ stderr: expect.stringMatching(/Internal Server Error/), attempts: 4 })
     } finally { rmSync(root, { recursive: true, force: true }) }
   })
@@ -572,7 +572,7 @@ describe('rebaseAndRetest', () => {
       const beforeSha = currentRemoteSha(repoDir, 'feature')
       const runTests = vi.fn().mockResolvedValue(undefined)
 
-      const result = await rebaseAndRetest('feature', realExec, repoDir, runTests)
+      const result = await rebaseAndRetest('feature', realExec, repoDir, runTests, 'main', null, null, undefined, plentyOfDisk)
 
       expect(result).toEqual({ ok: true })
       expect(runTests).toHaveBeenCalledTimes(1)
@@ -602,7 +602,7 @@ describe('rebaseAndRetest', () => {
       const beforeSha = currentRemoteSha(repoDir, 'feature')
       const runTests = vi.fn()
 
-      const result = await rebaseAndRetest('feature', realExec, repoDir, runTests)
+      const result = await rebaseAndRetest('feature', realExec, repoDir, runTests, 'main', null, null, undefined, plentyOfDisk)
 
       expect(result.ok).toBe(false)
       expect(result.reason).toContain('Rebase')
@@ -631,7 +631,7 @@ describe('rebaseAndRetest', () => {
       const beforeSha = currentRemoteSha(repoDir, 'feature')
       const runTests = vi.fn().mockRejectedValue(new Error('2 tests failed'))
 
-      const result = await rebaseAndRetest('feature', realExec, repoDir, runTests)
+      const result = await rebaseAndRetest('feature', realExec, repoDir, runTests, 'main', null, null, undefined, plentyOfDisk)
 
       expect(result.ok).toBe(false)
       expect(result.reason).toContain('Tests failed')
@@ -643,8 +643,12 @@ describe('rebaseAndRetest', () => {
   })
 })
 
+// The gate refuses below 5 GB free (MIN_GATE_FREE_BYTES). Tests about other things say how much disk there is, so they
+// pass on a full Mac too (#826: they failed on the Mac mini at 4.6 GB free and passed on the MacBook).
+const plentyOfDisk = async () => 100 * 1024 ** 3
+
 describe('_defaultRunTests', () => {
-  it('installs dashboard dependencies before running vitest', async () => {
+  it('installs dashboard dependencies before running the dashboard check', async () => {
     // Found live 2026-10-01 (PR #119's actual merge attempt): a
     // `git worktree add` scratch checkout has no dashboard/node_modules
     // at all, so `npx vitest run` hard-failed with a dependency-
@@ -659,16 +663,76 @@ describe('_defaultRunTests', () => {
 
     await _defaultRunTests('/repo', exec)
 
-    const dashboardCalls = calls.filter((c) => c.cwd === '/repo/dashboard')
-    const installIndex = dashboardCalls.findIndex((c) => c.cmd === 'npm' && c.args[0] === 'install')
-    const vitestIndex = dashboardCalls.findIndex((c) => c.cmd === 'npx' && c.args[0] === 'vitest')
+    const installIndex = calls.findIndex((c) => c.cwd === '/repo/dashboard' && c.cmd === 'npm' && c.args[0] === 'install')
+    const vitestIndex = calls.findIndex((c) => c.cmd === 'bash' && c.args.join(' ') === '.github/run-check.sh dashboard')
     expect(installIndex).toBeGreaterThanOrEqual(0)
     expect(vitestIndex).toBeGreaterThan(installIndex)
   })
 
+  it('#826: installs first, then runs every check the required list gives the gate, through the runner CI uses, in list order', async () => {
+    const root = mkdtempSync(path.join(tmpdir(), 'rc-'))
+    try {
+      mkdirSync(path.join(root, '.github'))
+      writeFileSync(path.join(root, '.github', 'required-checks.json'), JSON.stringify({ checks: [
+        { id: 'rules', name: 'Rules', command: ['python', 'lib/rules.py'] },
+        { id: 'scan', name: 'Secret scan', where: 'ci' },
+        { id: 'unit', name: 'Unit', cwd: 'web', install: 'npm', command: ['npx', 'vitest', 'run'], parser: 'vitest' }
+      ] }))
+      const calls = []
+      const exec = vi.fn(async (cmd, args, opts) => { calls.push([cmd, args.join(' '), opts?.cwd, opts?.env]); return { stdout: '', stderr: '' } })
+      const cache = { seed: vi.fn(async () => {}), store: vi.fn(async () => {}) }
+      await _defaultRunTests(root, exec, undefined, async () => [], cache)
+      expect(calls.map(([c, a, cwd]) => `${c} ${a} @${path.relative(root, cwd) || '.'}`)).toEqual([
+        'bash .github/run-check.sh unit --affected @.', 'npm install @web', 'bash .github/run-check.sh rules @.', 'bash .github/run-check.sh unit @.'
+      ])
+      // `python` in a check means the venv's interpreter, and every check runs with the gate's marker.
+      const env = calls.find(([c]) => c === "bash")[3]
+      expect(env.PATH.split(path.delimiter)[0]).toMatch(/venv[/\\]bin$/)
+      expect(env.MARVIN_MERGE_GATE).toBe('1')
+    } finally {
+      rmSync(root, { recursive: true, force: true })
+    }
+  })
+
+  it('#826: with a base, every check is told it, and a check the PR does not affect skips its install', async () => {
+    const root = mkdtempSync(path.join(tmpdir(), 'rc-'))
+    try {
+      mkdirSync(path.join(root, '.github'))
+      writeFileSync(path.join(root, '.github', 'required-checks.json'), JSON.stringify({ checks: [
+        { id: 'unit', name: 'Unit', cwd: 'web', install: 'npm', paths: ['web/*'], command: ['npx', 'vitest', 'run'], parser: 'vitest' }
+      ] }))
+      for (const [answer, installs] of [['false\n', false], ['true\n', true], ['', true]]) {
+        const calls = []
+        const exec = vi.fn(async (cmd, args, opts) => {
+          calls.push([cmd, args.join(' '), opts?.env?.MARVIN_BASE])
+          return { stdout: args.includes('--affected') ? answer : '', stderr: '' }
+        })
+        await _defaultRunTests(root, exec, undefined, async () => [], { seed: async () => {}, store: async () => {} }, 'main')
+        expect(calls.some(([c]) => c === 'npm')).toBe(installs)
+        expect(calls.filter(([c]) => c === 'bash').every(([, , b]) => b === 'origin/main')).toBe(true)
+      }
+      const calls = []
+      await _defaultRunTests(root, vi.fn(async (c, a, o) => { calls.push(o?.env?.MARVIN_BASE); return { stdout: '' } }), undefined, async () => [], { seed: async () => {}, store: async () => {} })
+      expect(calls.every((b) => b === undefined)).toBe(true) // no base: everything runs, as on main
+    } finally {
+      rmSync(root, { recursive: true, force: true })
+    }
+  })
+
+  it('#826: a broken list fails the gate loudly instead of running nothing', async () => {
+    const root = mkdtempSync(path.join(tmpdir(), 'rc-'))
+    try {
+      mkdirSync(path.join(root, '.github'))
+      writeFileSync(path.join(root, '.github', 'required-checks.json'), '{"checks": []}')
+      await expect(_defaultRunTests(root, vi.fn(async () => ({ stdout: '' })))).rejects.toThrow(/required-checks.json/)
+    } finally {
+      rmSync(root, { recursive: true, force: true })
+    }
+  })
+
   it('#687: seeds node_modules from the cache before npm install and stores the result after, in the dashboard dir', async () => {
     const order = []
-    const exec = vi.fn(async (cmd, args) => { order.push(cmd === 'npm' ? 'install' : cmd); return { stdout: '', stderr: '' } })
+    const exec = vi.fn(async (cmd, args) => { if (!args.includes('--affected')) order.push(cmd === 'npm' ? 'install' : cmd); return { stdout: '', stderr: '' } })
     const cache = { seed: vi.fn(async (d) => order.push(`seed ${d}`)), store: vi.fn(async (d) => order.push(`store ${d}`)) }
     await _defaultRunTests('/repo', exec, undefined, async () => [], cache)
     expect(order.slice(0, 3)).toEqual(['seed /repo/dashboard', 'install', 'store /repo/dashboard'])
@@ -894,7 +958,7 @@ describe('base branches other than main', () => {
       sh('git', ['commit', '-q', '-m', 'trunk moved'], repoDir)
       sh('git', ['push', 'origin', 'trunk'], repoDir)
       const runTests = vi.fn().mockResolvedValue(undefined)
-      const result = await rebaseAndRetest('feature', realExec, repoDir, runTests, 'trunk')
+      const result = await rebaseAndRetest('feature', realExec, repoDir, runTests, 'trunk', null, null, undefined, plentyOfDisk)
       expect(result).toEqual({ ok: true })
       expect(runTests).toHaveBeenCalledTimes(1)
       sh('git', ['fetch', 'origin', 'feature'], repoDir)
@@ -1170,7 +1234,7 @@ describe('the gate tells a red main apart from a bad PR', () => {
       sh('git', ['checkout', '-q', '-b', 'feature'], repoDir)
       writeFileSync(path.join(repoDir, 'f.txt'), 'x\n'); sh('git', ['add', '.'], repoDir); sh('git', ['commit', '-q', '-m', 'feature'], repoDir)
       sh('git', ['push', '-u', 'origin', 'feature'], repoDir)
-      const r = await rebaseAndRetest('feature', realExec, repoDir, async () => { throw pytestFailure })
+      const r = await rebaseAndRetest('feature', realExec, repoDir, async () => { throw pytestFailure }, 'main', null, null, undefined, plentyOfDisk)
       expect(r.ok).toBe(false)
       expect(r.reason).toContain('FAILED tests/test_render_diagrams.py::test_every_figure')
     } finally { rmSync(root, { recursive: true, force: true }) }

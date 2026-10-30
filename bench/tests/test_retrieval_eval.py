@@ -60,6 +60,7 @@ def test_keywords_drop_question_words():
     assert re_.keywords("Where is the dispatch lock checked for staleness?") == ["dispatch", "lock", "checked", "staleness"]
 
 
+@pytest.mark.requires_tool("rg")
 def test_rg_ranks_the_file_matching_most_distinct_keywords(tmp_path):
     r = make_repo(tmp_path)
     got = re_.rg_retrieve("where is the dispatch lock checked for being stale", r)
@@ -134,6 +135,7 @@ def test_question_file_is_validated(tmp_path):
         re_.load_questions(bad)
 
 
+@pytest.mark.requires_tool("rg")
 def test_rg_searches_the_folder_even_when_stdin_is_an_open_pipe(tmp_path):
     # 2026-10-26 real run: every rg call timed out. With no path argument and a non-tty stdin, rg searches stdin and
     # waits forever. pytest closes stdin, so only a child process with an open pipe reproduces it.

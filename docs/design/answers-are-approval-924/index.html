@@ -1,0 +1,442 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Answers are the approval: mock-up (marvin#924)</title>
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<!-- Mock-up only (marvin#924): the real dashboard is untouched until the owner signs off the look. The button's name and
+     what it does come from answer_state.js (answerState), tested in dashboard/test/answers_are_approval_proto.test.js,
+     so every click here runs the tested rule. Opens straight from Finder: no server, no build, no libraries.
+     Pick a scene with the buttons at the top, or link one: index.html#scene=b&theme=light -->
+<style>
+  * { box-sizing: border-box; }
+  /* Dark is the dashboard's colours today (Tailwind neutral, sky, emerald, amber). Light is how it would read. */
+  :root, :root[data-theme=dark] {
+    color-scheme: dark;
+    --bg: #0a0a0a; --panel: #171717; --well: rgba(10, 10, 10, .6); --border: #262626; --border-2: #404040;
+    --text: #ffffff; --text-2: #e5e5e5; --text-3: #a3a3a3; --muted: #737373;
+    --dec-border: #075985; --dec-bg: rgba(8, 47, 73, .2);
+    --pick-border: #10b981; --pick-bg: rgba(16, 185, 129, .15); --pick-text: #a7f3d0;
+    --pre-bg: rgba(16, 185, 129, .06); --pre-text: #6ee7b7;
+    --amber: #fcd34d; --amber-border: #b45309; --amber-bg: rgba(69, 26, 3, .45);
+    --ok: #34d399; --sky: #7dd3fc; --blue: #198fd9; --blue-btn: #2563eb; --blue-btn-h: #3b82f6; --halo: rgba(102, 175, 233, .6);
+    --green-btn: #059669; --green-btn-h: #10b981; --chip: #262626;
+  }
+  :root[data-theme=light] {
+    color-scheme: light;
+    --bg: #f5f5f4; --panel: #ffffff; --well: #fafafa; --border: #e5e5e5; --border-2: #d4d4d4;
+    --text: #0a0a0a; --text-2: #262626; --text-3: #525252; --muted: #737373;
+    --dec-border: #7dd3fc; --dec-bg: #f0f9ff;
+    --pick-border: #059669; --pick-bg: #d1fae5; --pick-text: #065f46;
+    --pre-bg: #f0fdf4; --pre-text: #047857;
+    --amber: #b45309; --amber-border: #f59e0b; --amber-bg: #fffbeb;
+    --ok: #059669; --sky: #0369a1; --blue: #198fd9; --blue-btn: #2563eb; --blue-btn-h: #1d4ed8; --halo: rgba(25, 143, 217, .38);
+    --green-btn: #059669; --green-btn-h: #047857; --chip: #ececec;
+  }
+  @media (prefers-color-scheme: light) {
+    :root:not([data-theme]) {
+      color-scheme: light;
+      --bg: #f5f5f4; --panel: #ffffff; --well: #fafafa; --border: #e5e5e5; --border-2: #d4d4d4;
+      --text: #0a0a0a; --text-2: #262626; --text-3: #525252; --muted: #737373;
+      --dec-border: #7dd3fc; --dec-bg: #f0f9ff;
+      --pick-border: #059669; --pick-bg: #d1fae5; --pick-text: #065f46;
+      --pre-bg: #f0fdf4; --pre-text: #047857;
+      --amber: #b45309; --amber-border: #f59e0b; --amber-bg: #fffbeb;
+      --ok: #059669; --sky: #0369a1; --halo: rgba(25, 143, 217, .38); --chip: #ececec;
+    }
+  }
+  body { margin: 0; background: var(--bg); color: var(--text-2); font: 14px/1.45 -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; }
+  button, textarea { font: inherit; }
+  .mono { font-family: ui-monospace, Menlo, monospace; }
+
+  /* The mock-up's own controls (dashed, so they never read as dashboard UI). */
+  .controls { display: flex; flex-wrap: wrap; gap: 8px 14px; align-items: center; padding: 12px 16px; border-bottom: 1px dashed var(--border-2); font-size: 13px; }
+  .scenes { display: flex; flex-wrap: wrap; gap: 6px; }
+  .scenes button, .controls .theme button { border: 1px dashed var(--border-2); background: transparent; color: var(--text-3); border-radius: 6px; padding: 4px 9px; cursor: pointer; }
+  .scenes button[aria-pressed=true], .controls .theme button[aria-pressed=true] { border-style: solid; border-color: var(--sky); color: var(--text); }
+  .controls .theme { display: flex; gap: 6px; margin-left: auto; }
+  .caption { margin: 0; padding: 10px 16px; color: var(--text-3); font-size: 13px; border-bottom: 1px dashed var(--border-2); }
+  .caption b { color: var(--text); font-weight: 600; }
+  .mock { display: inline-block; margin-top: 6px; font-size: 12px; color: var(--text-3); border: 1px dashed var(--border-2); border-radius: 6px; padding: 3px 8px; cursor: pointer; background: none; }
+
+  /* MrDetail: back link, header with the actions on the right, then sections. */
+  .detail { display: flex; flex-direction: column; gap: 16px; padding: 24px; max-width: 980px; }
+  .back { align-self: flex-start; background: none; border: 0; padding: 0; color: var(--text-3); font-size: 13px; cursor: pointer; }
+  .head { display: flex; flex-wrap: wrap; justify-content: space-between; align-items: flex-start; gap: 12px; }
+  .head .who { flex: 1 1 320px; min-width: 0; }
+  .head h2 { margin: 0; font: 600 18px/1.35 ui-monospace, Menlo, monospace; color: var(--text); overflow-wrap: anywhere; }
+  .head .sub { margin: 2px 0 0; font-size: 13px; color: var(--muted); }
+  .head .url { font-size: 12px; color: #60a5fa; overflow-wrap: anywhere; }
+  .head .proj { margin: 4px 0 0; font-size: 12px; color: var(--muted); }
+  .head .proj span { color: var(--text-3); }
+  .acts { margin-left: auto; display: flex; flex-direction: column; align-items: flex-end; gap: 4px; max-width: 20rem; text-align: right; }
+  .acts .row { display: flex; gap: 8px; }
+  .btn { border-radius: 6px; padding: 6px 16px; font-size: 13px; font-weight: 500; cursor: pointer; border: 1px solid var(--border-2); background: transparent; color: var(--text-3); }
+  .btn.blue { background: var(--blue-btn); border-color: var(--blue-btn); color: #fff; }
+  .btn:disabled { opacity: .5; cursor: default; }
+  .headline { margin: 0; font-size: 13px; font-weight: 500; }
+  .headline.wait { color: var(--amber); } .headline.ready { color: var(--ok); } .headline.working { color: #60a5fa; }
+  .acts .small { margin: 0; font-size: 12px; color: var(--text-3); }
+  .merged { margin: 0; border: 1px solid var(--blue); border-radius: 8px; padding: 8px 12px; font-size: 13px; color: var(--text-2); text-align: right; animation: glow .9s ease-in-out; }
+  .merged b { color: var(--blue); font-weight: 500; }
+  @keyframes glow { 50% { box-shadow: 0 0 16px 2px var(--halo); } }
+
+  .section { border: 1px solid var(--border); background: var(--panel); border-radius: 8px; padding: 16px; }
+  .section h4 { margin: 0 0 8px; font: 600 13px/1.3 ui-monospace, Menlo, monospace; color: var(--text); }
+  .ph { display: grid; grid-template-columns: repeat(auto-fill, minmax(140px, 1fr)); gap: 10px; }
+  .ph i { display: block; height: 84px; border-radius: 6px; background: var(--chip); }
+  .lines i { display: block; height: 9px; border-radius: 4px; background: var(--chip); margin: 8px 0; }
+
+  /* Decisions.jsx */
+  .dec { position: relative; overflow: hidden; border: 2px solid var(--dec-border); background: var(--dec-bg); border-radius: 8px; padding: 16px; }
+  .dec-top { display: flex; flex-wrap: wrap; justify-content: space-between; gap: 8px; margin-bottom: 12px; }
+  .dec-top h4 { margin: 0; font: 600 13px/1.3 ui-monospace, Menlo, monospace; color: var(--text); }
+  .dec-top p { margin: 2px 0 0; font-size: 12px; color: var(--text-3); }
+  .qs { display: flex; flex-direction: column; gap: 12px; }
+  fieldset { margin: 0; border: 1px solid var(--border); background: var(--well); border-radius: 8px; padding: 16px; min-width: 0; }
+  .qhead { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; margin-bottom: 12px; }
+  .qhead p { margin: 0; font-size: 15px; font-weight: 500; color: var(--text); }
+  .badge { border: 1px solid; border-radius: 99px; padding: 1px 8px; font-size: 11px; }
+  .badge.req { border-color: var(--amber-border); color: var(--amber); }
+  .badge.done { border-color: #047857; color: var(--ok); }
+  .badge.optional { border-color: var(--border-2); color: var(--text-3); }
+  .badge.multi { border-color: #075985; color: var(--sky); }
+  .opts { display: flex; flex-wrap: wrap; gap: 8px; }
+  .opt { min-height: 44px; border-radius: 12px; border: 2px solid var(--border-2); background: var(--panel); color: var(--text-2); padding: 8px 16px; text-align: left;
+         font-size: 13px; font-weight: 500; cursor: pointer; transition: transform .1s; max-width: 100%; }
+  .opt:active { transform: scale(.95); }
+  .opt.on { border-color: var(--pick-border); background: var(--pick-bg); color: var(--pick-text); }
+  /* Pre-selected because it's what was built, not yet sent: the same green, dashed and lighter, with a small tag. */
+  .opt.pre { border-style: dashed; background: var(--pre-bg); color: var(--pre-text); }
+  .opt .tick { margin-right: 6px; }
+  .opt .tag { display: block; margin-top: 2px; font-size: 11px; font-weight: 400; opacity: .85; }
+  .note-add { margin-top: 8px; background: none; border: 0; padding: 0; color: var(--text-3); font-size: 12px; cursor: pointer; }
+  textarea { width: 100%; margin-top: 12px; border-radius: 6px; border: 1px solid var(--border); background: var(--panel); color: var(--text-2); padding: 8px; font-size: 13px; resize: vertical; }
+  textarea.answer { margin-top: 0; border-color: var(--border-2); }
+  textarea:disabled { opacity: .7; }
+
+  /* The one button and the line that says why it's named that. */
+  .foot { margin-top: 16px; display: flex; flex-wrap: wrap; align-items: center; justify-content: flex-end; gap: 8px 14px; }
+  .why { margin: 0; flex: 1 1 260px; font-size: 12px; color: var(--text-3); text-align: right; }
+  .why.warn { color: var(--amber); }
+  .go { min-height: 44px; border-radius: 12px; padding: 8px 20px; font-size: 13px; font-weight: 600; border: 2px solid transparent; cursor: pointer; transition: transform .1s; }
+  .go:active { transform: scale(.95); }
+  .go.merge { background: var(--blue-btn); color: #fff; }
+  .go.merge:hover { background: var(--blue-btn-h); }
+  .go.send-back { background: transparent; border-color: var(--amber-border); color: var(--amber); }
+  .go.send, .go.two-step { background: var(--green-btn); color: #fff; }
+  .go.disabled, .go:disabled { opacity: .45; cursor: default; transform: none; }
+  .go.disabled { background: var(--chip); color: var(--text-3); }
+  .done-line { margin: 12px 0 0; text-align: right; font-size: 13px; }
+  .done-line.ok { color: var(--ok); } .done-line.back { color: var(--amber); } .done-line.err { color: #f87171; }
+  .prog { margin-top: 10px; margin-left: auto; width: 288px; max-width: 100%; }
+  .prog .bar { height: 5px; border-radius: 3px; background: var(--chip); overflow: hidden; }
+  .prog .bar i { display: block; height: 100%; width: 0; background: var(--blue-btn); transition: width .9s ease-in-out; }
+  .prog p { margin: 4px 0 0; font-size: 12px; color: var(--muted); text-align: right; }
+  /* The merge confirmation: one solid blue band crosses the card left to right (the #838 look), then the merged line. */
+  .band { position: absolute; top: 0; bottom: 0; left: 0; width: 34%; background: var(--blue); box-shadow: 0 0 8px 2px var(--halo); pointer-events: none;
+          transform: translateX(-110%); animation: sweep .9s ease-in-out forwards; z-index: 2; }
+  @keyframes sweep { to { transform: translateX(310%); } }
+
+  /* The ballot: a mock-up or plan PR. Numbered questions, round marks instead of chips, one wide button. */
+  .dec.ballot { border-color: var(--border-2); background: var(--panel); }
+  .ballot .dec-top h4 { font-family: inherit; font-size: 15px; }
+  .ballot .kind { display: inline-block; margin-left: 8px; border: 1px solid var(--border-2); border-radius: 99px; padding: 1px 8px; font-size: 11px; color: var(--text-3); font-weight: 400; vertical-align: 1px; }
+  .ballot fieldset { background: transparent; border: 0; border-top: 1px solid var(--border); border-radius: 0; padding: 14px 0 4px; }
+  .ballot .num { color: var(--muted); font-size: 12px; margin-right: 2px; }
+  .ballot .opts { flex-direction: column; gap: 6px; }
+  .ballot .opt { display: flex; align-items: center; gap: 10px; width: 100%; border-width: 1px; border-radius: 8px; min-height: 44px; }
+  .ballot .opt .mark { flex: none; width: 18px; height: 18px; border-radius: 50%; border: 2px solid var(--border-2); display: grid; place-items: center; }
+  .ballot .opt.multi .mark { border-radius: 4px; }
+  .ballot .opt.on .mark { border-color: var(--pick-border); background: var(--pick-border); color: #fff; font-size: 11px; }
+  .ballot .foot { flex-direction: column; align-items: stretch; }
+  .ballot .why { text-align: left; flex-basis: auto; }
+  .ballot .go { width: 100%; }
+
+  @media (max-width: 640px) {
+    .detail { padding: 16px; }
+    .acts { margin-left: 0; align-items: flex-start; text-align: left; max-width: none; }
+    .controls .theme { margin-left: 0; }
+    .foot { justify-content: stretch; }
+    .why { text-align: left; }
+    .go { width: 100%; }
+    .done-line { text-align: left; }
+    .prog { margin-left: 0; width: 100%; }
+    .prog p { text-align: left; }
+  }
+  @media (prefers-reduced-motion: reduce) { .band { animation: none; display: none; } .merged { animation: none; } }
+</style>
+</head>
+<body>
+<div class="controls">
+  <div class="scenes" id="scenes" role="group" aria-label="Scene"></div>
+  <div class="theme" role="group" aria-label="Theme">
+    <button data-theme="dark">Dark</button><button data-theme="light">Light</button>
+  </div>
+</div>
+<p class="caption" id="caption"></p>
+<main id="app"></main>
+
+<script src="answer_state.js"></script>
+<script>
+'use strict'
+const { answerState, canPress, answered, kindOf } = globalThis.AnswerState
+const opt = (label, built = false) => ({ label, built })
+
+// The PR's questions as the parser would hand them over, with the "(built here)" marker on an option as `built`.
+const startScreen = () => [
+  { id: 'handoff', question: 'Hand-off into the start screen', kind: 'pick-one', required: true, options: [opt('Glide', true), opt('Dive'), opt('Fade')] },
+  { id: 'extras', question: 'What plays with it? (pick any)', kind: 'pick-any', required: true, options: [opt('Sound', true), opt('Haptic tap', true), opt('Confetti')] },
+  { id: 'tone', question: 'Card colour', kind: 'pick-one', required: false, options: [opt('Blue', true), opt('Grey')] }
+]
+const unbuilt = (qs) => qs.map((q) => ({ ...q, options: q.options.map((o) => ({ ...o, built: false })) }))
+
+const PR = { number: 931, title: 'Start screen: hand-off and sound', sub: 'example-app — verdict: pass', repo: 'example/example-app' }
+const PLAN = { number: 934, title: 'Mock-up: start screen hand-off (draft)', sub: 'Design mock-up — nothing to merge', repo: 'example/example-app' }
+
+const SCENES = {
+  a: { name: 'a. All built: one press merges', pr: PR, decisions: startScreen, picks: {}, notes: {},
+       caption: '<b>Code done, every answer is what was built.</b> The built options start selected but say <i>not yet sent</i>. One press saves them and merges. Try changing one.' },
+  b: { name: 'b. One answer changed', pr: PR, decisions: startScreen, picks: { handoff: ['Dive'] }, notes: {},
+       caption: '<b>Gil picks Dive instead of the Glide that was built.</b> It can’t merge as built, so the button becomes Send back. Pick Glide again and it goes back to Merge.' },
+  c: { name: 'c. A note typed', pr: PR, decisions: startScreen, picks: {}, notes: { tone: 'A touch darker than this blue, please.' },
+       caption: '<b>Every answer matches, but there is a note.</b> A note means MARVIN has something to read, so it sends back. Clear the note (spaces don’t count) and it’s Merge again.' },
+  d: { name: 'd. Mock-up PR: a ballot', pr: PLAN, plan: true, decisions: () => unbuilt(startScreen()), picks: { handoff: ['Dive'], extras: ['Sound'] }, notes: {},
+       caption: '<b>A mock-up or plan PR has nothing to merge.</b> The card reads like a ballot: numbered questions, nothing pre-selected, one wide Send answers.' },
+  e: { name: 'e. Required one unanswered', pr: PR,
+       decisions: () => [...startScreen(), { id: 'first', question: 'Which tab opens first?', kind: 'pick-one', required: true, options: [opt('Captions'), opt('Translate')] }],
+       picks: {}, notes: {},
+       caption: '<b>A required question with nothing built for it.</b> Nobody can pick it for Gil, so the button is off and counts what’s left. Pick one: nothing was built for it, so it becomes Send back.' },
+  f: { name: 'f. Old-format PR', pr: PR, decisions: () => unbuilt(startScreen()), picks: {}, notes: {}, legacy: true,
+       caption: '<b>An older PR that doesn’t mark what was built.</b> Nothing to compare against, so it keeps today’s two steps: Submit decisions, then Approve &amp; Merge at the top.' }
+}
+
+let S = null // the live scene: { id, decisions, picks, notes, plan, status, failure, done, failNext, submitted }
+
+function hashParams() {
+  return Object.fromEntries(location.hash.replace(/^#/, '').split('&').filter(Boolean).map((kv) => kv.split('=').map(decodeURIComponent)))
+}
+function setHash(patch) {
+  const p = { ...hashParams(), ...patch }
+  history.replaceState(null, '', '#' + Object.entries(p).map(([k, v]) => `${k}=${encodeURIComponent(v)}`).join('&'))
+}
+
+function loadScene(id) {
+  const sc = SCENES[id] || SCENES.a
+  S = { id: SCENES[id] ? id : 'a', decisions: sc.decisions(), picks: structuredClone(sc.picks), notes: { ...sc.notes }, plan: !!sc.plan,
+        status: 'idle', failure: null, done: null, failNext: false, submitted: false, notesOpen: new Set(Object.keys(sc.notes)) }
+  setHash({ scene: S.id })
+  render()
+}
+
+function setTheme(t) {
+  document.documentElement.dataset.theme = t
+  setHash({ theme: t })
+  document.querySelectorAll('.theme button').forEach((b) => b.setAttribute('aria-pressed', String(b.dataset.theme === t)))
+}
+
+const esc = (s) => String(s).replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]))
+
+function stateNow() {
+  return answerState({ decisions: S.decisions, picks: S.picks, notes: S.notes, plan: S.plan, status: S.status, failure: S.failure })
+}
+
+function questionHtml(q, i, st, readOnly, ballot) {
+  const k = kindOf(q)
+  const shown = st.picks?.[q.id] ?? (S.picks[q.id] || [])
+  const isAnswered = answered(q, k === 'text' ? (S.picks[q.id] || '') : shown)
+  const pre = st.unsent.includes(q.id) && !readOnly
+  const badges = (q.required
+    ? `<span class="badge ${isAnswered ? 'done' : 'req'}">${isAnswered ? 'Answered' : 'Required'}</span>`
+    : '<span class="badge optional">Optional</span>') + (k === 'multi' ? '<span class="badge multi">Pick any</span>' : '')
+  const label = q.question.replace(/\s*\(pick any\)$/, '')
+  let body
+  if (k === 'text') {
+    body = `<textarea class="answer" data-key="text:${q.id}" rows="2" placeholder="Type your answer" ${readOnly ? 'disabled' : ''}>${esc(S.picks[q.id] || '')}</textarea>`
+  } else {
+    body = `<div class="opts" role="${k === 'multi' ? 'group' : 'radiogroup'}" aria-label="${esc(label)}">` + q.options.map((o) => {
+      const on = shown.includes(o.label)
+      const cls = ['opt', on ? 'on' : '', on && pre ? 'pre' : '', k === 'multi' ? 'multi' : ''].join(' ')
+      const tag = !ballot && o.built ? `<span class="tag">${on && pre ? 'Built here · not yet sent' : 'Built here'}</span>` : ''
+      const mark = ballot ? `<span class="mark" aria-hidden="true">${on ? '✓' : ''}</span>` : (on ? '<span class="tick" aria-hidden="true">✓</span>' : '')
+      return `<button type="button" class="${cls}" role="${k === 'multi' ? 'checkbox' : 'radio'}" aria-checked="${on}" data-key="opt:${q.id}:${esc(o.label)}" ${readOnly ? 'disabled' : ''}>${mark}<span>${esc(o.label)}${tag}</span></button>`
+    }).join('') + '</div>'
+  }
+  const note = S.notesOpen.has(q.id) || S.notes[q.id]
+    ? `<textarea data-key="note:${q.id}" rows="1" placeholder="Add a note (optional)" aria-label="Note for: ${esc(label)}" ${readOnly ? 'disabled' : ''}>${esc(S.notes[q.id] || '')}</textarea>`
+    : (readOnly ? '' : `<button type="button" class="note-add" data-key="addnote:${q.id}">+ Add a note</button>`)
+  const num = ballot ? `<span class="num">${i + 1} of ${S.decisions.length}</span>` : ''
+  return `<fieldset data-question="${q.id}"><legend style="position:absolute;left:-9999px">${esc(label)}</legend>
+    <div class="qhead">${num}<p>${esc(label)}</p>${badges}</div>${body}${k === 'text' ? '' : note}</fieldset>`
+}
+
+function headerActions(st) {
+  const legacy = st.action === 'two-step'
+  if (S.done === 'merged') {
+    const t = new Date().toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' })
+    return `<p class="merged"><b>✓ Merged</b> into main at ${t} by you. It leaves the Open list when you go back.</p>`
+  }
+  if (S.status === 'sending' && st.action === 'merge') return '<div class="row"><button class="btn" disabled>Deny</button></div><p class="headline working">Merging…</p>'
+  if (legacy) {
+    // Today's two steps: Approve waits for Submit decisions.
+    return `<div class="row"><button class="btn">Deny</button><button class="btn blue" data-key="approve" ${S.submitted ? '' : 'disabled'}>Approve &amp; Merge</button></div>
+      <p class="headline ${S.submitted ? 'ready' : 'wait'}">${S.submitted ? 'Ready to merge' : 'Answer the decisions first'}</p>
+      ${S.submitted ? '' : '<p class="small">Pick your answers in the Decisions section and submit; Approve becomes available once every required one is answered.</p>'}`
+  }
+  if (S.plan) return '<div class="row"><button class="btn">Deny</button></div><p class="headline wait">A mock-up: nothing to merge</p><p class="small">Your answers below are the review.</p>'
+  if (S.done) return '<p class="headline wait">Sent back with your answers</p>'
+  return '<div class="row"><button class="btn">Deny</button></div><p class="headline wait">Your answers decide it</p><p class="small">The button under the Decisions names what happens.</p>'
+}
+
+function footerHtml(st) {
+  if (st.action === 'two-step') {
+    const missing = S.decisions.filter((q) => q.required && !answered(q, S.picks[q.id] || (kindOf(q) === 'text' ? '' : [])))
+    const dirty = Object.keys(S.picks).length > 0
+    return `<div class="foot">
+      ${missing.length ? `<p class="why warn">Still to answer: ${missing.map((q) => esc(q.question.replace(/\s*\(pick any\)$/, ''))).join(' · ')}</p>` : `<p class="why">${esc(st.reason)}</p>`}
+      <button type="button" class="go two-step" data-key="go" ${dirty && !S.submitted ? '' : 'disabled'}>Submit decisions</button></div>
+      ${S.submitted ? '<p class="done-line ok">Saved to the description. Recorded on GitHub ↗ · Now Approve &amp; Merge at the top.</p>' : ''}`
+  }
+  const warn = st.action === 'disabled' || st.action === 'send-back'
+  const failed = S.status === 'merge-failed'
+  return `<div class="foot">
+      <p class="why ${warn || failed ? 'warn' : ''}" data-why>${esc(st.reason)}</p>
+      <button type="button" class="go ${st.action}" data-key="go" ${canPress(st) ? '' : 'disabled'} aria-describedby="why">${esc(st.label)}</button>
+    </div>
+    ${S.status === 'sending' && st.action === 'merge' ? '<div class="prog"><div class="bar"><i id="bar"></i></div><p>Saving answers · rebasing · tests · merging</p></div>' : ''}
+    ${S.id === 'a' && !S.done && S.status !== 'sending' ? `<button type="button" class="mock" data-key="failnext">Mock: ${S.failNext ? 'the next merge will fail (tap to undo)' : 'make the next merge fail'}</button>` : ''}`
+}
+
+function render() {
+  const sc = SCENES[S.id]
+  document.querySelectorAll('#scenes button').forEach((b) => b.setAttribute('aria-pressed', String(b.dataset.scene === S.id)))
+  document.getElementById('caption').innerHTML = sc.caption
+
+  // Keep the caret where it was when a re-render replaces a text box.
+  const a = document.activeElement
+  const focusKey = a?.dataset?.key
+  const caret = a && 'selectionStart' in a ? [a.selectionStart, a.selectionEnd] : null
+
+  const st = stateNow()
+  const ballot = S.plan
+  const readOnly = !!S.done || S.status === 'sending'
+  const answeredN = S.decisions.filter((q) => q.required && answered(q, st.picks?.[q.id] ?? (S.picks[q.id] || []))).length
+  const requiredN = S.decisions.filter((q) => q.required).length
+  let sub
+  if (st.action === 'two-step') sub = st.missing?.length || !S.submitted ? `${requiredN - S.decisions.filter((q) => q.required && answered(q, S.picks[q.id] || [])).length} to answer before you can approve.` : 'All required decisions are answered.'
+  else if (ballot) sub = `${S.decisions.length} questions · ${answeredN} of ${requiredN} required answered`
+  else if (S.done === 'merged') sub = 'Your answers are saved in the description, and it merged.'
+  else if (S.done === 'sent-back') sub = 'Your answers are saved in the description.'
+  else if (S.status === 'sending') sub = 'Saving your answers, then merging.'
+  else if (S.status === 'merge-failed') sub = 'Your answers are saved in the description.'
+  else sub = st.unsent.length ? 'What was built is selected. Nothing is sent until you press the button.' : 'Your answers. Nothing is sent until you press the button.'
+
+  let doneLine = ''
+  if (S.done === 'sent-back') doneLine = '<p class="done-line back">Sent back with your answers. MARVIN rebuilds it, and it comes back here as a normal review.</p>'
+  if (S.done === 'merged') doneLine = '<p class="done-line ok">Answers saved and merged.</p>'
+  if (S.done === 'sent') doneLine = '<p class="done-line ok">Answers sent. MARVIN takes it from here; nothing merges.</p>'
+
+  const pr = sc.pr
+  document.getElementById('app').innerHTML = `
+  <div class="detail">
+    <button class="back">← Back to MR Review</button>
+    <div class="head">
+      <div class="who">
+        <h2>#${pr.number} — ${esc(pr.title)}</h2>
+        <p class="sub">${esc(pr.sub)}</p>
+        <a class="url" href="#">https://github.com/${pr.repo}/pull/${pr.number}</a>
+        <p class="proj">Project: <span>${pr.repo.split('/')[1]}</span> &nbsp; Docs → &nbsp; Board →</p>
+      </div>
+      <div class="acts">${headerActions(st)}</div>
+    </div>
+    <div class="dec ${ballot ? 'ballot' : ''}" id="dec" data-action="${st.action}">
+      ${S.justMerged ? '<span class="band"></span>' : ''}
+      <div class="dec-top"><div>
+        <h4>${ballot ? 'Ballot<span class="kind">Mock-up · nothing to merge</span>' : 'Decisions'}</h4>
+        <p>${sub}</p>
+      </div></div>
+      <div class="qs">${S.decisions.map((q, i) => questionHtml(q, i, st, readOnly || (st.action === 'two-step' && S.submitted), ballot)).join('')}</div>
+      ${S.done ? doneLine : footerHtml(st)}
+    </div>
+    ${ballot ? '' : `<div class="section"><h4>Images &amp; recordings (3)</h4><div class="ph"><i></i><i></i><i></i></div></div>
+    <div class="section"><h4>Test Results</h4><div class="lines"><i style="width:60%"></i><i style="width:40%"></i></div></div>`}
+    <div class="section"><h4>Requirements &amp; Tasks (linked ticket)</h4><div class="lines"><i style="width:85%"></i><i style="width:70%"></i><i style="width:50%"></i></div></div>
+  </div>`
+  S.justMerged = false
+  const why = document.querySelector('[data-why]')
+  if (why) why.id = 'why'
+
+  if (focusKey) {
+    const el = document.querySelector(`[data-key="${CSS.escape(focusKey)}"]`)
+    if (el) { el.focus(); if (caret && 'selectionStart' in el) el.setSelectionRange(...caret) }
+  }
+  const bar = document.getElementById('bar')
+  if (bar) requestAnimationFrame(() => requestAnimationFrame(() => { bar.style.width = '100%' }))
+}
+
+function press() {
+  const st = stateNow()
+  if (!canPress(st)) return // pressing twice, or while it's off, does nothing
+  if (st.action === 'two-step') { S.submitted = true; render(); return }
+  // Every answer goes in as yours: what was only pre-selected is now ticked.
+  for (const [id, v] of Object.entries(st.picks)) if (!(id in S.picks)) S.picks[id] = v
+  if (st.action === 'send-back') { S.done = 'sent-back'; render(); return }
+  if (st.action === 'send') { S.done = 'sent'; render(); return }
+  S.status = 'sending'
+  render()
+  setTimeout(() => {
+    if (S.failNext) {
+      S.status = 'merge-failed'; S.failNext = false
+      S.failure = 'GitHub checks failed on the rebased branch (ui-tests)'
+    } else {
+      S.status = 'idle'; S.done = 'merged'; S.justMerged = true
+    }
+    render()
+  }, 1100)
+}
+
+document.getElementById('app').addEventListener('click', (e) => {
+  const el = e.target.closest('[data-key]')
+  if (!el || el.disabled) return
+  const [kind, id, ...rest] = el.dataset.key.split(':')
+  if (kind === 'opt') {
+    const label = rest.join(':') // the browser already decoded the attribute
+    const q = S.decisions.find((x) => x.id === id)
+    const cur = stateNow().picks?.[id] ?? (S.picks[id] || [])
+    const has = cur.includes(label)
+    S.picks[id] = kindOf(q) === 'multi' ? (has ? cur.filter((c) => c !== label) : [...cur, label]) : (has ? [] : [label])
+    if (S.status === 'merge-failed') S.status = 'idle'
+    render()
+  } else if (kind === 'addnote') {
+    S.notesOpen.add(id); render()
+    document.querySelector(`[data-key="note:${CSS.escape(id)}"]`)?.focus()
+  } else if (kind === 'go') press()
+  else if (kind === 'approve') { S.done = 'merged'; S.justMerged = true; render() }
+  else if (kind === 'failnext') { S.failNext = !S.failNext; render() }
+})
+document.getElementById('app').addEventListener('input', (e) => {
+  const key = e.target.dataset?.key || ''
+  const [kind, id] = key.split(':')
+  if (kind === 'note') S.notes[id] = e.target.value
+  else if (kind === 'text') S.picks[id] = e.target.value
+  else return
+  render()
+})
+
+const scenesEl = document.getElementById('scenes')
+for (const [id, sc] of Object.entries(SCENES)) {
+  const b = document.createElement('button')
+  b.dataset.scene = id
+  b.textContent = sc.name
+  b.onclick = () => loadScene(id)
+  scenesEl.appendChild(b)
+}
+document.querySelectorAll('.theme button').forEach((b) => { b.onclick = () => setTheme(b.dataset.theme) })
+
+const p0 = hashParams()
+setTheme(p0.theme || (matchMedia('(prefers-color-scheme: light)').matches ? 'light' : 'dark'))
+loadScene(p0.scene || 'a')
+window.addEventListener('hashchange', () => { const p = hashParams(); if (p.scene && p.scene !== S.id) loadScene(p.scene); if (p.theme) setTheme(p.theme) })
+</script>
+</body>
+</html>

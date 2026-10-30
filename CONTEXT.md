@@ -492,6 +492,10 @@ ever been closed unmerged. Gil approves almost everything; the wait is the cost.
   or run it on the API credit; at the hard line a big task needs Gil's yes. Nothing is cut off mid-task.
 - **Pace** (of a budget that expires, like the API credit or the weekly plan limit): projected spend to the reset
   date. Under pace, queued work is pulled forward; over pace, it is slowed, so the budget lands near its limit.
+- **Plan first** (billing, Gil 2026-10-30): every build runs on the Claude plan while it has room, however many run
+  at once. A run that hits the plan's usage limit retries at once on the API credit, and that Mac stays on the credit
+  for an hour before trying the plan again (`dispatch_concurrency.plan_limited`). A spent credit falls back to waiting
+  for the plan. Each switch is a line in `~/.claude/logs/builder-billing.jsonl`.
 - **Fix level**: every fix Vitals offers is one of three. **Auto**: low-risk, reversible, touches only MARVIN's own
   state; MARVIN runs it at once and reports it. **One tap**: a button Gil presses (spends a budget, touches another
   project, or is hard to undo). **Decision**: a real choice with options. An auto fix that fails twice drops to one
@@ -1506,6 +1510,22 @@ Mac has no push channel. Gil applies the hooks on each Mac with `marvin_hooks.py
   entry hash. Tau is per loop from 20 labels, else the global tau (all loops, from 20), else 0.3, never below 0.3,
   and the whole map is recomputed on every label (#599). Other Macs cache the primary's map (`GET /safety/taus`).
 
+## Box memory review (proposed 2026-10-30, ADR 0082, marvin#912)
+
+- **Box item**: one change a Claude session on mac-mini-2012 made to memory or handoffs: a new memory, an edit, a
+  delete, a handoff (new or edited), a handoff delete, or one MEMORY.md index line added or removed. Untrusted data,
+  identified by a hash of its kind, name, starting hash and content (`lib/box_memory_export.py` makes them on the box).
+- **Box outbox**: `~/.claude/box-outbox/` on the box, outside the synced tree. Items are captured there before the
+  mirror resets an edit away, and pruned once the mirror brings the same content back (or after 30 days).
+- **Pull**: the primary Mac runs the export on the box over ssh and reads stdout; the box never pushes (ADR 0069).
+- **Trust layer**: kind × risk (`memory-new.high` = a new feedback/user memory). Its own streak of clean approvals in
+  `~/.claude/box-memory/trust-ramp.json` (the ADR 0064 ramp code, separate file). Open after N; some layers never open.
+  **Clean approval** = Gil's Fine on an item that was not flagged. Flag, Block, Fix it or revert reset it.
+- **Held item**: shown as a `box_memory` card in Health ▸ Safety reviews (Fine applies, Block drops, Fix it drops with
+  a note). **Auto-passed item**: applied without a card because its layer is open; still in the audit log.
+- **Collision**: the Mac's file no longer matches what the box started from. Always held.
+- **Revert**: `box_memory_review.py revert <audit id>` restores what an apply replaced, if untouched since.
+
 ## Merge order and the sent-back loop (2026-10-05)
 
 - **Order:** a PR waits on every OLDER open PR in its repo that shares a changed file (`dashboard/electron/main/pr_order.js`). Derived from the PRs' file lists each time; the MR list shows it, Approve & Merge is disabled with the reason, and `mr:approve` re-checks it in the main process so a stale screen cannot skip it. Deny stays available.
@@ -1880,6 +1900,9 @@ MARVIN-as-OS north star).
   `test` and `bench`. A job may name the tag it **needs**, and untagged work counts as `general`, so every job that
   exists today keeps running only on the Macs. If no device that accepts the tag is online, the job fails loudly
   and never falls back to a Mac, so untrusted code can't land on a Mac because the Kali box was down.
+  **Exception (ADR 0069 amendment, 2026-10-30, #930):** `test` and `bench` work that times out on the box, loses
+  the link mid-run, or finds no box available reruns once on the less busy Mac (a **fallback**, logged, at most 2 at
+  once). `security` and `quarantine` never fall back.
 - **Linux device identity** (settled from code 2026-10-16): same registry fields as the Macs, read from the
   firmware tables instead of macOS's `ioreg`, plus `os: linux`.
 - **Pull-only node** (decided 2026-10-16, ADR 0069): mac-mini-2012 receives code sync and never sends it. Its
@@ -1936,3 +1959,20 @@ owner turns on or buys, and may hold several skills.
   line is advice and doesn't count for a second occurrence.
 _Avoid_: calling a fix to one surface (the dashboard, a session prompt) "fixed" when the same state can be reached
 another way.
+
+## Merges under memory pressure (built 2026-10-30, marvin#940)
+
+- **Test slot**: a machine's one place to run tests (`lib/test_slot.py`). The merge gate, the after-merge full suite
+  (main-health) and helpers' whole-suite or parallel runs take it one at a time; one test file never waits. Workers
+  are sized to free memory, not cores.
+- **Merges first**: a merge is marked on the machine from the Approve to its end. While one is marked or queued for
+  memory, other test runs wait for it and new helpers are queued (memory guard); nothing running is stopped.
+- **Waiting for memory**: an approval the merge Mac refused for memory and queued. It is kept (approval ledger outcome
+  `waiting-memory`), runs there by itself when pressure drops, and its card says "Approved: waiting for memory on the
+  Mac mini". Not a failure.
+- **Backup merge machine**: a later machine in the merge list (the MacBook; the Linux box for MARVIN PRs, #945) that
+  takes a merge when the Mini can't for memory, only if it says it is fit (awake, on power, at home, idle:
+  `GET /merge-ready`) and only after the Mini dropped its queued copy (`POST /merge-forget`). The card names the Mac
+  that merged and flags tests run on another OS.
+_Avoid_: "failed" for an approval that waits for memory; "idle" meaning the owner is away (here it means the machine
+runs no merge or test of its own and its memory is normal).
