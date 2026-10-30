@@ -190,13 +190,17 @@ def test_the_box_copy_with_no_primary_in_the_registry_copies_nothing_and_says_so
     assert (logs / "health-status.json").read_text() == '{"good": true}'
 
 
-def test_the_box_copy_finds_the_primary_through_the_registry_lookup_it_runs():
-    """The exact lookup the script runs answers with a hostname from this machine's registry."""
-    import re
+def test_the_box_copy_finds_the_primary_through_the_registry_lookup_it_runs(tmp_path):
+    """The exact lookup the script runs answers with the primary's Tailscale hostname from the synced registry."""
+    import json, re, sys
+    import scanner_role
+    (tmp_path / ".claude").mkdir()
+    primary = scanner_role.PRIMARY_PREFIX + "1"
+    (tmp_path / ".claude" / "marvin-network.json").write_text(json.dumps({"devices": {
+        primary: {"tailscale_hostname": "the-primary", "hardware_uuid": "P", "accepts": ["general"]},
+        "linux-box": {"tailscale_hostname": "the-box", "hardware_uuid": "B", "os": "linux", "accepts": ["test"]}}}))
     feed = (SCRIPT.parent / "marvin-observer-feed.sh").read_text()
     code = re.search(r"-c '([^']*scanner_role[^']*)'", feed).group(1)
-    root = SCRIPT.parents[2]
-    r = subprocess.run([__import__("sys").executable, "-c", code], cwd=root, capture_output=True, text=True, timeout=30)
-    if not (Path.home() / ".claude" / "marvin-network.json").exists():
-        pytest.skip("no machine registry on this machine")
-    assert r.returncode == 0 and r.stdout.strip() and " " not in r.stdout.strip()
+    r = subprocess.run([sys.executable, "-c", code], cwd=SCRIPT.parents[2], capture_output=True, text=True, timeout=30,
+                       env={"HOME": str(tmp_path), "PATH": "/usr/bin:/bin"})
+    assert r.stdout.strip() == "the-primary", r.stderr
