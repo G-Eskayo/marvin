@@ -1888,8 +1888,10 @@ MARVIN-as-OS north star).
   except the Macs' code sync. The box's only scheduled job is the **mirror** (pull-only code sync,
   every 10 minutes). Its health is checked from the Macs, which already reach every registered device; Mac-only checks
   skip it. Everything else arrives as dispatched work.
-- **Bot PRs** (built 2026-10-16): PRs by MARVIN-bot-gil always wait for Gil, which is stricter than the 5-PR ramp.
-  A per-author streak can replace that later.
+- **Bot PRs** (built 2026-10-16, ramp 2026-10-30, #952): PRs by MARVIN-bot-gil wait for Gil until the bot's own
+  **author ramp** opens: 5 clean approvals in a row (`ramp_authors` in config/auto_merge.json, `trust_ramp.record_author`).
+  A deny, revert or break resets it to 0; the project's ramp must also be open. Trust is by author only: the `from-box`
+  label (#951) is information and changes no verdict.
 - **Open in this design** (as of 2026-10-16): the box's GitHub identity; sudo scope; Claude Code sign-in on Linux.
 
 ## One "needs a person" state, bot comments don't reset strikes, one plan per run (2026-10-22, #605)

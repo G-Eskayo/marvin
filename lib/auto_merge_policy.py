@@ -11,6 +11,9 @@ reads config/auto_merge.json. Verdict "auto" or "ask", always with readable reas
 - more than max_changed_lines → ask; an empty PR → ask
 - a path that isn't plain (``..``, absolute, backslashes, empty segments, non-ASCII look-alikes) → ask
 - a brand-new top-level folder is owned, at most new_top_level_per_week a week (more is sprawl) → ask past that
+- a PR by a **ramp author** (``ramp_authors``: mac-mini-2012's bot account, ADR 0069 rule 5) → ask until that
+  author's own trust ramp is open (5 clean approvals, trust_ramp.py); ``always_ask_authors`` → always ask. Trust is by
+  author only: no label (``from-box``) is an input here
 - finance-os → always ask; another project → its profile's ``auto_merge.core`` paths, and its trust ramp must be open
 - a missing or corrupt rules file → ask for everything
 
@@ -25,6 +28,12 @@ from pathlib import Path
 RULES_PATH = Path(__file__).resolve().parents[1] / "config" / "auto_merge.json"
 ASK_ALL = {"ask_all": True}
 _LIST_KEYS = ("core", "ui", "dependencies")
+_AUTHOR_KEYS = ("ramp_authors", "always_ask_authors")   # optional, but a list of logins when present
+
+
+def _authors_ok(rules: dict) -> bool:
+    return all(k not in rules or (isinstance(rules[k], list) and all(isinstance(a, str) for a in rules[k]))
+               for k in _AUTHOR_KEYS)
 
 
 def load_rules(path: Path = RULES_PATH) -> dict:
@@ -33,7 +42,8 @@ def load_rules(path: Path = RULES_PATH) -> dict:
     except (OSError, ValueError):
         return ASK_ALL
     if not isinstance(data, dict) or any(not isinstance(data.get(k), list) for k in _LIST_KEYS) \
-            or not isinstance(data.get("max_changed_lines"), int) or not isinstance(data.get("new_top_level_per_week"), int):
+            or not isinstance(data.get("max_changed_lines"), int) or not isinstance(data.get("new_top_level_per_week"), int) \
+            or not _authors_ok(data):
         return ASK_ALL
     return data
 
@@ -71,12 +81,25 @@ def area(path: str, rules: dict, existing_top_level, extra_core=()) -> str:
 
 def decide(repo: str, files: list[dict], rules: dict, *, existing_top_level, new_top_level_this_week: int,
            ramp_open: bool, render_check_passed: bool = False, profile: dict | None = None,
-           author: str | None = None) -> dict:
+           author: str | None = None, author_ramp_open: bool = False, author_ramp_streak: int | None = None) -> dict:
+    """`author` is the PR author's login: None when the caller has no author at all (no author rule applies), "" when
+    the PR's author couldn't be read (asks whenever any author is on a ramp). `author_ramp_open` must be exactly True
+    for a ramp author's PR to go on; `author_ramp_streak` only adds "3 of 5" to the reason."""
     reasons: list[str] = []
-    # ADR 0069 rule 5: PRs written on mac-mini-2012 (its own GitHub account) never auto-merge until that account has
-    # earned it; until a per-author streak exists, that means always.
-    if author and author.lower() in {a.lower() for a in rules.get("always_ask_authors", [])}:
-        reasons.append(f"{author} writes from mac-mini-2012, whose PRs wait for Gil until they earn trust (ADR 0069)")
+    if not rules.get("ask_all") and not _authors_ok(rules):
+        return {"verdict": "ask", "reasons": ["the auto-merge rules' author lists are malformed, so everything waits"]}
+    # ADR 0069 rule 5: PRs written on mac-mini-2012 (its own GitHub account) wait until that account earns trust.
+    ramp = {a.lower() for a in rules.get("ramp_authors", [])}
+    always = {a.lower() for a in rules.get("always_ask_authors", [])}
+    who = author.strip().lower() if isinstance(author, str) else None
+    if who == "" and (ramp or always):
+        reasons.append("the PR's author couldn't be read, so it can't be told apart from the box's bot (ADR 0069)")
+    elif who and who in always:
+        reasons.append(f"{author.strip()} writes from mac-mini-2012, whose PRs always wait for Gil (ADR 0069)")
+    elif who and who in ramp and author_ramp_open is not True:
+        count = f", {author_ramp_streak} of 5" if isinstance(author_ramp_streak, int) and not isinstance(author_ramp_streak, bool) else ""
+        reasons.append(f"{author.strip()} writes from mac-mini-2012; its PRs wait for Gil until 5 clean approvals "
+                       f"(ADR 0069{count})")
     if rules.get("ask_all"):
         return {"verdict": "ask", "reasons": ["the auto-merge rules file is missing or unreadable, so everything waits"]}
     if not files:

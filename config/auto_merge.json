@@ -1,5 +1,5 @@
 {
-  "_readme": "Auto-merge rules (ADR 0064, lib/auto_merge_policy.py). This file is itself core: changing it always waits for Gil, so auto-merge can never widen its own permissions. Paths are matched case-insensitively (macOS file systems ignore case). core = always waits for Gil, whatever the ticket; ui = waits until the render check passed (#126); dependencies = manifests and lockfiles: adding or upgrading code from outside always waits. A path under none of these is owned if its top-level folder exists in the repo; a brand-new top-level folder is owned, at most new_top_level_per_week a week.",
+  "_readme": "Auto-merge rules (ADR 0064, lib/auto_merge_policy.py). This file is itself core: changing it always waits for Gil, so auto-merge can never widen its own permissions. Paths are matched case-insensitively (macOS file systems ignore case). core = always waits for Gil, whatever the ticket; ui = waits until the render check passed (#126); dependencies = manifests and lockfiles: adding or upgrading code from outside always waits. A path under none of these is owned if its top-level folder exists in the repo; a brand-new top-level folder is owned, at most new_top_level_per_week a week. ramp_authors = GitHub logins (any case) whose PRs wait for Gil until that author's own trust ramp opens after 5 clean approvals (ADR 0069 rule 5: mac-mini-2012's bot account; lib/trust_ramp.py). always_ask_authors (optional, still read) = logins whose PRs always wait. A malformed author list makes everything wait.",
   "core": [
     "config/auto_merge.json",
     "lib/auto_merge_policy.py",
@@ -60,7 +60,7 @@
   ],
   "home_repo": "G-Eskayo/marvin",
   "new_top_level_per_week": 3,
-  "always_ask_authors": [
+  "ramp_authors": [
     "MARVIN-bot-gil"
   ],
   "known_incident_regressions": {
