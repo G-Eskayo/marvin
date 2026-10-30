@@ -40,6 +40,16 @@ def tailscale_bin_or_default() -> str:
     return tailscale_bin() or (MAC_TAILSCALE if os_name() == "macos" else LINUX_TAILSCALE)
 
 
+# lsof: /usr/sbin on macOS, /usr/bin on Debian/Kali (mac-mini-2012). Absolute, for the same bare-PATH reason as tailscale.
+LSOF_CANDIDATES = ["/usr/sbin/lsof", "/usr/bin/lsof"]
+
+
+def lsof_bin() -> str | None:
+    """Absolute path to lsof, or None. The cleanup sweep asks it what live processes use before removing anything;
+    a Mac-only path made every folder on the Linux box read as unused (marvin#911)."""
+    return next((p for p in LSOF_CANDIDATES if os.access(p, os.X_OK)), None) or shutil.which("lsof")
+
+
 def memory_dir() -> Path:
     """MARVIN's memory folder on this machine.
 

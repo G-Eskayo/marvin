@@ -183,6 +183,19 @@ def registry_id() -> str:
     return machine_label()  # not registered yet — fall back to the plain label
 
 
+def pull_only() -> bool:
+    """True on a pull-only node (ADR 0069: mac-mini-2012): it mirrors code, never pushes, never writes GitHub or the
+    synced ~/.claude, and holds no secrets. ADR 0069 rule 6 is the registry's mark of it: only full nodes accept
+    untagged ("general") work. An entry with no `accepts` predates the field and is a Mac. An unregistered machine is
+    pull-only unless it is a Mac, so an unknown Linux box is never trusted by default; scheduled jobs (marvin#911)
+    use this to skip their GitHub and sync writes."""
+    me = _load_registry().get(registry_id())
+    if me is None:
+        return host_os.os_name() != "macos"
+    accepts = me.get("accepts", ["general"])
+    return not isinstance(accepts, list) or "general" not in accepts
+
+
 def remote_devices() -> dict:
     """All registered devices that aren't this one, keyed by device id."""
     my_id = registry_id()
