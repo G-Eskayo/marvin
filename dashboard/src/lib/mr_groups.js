@@ -9,7 +9,6 @@ import { describePrState } from './prState.js'
 import { projectIdOf } from './projects.js'
 
 export const OTHER = 'other'
-const MARVIN_REPO = 'G-Eskayo/marvin'
 
 // Display order. "Needs you" first, as the ticket asks; "stuck" holds PRs being fixed somewhere else (sent back,
 // conflicts, failing checks, missing images), which neither you nor time will move on their own.
@@ -36,7 +35,8 @@ const KIND_TIER = Object.fromEntries(KIND_ORDER)
 const KIND_RANK = Object.fromEntries(KIND_ORDER.map(([k], i) => [k, i]))
 
 const labelNames = (pr) => (pr.labels || []).map((l) => (typeof l === 'string' ? l : l?.name)).filter(Boolean)
-const repoOf = (pr) => pr.repo || MARVIN_REPO
+// The repo comes from the PR itself (its repo field, else its URL), never a hard-coded owner (lib/tests/test_instance.py).
+const repoOf = (pr) => pr.repo || /github\.com\/([^/]+\/[^/]+)\/pull\//.exec(pr.url || '')?.[1] || ''
 
 export function projectOfPr(pr, projects) {
   const list = Array.isArray(projects) ? projects : []

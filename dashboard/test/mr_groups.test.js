@@ -40,6 +40,15 @@ describe('projectOfPr: ADR 0060, a PR belongs to its repo project unless labelle
     const projects = [...PROJECTS, { id: 'ml-powered-thing', name: 'ML-Powered thing', repo: null }]
     expect(projectOfPr(pr(5, { repo: 'G-Eskayo/ML-Powered_Thing' }), projects).id).toBe('ml-powered-thing')
   })
+  it('a PR with no repo field takes its repo from its URL, never from a hard-coded owner (main red, 2026-10-29)', () => {
+    const { repo, ...noRepo } = pr(7, { repo: 'G-Eskayo/clarity-captions' })
+    expect(projectOfPr(noRepo, PROJECTS).id).toBe('clarity-captions')
+  })
+  it('a PR with neither a repo nor a GitHub URL goes to Other instead of being filed under MARVIN', () => {
+    const { repo, url, ...bare } = pr(8)
+    expect(projectOfPr(bare, PROJECTS).id).toBe(OTHER)
+    expect(projectOfPr({ ...bare, url: 'https://example.com/not-a-pr' }, PROJECTS).id).toBe(OTHER)
+  })
   it('a repo nobody knows goes to Other, never dropped', () => {
     expect(projectOfPr(pr(6, { repo: 'someone/else' }), PROJECTS)).toEqual({ id: OTHER, why: 'unknown-repo' })
   })
