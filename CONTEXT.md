@@ -492,6 +492,10 @@ ever been closed unmerged. Gil approves almost everything; the wait is the cost.
   or run it on the API credit; at the hard line a big task needs Gil's yes. Nothing is cut off mid-task.
 - **Pace** (of a budget that expires, like the API credit or the weekly plan limit): projected spend to the reset
   date. Under pace, queued work is pulled forward; over pace, it is slowed, so the budget lands near its limit.
+- **Plan first** (billing, Gil 2026-10-30): every build runs on the Claude plan while it has room, however many run
+  at once. A run that hits the plan's usage limit retries at once on the API credit, and that Mac stays on the credit
+  for an hour before trying the plan again (`dispatch_concurrency.plan_limited`). A spent credit falls back to waiting
+  for the plan. Each switch is a line in `~/.claude/logs/builder-billing.jsonl`.
 - **Fix level**: every fix Vitals offers is one of three. **Auto**: low-risk, reversible, touches only MARVIN's own
   state; MARVIN runs it at once and reports it. **One tap**: a button Gil presses (spends a budget, touches another
   project, or is hard to undo). **Decision**: a real choice with options. An auto fix that fails twice drops to one
