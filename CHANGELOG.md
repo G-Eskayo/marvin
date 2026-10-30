@@ -1,5 +1,7 @@
 # Changelog
 
+- Docs tab: doc-relative image paths render broken, and new docs/plans files may not appear in a running app ([#885](https://github.com/G-Eskayo/marvin/pull/885))
+
 - Build #769: nightly resets with guardrails, recovery between the M4 and 2012 minis, and a Health card ([#856](https://github.com/G-Eskayo/marvin/pull/856))
 
 - MR Review: build the approved merge motion into the real dashboard (round 2 of #761) ([#855](https://github.com/G-Eskayo/marvin/pull/855))
