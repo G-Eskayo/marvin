@@ -1652,3 +1652,48 @@ def test_credit_readiness_only_asks_machines_that_have_credit_slots(monkeypatch)
                                                           "macbook-pro-1": {"is_self": True, "tailscale_hostname": "mbp"}})
     ready = tp._credit_readiness({"credit_slots": {"mac-mini-1": 2, "macbook-pro-1": 0}})
     assert ready == {"mac-mini-1": True} and asked == ["mini"]
+
+
+# ── memory guard (marvin#845): checked before the claim, so a waiting ticket stays unclaimed and ready ────────
+
+def _one_ready(monkeypatch, device=("mac-mini-1", {"is_self": True})):
+    monkeypatch.setattr(tp, "_unclaimed_ready_tickets", lambda: [
+        {"number": 845, "title": "memory guard", "createdAt": "2026-01-01T00:00:00Z", "labels": []}])
+    monkeypatch.setattr(tp, "select_machine", lambda target=None: device)
+    monkeypatch.setattr(sys, "argv", ["ticket_pipeline.py"])
+
+
+def test_under_memory_pressure_this_mac_neither_claims_nor_dispatches_and_queues_a_rescan(monkeypatch, capsys):
+    import memory_guard
+    _one_ready(monkeypatch)
+    seen = []
+    monkeypatch.setattr(memory_guard, "guard", lambda what, argv, cwd, **k: seen.append((what, argv, k.get("key"))) or
+                        {"ok": False, "queued": True, "message": f"The Mac mini's memory is under pressure, so {what} waits."})
+    monkeypatch.setattr(tp, "_claim", lambda *a, **k: pytest.fail("no claim while memory is under pressure"))
+    monkeypatch.setattr(tp, "dispatch", lambda *a, **k: pytest.fail("no dispatch while memory is under pressure"))
+    tp.main()
+    what, argv, key = seen[0]
+    assert what == "#845" and key == "ticket-pipeline"
+    assert argv[-1].endswith("ticket_pipeline.py"), "when pressure drops the scan runs again and picks the ticket up"
+
+
+def test_with_normal_memory_the_ticket_is_claimed_and_dispatched(monkeypatch):
+    import memory_guard
+    _one_ready(monkeypatch)
+    monkeypatch.setattr(memory_guard, "guard", lambda *a, **k: {"ok": True, "queued": False, "message": ""})
+    claimed = []
+    monkeypatch.setattr(tp, "_claim", lambda n, l, **kw: claimed.append(n) or True)
+    monkeypatch.setattr(tp, "dispatch", lambda *a, **kw: SimpleNamespace(ok=True, device_id="mac-mini-1"))
+    tp.main()
+    assert claimed == [845]
+
+
+def test_another_macs_dispatch_does_not_read_this_macs_memory(monkeypatch):
+    import memory_guard
+    _one_ready(monkeypatch, device=("macbook-pro-1", {"is_self": False}))
+    monkeypatch.setattr(memory_guard, "guard", lambda *a, **k: pytest.fail("not this Mac's memory"))
+    monkeypatch.setattr(tp, "_claim", lambda n, l, **kw: True)
+    sent = []
+    monkeypatch.setattr(tp, "dispatch", lambda *a, **kw: sent.append(kw["target"]) or SimpleNamespace(ok=True, device_id="macbook-pro-1"))
+    tp.main()
+    assert sent == ["macbook-pro-1"]
