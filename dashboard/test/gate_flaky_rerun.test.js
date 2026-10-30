@@ -2,7 +2,7 @@ import { describe, it, expect, vi } from 'vitest'
 
 // Never write the real logs from a test (same mocks as merge.test.js).
 vi.mock('../webhook-server/ticket_stages.js', () => ({ recordStage: vi.fn() }))
-vi.mock('../webhook-server/failure_log.js', () => ({ recordFailure: vi.fn(), recordFlaky: vi.fn(), flakySeenBefore: vi.fn(() => false) }))
+vi.mock('../webhook-server/failure_log.js', () => ({ recordFailure: vi.fn(), recordFlaky: vi.fn() }))
 vi.mock('../webhook-server/rebase_status.js', () => ({ writeRebaseStatus: vi.fn(), readRebaseStatus: vi.fn(() => ({})) }))
 vi.mock('../webhook-server/ui_evidence.js', () => ({ assertUiEvidence: vi.fn(async () => {}) }))
 vi.mock('../webhook-server/decisions_gate.js', () => ({ assertDecisions: vi.fn(async () => {}) }))
@@ -15,7 +15,7 @@ import { tmpdir } from 'os'
 import path from 'path'
 import { rebaseAndRetest, rerunFailingTests, mergePr, FLAKY_RERUN_MAX } from '../webhook-server/merge.js'
 import { recordStage } from '../webhook-server/ticket_stages.js'
-import { recordFailure, recordFlaky, flakySeenBefore } from '../webhook-server/failure_log.js'
+import { recordFailure, recordFlaky } from '../webhook-server/failure_log.js'
 
 // Failure containment (2026-10-30): PR #892 was sent back because test/fits_window.test.jsx, a test it never touched,
 // failed once in the gate. A test the PR didn't change that fails, then passes when run again, is flaky: it is named and
@@ -195,7 +195,7 @@ describe('rerunFailingTests: what one rerun runs', () => {
   })
 })
 
-describe('mergePr: a flaky pass holds for Approve again (Gil 2026-10-30), then merges', () => {
+describe('mergePr: a flaky pass merges, and the owner is told which test', () => {
   const PR = 'https://github.com/G-Eskayo/marvin/pull/892'
   const gate = () => vi.fn().mockResolvedValue({ gate: true, headRefName: 'pipeline/x', body: 'Closes G-Eskayo/marvin#891' })
   const noop = vi.fn()
@@ -209,43 +209,25 @@ describe('mergePr: a flaky pass holds for Approve again (Gil 2026-10-30), then m
     const rebase = vi.fn().mockResolvedValue({ ok: true, flaky: ['test/fits_window.test.jsx'] })
     const reengage = vi.fn()
     const run = () => mergePr(PR, exec, noop, noop, gate(), rebase, reengage, recordStage, { rebaseOpen: async () => {} })
-    const merged = () => calls.some((c) => c[0] === 'gh' && c[1] === 'pr' && c[2] === 'merge')
-    return { run, calls, reengage, merged }
+    return { run, calls, reengage }
   }
 
-  it('first time: holds, never merges, names the test, records it, and neither sends it back nor feeds the breaker', async () => {
-    flakySeenBefore.mockReturnValueOnce(false)
+  it('merges, comments on the PR naming the flaky test, records it, and does not send the PR back', async () => {
     const w = world()
-    await expect(w.run()).rejects.toMatchObject({ payload: { code: 'FLAKY_HOLD', stage: 'gate', action: 'escalate' } })
-    expect(w.merged()).toBe(false)
+    const r = await w.run()
+    expect(r.merged).toBe(true)
     expect(w.reengage).not.toHaveBeenCalled()
     const comment = w.calls.find((c) => c[0] === 'gh' && c[1] === 'pr' && c[2] === 'comment')
+    expect(comment).toBeTruthy()
     expect(comment.join(' ')).toContain('test/fits_window.test.jsx')
-    expect(comment.join(' ')).toContain('Approve it again')
+    expect(recordStage).toHaveBeenCalledWith('891', 'gate', 'passed', expect.stringContaining('flaky'))
     expect(recordFlaky).toHaveBeenCalledWith(expect.objectContaining({ tests: ['test/fits_window.test.jsx'], prUrl: PR }))
     // A flake is not a failure: it must never feed the cross-ticket breaker, which would pause dispatch.
     expect(recordFailure).not.toHaveBeenCalled()
   })
 
-  it('approved again after the hold, with the same flaky test: merges (no endless hold on a test that keeps flaking)', async () => {
-    flakySeenBefore.mockReturnValueOnce(true)
-    const w = world()
-    const r = await w.run()
-    expect(r.merged).toBe(true)
-    expect(flakySeenBefore).toHaveBeenLastCalledWith(PR, ['test/fits_window.test.jsx'])
-  })
-
-  it('a check of the history that throws counts as not seen: it holds, never merges by accident', async () => {
-    flakySeenBefore.mockImplementationOnce(() => { throw new Error('log unreadable') })
-    const w = world()
-    await expect(w.run()).rejects.toMatchObject({ payload: { code: 'FLAKY_HOLD' } })
-    expect(w.merged()).toBe(false)
-  })
-
-  it('a comment GitHub refuses never turns the hold into a merge', async () => {
-    flakySeenBefore.mockReturnValueOnce(false)
+  it('a comment GitHub refuses never blocks the merge', async () => {
     const w = world(true)
-    await expect(w.run()).rejects.toMatchObject({ payload: { code: 'FLAKY_HOLD' } })
-    expect(w.merged()).toBe(false)
+    expect((await w.run()).merged).toBe(true)
   })
 })
