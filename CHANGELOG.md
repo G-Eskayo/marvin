@@ -1,5 +1,7 @@
 # Changelog
 
+- MR Review: build the approved merge motion into the real dashboard (round 2 of #761) ([#855](https://github.com/G-Eskayo/marvin/pull/855))
+
 - Live map: nothing moves unless something real happened; leaf nodes and links light from real activity ([#851](https://github.com/G-Eskayo/marvin/pull/851))
 
 - Plan first, credit for overflow: builds bill the API credit only when a Mac's normal slots are busy (extra slots on the Mini) ([#850](https://github.com/G-Eskayo/marvin/pull/850))
