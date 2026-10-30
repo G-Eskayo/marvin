@@ -1936,3 +1936,20 @@ owner turns on or buys, and may hold several skills.
   line is advice and doesn't count for a second occurrence.
 _Avoid_: calling a fix to one surface (the dashboard, a session prompt) "fixed" when the same state can be reached
 another way.
+
+## Merges under memory pressure (built 2026-10-30, marvin#940)
+
+- **Test slot**: a machine's one place to run tests (`lib/test_slot.py`). The merge gate, the after-merge full suite
+  (main-health) and helpers' whole-suite or parallel runs take it one at a time; one test file never waits. Workers
+  are sized to free memory, not cores.
+- **Merges first**: a merge is marked on the machine from the Approve to its end. While one is marked or queued for
+  memory, other test runs wait for it and new helpers are queued (memory guard); nothing running is stopped.
+- **Waiting for memory**: an approval the merge Mac refused for memory and queued. It is kept (approval ledger outcome
+  `waiting-memory`), runs there by itself when pressure drops, and its card says "Approved: waiting for memory on the
+  Mac mini". Not a failure.
+- **Backup merge machine**: a later machine in the merge list (the MacBook; the Linux box for MARVIN PRs, #945) that
+  takes a merge when the Mini can't for memory, only if it says it is fit (awake, on power, at home, idle:
+  `GET /merge-ready`) and only after the Mini dropped its queued copy (`POST /merge-forget`). The card names the Mac
+  that merged and flags tests run on another OS.
+_Avoid_: "failed" for an approval that waits for memory; "idle" meaning the owner is away (here it means the machine
+runs no merge or test of its own and its memory is normal).
