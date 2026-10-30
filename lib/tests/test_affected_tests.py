@@ -165,7 +165,7 @@ def test_770_also_runs_the_tests_of_what_it_changed_and_of_what_imports_that():
 # ── how the Python check runs it ────────────────────────────────────────────
 
 def test_without_a_base_the_whole_suite_runs(repo):
-    argv, env = at.plan(repo, None)
+    argv, env = at.plan(repo, None, parallel=[])
     assert argv[-3:] == ["-m", "pytest", "-q"] and "MARVIN_SELECTED_TESTS" not in env
 
 
@@ -173,9 +173,14 @@ def test_with_a_base_pytest_is_told_which_files_to_collect(repo, tmp_path):
     base = _git(repo, "rev-parse", "HEAD").strip()
     _write(repo, {"lib/alone.py": "Y = 3\n"})
     _git(repo, "commit", "-qam", "change")
-    argv, env = at.plan(repo, base)
-    assert argv[-3:] == ["-m", "pytest", "-q"]
+    argv, env = at.plan(repo, base, parallel=["-n", "auto"])
+    assert argv[-5:] == ["-m", "pytest", "-q", "-n", "auto"]
     assert set(Path(env["MARVIN_SELECTED_TESTS"]).read_text().split()) == RULES | {"lib/tests/test_alone.py"}
+
+
+def test_parallel_only_where_pytest_xdist_is_installed():
+    assert at.parallel_args(have_xdist=True) == ["-n", "auto"]
+    assert at.parallel_args(have_xdist=False) == []
 
 
 def test_the_conftest_collects_only_the_selected_files():

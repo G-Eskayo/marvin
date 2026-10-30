@@ -33,8 +33,10 @@ def _infra(what: str) -> str:
 def require_path(path, why: str = "") -> None:
     """Skip (as infra) when a file or folder outside the repo isn't on this machine."""
     if not os.path.exists(os.path.expanduser(str(path))):
-        _missing[str(path)] += 1
-        pytest.skip(_infra(str(path)) + (f" ({why})" if why else ""), allow_module_level=True)
+        home = os.path.expanduser("~")
+        shown = "~" + str(path)[len(home):] if str(path).startswith(home + os.sep) else str(path)  # a test HOME too
+        _missing[shown] += 1
+        pytest.skip(_infra(shown) + (f" ({why})" if why else ""), allow_module_level=True)
 
 
 def pytest_configure(config):

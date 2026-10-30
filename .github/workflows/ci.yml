@@ -47,7 +47,6 @@ jobs:
     runs-on: macos-15
     timeout-minutes: 60
     env:
-      PYTEST_ADDOPTS: "-n auto" # parallel, as the gate runs it: serial took over 40 minutes on GitHub's runner
       MARVIN_MERGE_GATE: "1" # leave out the tests that read another repo's data, as the gate does
       MARVIN_BASE: ${{ github.event.pull_request.base.sha }} # a PR runs the tests it affects; main runs them all
       MARVIN_REQUIRE_TOOLS: "1" # CI installs every tool a test declares: a missing one fails here, never skips

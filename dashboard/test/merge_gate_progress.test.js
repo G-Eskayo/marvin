@@ -492,9 +492,8 @@ describe('the gate runs the Python suite in parallel when it can', () => {
       const calls = [], events = []
       const exec = vi.fn(async (cmd, a, o) => { calls.push([a, o?.env]); return { stdout: '', stderr: '' } })
       await _defaultRunTests(path.join(home, 'scratch'), exec, (s, st, e) => events.push([s, st, e?.detail]), async () => args)
-      // #826: pytest's parallel args reach it through PYTEST_ADDOPTS, since the runner, not the gate, starts pytest.
-      expect(calls.find(([a]) => a.includes('python'))[1].PYTEST_ADDOPTS || '').toBe(args.join(' '))
-      expect(calls.find(([a]) => a.includes('dashboard') && !a.includes('--affected'))[1].PYTEST_ADDOPTS).toBeUndefined()
+      // #826: lib/affected_tests.py adds -n auto itself; PYTEST_ADDOPTS would leak into pytest runs that tests start.
+      expect(calls.every(([, env]) => (env?.PYTEST_ADDOPTS ?? process.env.PYTEST_ADDOPTS) === process.env.PYTEST_ADDOPTS)).toBe(true)
       expect(events.some(([s, st, d]) => s === 'tests' && st === 'running' && d === detail)).toBe(true)
     }
   })

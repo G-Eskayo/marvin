@@ -123,9 +123,20 @@ def select(repo: Path, changed: list[str]) -> list[str] | None:
     return sorted(picked)
 
 
-def plan(repo: Path, base: str | None) -> tuple[list[str], dict]:
+def parallel_args(have_xdist: bool | None = None) -> list[str]:
+    """`-n auto` where pytest-xdist is installed, on this command line only: PYTEST_ADDOPTS would also reach the
+    pytest runs that tests start themselves (test_auto_merge_regression) and change their exit codes."""
+    if have_xdist is None:
+        import importlib.util
+        have_xdist = importlib.util.find_spec("xdist") is not None
+    if not have_xdist:
+        print("affected tests: pytest-xdist is not installed, running serially (slower)", flush=True)
+    return ["-n", "auto"] if have_xdist else []
+
+
+def plan(repo: Path, base: str | None, parallel: list[str] | None = None) -> tuple[list[str], dict]:
     """The pytest command and environment for the Python check."""
-    argv = [sys.executable, "-m", "pytest", "-q"]
+    argv = [sys.executable, "-m", "pytest", "-q", *(parallel_args() if parallel is None else parallel)]
     env = {k: v for k, v in os.environ.items() if k != "MARVIN_SELECTED_TESTS"}
     if not base:
         print("affected tests: no base given, running the whole suite", flush=True)
