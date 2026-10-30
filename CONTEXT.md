@@ -371,6 +371,11 @@ then) — a real, current fragility, not a hypothetical one.
   metrics-comparison (see Verification/trust mechanism above) = measurement, the MR = the write-up,
   Gil's approve/deny = peer review. Not just a metaphor — it's the actual justification for why the
   sandbox and the metrics-comparison step both exist as hard requirements, not nice-to-haves.
+- **Answers are the approval** (decided with Gil, 2026-10-30): a PR that asks for Decisions has one button, named by
+  the answers. All answers match what's built: **Merge with these answers** (saves them and merges in one press). Any
+  answer changes something, or a note is typed: **Send back with answers** (MARVIN rebuilds; the PR returns as a
+  normal review). A mock-up or plan PR, with nothing to merge: **Send answers**, laid out like a ballot. The option
+  that was built is pre-selected on screen but never ticked in the PR until Gil presses the button.
 
 ## Auto-merge (designed 2026-10-09, #332, ADR 0064)
 
@@ -487,6 +492,10 @@ ever been closed unmerged. Gil approves almost everything; the wait is the cost.
   or run it on the API credit; at the hard line a big task needs Gil's yes. Nothing is cut off mid-task.
 - **Pace** (of a budget that expires, like the API credit or the weekly plan limit): projected spend to the reset
   date. Under pace, queued work is pulled forward; over pace, it is slowed, so the budget lands near its limit.
+- **Plan first** (billing, Gil 2026-10-30): every build runs on the Claude plan while it has room, however many run
+  at once. A run that hits the plan's usage limit retries at once on the API credit, and that Mac stays on the credit
+  for an hour before trying the plan again (`dispatch_concurrency.plan_limited`). A spent credit falls back to waiting
+  for the plan. Each switch is a line in `~/.claude/logs/builder-billing.jsonl`.
 - **Fix level**: every fix Vitals offers is one of three. **Auto**: low-risk, reversible, touches only MARVIN's own
   state; MARVIN runs it at once and reports it. **One tap**: a button Gil presses (spends a budget, touches another
   project, or is hard to undo). **Decision**: a real choice with options. An auto fix that fails twice drops to one
@@ -559,6 +568,10 @@ ever been closed unmerged. Gil approves almost everything; the wait is the cost.
   never hidden.
 - **Not enough data yet**: the state of a measure that has no baseline or history (a new install has no paid baseline
   and doesn't know its plan's limits). Never shown as 0% or as healthy.
+- **Menu bar meter**: a small MARVIN item in the macOS menu bar, there from login whether or not the dashboard is
+  open. In the bar: this Mac's CPU and GPU as two tiny live bars and a dot in the Vitals verdict colour. Clicked:
+  every Mac's CPU, GPU, memory and thermal, its top processes, any Mac asleep or gone quiet, and a way into Vitals.
+  It reads the same numbers as Vitals, so the two never disagree.
 - **Dead and stuck** (of a worker): **dead** means its process ended without finishing; it is red at once. **Stuck**
   means alive but with no **progress** (its log or transcript grew, a commit landed, it moved stage) for longer than
   its limit: a builder or chat helper 15 min (amber) and 45 min (red), a spawned agent 10 and 30, a scheduled job 3x
@@ -572,6 +585,13 @@ ever been closed unmerged. Gil approves almost everything; the wait is the cost.
 - **Recurring issue**: a failure that keeps coming back. Vitals counts every occurrence so recurring ones can be traced
   to their root and fixed. The third dismissal of the same failure becomes a decision: fix the root, mute it, or
   retire the check.
+- **Shared truth**: one owner per kind of thing, not "the Mini wins". GitHub owns PRs, tickets, claims and its call
+  allowance (each Mac only holds a copy; the newer read wins). The Mac mini owns merges and the shared sync repo.
+  Each Mac owns its own load, tokens, sessions and failures. Whether a Mac is alive is owned by the others. Each Mac
+  pushes its own activity to the others as it happens, so every map shows the same work with no hub.
+- **Mac state**: **awake**; **asleep** or **off** (it said so before it went: calm, with "last seen", never an
+  error); **gone quiet** (it dropped off without a word). A laptop that is asleep or off is never shown as dead or
+  failing. Only an always-on machine (the Mac mini) turns red, and only after a grace period.
 - **Machine health**: each computer's own load (CPU, GPU, memory, thermal) shown in Vitals per Mac. It belongs to
   MARVIN's health because the point is for the computers to work together as one; work should go to whichever Mac
   has room, and to the GPU where it can.
@@ -1490,6 +1510,22 @@ Mac has no push channel. Gil applies the hooks on each Mac with `marvin_hooks.py
   entry hash. Tau is per loop from 20 labels, else the global tau (all loops, from 20), else 0.3, never below 0.3,
   and the whole map is recomputed on every label (#599). Other Macs cache the primary's map (`GET /safety/taus`).
 
+## Box memory review (proposed 2026-10-30, ADR 0082, marvin#912)
+
+- **Box item**: one change a Claude session on mac-mini-2012 made to memory or handoffs: a new memory, an edit, a
+  delete, a handoff (new or edited), a handoff delete, or one MEMORY.md index line added or removed. Untrusted data,
+  identified by a hash of its kind, name, starting hash and content (`lib/box_memory_export.py` makes them on the box).
+- **Box outbox**: `~/.claude/box-outbox/` on the box, outside the synced tree. Items are captured there before the
+  mirror resets an edit away, and pruned once the mirror brings the same content back (or after 30 days).
+- **Pull**: the primary Mac runs the export on the box over ssh and reads stdout; the box never pushes (ADR 0069).
+- **Trust layer**: kind × risk (`memory-new.high` = a new feedback/user memory). Its own streak of clean approvals in
+  `~/.claude/box-memory/trust-ramp.json` (the ADR 0064 ramp code, separate file). Open after N; some layers never open.
+  **Clean approval** = Gil's Fine on an item that was not flagged. Flag, Block, Fix it or revert reset it.
+- **Held item**: shown as a `box_memory` card in Health ▸ Safety reviews (Fine applies, Block drops, Fix it drops with
+  a note). **Auto-passed item**: applied without a card because its layer is open; still in the audit log.
+- **Collision**: the Mac's file no longer matches what the box started from. Always held.
+- **Revert**: `box_memory_review.py revert <audit id>` restores what an apply replaced, if untouched since.
+
 ## Merge order and the sent-back loop (2026-10-05)
 
 - **Order:** a PR waits on every OLDER open PR in its repo that shares a changed file (`dashboard/electron/main/pr_order.js`). Derived from the PRs' file lists each time; the MR list shows it, Approve & Merge is disabled with the reason, and `mr:approve` re-checks it in the main process so a stale screen cannot skip it. Deny stays available.
@@ -1923,3 +1959,20 @@ owner turns on or buys, and may hold several skills.
   line is advice and doesn't count for a second occurrence.
 _Avoid_: calling a fix to one surface (the dashboard, a session prompt) "fixed" when the same state can be reached
 another way.
+
+## Merges under memory pressure (built 2026-10-30, marvin#940)
+
+- **Test slot**: a machine's one place to run tests (`lib/test_slot.py`). The merge gate, the after-merge full suite
+  (main-health) and helpers' whole-suite or parallel runs take it one at a time; one test file never waits. Workers
+  are sized to free memory, not cores.
+- **Merges first**: a merge is marked on the machine from the Approve to its end. While one is marked or queued for
+  memory, other test runs wait for it and new helpers are queued (memory guard); nothing running is stopped.
+- **Waiting for memory**: an approval the merge Mac refused for memory and queued. It is kept (approval ledger outcome
+  `waiting-memory`), runs there by itself when pressure drops, and its card says "Approved: waiting for memory on the
+  Mac mini". Not a failure.
+- **Backup merge machine**: a later machine in the merge list (the MacBook; the Linux box for MARVIN PRs, #945) that
+  takes a merge when the Mini can't for memory, only if it says it is fit (awake, on power, at home, idle:
+  `GET /merge-ready`) and only after the Mini dropped its queued copy (`POST /merge-forget`). The card names the Mac
+  that merged and flags tests run on another OS.
+_Avoid_: "failed" for an approval that waits for memory; "idle" meaning the owner is away (here it means the machine
+runs no merge or test of its own and its memory is normal).

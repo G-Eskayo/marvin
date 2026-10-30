@@ -35,6 +35,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Callable
 
+import dispatch_concurrency
 import marvin_launcher
 import metrics_registry as mr
 import test_change_rule  # noqa: E402
@@ -123,11 +124,40 @@ _EXEC_ALLOWED_TOOLS = (
 def _launch(kind: str, prompt: str, *, ticket_ref: str, **kwargs) -> tuple[str, float]:
     """Every model run this module makes goes through the MARVIN launcher (ADR 0059, marvin#302), which
     adds the kind's layers of MARVIN context, resolves the claude binary, and records the run with its
-    real cost and tokens. Returns (result_text, cost_usd) for ticket_stages' per-stage cost field."""
-    result = marvin_launcher.launch(kind, prompt, ticket=ticket_ref, **kwargs)
-    if result.exit_code != 0:
-        raise ModelRunFailed(kind, result.exit_code, result.text or result.stderr)
-    return result.text, result.cost_usd
+    real cost and tokens. Returns (result_text, cost_usd) for ticket_stages' per-stage cost field.
+
+    Plan first, the monthly API credit only once the plan runs out (Gil, 2026-10-30): a run that hits the plan's
+    usage limit is retried at once on the credit, and dispatch_concurrency remembers the limit for an hour so later
+    runs on this Mac start on the credit. A run already on the credit (builder_auth.sh put the build there) is never
+    retried: its limit is the credit's."""
+    base = kwargs.pop("env", None)
+    base = dict(base if base is not None else os.environ)
+    on_credit, switched = bool(base.get("ANTHROPIC_API_KEY")), False
+    if not on_credit and dispatch_concurrency.plan_limited():
+        credit = dispatch_concurrency.credit_env(base=base)
+        if credit is not None:
+            base, on_credit, switched = credit, True, True
+    result = marvin_launcher.launch(kind, prompt, ticket=ticket_ref, env=base, **kwargs)
+    if result.exit_code == 0:
+        if switched:
+            dispatch_concurrency.log_billing(ticket_ref, "api", "plan-limit")
+        return result.text, result.cost_usd
+    failure = ModelRunFailed(kind, result.exit_code, result.text or result.stderr)
+    if on_credit or not failure.usage_limit:
+        raise failure
+    dispatch_concurrency.mark_plan_limited()
+    credit = dispatch_concurrency.credit_env(base=base)
+    if credit is None:
+        raise failure
+    retry = marvin_launcher.launch(kind, prompt, ticket=ticket_ref, env=credit, **kwargs)
+    if retry.exit_code == 0:
+        dispatch_concurrency.log_billing(ticket_ref, "api", "plan-limit")
+        return retry.text, retry.cost_usd
+    detail = retry.text or retry.stderr or ""
+    if "credit balance is too low" in detail:
+        dispatch_concurrency.record_credit_check(False, "credit-exhausted")
+        dispatch_concurrency.log_billing(ticket_ref, "plan", "credit-exhausted")
+    raise failure
 
 
 def _default_executor(worktree_path: Path, ticket_ref: str, feedback: dict | None, profile: dict | None = None,

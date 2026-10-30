@@ -8,6 +8,8 @@
    on the Mini made about 1,000 real gh calls an hour while PRs were being approved, on the one allowance both Macs and
    the dashboard share (found 2026-10-08). A `gh` that refuses everything comes first on PATH for every test; tests
    that need gh behaviour mock it.
+3. Only the selected tests are collected when $MARVIN_SELECTED_TESTS names a file (marvin#826, lib/affected_tests.py):
+   a PR runs what its change can affect, and files it can't are never imported.
 """
 import atexit
 import os
@@ -20,6 +22,9 @@ sys.path.insert(0, str(Path(__file__).resolve().parent / "lib"))
 import real_home_guard  # noqa: E402  (pure: reads no HOME-derived constants)
 
 import pytest  # noqa: E402
+
+# Tests declare the tools they need (@pytest.mark.requires_tool("rg")); a missing one is infra, not a red test (#826).
+pytest_plugins = ["tool_requirements"]
 
 REAL_HOME = real_home_guard.real_home()
 
@@ -43,6 +48,55 @@ os.environ["MARVIN_MEMORY_PRESSURE_LEVEL"] = "normal"
 atexit.register(shutil.rmtree, TEST_HOME, True)  # removes the links, never what they point to
 WRITE_GUARD = real_home_guard.install_write_guard(real_home_guard.protected_roots(REAL_HOME),
                                                   resolve_under=(str(TEST_HOME / ".claude"),))
+
+
+_ROOT = Path(__file__).resolve().parent
+_selected: set[str] | None = None
+
+
+def pytest_ignore_collect(collection_path, config):
+    """Only the files lib/affected_tests.py selected for this change, when it selected (marvin#826)."""
+    global _selected
+    listing = os.environ.get("MARVIN_SELECTED_TESTS")
+    name = collection_path.name
+    if not listing or collection_path.suffix != ".py" or not (name.startswith("test_") or name.endswith("_test.py")):
+        return None
+    if _selected is None:
+        _selected = {str((_ROOT / p).resolve()) for p in Path(listing).read_text().split()}
+    return None if str(collection_path.resolve()) in _selected else True
+
+
+# marvin#940: one test run at a time on this machine, merges first (lib/test_slot.py). A whole-suite or parallel run
+# waits here for the slot before collecting anything and holds it to the end; one file or one test never waits. The
+# controller decides once; xdist workers, the tests and anything they start inherit MARVIN_TEST_SLOT and pass through,
+# so no test ever queues on the machine's real slot. Inside the merge gate the slot is already held.
+_TEST_SLOT = None
+
+
+def pytest_configure(config):
+    global _TEST_SLOT
+    import test_slot
+    if hasattr(config, "workerinput"):
+        return
+    if os.environ.get(test_slot.HELD_ENV):
+        os.environ[test_slot.DIR_ENV] = str(TEST_HOME / ".cache" / "marvin" / "test-slot")
+        return
+    n = getattr(config.option, "numprocesses", None)
+    if test_slot.is_heavy(list(config.args), n not in (None, 0), cwd=config.invocation_params.dir):
+        _TEST_SLOT = test_slot.slot("pytest " + " ".join(config.args)[:60],
+                                    say=lambda t: print(f"test-slot: {t}", file=sys.stderr, flush=True))
+        _TEST_SLOT.__enter__()
+    else:
+        os.environ[test_slot.HELD_ENV] = "pytest (small run, not queued)"
+    # From here on the tests see a slot of their own: no test waits on, or reads, the machine's real merges and runs.
+    os.environ[test_slot.DIR_ENV] = str(TEST_HOME / ".cache" / "marvin" / "test-slot")
+
+
+def pytest_unconfigure(config):
+    global _TEST_SLOT
+    if _TEST_SLOT is not None:
+        _TEST_SLOT.__exit__(None, None, None)
+        _TEST_SLOT = None
 
 
 @pytest.hookimpl(hookwrapper=True)
@@ -74,3 +128,14 @@ def _no_real_github(tmp_path_factory, monkeypatch):
     fake.write_text("#!/bin/sh\necho 'gh is disabled in tests' >&2\nexit 1\n")
     fake.chmod(0o755)
     monkeypatch.setenv("PATH", f"{bin_dir}{os.pathsep}{os.environ.get('PATH', '')}")
+
+
+@pytest.fixture(autouse=True)
+def _no_real_claude(tmp_path_factory, monkeypatch):
+    """No test starts Claude Code (#826): code that only looks the binary up finds this one, on a runner without
+    Claude Code too, and anything that runs it gets a refusal instead of spending tokens. Its own name, so the
+    folders' conftests that redefine _no_real_github don't drop it."""
+    no_claude = tmp_path_factory.mktemp("no-claude")
+    (no_claude / "claude").write_text("#!/bin/sh\necho 'claude is disabled in tests' >&2\nexit 1\n")
+    (no_claude / "claude").chmod(0o755)
+    monkeypatch.setenv("PATH", f"{no_claude}{os.pathsep}{os.environ.get('PATH', '')}")

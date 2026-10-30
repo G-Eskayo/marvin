@@ -16,6 +16,11 @@ starve the merge gate: single-flight lock + skip docs/log-only commits"; pipelin
   ran the 7-minute suite. When everything that changed since the last checked commit is machine data (bench/metrics/,
   *.log, *.jsonl) or a doc no test reads (*.md, docs/; "reads" = a test file names it, by `git grep`), the last verdict
   is carried forward to the new commit instead. A merge that touches code still runs once.
+- Coalesced (marvin#940): a refresh that finds one running leaves a mark (`.again` beside the state file) and returns.
+  The running one, once it has recorded its answer, sees the mark and checks again on the newest main: a burst of
+  merges during a run costs one more run, not one per merge. The 2026-10-30 memory fill was these runs piling up.
+- In the machine's one test slot (lib/test_slot.py): it waits behind the merge gate and any other test run, merges
+  first, and its pytest-xdist workers are sized to free memory, not cores.
 Cost: O(changed paths) git calls per refresh; one suite run per code-changing move of main, never two at once.
 """
 from __future__ import annotations
@@ -46,21 +51,31 @@ def _head() -> str | None:
         return None
 
 
-def parallel_args(python: Path = VENV_PY) -> list[str]:
-    """`-n auto` when the venv has pytest-xdist (391 s serial vs 39 s on the M4, 2026-10-21); otherwise serial, with a
-    line saying why. Asked of the venv's own python: this script itself may run under another interpreter."""
+def parallel_args(python: Path = VENV_PY, workers=None) -> list[str]:
+    """`-n N` when the venv has pytest-xdist (391 s serial vs 39 s on the M4, 2026-10-21), N = the workers that fit in
+    free memory now (test_slot.workers, marvin#940); otherwise serial, with a line saying why. Asked of the venv's own
+    python: this script itself may run under another interpreter."""
     try:
         ok = subprocess.run([str(python), "-c", "import xdist"], capture_output=True, timeout=60).returncode == 0
     except (OSError, subprocess.SubprocessError):
         ok = False
     if ok:
-        return ["-n", "auto"]
+        if workers is None:
+            import test_slot
+            workers = test_slot.workers
+        return ["-n", str(workers())]
     print(f"[main-health] pytest-xdist is not installed in {python}: running the suite serially (slower). "
           f"Fix: {python} -m pip install pytest-xdist", file=sys.stderr)
     return []
 
 
 def _run_suite() -> tuple[bool, list[str], str]:
+    import test_slot
+    with test_slot.slot("main-health (after-merge full suite)"):
+        return _run_suite_in_slot()
+
+
+def _run_suite_in_slot() -> tuple[bool, list[str], str]:
     tmp = tempfile.mkdtemp(prefix="main-health-")
     try:
         subprocess.run(["git", "worktree", "add", "-q", "--detach", tmp, "origin/main"], cwd=REPO_DIR, check=True, capture_output=True, timeout=120)
@@ -123,32 +138,40 @@ def _write(state_path: Path, health_record: dict) -> None:
 
 def refresh(state_path: Path = STATE, head=_head, run_suite=_run_suite, now: datetime | None = None,
             changed=_changed_paths, named_by_a_test=_named_by_a_test) -> dict:
-    now = now or datetime.now(timezone.utc)
     Path(state_path).parent.mkdir(parents=True, exist_ok=True)
+    again = Path(state_path).with_suffix(".again")
     with open(Path(state_path).with_suffix(".lock"), "a") as lock:
         try:
             fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
         except OSError:
-            return {"ran": False, "busy": True}  # one is already running; it will record the answer
-        prior = {}
-        try:
-            prior = json.loads(Path(state_path).read_text())
-        except (OSError, ValueError):
-            pass
-        sha = head()
-        if sha is None or sha == prior.get("sha"):
-            return {**prior, "ran": False}
-        if prior.get("sha") and "ok" in prior and not needs_suite(changed(prior["sha"], sha), lambda p: named_by_a_test(p, sha)):
-            res = {**{k: v for k, v in prior.items() if k in ("ok", "failed", "summary")}, "sha": sha,
-                   "tested_sha": prior.get("tested_sha", prior["sha"]), "checked_at": now.isoformat(),
-                   "carried": f"only docs or machine data changed since {prior['sha']}", "ran": False}
-            _write(state_path, res)
-            return res
-        ok, failed, summary = run_suite()
-        res = {"sha": sha, "ok": ok, "failed": failed, "summary": summary, "checked_at": now.isoformat(), "ran": True}
+            again.touch()   # the running one checks the newest main once more when it ends
+            return {"ran": False, "busy": True}
+        while True:
+            again.unlink(missing_ok=True)
+            res = _refresh_once(state_path, head, run_suite, now or datetime.now(timezone.utc), changed, named_by_a_test)
+            if not again.exists():
+                return res
+
+
+def _refresh_once(state_path, head, run_suite, now, changed, named_by_a_test) -> dict:
+    prior = {}
+    try:
+        prior = json.loads(Path(state_path).read_text())
+    except (OSError, ValueError):
+        pass
+    sha = head()
+    if sha is None or sha == prior.get("sha"):
+        return {**prior, "ran": False}
+    if prior.get("sha") and "ok" in prior and not needs_suite(changed(prior["sha"], sha), lambda p: named_by_a_test(p, sha)):
+        res = {**{k: v for k, v in prior.items() if k in ("ok", "failed", "summary")}, "sha": sha,
+               "tested_sha": prior.get("tested_sha", prior["sha"]), "checked_at": now.isoformat(),
+               "carried": f"only docs or machine data changed since {prior['sha']}", "ran": False}
         _write(state_path, res)
         return res
-
+    ok, failed, summary = run_suite()
+    res = {"sha": sha, "ok": ok, "failed": failed, "summary": summary, "checked_at": now.isoformat(), "ran": True}
+    _write(state_path, res)
+    return res
 
 if __name__ == "__main__":
     if sys.argv[1:] != ["refresh"]:

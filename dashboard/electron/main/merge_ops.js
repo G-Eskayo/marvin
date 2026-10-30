@@ -61,7 +61,9 @@ export function createMergeOps({ maxMergingMs = 45 * 60_000 } = {}) {
       if (mergedHere(url)) return ops.get(url)
       const o = ops.get(url)
       const base = { head: o?.head ?? null, progress: o?.progress, at: now }
-      ops.set(url, result?.reengaged ? { state: 'reengaged', reason: result.reason, ...base } : { state: 'merged', ...base })
+      // marvin#940: merged on a backup Mac says which (mergedOn), and flags tests run on another OS (note).
+      const where = result?.mergedOn ? { mergedOn: result.mergedOn, ...(result.machineNote ? { note: result.machineNote } : {}) } : {}
+      ops.set(url, result?.reengaged ? { state: 'reengaged', reason: result.reason, ...base, ...where } : { state: 'merged', ...base, ...where })
       return ops.get(url)
     },
     fail(url, reason, now = Date.now()) {
@@ -94,8 +96,18 @@ export function createMergeOps({ maxMergingMs = 45 * 60_000 } = {}) {
       ops.set(url, { state: 'queued', reason, head: o?.head ?? null, progress: null, at: now })
       return ops.get(url)
     },
+    // marvin#940: the machine refused it for memory and queued it; it runs there by itself when pressure drops. Nothing
+    // ran, so no progress. `machine` is the machine's name for the card ("Mac mini").
+    waitMemory(url, reason, machine = null, now = Date.now()) {
+      if (mergedHere(url)) return ops.get(url)
+      const o = ops.get(url)
+      ops.set(url, { state: 'waiting-memory', reason, machine, head: o?.head ?? null, progress: null, at: now })
+      return ops.get(url)
+    },
+    // Deny cancels a saved approval. One waiting for memory on the Mini is then refused by the Mini's own gate when its
+    // queued copy runs (a denied PR is sent back or closed), so nothing merges.
     cancelQueued(url) {
-      if (ops.get(url)?.state !== 'queued') return false
+      if (ops.get(url)?.state !== 'queued' && ops.get(url)?.state !== 'waiting-memory') return false
       ops.delete(url)
       return true
     },

@@ -276,6 +276,22 @@ def profile_problems(profile: dict) -> list[str]:
     return out
 
 
+def with_required_checks(profile: dict, repo_dir: Path) -> dict:
+    """The profile with its required verify steps taken from the repo's own list (.github/required-checks.json,
+    lib/required_checks.py, marvin#826), each run through the runner CI uses. Optional steps the list doesn't name are
+    kept; a required step the list no longer has is dropped. A repo with no list keeps its profile as it is."""
+    import required_checks
+    checks = required_checks.load(Path(repo_dir))
+    if checks is None:
+        return profile
+    listed = [{"id": c["id"], "label": c["name"], "cwd": ".", "command": ["bash", required_checks.RUNNER, c["id"]],
+               "requires": list(c["requires"]), "parser": c["parser"], "required": True, "timeout_s": c["timeout_s"]}
+              for c in checks if c["where"] == "both"]
+    ids = {t["id"] for t in listed}
+    kept = [t for t in profile["verify"] if t["id"] not in ids and not t["required"]]
+    return {**profile, "verify": listed + kept}
+
+
 def load_profile(repo: str, directory: Path | None = None) -> dict | None:
     directory = directory or PROFILES_DIR
     if not directory.is_dir():
@@ -468,6 +484,7 @@ class Measurer:
         metrics: dict = {}
         passed = failed = 0
         self.report = {"tiers": [], "notes": []}
+        self.profile = with_required_checks(self.profile, Path(worktree))  # the repo's own list (marvin#826)
         self._setup(Path(worktree))
         for t in self.profile["verify"]:
             row = {"id": t["id"], "label": t["label"], "ran": False}
@@ -563,6 +580,8 @@ def gate_info(profile: dict, catalog: dict | None = None, have=None) -> dict:
     """Everything the dashboard's merge gate needs to know to rebase and retest one of this project's PRs."""
     profile = _validate(copy.deepcopy(profile), "profile")
     clone = resolve_clone(profile, catalog if catalog is not None else _catalog(), ensure=True)
+    if clone:
+        profile = with_required_checks(profile, clone)
     env = build_env(profile)
     check = have or (lambda cap, e: globals()["have"](cap, e))
     missing: list[str] = []
@@ -651,6 +670,7 @@ def selftest(profile: dict, runner=_default_runner, have=None, catalog: dict | N
     clone = resolve_clone(profile, catalog if catalog is not None else _catalog(), ensure=True)
     if clone is None:
         return {"ok": False, "kind": "no_clone", "error": f"no local clone of {profile['repo']} on this machine"}
+    profile = with_required_checks(profile, clone)
     ticket_ref = f"{profile['repo']}#999999"
     branch = f"pipeline/{ticket_ref.lower()}"
     measurer = Measurer(profile, runner=runner, have=have)

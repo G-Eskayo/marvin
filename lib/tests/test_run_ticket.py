@@ -629,7 +629,8 @@ def test_a_timed_out_test_releases_the_claim_without_blaming_the_ticket(monkeypa
     monkeypatch.setattr(rt, "_consecutive_failure_streak", lambda *a, **k: 2)  # timeout is never a strike, even at the cap
     out = rt.run(7)
     assert calls["release"] == (7, rt.REPO)
-    assert (calls["gh_comment"], calls["breaker"], calls["park"]) == (1, 0, 0)  # posts a comment but no strike
+    # posts a comment and feeds the cross-ticket breaker (#881), but is no strike against the ticket
+    assert (calls["gh_comment"], calls["breaker"], calls["park"]) == (1, 1, 0)
     assert out["raised"] is False and "timed out" in out["reason"]
 
 
@@ -1183,3 +1184,82 @@ def test_run_is_still_build_then_settle(monkeypatch):
 def test_a_long_reason_keeps_its_end_where_the_cause_is():
     line = rt.build_only_line({"raised": False, "reason": "Command [huge prompt " + "x" * 9000 + "] timed out after 900 seconds"}, [])
     assert line.rstrip().endswith('"findings": []}') and "timed out after 900 seconds" in line and "Command [huge" in line
+
+
+# ── #881: every outcome that isn't a success feeds the cross-ticket breaker ─────────────────────────────────────────
+# 2026-10-29/30: 20 builds on 11 tickets timed out at 1200 s in a row and nothing stopped them, because the timed_out
+# branch skipped failure_breaker.record_failure. Classifying an outcome decides whose strike it is and how it is retried,
+# never whether it is counted. The one named exception is env_missing (rt.BREAKER_EXEMPT says why).
+
+def _outcome_kinds():
+    import project_profile as pp
+    from sandbox_orchestration import ModelRunFailed, TaskListTooVague
+    return {
+        "timed_out": lambda: (_ for _ in ()).throw(rt.TestTimedOut(["pytest", "-q"], 1200, "....sss..")),
+        "model_unavailable": lambda: (_ for _ in ()).throw(ModelRunFailed("executor", 1, "You've hit your usage limit")),
+        "too_vague": lambda: (_ for _ in ()).throw(TaskListTooVague("the ticket says nothing", needs_person=True)),
+        "too_vague_no_task_list": lambda: (_ for _ in ()).throw(TaskListTooVague("no task list in the plan")),
+        "unhandled_exception": lambda: (_ for _ in ()).throw(RuntimeError("worktree creation failed")),
+        "failed_build": lambda: _failing_result(),
+        "env_missing": lambda: (_ for _ in ()).throw(pp.EnvMissing("core", ["xcode"])),
+    }
+
+
+def _quiet_run(monkeypatch, execute, streak=0):
+    monkeypatch.setattr(rt, "execute_ticket", lambda *a, **k: execute())
+    monkeypatch.setattr(rt, "raise_mr", lambda *a, **kw: {"raised": False, "pr_url": None, "reason": "3 iterations exhausted"})
+    monkeypatch.setattr(rt, "_release_claim", lambda *a, **k: None)
+    monkeypatch.setattr(rt, "_comment_failure", lambda *a, **k: None)
+    monkeypatch.setattr(rt, "_park_stuck_ticket", lambda *a, **k: None)
+    monkeypatch.setattr(rt, "_trigger_redispatch", lambda: None)
+    monkeypatch.setattr(rt, "_consecutive_failure_streak", lambda *a, **k: streak)
+    monkeypatch.setattr(rt, "_trailing_streaks", lambda *a, **k: [streak])
+    monkeypatch.setattr(rt, "_trailing_model_failures", lambda *a, **k: 0)
+    monkeypatch.setattr(rt.subprocess, "run", lambda *a, **k: None)
+    monkeypatch.setattr(rt, "drop_build_output", lambda *a, **k: [])
+
+
+@pytest.mark.parametrize("kind", sorted(_outcome_kinds()))
+@pytest.mark.parametrize("streak", [0, 10])   # a first failure, and one that parks the ticket
+def test_every_non_success_outcome_feeds_the_breaker_unless_it_is_a_named_exception(monkeypatch, kind, streak):
+    _quiet_run(monkeypatch, _outcome_kinds()[kind], streak=streak)
+    recorded = []
+    monkeypatch.setattr(rt.failure_breaker, "record_failure", lambda ticket, reason, **k: recorded.append((ticket, reason)))
+    out = rt.run(20)
+    assert out["raised"] is False
+    if kind in rt.BREAKER_EXEMPT:
+        assert recorded == []
+    else:
+        assert len(recorded) == 1 and recorded[0][0] == 20, f"{kind} skipped the cross-ticket breaker"
+
+
+def test_the_exemptions_are_named_with_a_reason_and_only_env_missing():
+    assert set(rt.BREAKER_EXEMPT) == {"env_missing", "too_vague"}
+    assert all(isinstance(why, str) and len(why) > 20 for why in rt.BREAKER_EXEMPT.values())
+
+
+def test_three_tickets_timing_out_trip_the_real_breaker_and_one_ticket_three_times_does_not(monkeypatch, tmp_path):
+    monkeypatch.setattr(rt.failure_breaker, "LOG_PATH", tmp_path / "pipeline-failures.jsonl")
+    dots = ["............", "...........................sssssss.", "....................................."]
+    for n, d in zip((779, 462, 881), dots):
+        _quiet_run(monkeypatch, lambda d=d: (_ for _ in ()).throw(rt.TestTimedOut(["pytest"], 1200, d)))
+        rt.run(n)
+    trips = rt.failure_breaker.tripped()
+    assert [t["signature"] for t in trips] == ["verify-timeout"] and trips[0]["tickets"] == [462, 779, 881]
+
+    monkeypatch.setattr(rt.failure_breaker, "LOG_PATH", tmp_path / "other.jsonl")
+    for d in dots:
+        _quiet_run(monkeypatch, lambda d=d: (_ for _ in ()).throw(rt.TestTimedOut(["pytest"], 1200, d)))
+        rt.run(779)
+    assert rt.failure_breaker.tripped() == []
+
+
+def test_a_breaker_log_that_cannot_be_written_never_stops_the_run_from_releasing_its_claim(monkeypatch):
+    released = []
+    _quiet_run(monkeypatch, lambda: (_ for _ in ()).throw(rt.TestTimedOut(["pytest"], 1200, "...")))
+    monkeypatch.setattr(rt, "_release_claim", lambda n, **k: released.append(n))
+    def unwritable(*a, **k):
+        raise OSError(28, "No space left on device")
+    monkeypatch.setattr(rt.failure_breaker, "record_failure", unwritable)
+    out = rt.run(20)
+    assert out["raised"] is False and released == [20]

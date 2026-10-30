@@ -1312,6 +1312,20 @@ def _mirror_log(repo: Path, line: str) -> None:
         f.write(f"{datetime.now(timezone.utc).isoformat()} [{repo}] {line}\n")
 
 
+def _capture_box_memory(repo: Path) -> None:
+    """ADR 0082: before the reset below throws away a box session's memory and handoff edits, save them as box items
+    in the box outbox, for the primary Mac to pull and review. Only for the ~/.claude mirror; never stops the mirror."""
+    try:
+        if Path(repo).expanduser().resolve() != (Path.home() / ".claude").resolve():
+            return
+        import box_memory_export
+        n = box_memory_export.capture(Path(repo))
+        if n:
+            _mirror_log(repo, f"saved {n} memory/handoff change(s) to the box outbox for review")
+    except Exception as e:
+        _mirror_log(repo, f"box memory capture failed: {str(e)[:200]}")
+
+
 def mirror(repo: Path) -> None:
     """Code sync for a pull-only node (mac-mini-2012, ADR 0069): make `repo` identical to origin/main.
 
@@ -1330,6 +1344,8 @@ def mirror(repo: Path) -> None:
     if head == target and not dirty:
         return
 
+    if dirty:
+        _capture_box_memory(repo)
     stamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
     backup = MIRROR_BACKUP_DIR / Path(repo).name / stamp
     saved = []
@@ -1382,6 +1398,14 @@ def main() -> None:
         print("usage: code_sync.py {push|pull|mirror} [repo-path]", file=sys.stderr)
         sys.exit(1)
     repo = Path(sys.argv[2]).expanduser() if len(sys.argv) == 3 else DEFAULT_REPO
+    asked = sys.argv[1]
+    import machine_profile
+    if asked != "mirror" and machine_profile.pull_only():
+        # ADR 0069: a pull-only node never commits or pushes. Callers written for the Macs (the session-start hook's
+        # `pull`, a handoff's `push`) get a mirror and nothing, so a session at the box can't touch the synced tree.
+        if asked == "push":
+            return
+        sys.argv[1] = "mirror"
     action = {"push": push, "pull": pull, "mirror": mirror}[sys.argv[1]]
     # ADR 0071: the owner's private instance is its own repo nested at <engine>/instance/; it syncs with the engine,
     # so every existing caller (launchd job, handoff hook) covers it with no config. No instance (a fresh install,

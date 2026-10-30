@@ -206,3 +206,20 @@ def test_signature_recognises_absolute_claude_timeouts_and_worktree_failures(rea
     import failure_breaker as fb
     got = fb.signature(reason)
     assert (got == sig) if sig else got.startswith("other:")
+
+
+# ── #881: a verify timeout is one failure however much progress output it cut off ─────────────────────────────────
+# The three real reasons from the Mac mini, 2026-10-30: the dots and s's are pytest's progress line at the moment of the
+# kill, so they differ every time and used to give three different "other:" signatures that never grouped.
+@pytest.mark.parametrize("reason", [
+    "timed out after 1200s running .....................................",
+    "timed out after 1200s running ..........................sssssss...........",
+    "timed out after 900s running pytest -q",
+    "Automated verification timed out: timed out after 1200s running ....",
+])
+def test_every_verify_timeout_has_one_signature(reason):
+    assert fb.signature(reason) == "verify-timeout"
+
+
+def test_a_claude_timeout_is_still_its_own_signature():
+    assert fb.signature("Unhandled exception: Command '['/x/claude', '-p']' timed out after 300 seconds") == "claude-timeout"

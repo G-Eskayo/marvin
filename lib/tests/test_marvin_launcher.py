@@ -84,8 +84,8 @@ def test_judge_and_utility_calls_get_no_marvin_layers(memory):
 
 def test_the_real_memory_has_work_rules_tagged():
     # Guards against the slice silently going empty on a real machine.
-    if not ml.MEMORY_DIR.exists():
-        pytest.skip("no MARVIN memory on this machine")
+    if not [n for n in ml.MEMORY_DIR.glob("*.md") if n.name != "MEMORY.md"]:
+        pytest.skip("no MARVIN memory notes on this machine (a fresh install, or CI)")
     assert len(ml.work_rule_notes()) >= 4
 
 

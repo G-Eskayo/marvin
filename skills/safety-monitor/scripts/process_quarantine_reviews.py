@@ -25,6 +25,10 @@ with `answer`, both through this file's parser. Every write here and in verify.q
 an answered entry's own lines are removed but its trailing divider stays (so two Macs' answers to adjacent entries
 merge in git without a conflict), and nothing else in the file is rewritten or reordered.
 
+Box memory cards (loop `box_memory`, ADR 0082) are the exception to "answered entries are removed here": the primary Mac's
+box_memory_review.settle acts on the tick, then records the label and removes the entry. On the primary, every answer
+settles at once and every no-argument run also starts a background pull from the Linux box.
+
 Run standalone or via launchd: ~/.agents/venv/bin/python process_quarantine_reviews.py
 Dashboard: process_quarantine_reviews.py list | answer --id ID --kind approve|modify|deny [--text NOTE]
 """
@@ -35,6 +39,7 @@ import hashlib
 import json
 import os
 import re
+import subprocess
 import sys
 import tempfile
 import time
@@ -55,6 +60,7 @@ BODY_CAP = 50_000      # characters of an entry's text sent to the dashboard (th
 EXCERPT_CAP = 280
 NOTE_CAP = 1_000       # a "modify" note: one line, stored as data
 LOCK_TIMEOUT_S = 10.0
+SETTLED_ELSEWHERE = {"box_memory"}   # answered entries another step acts on and removes (box_memory_review.py)
 
 
 def _split_entries(text: str) -> tuple[str, list[str]]:
@@ -270,7 +276,42 @@ def answer(eid: str, kind: str, text: str | None = None, path: Path | None = Non
     res = _answer_locked(eid, kind, note, path)
     if res.get("status") in ("answered", "already-answered"):
         _sync()
+        _settle_box_memory(path)
     return res
+
+
+def _box_memory():
+    sys.path.insert(0, str(Path(__file__).resolve().parents[3] / "lib"))
+    import box_memory_review
+    return box_memory_review
+
+
+def _settle_box_memory(path: Path) -> None:
+    """On the primary Mac, act on answered box memory cards at once (ADR 0082). Never fails the review."""
+    try:
+        if shared_labels.is_primary():
+            bmr = _box_memory()
+            bmr.settle(bmr.Ctx(quarantine=Path(path)))
+    except Exception as e:
+        print(f"[process-quarantine-reviews] box memory not settled: {e}", file=sys.stderr)
+
+
+def _start_box_pull() -> None:
+    """On the primary Mac, pull the Linux box's memory changes in the background (ADR 0082): the ssh read and the
+    judge calls take time, and this runs at session start."""
+    try:
+        if not shared_labels.is_primary():
+            return
+        bmr = _box_memory()
+        if not (os.environ.get("MARVIN_BOX_HOST") or bmr._registry_box()):
+            return
+        log = Path.home() / ".claude" / "logs" / "box-memory.log"
+        log.parent.mkdir(parents=True, exist_ok=True)
+        with open(log, "a") as out:
+            subprocess.Popen([sys.executable, bmr.__file__, "pull"], stdin=subprocess.DEVNULL, stdout=out,
+                             stderr=out, start_new_session=True)
+    except Exception as e:
+        print(f"[process-quarantine-reviews] box memory pull not started: {e}", file=sys.stderr)
 
 
 def _sync() -> None:
@@ -325,6 +366,11 @@ def _process_unlocked(path: Path) -> tuple[int, int]:
         if info is None or info["checked"] is None:
             out.append(block)
             remaining += 1
+            continue
+        if info["loop_name"] in SETTLED_ELSEWHERE:
+            # A box memory card (ADR 0082): the primary Mac acts on the tick itself and then removes the entry
+            # (box_memory_review.settle). The tick travels between Macs in this file, which the box cannot write.
+            out.append(block)
             continue
 
         # approve/modify -> the artifact was actually fine (label 0, not a
@@ -389,6 +435,8 @@ def _cli_process() -> None:
                 return p, r
             processed, remaining = run()
     print(f"[process-quarantine-reviews] {processed} review(s) processed, {remaining} still pending", file=sys.stderr)
+    _settle_box_memory(QUARANTINE_FILE)
+    _start_box_pull()
 
 
 def main(argv: list[str] | None = None) -> int:
