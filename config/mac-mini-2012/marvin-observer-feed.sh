@@ -6,7 +6,9 @@
 # leaves the last good one in place (its age is what the dashboard shows).
 set -uo pipefail
 py="$HOME/.agents/venv/bin/python"
-host="${MARVIN_OBSERVER_HOST:-gils-mac-mini}"
+# The primary Mac's Tailscale hostname comes from the synced machine registry, so no machine is named here.
+host="${MARVIN_OBSERVER_HOST:-$(cd "$HOME/.agents" && "$py" -c 'import sys; sys.path.insert(0, "lib"); import scanner_role; print(scanner_role._primary_device()[1]["tailscale_hostname"])' 2>/dev/null)}"
+[ -n "$host" ] || { echo "$(date -Is) no primary Mac in the machine registry; nothing copied" >&2; exit 1; }
 rc=0
 copy() { # $1 = file name under ~/.claude/logs on both machines
   local dest="$HOME/.claude/logs/$1" tmp

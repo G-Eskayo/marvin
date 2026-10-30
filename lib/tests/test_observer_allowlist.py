@@ -162,10 +162,41 @@ def test_the_box_copy_keeps_the_last_good_file_when_the_mini_sends_junk(tmp_path
     venv = tmp_path / ".agents" / "venv" / "bin"
     venv.mkdir(parents=True)
     (venv / "python").symlink_to(os.path.realpath(__import__("sys").executable))
-    env = {"HOME": str(tmp_path), "PATH": f"{fake}:/usr/bin:/bin"}
+    env = {"HOME": str(tmp_path), "PATH": f"{fake}:/usr/bin:/bin", "MARVIN_OBSERVER_HOST": "primary-mac"}
     r = subprocess.run(["/bin/bash", str(SCRIPT.parent / "marvin-observer-feed.sh")], env=env, capture_output=True, text=True, timeout=30)
     assert r.returncode == 1 and "could not copy github-feed.json" in r.stderr
     assert (logs / "github-feed.json").read_text() == '{"good": true}'
     assert (logs / "health-status.json").read_text().strip() == '{"new": 1}'
     assert oct((logs / "health-status.json").stat().st_mode & 0o777) == "0o600"
     assert sorted(p.name for p in logs.iterdir()) == ["github-feed.json", "health-status.json"]
+
+
+def test_the_box_copy_with_no_primary_in_the_registry_copies_nothing_and_says_so(tmp_path):
+    """No machine is named in the script (identity rule): with no registry to ask, it stops loudly, never guesses."""
+    logs = tmp_path / ".claude" / "logs"
+    logs.mkdir(parents=True)
+    (logs / "health-status.json").write_text('{"good": true}')
+    fake = tmp_path / "bin"
+    fake.mkdir()
+    (fake / "ssh").write_text('#!/bin/sh\necho called >> "$HOME/ssh-calls"\necho \'{"new": 1}\'\n')
+    (fake / "ssh").chmod(0o755)
+    venv = tmp_path / ".agents" / "venv" / "bin"
+    venv.mkdir(parents=True)
+    (venv / "python").symlink_to(os.path.realpath(__import__("sys").executable))
+    env = {"HOME": str(tmp_path), "PATH": f"{fake}:/usr/bin:/bin"}
+    r = subprocess.run(["/bin/bash", str(SCRIPT.parent / "marvin-observer-feed.sh")], env=env, capture_output=True, text=True, timeout=30)
+    assert r.returncode == 1 and "no primary Mac in the machine registry" in r.stderr
+    assert not (tmp_path / "ssh-calls").exists()
+    assert (logs / "health-status.json").read_text() == '{"good": true}'
+
+
+def test_the_box_copy_finds_the_primary_through_the_registry_lookup_it_runs():
+    """The exact lookup the script runs answers with a hostname from this machine's registry."""
+    import re
+    feed = (SCRIPT.parent / "marvin-observer-feed.sh").read_text()
+    code = re.search(r"-c '([^']*scanner_role[^']*)'", feed).group(1)
+    root = SCRIPT.parents[2]
+    r = subprocess.run([__import__("sys").executable, "-c", code], cwd=root, capture_output=True, text=True, timeout=30)
+    if not (Path.home() / ".claude" / "marvin-network.json").exists():
+        pytest.skip("no machine registry on this machine")
+    assert r.returncode == 0 and r.stdout.strip() and " " not in r.stdout.strip()
