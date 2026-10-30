@@ -1041,6 +1041,13 @@ WT="$HOME/.agents-pipeline-worktrees"
 if [ -d "$WT" ]; then echo "worktrees_kb=$(/usr/bin/du -sk "$WT" 2>/dev/null | /usr/bin/cut -f1)"; echo "worktrees_n=$(/bin/ls -1 "$WT" | /usr/bin/wc -l | /usr/bin/tr -d ' ')"; fi
 LEDGER="$HOME/.claude/logs/disk-ledger.jsonl"
 if [ -f "$LEDGER" ]; then echo "disk_ledger=$(tail -14 "$LEDGER" | /usr/bin/tr '\n' '|')"; fi
+# marvin#765: what the disk triggers freed (one JSON line each, joined by the unit separator, which JSON never holds
+# unescaped and str.splitlines doesn't split on), and this Mac's free space at the previous check, remembered here so "used since the last check" is per Mac.
+TRIG="$HOME/.claude/logs/disk-triggers.jsonl"
+if [ -f "$TRIG" ]; then echo "disk_triggers=$(tail -300 "$TRIG" | /usr/bin/tr '\n' '\037')"; fi
+LASTCHK="$HOME/.claude/logs/disk-last-check"
+if [ -f "$LASTCHK" ]; then echo "disk_last_check=$(cat "$LASTCHK")"; fi
+/bin/df -k "$HOME" | /usr/bin/awk -v t="$(date +%s)" 'NR==2 {print t " " $4}' > "$LASTCHK" 2>/dev/null
 '''.replace("__ETIME_AWK__", _ETIME_AWK)
 
 
@@ -1071,6 +1078,11 @@ def evaluate_job_placement(jobs: list[str], role: str) -> tuple[str, str]:
     return "yellow", "; ".join(parts)
 
 
+def _parse_last_check(v: str) -> tuple[int, int] | None:
+    parts = v.split()
+    return (int(parts[0]), int(parts[1])) if len(parts) == 2 and all(p.isdigit() for p in parts) else None
+
+
 def parse_machine_state(text: str) -> dict:
     raw = dict(line.split("=", 1) for line in text.splitlines() if "=" in line)
 
@@ -1096,6 +1108,8 @@ def parse_machine_state(text: str) -> dict:
             "disk_free_kb": num("disk_free_kb"), "disk_total_kb": num("disk_total_kb"),
             "worktrees_kb": num("worktrees_kb"), "worktrees_n": num("worktrees_n"),
             "disk_ledger": disk_ledger,
+            "disk_triggers": [l for l in raw.get("disk_triggers", "").strip().split("\x1f") if l.strip()],
+            "disk_last_check": _parse_last_check(raw.get("disk_last_check", "")),
             "jobs": [j for j in raw.get("jobs", "").strip().split(",") if j],
             "job_exits": _parse_job_exits(raw.get("job_exits", ""))}
 
@@ -1239,6 +1253,9 @@ def evaluate_machine_state(state: dict, now: datetime) -> list[tuple[str, str, s
         if sev != "green":
             detail += " -- check ~/.claude/logs/mr-pipeline-sweep.md and docs/plans/storage-and-distribution-2026-10-06.md"
         out.append(("disk:space", sev, detail))
+    activity = disk_activity(state, now)
+    if activity:
+        out.append(("disk:activity", *activity))
     ledger = state.get("disk_ledger")
     if ledger:
         forecast = forecast_days_to_critical(ledger, critical_kb=15 * 1048576)
@@ -1258,6 +1275,42 @@ def evaluate_machine_state(state: dict, now: datetime) -> list[tuple[str, str, s
         sev, detail = evaluate_job_placement(state["jobs"], role)
         out.append(("jobs:placement", sev, detail))
     return out
+
+
+_TRIGGER_LABELS = {"preflight": "pre-flight", "after-merge": "after merge", "download-cache": "download cache",
+                   "aerial-watch": "aerial watch"}
+
+
+def disk_activity(state: dict, now: datetime) -> tuple[str, str] | None:
+    """(severity, detail) for one Mac's disk:activity card (marvin#765): what work wrote since the previous check
+    (the fall in free space plus what the triggers gave back meanwhile), what each trigger freed, and the last 24 h.
+    Yellow when a pre-flight refused work for space in the last 24 h; None without a free-space reading."""
+    free_kb = state.get("disk_free_kb")
+    if free_kb is None:
+        return None
+    import disk_triggers
+    lines = state.get("disk_triggers") or []
+    gb = lambda n: f"{n / 2**30:.1f} GB"  # noqa: E731
+    day = disk_triggers.summarize(lines, now - timedelta(hours=24))
+    last = state.get("disk_last_check")
+    if last:
+        then = datetime.fromtimestamp(last[0], tz=timezone.utc)
+        since = disk_triggers.summarize(lines, then)
+        wrote = max(0, (last[1] - free_kb) * 1024 + since["freed_bytes"])
+        mins = max(0, int((now - then).total_seconds() // 60))
+        ago = f"{mins} min ago" if mins < 120 else f"{mins // 60} h ago"
+        parts = ", ".join(f"{_TRIGGER_LABELS.get(t, t)} {gb(n)}" for t, n in sorted(since["by_trigger"].items(),
+                                                                                      key=lambda kv: -kv[1]))
+        head = f"since the last check ({ago}): work wrote {gb(wrote)}, triggers freed {gb(since['freed_bytes'])}"
+        head += f" ({parts})" if parts else ""
+    else:
+        head = "first reading on this Mac: what work wrote shows from the next check"
+    detail = f"{head}; last 24 h: triggers freed {gb(day['freed_bytes'])}"
+    if day["refused"]:
+        names = sorted(set(day["refused"]))
+        detail += f"; refused for space: {', '.join(names[:3])}" + (f" and {len(names) - 3} more" if len(names) > 3 else "")
+        return "yellow", detail
+    return "green", detail
 
 
 def _run_machine_state(target: str | None, script: str = _MACHINE_STATE_SCRIPT) -> str:

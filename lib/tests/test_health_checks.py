@@ -1472,3 +1472,57 @@ def test_the_default_runs_the_registered_step_on_that_mac(monkeypatch, tmp_path)
     monkeypatch.setattr(pm, "first_aid_everywhere", lambda name, only=None: seen.append((name, only)) or [{"ok": True, "changed": False, "detail": "x", "mac": "mini"}])
     hc.react_to_low_disk([_disk("mini", "red")], stamp_path=tmp_path / "s.json")
     assert seen == [("disk-clear-rebuildable", {"mini"})]
+
+
+# ── disk:activity (marvin#765): per Mac, what used the space since the last check and what the triggers freed ──
+
+def _trig(trigger, freed, minutes_ago, **extra):
+    return json.dumps({"ts": (NOW - timedelta(minutes=minutes_ago)).isoformat(), "trigger": trigger,
+                       "freed_bytes": freed, **extra})
+
+
+GiB_KB = 1048576
+
+
+def test_parse_machine_state_reads_trigger_lines_and_the_last_check():
+    text = ("disk_triggers=" + "\x1f".join([_trig("preflight", 0, 5, ok=False, what="helper a|b"), _trig("after-merge", 1, 3)])
+            + f"\ndisk_last_check={int((NOW - timedelta(hours=1)).timestamp())} {20 * GiB_KB}\n")
+    st = hc.parse_machine_state(text)
+    assert len(st["disk_triggers"]) == 2 and json.loads(st["disk_triggers"][0])["what"] == "helper a|b"
+    assert st["disk_last_check"] == (int((NOW - timedelta(hours=1)).timestamp()), 20 * GiB_KB)
+
+
+def test_the_machine_script_reports_triggers_and_remembers_this_check():
+    s = hc._MACHINE_STATE_SCRIPT
+    assert "disk-triggers.jsonl" in s and "disk_triggers=" in s and "disk_last_check=" in s
+
+
+def test_disk_activity_says_what_work_wrote_and_what_triggers_freed_since_the_last_check():
+    st = _mstate(disk_free_kb=18 * GiB_KB, disk_total_kb=228 * GiB_KB,
+                 disk_last_check=(int((NOW - timedelta(minutes=60)).timestamp()), 20 * GiB_KB),
+                 disk_triggers=[_trig("after-merge", 3 * 2**30, 30), _trig("download-cache", 2**30, 10),
+                                _trig("preflight", 2 * 2**30, 120)])
+    res = {k: (s, d) for k, s, d in hc.evaluate_machine_state(st, NOW)}
+    sev, detail = res["disk:activity"]
+    assert sev == "green"
+    # free fell 2 GB while the triggers gave back 4 GB, so work wrote 6 GB
+    assert "work wrote 6.0 GB" in detail and "triggers freed 4.0 GB" in detail
+    assert "after merge 3.0 GB" in detail and "download cache 1.0 GB" in detail
+    assert "last 24 h: triggers freed 6.0 GB" in detail
+
+
+def test_disk_activity_turns_yellow_when_work_was_refused_for_space():
+    st = _mstate(disk_free_kb=3 * GiB_KB, disk_total_kb=228 * GiB_KB,
+                 disk_triggers=[_trig("preflight", 0, 30, ok=False, what="helper Seal Speak: #60")])
+    sev, detail = {k: (s, d) for k, s, d in hc.evaluate_machine_state(st, NOW)}["disk:activity"]
+    assert sev == "yellow" and "refused for space" in detail and "helper Seal Speak: #60" in detail
+
+
+def test_disk_activity_without_a_previous_check_still_reports_the_triggers():
+    st = _mstate(disk_free_kb=30 * GiB_KB, disk_total_kb=228 * GiB_KB, disk_triggers=[_trig("after-merge", 2**30, 30)])
+    sev, detail = {k: (s, d) for k, s, d in hc.evaluate_machine_state(st, NOW)}["disk:activity"]
+    assert sev == "green" and "first reading" in detail and "last 24 h: triggers freed 1.0 GB" in detail
+
+
+def test_no_disk_reading_means_no_activity_card():
+    assert "disk:activity" not in dict((k, s) for k, s, _ in hc.evaluate_machine_state(_mstate(), NOW))

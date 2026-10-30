@@ -31,6 +31,8 @@ import {
   mergePr,
   triggerRebuildIfDashboardChanged,
   triggerTicketPipeline,
+  triggerDiskCleanup,
+  triggerAfterMerge,
   isBehindMain,
   rebaseAndRetest,
   freeDiskBytes,
@@ -346,6 +348,34 @@ describe('triggerTicketPipeline', () => {
     expect(args[0]).toMatch(/lib\/ticket_pipeline\.py$/)
     expect(opts).toMatchObject({ detached: true, stdio: 'ignore' })
     expect(unref).toHaveBeenCalled()
+  })
+})
+
+// marvin#765: each merge also removes merged PRs' worktrees on every Mac (lib/disk_triggers.py after-merge), so
+// the space comes back when the work ends, not at the next daily sweep.
+describe('triggerDiskCleanup', () => {
+  it('spawns disk_triggers.py after-merge detached', () => {
+    const unref = vi.fn()
+    const spawnFn = vi.fn().mockReturnValue({ unref })
+    triggerDiskCleanup(spawnFn)
+    expect(spawnFn).toHaveBeenCalledTimes(1)
+    const [pythonPath, args, opts] = spawnFn.mock.calls[0]
+    expect(pythonPath).toMatch(/venv\/bin\/python$/)
+    expect(args[0]).toMatch(/lib\/disk_triggers\.py$/)
+    expect(args.slice(1)).toEqual(['after-merge'])
+    expect(opts).toMatchObject({ detached: true, stdio: 'ignore' })
+    expect(unref).toHaveBeenCalled()
+  })
+})
+
+describe('triggerAfterMerge (the default redispatch)', () => {
+  it('starts the pipeline scan and the disk cleanup, and one failing to start never stops the other', () => {
+    const unref = vi.fn()
+    const spawnFn = vi.fn().mockImplementationOnce(() => { throw new Error('spawn EAGAIN') }).mockReturnValue({ unref })
+    triggerAfterMerge(spawnFn)
+    const scripts = spawnFn.mock.calls.map(([, args]) => args[0])
+    expect(scripts.some((s) => /ticket_pipeline\.py$/.test(s))).toBe(true)
+    expect(scripts.some((s) => /disk_triggers\.py$/.test(s))).toBe(true)
   })
 })
 
