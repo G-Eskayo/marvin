@@ -633,9 +633,9 @@ def build_work_tree(tree: dict, enrichment: dict, work: dict, synapses: list[dic
     regions = {r["name"]: {"id": "region:" + r["name"], "name": r["name"], "cat": _region_cat(r["name"]),
                            "desc": r.get("brain", ""), "children": [], "expandable": False, "expanded": True}
                for r in spec["regions"]}
-    cat_colors = {_region_cat(r["name"]): {"label": r["name"], "brain": r.get("brain", ""), "colorFrom": r["colorFrom"]}
+    cat_colors = {_region_cat(r["name"]): {"label": r["name"], "brain": r.get("brain", ""), "color": r["color"]}
                   for r in spec["regions"]}
-    cat_colors.update(spec.get("work_colors", {}))
+    cat_colors["work"] = dict(spec["work_color"])
     default = spec["default"]
 
     def pull_placed(node: dict) -> list[tuple[str, dict]]:
@@ -674,7 +674,7 @@ def build_work_tree(tree: dict, enrichment: dict, work: dict, synapses: list[dic
                 renamed[w["name"]] = w["id"]
     body = {"id": "half:body", "name": "Body", "cat": "root", "desc": "What MARVIN is made of, by Vitals region",
             "children": list(regions.values()), "expandable": False, "expanded": True}
-    work_half["cat"] = "root"
+    _recolour(work_half, "work")  # one hue for everything MARVIN is working on
     root = {"id": tree["id"], "cat": "root", "desc": tree.get("desc", ""), "expandable": False, "expanded": True,
             "children": [body, work_half], "catColors": cat_colors}
     attach_halves_layout(root)
@@ -687,6 +687,18 @@ def build_work_tree(tree: dict, enrichment: dict, work: dict, synapses: list[dic
         if s2["a"] in all_ids and s2["b"] in all_ids:
             out.append(s2)
     return root, out
+
+
+def default_layout(enrichment: dict) -> str:
+    """The one layout switch the browser page and both wallpaper hosts follow (?layout= overrides it in a browser)."""
+    v = (enrichment.get("body_regions") or {}).get("default_layout")
+    return v if v in ("today", "work") else "today"
+
+
+def tree_data(tree: dict, synapses: list, work_tree: dict, work_synapses: list, layout: str) -> dict:
+    """tree-data.json: what the wallpaper hosts push into the page on regeneration. `work` is the Body and Work
+    layout, so a wallpaper showing it updates the same way the browser page does."""
+    return {"tree": tree, "synapses": synapses, "work": {"tree": work_tree, "synapses": work_synapses}, "layout": layout}
 
 
 # ── precomputed layout (#183, ADR 0049) ─────────────────────────────────
@@ -1022,7 +1034,8 @@ def main() -> None:
     )
 
     work_js = ("var workTree = " + json.dumps(work_tree, ensure_ascii=False) + ";\n  var workSynapses = "
-               + json.dumps(work_synapses, ensure_ascii=False) + ";")
+               + json.dumps(work_synapses, ensure_ascii=False) + ";\n  var DEFAULT_LAYOUT = "
+               + json.dumps(default_layout(enrichment)) + ";")
     template = re.sub(
         r"/\*__WORK_START__\*/.*?/\*__WORK_END__\*/",
         lambda _m: "/*__WORK_START__*/\n  " + work_js + "\n  /*__WORK_END__*/",
@@ -1031,7 +1044,8 @@ def main() -> None:
 
     OUTPUT_PATH.write_text(template, encoding="utf-8")
     TREE_DATA_PATH.write_text(
-        json.dumps({"tree": tree, "synapses": synapses}, ensure_ascii=False), encoding="utf-8"
+        json.dumps(tree_data(tree, synapses, work_tree, work_synapses, default_layout(enrichment)), ensure_ascii=False),
+        encoding="utf-8",
     )
     n_skills = len(manifest["index"])
     n_agents = len(discover_recurring_agents())

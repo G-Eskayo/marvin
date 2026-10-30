@@ -32,7 +32,7 @@ function parse(line) {
 }
 
 // The fields of an activity line the page reads (template.html ingestEvent, #843), each only with its own type.
-const ACTIVITY_FIELDS = { skill: 'string', ts: 'number', tool: 'string', session: 'string', file: 'string', ok: 'boolean' }
+const ACTIVITY_FIELDS = { skill: 'string', ts: 'number', tool: 'string', session: 'string', file: 'string', ok: 'boolean', agent: 'string' }
 
 function activityEvent(o) {
   const ev = {}
@@ -60,7 +60,15 @@ function demoCalls(lines) {
 function treeCall(text) {
   const o = parse(text)
   if (!o || typeof o !== 'object') return null
-  return call('updateTreeData', o.tree || {}, o.synapses || [])
+  // `work`: the Body and Work layout (#854), so a wallpaper showing it regenerates like the browser page does
+  return call('updateTreeData', o.tree || {}, o.synapses || [], o.work && typeof o.work === 'object' ? o.work : null)
+}
+
+// work.json (brain-map/scripts/work_view.py) -> the page's applyWork, or null when it doesn't parse or has no workers.
+function workCall(text) {
+  const o = parse(text)
+  if (!o || typeof o !== 'object' || Array.isArray(o) || !Array.isArray(o.workers)) return null
+  return call('applyWork', o)
 }
 
 // `tailscale status --json` + marvin-network.json -> calls for devices whose online state changed.
@@ -86,4 +94,4 @@ function livenessCalls(status, registry, last) {
   return { calls, last: next }
 }
 
-module.exports = { call, newLines, linesAfter, activityCalls, demoCalls, treeCall, livenessCalls }
+module.exports = { call, newLines, linesAfter, activityCalls, demoCalls, treeCall, workCall, livenessCalls }

@@ -12,10 +12,11 @@ projects, MARVIN included), each holding its **workers**:
   project, a north star (`ns<N>`) is MARVIN's own, and no goal is Unassigned. A job loaded on this Mac that the
   catalog doesn't know is Unassigned too.
 
-A worker whose project can't be found goes under **Unassigned**, never dropped. Helpers and builders appear while
-alive and stay FADE_S after finishing (a placeholder Gil is to decide), then leave. Each carries `ended` (epoch s,
-None while alive), so the page fades it on time even if nothing rewrites work.json in between. One that died (failed, or
-killed with no stop) is red. Jobs are always shown, since they are catalogued; only their state changes.
+A worker whose project can't be found goes under **Unassigned**, never dropped. Gil, 2026-10-30: nothing fades. A
+worker shows only while it runs, and one that finished cleanly leaves at once. One that died (failed, crashed, or
+killed with no stop) stays, red, until a retry passes (its ticket's or job's next run) or someone dismisses it in the
+page's tray. Its `ended` names that one failure, so dismissing it never hides a later one. Jobs follow the same rule:
+idle and switched-off jobs aren't drawn.
 
 A helper's project: the catalog project whose local folder holds its working folder (longest wins), else the repo
 that folder pushes to (a worktree in a temp folder), else the repo most of the tickets in its report name.
@@ -47,7 +48,6 @@ import chat_helpers  # noqa: E402  (state_of: the one rule for a helper killed m
 
 UNASSIGNED = "Unassigned"
 HALF_ID, HALF_NAME = "half:work", "Work"
-FADE_S = 10 * 60          # placeholder: how long a finished worker stays (open question for Gil)
 BUILDER_DEAD_S = 30 * 60  # a builder with no stage event this long and no end died (matches job_events' crash rule)
 JOB_CRASHED_S = 30 * 60   # dashboard/electron/main/jobs.js CRASHED_AFTER_MS
 MONITORED = ("active", "recent")
@@ -108,12 +108,8 @@ def git_remote(folder: str) -> str | None:
 
 # ── workers ─────────────────────────────────────────────────────────────────
 
-def _fresh(end: float | None, now: float) -> bool:
-    return end is None or now - end <= FADE_S
-
-
 def helper_workers(docs: list[dict], projects: list[dict], now: float, remote_of=None) -> list[dict]:
-    """One worker per helper that is running, or finished/died within FADE_S."""
+    """One worker per helper that is running or died. A clean finish leaves at once."""
     remote_of = remote_of or git_remote
     remotes: dict[str, str | None] = {}
     out = []
@@ -131,11 +127,10 @@ def helper_workers(docs: list[dict], projects: list[dict], now: float, remote_of
         elif state == "stale":
             started = _ts(run.get("started_at")) or 0.0
             end, state = started + chat_helpers.STALE_S, "failed"
-        else:
-            end = _ts(run.get("finished_at")) or _ts(run.get("started_at"))
-            state = "passed" if state == "passed" else "failed"
-        if not _fresh(end, now):
+        elif state == "passed":
             continue
+        else:
+            end, state = _ts(run.get("finished_at")) or _ts(run.get("started_at")), "failed"
         cwd = h.get("cwd") if isinstance(h.get("cwd"), str) else ""
         pid = project_for_path(cwd, projects) if cwd else None
         if pid is None and cwd:
@@ -156,7 +151,7 @@ def helper_workers(docs: list[dict], projects: list[dict], now: float, remote_of
 
 
 def builder_workers(stages: dict, projects: list[dict], now: float) -> list[dict]:
-    """One worker per ticket whose pipeline run is going, or ended within FADE_S. `stages`: (repo, n) -> events."""
+    """One worker per ticket whose pipeline run is going, or whose last run died. `stages`: (repo, n) -> events."""
     out = []
     for key, events in (stages or {}).items():
         try:
@@ -171,13 +166,11 @@ def builder_workers(stages: dict, projects: list[dict], now: float) -> list[dict
         if last.get("status") == "failed":
             state, end = "failed", at
         elif last.get("stage") == "done":
-            state, end = "passed", at
+            continue
         elif now - at > BUILDER_DEAD_S:
             state, end = "failed", at + BUILDER_DEAD_S
         else:
             state, end = "running", None
-        if not _fresh(end, now):
-            continue
         title = next((e.get("title") for e in events if e.get("title")), None)
         out.append({"id": f"builder:{repo}#{number}", "name": f"#{number}" + (f" {title}" if title else ""),
                     "kind": "builder", "state": state, "project": project_for_repo(repo, projects), "ended": end,
@@ -185,20 +178,26 @@ def builder_workers(stages: dict, projects: list[dict], now: float) -> list[dict
     return out
 
 
-def _job_state(log: dict | None, now: float) -> str:
+def _job_state(log: dict | None, now: float) -> tuple[str, float | None]:
+    """(running | failed | idle, when the failure happened)."""
     runs = [r for r in (log or {}).get("runs") or [] if isinstance(r, dict) and r.get("started_at")]
     if not runs:
-        return "idle"
+        return "idle", None
     last = runs[-1]
+    started = _ts(last.get("started_at"))
     if last.get("status") == "running":
-        started = _ts(last.get("started_at"))
-        return "running" if started is not None and now - started <= JOB_CRASHED_S else "failed"
-    return "failed" if last.get("status") == "failed" else "idle"
+        if started is not None and now - started <= JOB_CRASHED_S:
+            return "running", None
+        return "failed", (started or 0.0) + JOB_CRASHED_S
+    if last.get("status") == "failed":
+        return "failed", _ts(last.get("finished_at")) or started
+    return "idle", None
 
 
 def job_workers(jobs: dict, logs: dict, loaded: list[str], projects: list[dict], now: float,
                 goals: dict | None = None, paths: dict | None = None) -> list[dict]:
-    """Every catalogued job, plus any job loaded here the catalog doesn't know, under the project it serves."""
+    """Every job that is running or whose last run failed (catalogued, or loaded here and not catalogued), under the
+    project it serves. Idle and switched-off jobs aren't drawn."""
     ids = {p["id"] for p in projects}
     marvin = next((p["id"] for p in projects if p["id"] == "marvin"), None)
     goals, paths = goals or {}, paths or {}
@@ -214,14 +213,19 @@ def job_workers(jobs: dict, logs: dict, loaded: list[str], projects: list[dict],
             pid = marvin
         else:
             pid = None
-        state = "off" if j and j.get("machine") == "none" else _job_state(logs.get(name), now)
+        if j and j.get("machine") == "none":
+            continue
+        state, ended = _job_state(logs.get(name), now)
+        if state == "idle":
+            continue
         if j is None:
             desc = "Scheduled job running here that the job catalog doesn't list"
         elif goal is None:
             desc = "Scheduled job with no declared goal"
         else:
             desc = f"Scheduled job ({j.get('machine')}); serves: {goals.get(goal, goal)}"
-        w = {"id": f"job:{name}", "name": name, "kind": "job", "state": state, "project": pid, "desc": desc}
+        w = {"id": f"job:{name}", "name": name, "kind": "job", "state": state, "project": pid, "ended": ended,
+             "desc": desc}
         if paths.get(name):
             w["path"] = paths[name]
         out.append(w)
@@ -231,9 +235,9 @@ def job_workers(jobs: dict, logs: dict, loaded: list[str], projects: list[dict],
 # ── the tree ────────────────────────────────────────────────────────────────
 
 def worker_node(w: dict) -> dict:
-    node = {"id": w["id"], "name": w["name"], "cat": "workers", "desc": w.get("desc", ""), "children": [],
+    node = {"id": w["id"], "name": w["name"], "cat": "work", "desc": w.get("desc", ""), "children": [],
             "expandable": False, "expanded": True,
-            "worker": {k: w[k] for k in ("kind", "state", "agent") if k in w}}
+            "worker": {k: w[k] for k in ("kind", "state", "agent", "ended") if k in w}}
     if w.get("path"):
         node["path"], node["openable"] = w["path"], True
     return node
@@ -244,17 +248,17 @@ def work_trunk(projects: list[dict], workers: list[dict], node_id_of=None) -> di
     node_id_of = node_id_of or (lambda p: p["id"])
     children, by_pid = [], {}
     for p in projects:
-        node = {"id": node_id_of(p), "name": p["name"], "projectId": p["id"], "cat": "projects",
+        node = {"id": node_id_of(p), "name": p["name"], "projectId": p["id"], "cat": "work",
                 "desc": (p.get("desc") or "").split(". ")[0], "children": [], "expandable": False, "expanded": True}
         by_pid[p["id"]] = node
         children.append(node)
-    unassigned = {"id": UNASSIGNED, "name": UNASSIGNED, "projectId": None, "cat": "unassigned",
+    unassigned = {"id": UNASSIGNED, "name": UNASSIGNED, "projectId": None, "cat": "work",
                   "desc": "Workers whose project can't be determined, and jobs with no declared goal",
                   "children": [], "expandable": False, "expanded": True}
     for w in workers:
         (by_pid.get(w.get("project")) or unassigned)["children"].append(worker_node(w))
     children.append(unassigned)
-    return {"id": HALF_ID, "name": HALF_NAME, "cat": "projects", "desc": "What MARVIN is working on",
+    return {"id": HALF_ID, "name": HALF_NAME, "cat": "work", "desc": "What MARVIN is working on",
             "children": children, "expandable": False, "expanded": True}
 
 
@@ -326,7 +330,7 @@ def read_live(claude_dir: Path | None = None, jobs: dict | None = None, loaded: 
             stages[key] = events
     workers = (helper_workers(helpers, projects, now, remote_of) + builder_workers(stages, projects, now)
                + job_workers(jobs or {}, logs, loaded or [], projects, now, goals, paths))
-    return {"generated_at": now, "fade_s": FADE_S, "projects": projects, "workers": workers}
+    return {"generated_at": now, "projects": projects, "workers": workers}
 
 
 def write(out: Path, doc: dict) -> None:

@@ -1,9 +1,11 @@
 // Body and Work (#854, a mock-up for review behind ?layout=work and the legend's layout row).
 //
 // Body is today's branches regrouped by Vitals region; Work is one node per project holding its workers (chat
-// helpers, pipeline builders, spawned agents, the jobs serving it) and the files they touch. Workers appear while
-// alive and leave a while after they end; one that died is red; links between the halves light only from real
-// traffic (#843's rule). The default layout must stay exactly as it was.
+// helpers, pipeline builders, spawned agents, the jobs serving it) and the files they touch. Gil, 2026-10-30: a worker
+// shows only while it runs and leaves the moment it finishes cleanly; one that died stays red until a retry passes or
+// it is dismissed from the tray. Labels: regions and projects, plus what is lit or red. The wallpaper shows the same
+// layout and data. Links between the halves light only from real traffic (#843's rule). The default layout must
+// stay exactly as it was.
 //
 // The ticket's break-it list: a worker whose project can't be found (Unassigned, never dropped), a project with 30
 // workers, and 50 helpers starting and stopping in a minute. (0 and 42 projects: brain-map/tests/test_work_layout.py.)
@@ -13,7 +15,7 @@ import { test, before, after } from 'node:test'
 import assert from 'node:assert/strict'
 import { execFileSync } from 'node:child_process'
 import { createRequire } from 'node:module'
-import { readFileSync } from 'node:fs'
+import { readFileSync, writeFileSync, unlinkSync } from 'node:fs'
 import { fileURLToPath, pathToFileURL } from 'node:url'
 import path from 'node:path'
 
@@ -36,13 +38,13 @@ before(async () => {
 })
 after(() => browser?.close())
 
-async function openMap({ work = true, init } = {}) {
+async function openMap({ work = true, init, file = 'index.html', query } = {}) {
   const page = await browser.newPage({ viewport: { width: 1280, height: 800 } })
   const errors = []
   page.on('pageerror', (e) => errors.push(e.message))
   if (init) await page.addInitScript(init)
-  await page.goto(pathToFileURL(path.join(MAP, 'index.html')).href + (work ? '?layout=work' : ''))
-  await page.evaluate(() => window.__map.driveExternally())
+  await page.goto(pathToFileURL(path.join(MAP, file)).href + (query ?? (work ? '?layout=work' : '')))
+  if (!/wallpaper=1/.test(query || '')) await page.evaluate(() => window.__map.driveExternally())
   page.errors = errors
   return page
 }
@@ -135,29 +137,68 @@ test('a worker whose project cannot be found is under Unassigned, never dropped'
   await page.close()
 })
 
-test('a worker that died is red, and stops being red when its state is not failed', async (t) => {
+test('a worker that finishes cleanly leaves at once; one that died stays red until a retry passes', async (t) => {
   if (skipReason) return t.skip(skipReason)
   const page = await openMap()
   const p = await aProject(page)
-  await apply(page, { workers: [helperW('d1', p.projectId, { state: 'failed', ended: nowS() })] })
+  await apply(page, { workers: [helperW('ok1', p.projectId), helperW('d1', p.projectId, { state: 'failed', ended: 1000 })] })
   assert.equal(await m(page, () => window.__map.failed('helper:d1')), true)
-  await apply(page, { workers: [helperW('d1', p.projectId, { state: 'passed', ended: nowS() })] })
+  // ok1 finished: work.json stops listing it. d1 is still listed, red, however long ago it died.
+  await apply(page, { workers: [helperW('d1', p.projectId, { state: 'failed', ended: 1000 })] })
+  assert.equal(await m(page, () => window.__map.has('helper:ok1')), false)
+  assert.equal(await m(page, () => window.__map.failed('helper:d1')), true)
+  // the retry runs: no longer red
+  await apply(page, { workers: [helperW('d1', p.projectId)] })
   assert.equal(await m(page, () => window.__map.failed('helper:d1')), false)
+  // and passes: gone
+  await apply(page, { workers: [] })
+  assert.equal(await m(page, () => window.__map.has('helper:d1')), false)
   await page.close()
 })
 
-test('a finished worker leaves once its time is up, even if work.json still lists it; a job stays', async (t) => {
+test('a job shows only while it runs or after it failed, and leaves once work.json drops it', async (t) => {
   if (skipReason) return t.skip(skipReason)
   const page = await openMap()
   const p = await aProject(page)
-  const job = (await m(page, () => window.__map.workers())).find((w) => w.kind === 'job')
-  assert.ok(job, 'no job worker on the generated map')
-  await apply(page, { fade_s: 600, workers: [helperW('f1', p.projectId, { state: 'passed', ended: nowS() - 30 })] })
-  assert.ok(await m(page, () => window.__map.has('helper:f1')))
-  await apply(page, { fade_s: 600, workers: [helperW('f1', p.projectId, { state: 'passed', ended: nowS() - 601 })] })
-  assert.equal(await m(page, () => window.__map.has('helper:f1')), false)
-  assert.ok(await m(page, (id) => window.__map.has(id), job.id), 'a job left the map because work.json did not list it')
+  const job = (id, state) => ({ id: `job:${id}`, name: id, kind: 'job', state, project: p.projectId, ended: state === 'failed' ? 5 : null })
+  await apply(page, { workers: [job('runs', 'running'), job('broke', 'failed')] })
+  assert.ok(await m(page, () => window.__map.has('job:runs')))
+  assert.equal(await m(page, () => window.__map.failed('job:broke')), true)
+  await apply(page, { workers: [job('broke', 'failed')] })
+  assert.equal(await m(page, () => window.__map.has('job:runs')), false)
   await page.close()
+})
+
+test('a dead worker tapped in the tray is dismissed: gone, and stays gone for that failure only', async (t) => {
+  if (skipReason) return t.skip(skipReason)
+  const page = await openMap()
+  const p = await aProject(page)
+  const dead = (ended) => ({ workers: [helperW('z1', p.projectId, { state: 'failed', ended })] })
+  await apply(page, dead(1000))
+  await frames(page, 2)
+  await m(page, () => window.__map.openTray())
+  await page.click('[data-dismiss="helper:z1"]')
+  assert.equal(await m(page, () => window.__map.has('helper:z1')), false)
+  await apply(page, dead(1000)) // the same failure, read again
+  assert.equal(await m(page, () => window.__map.has('helper:z1')), false)
+  await apply(page, dead(2000)) // it was retried and died again: a new failure shows
+  assert.equal(await m(page, () => window.__map.failed('helper:z1')), true)
+  assert.equal(await m(page, () => window.__map.dismiss('half:body')), false, 'only a red worker can be dismissed')
+  await page.close()
+})
+
+test('a dismissal outlives a reload in the same browser', async (t) => {
+  if (skipReason) return t.skip(skipReason)
+  const ctx = await browser.newContext({ viewport: { width: 1280, height: 800 } })
+  const page = await ctx.newPage()
+  await page.goto(pathToFileURL(path.join(MAP, 'index.html')).href + '?layout=work')
+  const doc = { workers: [helperW('r1', null, { state: 'failed', ended: 7 })] }
+  await page.evaluate((d) => window.__map.applyWork(d), doc)
+  assert.equal(await page.evaluate(() => window.__map.dismiss('helper:r1')), true)
+  await page.reload()
+  await page.evaluate((d) => window.__map.applyWork(d), doc)
+  assert.equal(await page.evaluate(() => window.__map.has('helper:r1')), false)
+  await ctx.close()
 })
 
 test('a project with 30 workers shows all 30 and still draws', async (t) => {
@@ -253,6 +294,7 @@ test('in the work layout, with nothing happening, nothing moves (running workers
   const page = await openMap()
   const p = await aProject(page)
   await apply(page, { workers: [helperW('s1', p.projectId)] })
+  await page.waitForTimeout(700) // grow-in and shrink-out run on the real clock (BIRTH_MS, DEATH_MS)
   await frames(page, 60 * SECOND)
   const a = await m(page, () => document.getElementById('c').toDataURL())
   await apply(page, { workers: [helperW('s1', p.projectId)] }) // the same state read again changes nothing
@@ -271,4 +313,69 @@ test('the legend\'s layout row switches between the two layouts', async (t) => {
   await Promise.all([page.waitForNavigation(), page.click('#layout-toggle')])
   assert.doesNotMatch(page.url(), /layout=work/)
   await page.close()
+})
+
+test('labels: with 300 nodes and 3 active, only regions, projects and the 3 are labelled; others on hover', async (t) => {
+  if (skipReason) return t.skip(skipReason)
+  const page = await openMap()
+  const p = await aProject(page)
+  await apply(page, { workers: [] }) // nothing red
+  const count = await m(page, () => window.__map.nodeCount())
+  const filler = Array.from({ length: Math.max(0, 300 - count) }, (_, i) => helperW(`l${i}`, p.projectId))
+  await apply(page, { workers: filler })
+  await page.waitForTimeout(700) // grow-in runs on the real clock
+  await frames(page, 60 * SECOND) // the new workers' start light has gone
+  assert.ok(await m(page, () => window.__map.nodeCount()) >= 300)
+  const fixed = (await m(page, () => window.__map.childrenOf('half:body'))).length + (await m(page, () => window.__map.workProjects())).length
+  for (const a of ['l1', 'l2', 'l3']) await m(page, (a) => window.triggerActivity({ skill: 'MARVIN', tool: 'Bash', ts: 1.8e9, agent: a }), a)
+  await frames(page, SECOND)
+  const shown = (await m(page, () => window.__map.labels())).filter((l) => l.alpha > 0)
+  assert.ok(shown.length <= fixed + 3, `${shown.length} labels drawn, limit ${fixed} + 3`)
+  assert.ok(!shown.some((l) => l.text === 'helper l10'), 'an idle worker is labelled')
+  const pos = (await m(page, () => window.__map.nodes())).find((n) => n.id === 'helper:l10')
+  await page.mouse.move(pos.sx, pos.sy)
+  await frames(page, SECOND)
+  const under = await m(page, () => window.__map.hovered()) // the nearest part under the pointer
+  assert.ok(under && under.startsWith('helper:l'), `hovering picked ${under}`)
+  const name = 'helper ' + under.slice(7)
+  assert.ok((await m(page, () => window.__map.labels())).some((l) => l.text === name && l.alpha > 0), 'no label on hover')
+  await page.close()
+})
+
+test('everything in Work wears the Work hue and each region has its own', async (t) => {
+  if (skipReason) return t.skip(skipReason)
+  const page = await openMap()
+  const p = await aProject(page)
+  await apply(page, { workers: [helperW('h1', p.projectId)] })
+  assert.ok((await m(page, () => window.__map.workers())).every((w) => w.cat === 'work'))
+  assert.equal(new Set((await m(page, () => window.__map.childrenOf('half:body'))).map((c) => c.cat)).size, 8)
+  await page.close()
+})
+
+// ── parity: the wallpaper shows the same layout and data ──
+
+test('the one layout setting drives the wallpaper too, and the hosts\' pushes keep it current', async (t) => {
+  if (skipReason) return t.skip(skipReason)
+  const html = readFileSync(path.join(MAP, 'index.html'), 'utf8').replace('var DEFAULT_LAYOUT = "today";', 'var DEFAULT_LAYOUT = "work";')
+  assert.match(html, /var DEFAULT_LAYOUT = "work";/)
+  const file = 'index.layout-test.html'
+  writeFileSync(path.join(MAP, file), html)
+  try {
+    const page = await openMap({ file, query: '?wallpaper=1' })
+    assert.equal(await m(page, () => window.__map.layout()), 'work')
+    await m(page, (doc) => window.applyWork(doc), { workers: [helperW('w1', null)] })
+    assert.ok(await m(page, () => window.__map.has('helper:w1')))
+    const data = JSON.parse(readFileSync(path.join(MAP, 'tree-data.json'), 'utf8'))
+    await m(page, (d) => window.updateTreeData(d.tree, d.synapses, d.work), data)
+    assert.deepEqual((await m(page, () => window.__map.rootChildren())).map((c) => c.name), ['Body', 'Work'])
+    await m(page, (d) => window.updateTreeData(d.tree, d.synapses), data) // an older host: keep the Work layout
+    assert.deepEqual((await m(page, () => window.__map.rootChildren())).map((c) => c.name), ['Body', 'Work'])
+    assert.deepEqual(page.errors, [])
+    await page.close()
+    const today = await openMap({ file, query: '?layout=today' })
+    assert.equal(await m(today, () => window.__map.layout()), 'today')
+    await today.close()
+  } finally {
+    unlinkSync(path.join(MAP, file))
+  }
 })

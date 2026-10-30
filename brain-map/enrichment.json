@@ -325,46 +325,46 @@
     "ex-exo": "A copy of exo, the tool that lets computers team up to run AI."
   },
   "body_regions": {
-    "_comment": "#854 mock-up (?layout=work): the Body half groups today's branches by the Vitals regions (marvin-instance docs/plans/health-metrics-redo-2026-10-21.md §12). Structure only: every node still comes from its live source. `place` puts a trunk, or any node by id, in a region; anything not placed goes to `default`, so a new branch is never dropped. The Projects trunk becomes the Work half and the Autonomous Agents jobs move there as workers (brain-map/scripts/work_view.py). Each colour is an existing CAT colour (`colorFrom`); a region with no colour of its own reuses the nearest one (open question on the PR).",
+    "_comment": "#854 mock-up (?layout=work): the Body half groups today's branches by the Vitals regions (marvin-instance docs/plans/health-metrics-redo-2026-10-21.md §12). Structure only: every node still comes from its live source. `place` puts a trunk, or any node by id, in a region; anything not placed goes to `default`, so a new branch is never dropped. The Projects trunk becomes the Work half and the Autonomous Agents jobs move there as workers (brain-map/scripts/work_view.py). Colours (Gil, 2026-10-30): each region and the Work half has its own hue, none of them red (failure) or amber (missed purpose); brightness shows activity. Chosen with the dataviz validator for the map's dark surface (#0d1117): in this order every neighbouring pair of regions, and Work against every region, clears CVD dE 8 and normal-vision dE 15, and every pair clears normal-vision dE 15. `default_layout` (today | work) is the one switch both the browser page and the wallpaper hosts follow; ?layout= overrides it in a browser.",
     "regions": [
       {
         "name": "Pipeline",
-        "colorFrom": "project",
+        "color": "#1b9690",
         "brain": "Motor-like: lock, breaker, parallel dispatch"
       },
       {
         "name": "GitHub",
-        "colorFrom": "research",
+        "color": "#4f8aec",
         "brain": "Senses-like: budget, gate, sign-in per Mac"
       },
       {
         "name": "Code & tests",
-        "colorFrom": "quality",
+        "color": "#bc6ea3",
         "brain": "Judgement-like: main green, dashboard and webhook builds, trigger coverage"
       },
       {
         "name": "Skills & tools",
-        "colorFrom": "memory",
+        "color": "#af56fd",
         "brain": "Cortex-like: intent classifier, tool failure rate, hook errors"
       },
       {
         "name": "Code sync",
-        "colorFrom": "cross-machine",
+        "color": "#266595",
         "brain": "Corpus-callosum-like: repo sync per Mac, peer heartbeats"
       },
       {
         "name": "Producers",
-        "colorFrom": "agents",
+        "color": "#377029",
         "brain": "Autonomic-like: catalog, tagger, revisit agent, digests, beta ingest"
       },
       {
         "name": "Energy",
-        "colorFrom": "other",
+        "color": "#5943ec",
         "brain": "Metabolism-like: usage scans, tokens"
       },
       {
         "name": "Body",
-        "colorFrom": "infra",
+        "color": "#ae1599",
         "brain": "Brainstem-like: disk, headroom, jobs, placement, DesktopLive"
       }
     ],
@@ -381,17 +381,7 @@
       "Projects",
       "Autonomous Agents"
     ],
-    "work_colors": {
-      "workers": {
-        "label": "Workers",
-        "brain": "Helpers, builders, spawned agents and the jobs serving a project",
-        "colorFrom": "continuity"
-      },
-      "unassigned": {
-        "label": "Unassigned",
-        "brain": "Workers whose project can't be determined",
-        "colorFrom": "other"
-      }
-    }
+    "work_color": {"label": "Work", "brain": "What MARVIN is working on: projects, Unassigned, and the workers under them", "color": "#57a314"},
+    "default_layout": "today"
   }
 }

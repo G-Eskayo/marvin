@@ -15,12 +15,14 @@ const PAGE = path.join(BRAIN, 'index.html')
 const TREE = path.join(BRAIN, 'tree-data.json')
 const ACTIVITY = path.join(BRAIN, 'activity.jsonl')
 const DEMO = path.join(BRAIN, 'demo-events.jsonl')
+const WORK = path.join(BRAIN, 'work.json') // the Body and Work layout's workers (#854)
 const NETWORK = path.join(os.homedir(), '.claude', 'marvin-network.json')
 const LOG = path.join(os.homedir(), '.claude', 'logs', 'desktoplive.log')
 const STALL_MS = 60_000   // a page that stops drawing this long is reloaded (main.swift's liveness check, #176)
 
 const windows = new Map()            // display id -> BrowserWindow
 let lastTreeMtime = 0
+let lastWorkMtime = 0
 let activityLast = null
 let demoCount = 0
 let liveness = {}
@@ -65,6 +67,7 @@ function makeWindow(display) {
   try { setDesktopType(w) } catch (e) { log('xprop-failed', e.message); w.destroy(); throw e }   // never show it on top
   w.loadFile(PAGE, { query: { wallpaper: '1' } })
   w.once('ready-to-show', () => w.showInactive())
+  w.webContents.on('did-finish-load', () => { lastWorkMtime = 0 })   // a fresh page gets the current workers next tick
   w.webContents.on('render-process-gone', (_e, d) => { log('page-crash', d.reason); w.loadFile(PAGE, { query: { wallpaper: '1' } }) })
   w.webContents.setWindowOpenHandler(() => ({ action: 'deny' }))
   w.webContents.on('will-navigate', (e) => e.preventDefault())
@@ -91,6 +94,16 @@ function checkTree() {
   const js = h.treeCall(read(TREE))
   if (js) eachPage(js)
   else { log('page-reload', 'tree-data.json did not parse'); for (const w of windows.values()) w.reload() }
+}
+
+// work.json is rewritten whole when a helper or builder starts or stops: push it when it changes.
+function checkWork() {
+  let m = 0
+  try { m = fs.statSync(WORK).mtimeMs } catch { return }
+  if (m === lastWorkMtime) return
+  lastWorkMtime = m
+  const js = h.workCall(read(WORK))
+  if (js) eachPage(js)
 }
 
 // By the last line seen, not the count: the file is trimmed to 500 lines, so a full file's count never changes.
@@ -148,6 +161,7 @@ app.whenReady().then(() => {
   screen.on('display-metrics-changed', reconcile)
   setInterval(checkTree, 30_000)
   setInterval(checkActivity, 2_000)
+  setInterval(checkWork, 2_000)
   setInterval(() => { demoCount = checkFile(DEMO, demoCount, h.demoCalls) }, 1_000)
   setInterval(checkDevices, 18_000)
   setTimeout(checkDevices, 3_000)

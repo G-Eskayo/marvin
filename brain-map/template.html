@@ -363,30 +363,33 @@
   /*__WORK_START__*/
   var workTree = null;
   var workSynapses = [];
+  var DEFAULT_LAYOUT = "today";
   /*__WORK_END__*/
 
-  // ── Body and Work (#854, for review): ?layout=work, or the legend's layout row. Body is today's branches by Vitals
-  // region; Work is one node per project holding its workers (helpers, builders, spawned agents, jobs) and the files
-  // they touch. The default layout is untouched. Code layers come from today's tree by id (not embedded twice), and
-  // region/worker colours are existing palette colours (workTree.catColors names which). ──
-  var LAYOUT_WORK = /[?&]layout=work\b/.test(location.search) && !!workTree && !WALLPAPER;
-  if (LAYOUT_WORK) {
-    (function () {
-      var codeById = {};
-      (function walk(n) { if (n.code) codeById[n.id] = n.code; n.children.forEach(walk); })(tree);
-      (function walk(n) {
-        var src = n.codeFrom || n.id;
-        if (n.openable && codeById[src]) n.code = codeById[src];
-        n.children.forEach(walk);
-      })(workTree);
-      var colors = workTree.catColors || {};
-      Object.keys(colors).forEach(function (k) {
-        var c = colors[k];
-        if (!CAT[k] && CAT[c.colorFrom]) CAT[k] = { label: c.label, brain: c.brain, color: CAT[c.colorFrom].color };
-      });
-      tree = workTree; synapses = workSynapses;
-    })();
+  // ── Body and Work (#854, for review). Body is today's branches by Vitals region; Work is one node per project
+  // holding its workers (helpers, builders, spawned agents, jobs) and the files they touch. Which layout shows is one
+  // setting (enrichment.json body_regions.default_layout, embedded as DEFAULT_LAYOUT), followed by this page and by
+  // both wallpaper hosts alike; in a browser ?layout=work|today overrides it (the legend's layout row). Code layers
+  // come from today's tree by id (not embedded twice); each region and the Work half has its own hue
+  // (workTree.catColors). ──
+  var LAYOUT_PARAM = (location.search.match(/[?&]layout=(work|today)\b/) || [])[1] || null;
+  var LAYOUT_WORK = !!workTree && (LAYOUT_PARAM ? LAYOUT_PARAM === "work" : DEFAULT_LAYOUT === "work");
+  function prepareWorkTree(work, today) {
+    var codeById = {};
+    (function walk(n) { if (n.code) codeById[n.id] = n.code; (n.children || []).forEach(walk); })(today);
+    (function walk(n) {
+      var src = n.codeFrom || n.id;
+      if (n.openable && codeById[src]) n.code = codeById[src];
+      (n.children || []).forEach(walk);
+    })(work);
+    var colors = work.catColors || {};
+    Object.keys(colors).forEach(function (k) {
+      var c = colors[k];
+      if (c && typeof c.color === "string") CAT[k] = { label: c.label, brain: c.brain, color: c.color };
+    });
+    return work;
   }
+  if (LAYOUT_WORK) { tree = prepareWorkTree(workTree, tree); synapses = workSynapses; }
 
   // ── flatten + index ──────────────────────────────────────────────────
   var byId = {}, allNodes = [], branches = [], synapseDegree = {};
@@ -533,7 +536,14 @@
   // expandable nodes were open, then animates the diff the same way
   // relayout() does for expand/collapse, so a real change reads as "this
   // grew a branch" instead of the whole graph flashing back into existence.
-  function updateTreeData(newTree, newSynapses) {
+  // `work` ({tree, synapses}, from tree-data.json's "work"): the hosts pass it so a wallpaper on the Body and Work
+  // layout regenerates the same way the browser page does (#854 parity).
+  function updateTreeData(newTree, newSynapses, work) {
+    if (LAYOUT_WORK) {
+      if (!work || !work.tree || !Array.isArray(work.tree.children)) return; // an older host: keep what's showing
+      newTree = prepareWorkTree(work.tree, newTree);
+      newSynapses = Array.isArray(work.synapses) ? work.synapses : [];
+    }
     var expandState = {};
     (function walk(n) {
       if (n.expandable) expandState[n.id] = n.expanded;
@@ -547,6 +557,7 @@
     tree = newTree;
     synapses = newSynapses;
     indexAll();
+    if (LAYOUT_WORK) dropDismissed();
     relayout(true);
   }
   window.updateTreeData = updateTreeData;
@@ -703,8 +714,14 @@
   // starts, is red while its state is failed, and leaves FADE after it ended. Jobs are catalogued and stay; only
   // their state changes. A helper's own tool calls (activity lines with `agent`) light it; a file it touches becomes a
   // leaf under it, and the link from it to the body part that owns the file lights from that traffic only. ──
-  var WORK_FADE_S = 600, FILES_PER_WORKER = 40;
-  var TRANSIENT = { helper: true, agent: true, builder: true };
+  // Gil, 2026-10-30: nothing fades. A worker shows while it runs and leaves when it finishes cleanly; one that died
+  // stays red until a retry passes or it is dismissed (tap it in the tray). A dismissal names that one failure
+  // (id + when it ended), so a later failure of the same worker shows again. Dismissals live in this browser only:
+  // the wallpaper takes no input, so there a red worker stays until its retry passes.
+  var FILES_PER_WORKER = 40;
+  var DISMISS_KEY = "marvin-map-dismissed";
+  var dismissed = (function () { try { return JSON.parse(localStorage.getItem(DISMISS_KEY) || "{}") || {}; } catch (e) { return {}; } })();
+  function dismissKey(id, ended) { return id + "@" + (typeof ended === "number" ? ended : ""); }
   function workHalf() { return byId["half:work"] || null; }
   function projectNodeFor(pid) {
     var half = workHalf();
@@ -721,41 +738,62 @@
     if (half) (function walk(n) { if (n.worker) out.push(n); n.children.forEach(walk); })(half);
     return out;
   }
-  function applyWork(doc, nowS) {
+  function detach(n) {
+    if (!n.parent) return;
+    n.parent.children = n.parent.children.filter(function (c) { return c !== n; });
+    delete failedIds[n.id];
+  }
+  // Generated workers that are red when the page loads, and dismissed ones that a regeneration brings back.
+  function dropDismissed() {
+    var gone = false;
+    workerNodes().forEach(function (n) {
+      if (n.worker.state === "failed") failedIds[n.id] = true;
+      if (dismissed[dismissKey(n.id, n.worker.ended)]) { detach(n); gone = true; }
+    });
+    if (gone) indexAll();
+    return gone;
+  }
+  function dismissWorker(id) {
+    var n = byId[id];
+    if (!n || !n.worker || n.worker.state !== "failed") return false;
+    dismissed[dismissKey(id, n.worker.ended)] = Date.now();
+    try { localStorage.setItem(DISMISS_KEY, JSON.stringify(dismissed)); } catch (e) { /* private window: this session only */ }
+    detach(n);
+    indexAll(); relayout(true);
+    trayDirty = true;
+    return true;
+  }
+  function redWorkers() { return workerNodes().filter(function (n) { return n.worker.state === "failed"; }); }
+  function applyWork(doc) {
     if (!LAYOUT_WORK || !doc || !Array.isArray(doc.workers) || !workHalf()) return false;
     var now = clockNow();
-    nowS = typeof nowS === "number" ? nowS : Date.now() / 1000;
-    var fade = typeof doc.fade_s === "number" && doc.fade_s >= 0 ? doc.fade_s : WORK_FADE_S;
     var seen = {}, added = [], lit = [], removed = false;
     doc.workers.forEach(function (w) {
       if (!w || typeof w !== "object" || typeof w.id !== "string" || !w.id || seen[w.id]) return;
-      if (typeof w.ended === "number" && nowS - w.ended > fade) return; // its time on the map is up
+      var state = w.state === "failed" ? "failed" : "running"; // work.json lists only running and dead workers
+      var ended = typeof w.ended === "number" ? w.ended : null;
+      if (state === "failed" && dismissed[dismissKey(w.id, ended)]) return;
       seen[w.id] = true;
       var node = byId[w.id];
-      var state = typeof w.state === "string" ? w.state : "running";
       if (node && !node.worker) return; // an id that is already some other part: never overwrite it
       if (!node) {
         var parent = projectNodeFor(w.project);
         if (!parent) return;
-        node = { id: w.id, name: String(w.name || w.id).slice(0, 80), cat: "workers", desc: String(w.desc || ""),
+        node = { id: w.id, name: String(w.name || w.id).slice(0, 80), cat: "work", desc: String(w.desc || ""),
                  children: [], expandable: false, expanded: true,
-                 worker: { kind: String(w.kind || ""), state: state, agent: typeof w.agent === "string" ? w.agent : undefined } };
+                 worker: { kind: String(w.kind || ""), state: state, ended: ended, agent: typeof w.agent === "string" ? w.agent : undefined } };
         parent.children.push(node);
         added.push(node);
       } else {
         if (state === "running" && node.worker.state !== "running") lit.push(node);
-        node.worker.state = state;
+        node.worker.state = state; node.worker.ended = ended;
         if (typeof w.desc === "string") node.desc = w.desc;
       }
       if (state === "failed") failedIds[w.id] = true; else delete failedIds[w.id];
     });
-    workerNodes().forEach(function (n) {
-      if (seen[n.id] || !TRANSIENT[n.worker.kind] || !n.parent) return;
-      n.parent.children = n.parent.children.filter(function (c) { return c !== n; });
-      delete failedIds[n.id];
-      removed = true;
-    });
-    if (added.length || removed) { indexAll(); relayout(true); }
+    // Anything work.json no longer lists has finished cleanly (or its retry passed): it leaves now.
+    workerNodes().forEach(function (n) { if (!seen[n.id]) { detach(n); removed = true; } });
+    if (added.length || removed) { indexAll(); relayout(true); trayDirty = true; }
     added.concat(lit).forEach(function (n) { lightNode(n, now); });
     return added.length > 0 || removed;
   }
@@ -772,7 +810,7 @@
     if (!f) return true;
     var leafId = "file:" + ev.agent + ":" + f, leaf = byId[leafId];
     if (!leaf) {
-      leaf = { id: leafId, name: f.split("/").pop(), cat: "workers", desc: f, children: [], expandable: false, expanded: true, fileLeaf: true };
+      leaf = { id: leafId, name: f.split("/").pop(), cat: "work", desc: f, children: [], expandable: false, expanded: true, fileLeaf: true };
       worker.children.push(leaf);
       if (worker.children.length > FILES_PER_WORKER) worker.children.shift(); // the oldest file leaf goes first
       indexAll(); relayout(true);
@@ -860,6 +898,7 @@
   }
   window.setDeviceStatus = setDeviceStatus;
 
+  if (LAYOUT_WORK) dropDismissed();
   layout();
 
   // ── camera ───────────────────────────────────────────────────────────
@@ -1199,9 +1238,22 @@
   var trayEl = document.getElementById("event-tray");
   var trayToggle = document.getElementById("event-tray-toggle");
   var trayList = document.getElementById("event-tray-list");
-  function trayText(n) { return n + (n === 1 ? " thing" : " things") + " happened in the last minute"; }
+  function trayText(n, red) {
+    var t = n ? n + (n === 1 ? " thing" : " things") + " happened in the last minute" : "";
+    if (red) t += (t ? " \u00b7 " : "") + red + " failed";
+    return t;
+  }
   function buildTrayList(now) {
     trayList.innerHTML = "";
+    // Red workers first (#854): tap one to dismiss it. It stays dismissed for this failure only.
+    if (LAYOUT_WORK) redWorkers().forEach(function (n) {
+      var b = document.createElement("button");
+      b.className = "mono";
+      b.setAttribute("data-dismiss", n.id);
+      b.textContent = "\u2715 " + (n.name || n.id) + " \u00b7 failed \u00b7 tap to dismiss";
+      b.addEventListener("click", function () { dismissWorker(n.id); buildTrayList(clockNow()); });
+      trayList.appendChild(b);
+    });
     trayItems.slice(-TRAY_SHOWN).reverse().forEach(function (it) {
       var b = document.createElement("button");
       b.className = "mono";
@@ -1216,11 +1268,11 @@
     if (!trayDirty && now - trayRenderedAt < 1000) return;
     var changed = trayDirty;
     trayDirty = false; trayRenderedAt = now;
-    var n = trayItems.length;
-    if (!n) trayOpen = false;
-    trayEl.classList.toggle("show", n > 0);
+    var n = trayItems.length, red = LAYOUT_WORK ? redWorkers().length : 0;
+    if (!n && !red) trayOpen = false;
+    trayEl.classList.toggle("show", n + red > 0);
     trayList.classList.toggle("show", trayOpen);
-    trayToggle.textContent = trayText(n);
+    trayToggle.textContent = trayText(n, red);
     if (trayOpen && changed) buildTrayList(now);
   }
   trayToggle.addEventListener("click", function () {
@@ -1700,6 +1752,9 @@
       var color = nd.archived ? "#404040" : (nd.ready === false ? "#6b5b4a" : (nd.online === false ? "#5a5a5a" : CAT[nd.cat].color));
       var failed = !!failedIds[nd.id]; // red, and stays red, until a pass for this node
       var pulse = pulseIntensityOf(nd.id);
+      // Body and Work (#854, Gil 2026-10-30): activity is brightness of the part's own hue; amber is kept for a missed
+      // purpose and red for failure, so neither is used to mean "busy" here.
+      var litRGB = LAYOUT_WORK ? brightRGB(color, pulse) : SYNAPSE_COLOR;
 
       if (r < 0.4) return; // still basically zero-sized — nothing to draw yet
 
@@ -1707,22 +1762,22 @@
         // expanding ripple — the node's own "just fired" signal
         ctx.beginPath();
         ctx.arc(p.sx, p.sy, r + 3 + pulse * 22, 0, Math.PI * 2);
-        ctx.strokeStyle = "rgba(" + SYNAPSE_COLOR + "," + (pulse * 0.6) + ")";
+        ctx.strokeStyle = "rgba(" + litRGB + "," + (pulse * 0.6) + ")";
         ctx.lineWidth = 1.5;
         ctx.save();
-        ctx.shadowBlur = 10 + pulse * 10; ctx.shadowColor = "rgba(" + SYNAPSE_COLOR + ",0.8)";
+        ctx.shadowBlur = 10 + pulse * 10; ctx.shadowColor = "rgba(" + litRGB + ",0.8)";
         ctx.stroke();
         ctx.restore();
       }
 
       ctx.beginPath();
       ctx.arc(p.sx, p.sy, r + pulse * 2, 0, Math.PI * 2);
-      ctx.fillStyle = dim ? "rgba(110,118,129,0.25)" : (failed ? "rgb(" + FAIL_RGB + ")" : (pulse > 0 ? "rgba(" + SYNAPSE_COLOR + ",1)" : color));
+      ctx.fillStyle = dim ? "rgba(110,118,129,0.25)" : (failed ? "rgb(" + FAIL_RGB + ")" : (pulse > 0 ? "rgba(" + litRGB + ",1)" : color));
       ctx.globalAlpha = bf * (dim ? 0.4 : Math.min(1, 0.6 + depthT * 0.4 + pulse * 0.4));
       ctx.save();
       var hubGlow = nd.depth <= 1 ? 6 : 0;
       var glowAmt = pulse > 0 ? 16 + pulse * 16 : (dim ? 0 : hubGlow);
-      if (glowAmt > 0) { ctx.shadowBlur = glowAmt; ctx.shadowColor = pulse > 0 ? "rgba(" + SYNAPSE_COLOR + ",0.95)" : color; }
+      if (glowAmt > 0) { ctx.shadowBlur = glowAmt; ctx.shadowColor = pulse > 0 ? "rgba(" + litRGB + ",0.95)" : color; }
       ctx.fill();
       ctx.restore();
 
@@ -1742,10 +1797,17 @@
 
       discs.push({ id: nd.id, sx: p.sx, sy: p.sy, r: r });
       var alwaysLabel = nd.depth <= 2; // MARVIN, the trunks, and the skill sub-categories
+      var eligible = alwaysLabel || r > 6 || isSel || isHover || isConn || pulse > 0.1;
+      if (LAYOUT_WORK) {
+        // Gil, 2026-10-30: label only the regions and projects, plus whatever is lit or red right now; every other
+        // label shows on hover or tap (select).
+        isHover = isHover || hovered === nd;
+        alwaysLabel = isRegionOrProject(nd);
+        eligible = alwaysLabel || isSel || isHover || pulse > 0 || failed;
+      }
       labelCands.push({
         nd: nd, p: p, r: r, bf: bf, dim: dim, pulse: pulse, depthT: depthT, alwaysLabel: alwaysLabel,
-        isSel: isSel, isHover: isHover,
-        eligible: alwaysLabel || r > 6 || isSel || isHover || isConn || pulse > 0.1
+        isSel: isSel, isHover: isHover, failed: failed, eligible: eligible
       });
     });
     drawnNodes = discs;
@@ -1843,13 +1905,15 @@
       var want = c.eligible && c.bf > 0.4 && !crowded &&
         box.x >= 0 && box.y >= 0 && box.x + box.w <= W && box.y + box.h <= H &&
         !(a === 0 && leaving.some(function (b) { return boxesOverlap(box, b, clearance); })) &&
-        !discs.some(function (d) { return d.id !== nd.id && discCoversBox(d, box); });
+        // Body and Work: what you point at or tap is always named, even over a crowd of dots
+        ((LAYOUT_WORK && (c.isHover || c.isSel)) || !discs.some(function (d) { return d.id !== nd.id && discCoversBox(d, box); }));
       if (want) placed.push(box); else if (a > 0) leaving.push(box);
       a = want ? Math.min(1, a + step) : Math.max(0, a - (crowded ? dt / LABEL_YIELD_S : step));
       labelAlpha[nd.id] = a;
       if (a <= 0) return;
       var la = a * c.bf * (c.dim ? 0.3 : Math.min(1, 0.6 + c.depthT * 0.4 + c.pulse * 0.4));
-      ctx.fillStyle = c.pulse > 0.1 ? "rgba(" + SYNAPSE_COLOR + "," + la + ")" : c.alwaysLabel ? "rgba(" + LABEL_RGB + "," + la + ")" : "rgba(" + LABEL_RGB_DIM + "," + la + ")";
+      ctx.fillStyle = LAYOUT_WORK && (c.pulse > 0 || c.failed) ? "rgba(" + (c.failed ? FAIL_RGB : LABEL_RGB) + "," + la + ")" :
+        c.pulse > 0.1 ? "rgba(" + SYNAPSE_COLOR + "," + la + ")" : c.alwaysLabel ? "rgba(" + LABEL_RGB + "," + la + ")" : "rgba(" + LABEL_RGB_DIM + "," + la + ")";
       ctx.fillText(text, p.sx, p.sy - c.r - 6);
       drawnLabels.push({ text: text, x: box.x, y: box.y, w: box.w, h: box.h, alpha: a, shown: want, color: ctx.fillStyle });
     });
@@ -1893,11 +1957,16 @@
     ingestLines: ingestLines,
     // #854
     layout: function () { return LAYOUT_WORK ? "work" : "today"; },
+    dismiss: dismissWorker,
+    hovered: function () { return hovered ? hovered.id : null; },
+    red: function () { return redWorkers().map(function (n) { return n.id; }); },
+    nodeCount: function () { return allNodes.length; },
+    openTray: function () { trayOpen = true; trayList.classList.add("show"); buildTrayList(clockNow()); },
     applyWork: applyWork,
     rootChildren: function () { return tree.children.map(function (c) { return { id: c.id, name: c.name || c.id }; }); },
     childrenOf: function (id) { return byId[id] ? byId[id].children.map(function (c) { return { id: c.id, name: c.name || c.id, cat: c.cat }; }) : null; },
     workProjects: function () { var h = workHalf(); return h ? h.children.map(function (c) { return { id: c.id, projectId: c.projectId }; }) : []; },
-    workers: function () { return workerNodes().map(function (n) { return { id: n.id, parent: n.parent && n.parent.id, kind: n.worker.kind, state: n.worker.state }; }); },
+    workers: function () { return workerNodes().map(function (n) { return { id: n.id, parent: n.parent && n.parent.id, kind: n.worker.kind, state: n.worker.state, cat: n.cat }; }); },
     has: function (id) { return !!byId[id]; },
     legendRows: function () { return Array.prototype.map.call(legendEl.querySelectorAll(".row"), function (r) { return r.textContent; }); },
     // a node whose code has a source file holding at least two code nodes (a file and its functions)
@@ -1915,6 +1984,16 @@
     }
   };
 
+  function isRegionOrProject(nd) {
+    return nd.id.indexOf("region:") === 0 || !!(nd.parent && nd.parent.id === "half:work");
+  }
+  // "r,g,b" of a hex colour lifted toward white by how lit it is (0..1): brightness, same hue.
+  function brightRGB(hex, t) {
+    var m = /^#([0-9a-f]{2})([0-9a-f]{2})([0-9a-f]{2})$/i.exec(hex || "");
+    if (!m) return SYNAPSE_COLOR;
+    var k = Math.max(0, Math.min(1, t)) * 0.55;
+    return [m[1], m[2], m[3]].map(function (x) { var v = parseInt(x, 16); return Math.round(v + (255 - v) * k); }).join(",");
+  }
   // A fixed 0..1 value per id (FNV-1a), for placements that must not change between frames.
   function stableUnit(id, salt) {
     var h = 2166136261 ^ salt;

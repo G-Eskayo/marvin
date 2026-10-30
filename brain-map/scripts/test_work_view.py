@@ -110,7 +110,7 @@ def test_a_helper_with_no_folder_match_is_placed_by_the_tickets_its_report_names
     projects = wv.monitored_projects(catalog())
     links = [{"kind": "pr", "repo": f"{OWNER}/seal", "number": 3}, {"kind": "ticket", "repo": f"{OWNER}/seal", "number": 2},
              {"kind": "ticket", "repo": f"{OWNER}/marvin", "number": 9}]
-    w = wv.helper_workers([helper("a1", cwd="/h", links=links, status="passed", finished=T0)], projects, NOW)
+    w = wv.helper_workers([helper("a1", cwd="/h", links=links, status="failed", finished=T0)], projects, NOW)
     assert w[0]["project"] == "seal"
 
 
@@ -136,12 +136,9 @@ def test_a_chat_helper_and_a_spawned_agent_are_told_apart_by_whether_a_chat_star
 
 # ── alive, finished, died ───────────────────────────────────────────────────
 
-def test_a_finished_helper_stays_ten_minutes_then_goes():
-    docs = [helper("recent", status="passed", finished=T0 - timedelta(minutes=9)),
-            helper("old", status="passed", finished=T0 - timedelta(minutes=11))]
-    w = by_id(wv.helper_workers(docs, [], NOW))
-    assert list(w) == ["helper:recent"] and w["helper:recent"]["state"] == "passed"
-    assert w["helper:recent"]["ended"] == (T0 - timedelta(minutes=9)).timestamp()  # the page fades it on time from this
+def test_a_helper_that_finished_cleanly_leaves_at_once():
+    w = wv.helper_workers([helper("done", status="passed", finished=T0 - timedelta(seconds=1))], [], NOW)
+    assert w == []
 
 
 def test_a_running_helper_has_not_ended():
@@ -156,23 +153,28 @@ def test_a_helper_that_failed_is_red_and_one_killed_mid_run_is_too():
     assert w["helper:killed"]["state"] == "failed"
 
 
-def test_a_helper_killed_long_ago_has_faded():
-    w = wv.helper_workers([helper("killed", started=T0 - timedelta(hours=2))], [], NOW)
-    assert w == []
+def test_a_dead_helper_stays_red_however_long_ago_it_died():
+    # Gil, 2026-10-30: no fading. Red until a retry passes or someone dismisses it (the page's tray).
+    docs = [helper("old-fail", status="failed", finished=T0 - timedelta(days=9)),
+            helper("old-kill", started=T0 - timedelta(days=3))]
+    w = by_id(wv.helper_workers(docs, [], NOW))
+    assert w["helper:old-fail"]["state"] == w["helper:old-kill"]["state"] == "failed"
+    # `ended` names this one failure, so a dismissal of it doesn't hide a later one
+    assert w["helper:old-fail"]["ended"] == (T0 - timedelta(days=9)).timestamp()
 
 
 def test_fifty_helpers_starting_and_stopping_in_a_minute():
     projects = wv.monitored_projects(catalog())
     start = T0 - timedelta(seconds=60)
-    docs = []
+    running, stopped = [], []
     for i in range(50):
         began = start + timedelta(seconds=i)
-        docs.append(helper(f"c{i:02d}", cwd="/h/Developer/seal", started=began, status="passed",
-                           finished=began + timedelta(seconds=10)))
-    during = wv.helper_workers(docs, projects, NOW)
+        running.append(helper(f"c{i:02d}", cwd="/h/Developer/seal", started=began))
+        stopped.append(helper(f"c{i:02d}", cwd="/h/Developer/seal", started=began, status="passed",
+                              finished=began + timedelta(seconds=10)))
+    during = wv.helper_workers(running, projects, NOW)
     assert len(during) == 50 and len({w["id"] for w in during}) == 50
-    after = wv.helper_workers(docs, projects, NOW + 11 * 60)
-    assert after == []
+    assert wv.helper_workers(stopped, projects, NOW) == []
 
 
 def test_broken_helper_logs_are_skipped_not_fatal():
@@ -189,18 +191,21 @@ def test_a_ticket_being_built_is_a_running_builder_under_its_project():
     w = wv.builder_workers(st, projects, NOW)
     assert w == [{"id": f"builder:{OWNER}/seal#7", "name": "#7 Add face-to-face", "kind": "builder", "state": "running",
                   "project": "seal", "ended": None, "desc": "Pipeline builder: executing started"}]
+    assert not hasattr(wv, "FADE_S")  # no fading (Gil, 2026-10-30)
 
 
-def test_a_builder_that_finished_fades_and_one_that_failed_is_red():
-    st = {(f"{OWNER}/marvin", 1): stages(("done", "passed", T0 - timedelta(minutes=5), None)),
-          (f"{OWNER}/marvin", 2): stages(("done", "passed", T0 - timedelta(minutes=11), None)),
-          (f"{OWNER}/marvin", 3): stages(("verifying", "failed", T0 - timedelta(minutes=1), None)),
-          (f"{OWNER}/marvin", 4): stages(("executing", "started", T0 - timedelta(minutes=35), None))}  # no stage event for 35 min, never ended
+def test_a_builder_that_finished_leaves_and_one_that_died_is_red_until_a_retry_passes():
+    st = {(f"{OWNER}/marvin", 1): stages(("done", "passed", T0 - timedelta(seconds=5), None)),
+          (f"{OWNER}/marvin", 3): stages(("verifying", "failed", T0 - timedelta(days=4), None)),
+          (f"{OWNER}/marvin", 4): stages(("executing", "started", T0 - timedelta(minutes=35), None)),  # went quiet
+          (f"{OWNER}/marvin", 5): stages(("verifying", "failed", T0 - timedelta(hours=2), None),     # the retry
+                                         ("claimed", "started", T0 - timedelta(hours=1), None),
+                                         ("done", "passed", T0 - timedelta(minutes=50), None))}
     w = by_id(wv.builder_workers(st, wv.monitored_projects(catalog()), NOW))
-    assert w[f"builder:{OWNER}/marvin#1"]["state"] == "passed"
-    assert f"builder:{OWNER}/marvin#2" not in w
+    assert f"builder:{OWNER}/marvin#1" not in w
     assert w[f"builder:{OWNER}/marvin#3"]["state"] == "failed"
     assert w[f"builder:{OWNER}/marvin#4"]["state"] == "failed"
+    assert f"builder:{OWNER}/marvin#5" not in w
 
 
 def test_a_builder_for_a_repo_with_no_project_is_unassigned():
@@ -224,35 +229,51 @@ JOBS = {
 }
 
 
+ALL_RUNNING = {name: {"runs": [{"status": "running", "started_at": iso(T0)}]} for name in JOBS}
+
+
 def test_each_job_goes_under_the_project_its_declared_goal_names():
-    w = by_id(wv.job_workers(JOBS, {}, [], wv.monitored_projects(catalog()), NOW))
+    w = by_id(wv.job_workers(JOBS, ALL_RUNNING, [], wv.monitored_projects(catalog()), NOW))
     assert w["job:for-seal"]["project"] == "seal"
     assert w["job:north-star"]["project"] == "marvin"  # the north stars are MARVIN's own
 
 
 def test_a_job_with_no_declared_goal_is_unassigned():
-    w = by_id(wv.job_workers(JOBS, {}, [], wv.monitored_projects(catalog()), NOW))
+    w = by_id(wv.job_workers(JOBS, ALL_RUNNING, [], wv.monitored_projects(catalog()), NOW))
     assert w["job:no-goal"]["project"] is None
     assert w["job:lost-goal"]["project"] is None
 
 
+RUNNING = {"runs": [{"status": "running", "started_at": iso(T0 - timedelta(minutes=2))}]}
+
+
 def test_a_job_running_here_but_not_in_the_catalog_is_unassigned_not_dropped():
-    w = by_id(wv.job_workers(JOBS, {}, ["mystery", "for-seal"], wv.monitored_projects(catalog()), NOW))
-    assert w["job:mystery"]["project"] is None and w["job:mystery"]["state"] == "idle"
+    logs = {"mystery": RUNNING, "for-seal": RUNNING}
+    w = by_id(wv.job_workers(JOBS, logs, ["mystery", "for-seal"], wv.monitored_projects(catalog()), NOW))
+    assert w["job:mystery"]["project"] is None and w["job:mystery"]["state"] == "running"
     assert len([k for k in w if k == "job:for-seal"]) == 1
 
 
-def test_a_job_state_comes_from_its_run_log():
-    logs = {"for-seal": {"runs": [{"status": "running", "started_at": iso(T0 - timedelta(minutes=2))}]},
+def test_a_job_shows_only_while_running_or_red_after_a_failure():
+    logs = {"for-seal": RUNNING,
             "north-star": {"runs": [{"status": "failed", "started_at": iso(T0 - timedelta(hours=2)),
                                      "finished_at": iso(T0 - timedelta(hours=2))}]},
-            "no-goal": {"runs": [{"status": "running", "started_at": iso(T0 - timedelta(hours=2))}]}}  # crashed
+            "no-goal": {"runs": [{"status": "running", "started_at": iso(T0 - timedelta(hours=2))}]},  # crashed
+            "lost-goal": {"runs": [{"status": "passed", "started_at": iso(T0), "finished_at": iso(T0)}]},
+            "switched-off": RUNNING}
     w = by_id(wv.job_workers(JOBS, logs, [], wv.monitored_projects(catalog()), NOW))
     assert w["job:for-seal"]["state"] == "running"
     assert w["job:north-star"]["state"] == "failed"
     assert w["job:no-goal"]["state"] == "failed"
-    assert w["job:lost-goal"]["state"] == "idle"
-    assert w["job:switched-off"]["state"] == "off"
+    assert "job:lost-goal" not in w      # idle: not drawn
+    assert "job:switched-off" not in w   # off: not drawn, whatever its log says
+    assert w["job:north-star"]["ended"] == (T0 - timedelta(hours=2)).timestamp()
+
+
+def test_a_failed_job_whose_next_run_passed_is_gone():
+    logs = {"for-seal": {"runs": [{"status": "failed", "started_at": iso(T0 - timedelta(hours=2))},
+                                  {"status": "passed", "started_at": iso(T0), "finished_at": iso(T0)}]}}
+    assert wv.job_workers(JOBS, logs, [], wv.monitored_projects(catalog()), NOW) == []
 
 
 # ── the whole half, from disk ───────────────────────────────────────────────
