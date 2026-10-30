@@ -22,17 +22,17 @@ export function holdTestSlot(args, { spawnFn = spawn, python = PYTHON, script = 
     try {
       child = spawnFn(python, [script, ...args], { stdio: ['pipe', 'pipe', 'inherit'] })
     } catch { resolve(none); return }
-    let settled = false
+    let answered = false
     const exited = new Promise((r) => { child.once('exit', r); child.once('error', r) })
-    const settle = (v) => { if (!settled) { settled = true; resolve(v) } }
-    child.once('error', () => settle(none))
-    child.once('exit', () => settle(none))
+    const answer = (v) => { if (!answered) { answered = true; resolve(v) } }
+    child.once('error', () => answer(none))
+    child.once('exit', () => answer(none))
     let out = ''
     child.stdout.on('data', (b) => {
       out += b
       if (out.includes('held\n')) {
         if (unref) { child.unref(); child.stdin.unref?.(); child.stdout.unref?.() }
-        settle({ held: true, release: async () => { try { child.stdin.end() } catch { /* gone already */ } await exited } })
+        answer({ held: true, release: async () => { try { child.stdin.end() } catch { /* gone already */ } await exited } })
       }
     })
   })

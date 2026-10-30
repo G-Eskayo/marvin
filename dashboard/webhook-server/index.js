@@ -2,7 +2,7 @@ import { readFileSync } from 'fs'
 import os from 'os'
 import path from 'path'
 import { createServer } from 'http'
-import { mergePr, baselineFailsOnMain, mergesAhead, execWithGroupTimeout, runDiskFirstAid, memoryGuardCheck, withMergeMark, sweepGateClones } from './merge.js'
+import { mergePr, baselineFailsOnMain, mergesAhead, execWithGroupTimeout, runDiskFirstAid, memoryGuardCheck, withMergeMark, forgetQueuedMerge, sweepGateClones } from './merge.js'
 import { snapshotExec } from './pr_snapshot.js'
 import { createMergeTracker, createInflightStore, takeInterruptedMerges, recordMergeDuration, estimateMergeMs, machineLoad, approveResponder, wantsStream, createMergeLatch, alreadyMergingBody } from './merge_progress.js'
 import { resolveDeviceId, peerHosts } from '../electron/main/device_identity.js'
@@ -226,6 +226,8 @@ const server = createServer(async (req, res) => {
         }
       }) : null
       tracker?.start(mergesAhead(prUrl))
+      // marvin#940: this merge starting drops the same PR's copy queued for memory, so the queue never runs it twice.
+      if (prUrl && payload.by !== 'memory-queue') await forgetQueuedMerge(prUrl)
       try {
         // mergePr() returning normally covers both a real merge (merged:
         // true) and G-Eskayo/marvin#91's merge-time gate routing the ticket
@@ -260,6 +262,9 @@ const server = createServer(async (req, res) => {
       }
     } finally {
       if (prUrl) mergeLatch.release(prUrl)
+      // marvin#940: an approval that waited for memory has run by itself. The dashboards (here and on the other Macs)
+      // show it waiting; this is their trigger to look again (approval_retry.js concludes it from GitHub's state).
+      if (payload?.by === 'memory-queue') announceThisMac('memory-queue run finished')
     }
     return
   }
@@ -288,6 +293,17 @@ const server = createServer(async (req, res) => {
   }
 })
 
+// marvin#762/#940: tell this Mac's dashboard and the other Macs' that this one can merge (or just merged a waiting
+// approval): each runs one pass over the approvals it saved. A trigger, never a timer.
+function announceThisMac(why) {
+  return announceMergeHost({
+    machineId,
+    localRefreshUrl: DASHBOARD_REFRESH_URL,
+    peers: peerHosts(),
+    post: (url, body) => fetch(url, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body), signal: AbortSignal.timeout(5000) })
+  }).then(({ told, of }) => console.log(`[merge-host] ${why}: told ${told} of ${of}`)).catch(() => { /* best effort */ })
+}
+
 const rebuildCheck = createRebuildCheckTrigger()
 
 // marvin#568: which Mac runs the merges (shown on the card), and the in-flight record a restart reads.
@@ -312,12 +328,7 @@ server.listen(PORT, () => {
 
   // marvin#762: this Mac can merge again. Saved approvals (on this Mac's dashboard, and on the other Mac's, which
   // could not reach this one) are retried on this, not on a timer.
-  announceMergeHost({
-    machineId,
-    localRefreshUrl: DASHBOARD_REFRESH_URL,
-    peers: peerHosts(),
-    post: (url, body) => fetch(url, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body), signal: AbortSignal.timeout(5000) })
-  }).then(({ told, of }) => console.log(`[merge-host] announced this Mac can merge: ${told} of ${of} reached`))
+  announceThisMac('webhook started')
 
   // Trigger source for GitHub-side changes to any board repo: tell an open dashboard on this
   // machine what changed the moment it does (best-effort, like /mr-ready).

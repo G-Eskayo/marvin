@@ -935,10 +935,11 @@ export function triggerTicketPipeline(spawnFn = spawn) {
 // work, a process inside, or commits the PR lacks is kept (lib/disk_triggers.py). Fire-and-forget, like the scan.
 // marvin#845: ask lib/memory_guard.py before the gate's heavy work. Refused (exit 3), this same Approve is queued as a
 // POST to this Mac's webhook, to run when macOS reports memory pressure back at normal. Any other failure: go ahead.
+// marvin#940: the queued POST says `by: 'memory-queue'`, so its end tells the dashboards (they show it waiting).
 export async function memoryGuardCheck(prUrl, port, exec = execFileAsync) {
   const what = `PR #${prNumberOf(prUrl) ?? '?'}`
   const approve = ['/usr/bin/curl', '-sS', '-X', 'POST', '-H', 'Content-Type: application/json',
-    '--data', JSON.stringify({ pr_url: prUrl, by: 'you' }), `http://127.0.0.1:${port}/approve`]
+    '--data', JSON.stringify({ pr_url: prUrl, by: 'memory-queue' }), `http://127.0.0.1:${port}/approve`]
   try {
     await exec(VENV_PYTHON, [MEMORY_GUARD_SCRIPT, 'check', '--what', what, '--key', `merge:${prUrl}`, '--', ...approve], { timeout: 30_000 })
     return { ok: true }
@@ -948,6 +949,17 @@ export async function memoryGuardCheck(prUrl, port, exec = execFileAsync) {
     let queued = true
     try { queued = JSON.parse(String(e.stdout || '').trim().split('\n').pop()).queued !== false } catch { /* default: queued */ }
     return { ok: false, queued, message }
+  }
+}
+
+// marvin#940: a merge of this PR is starting (a second Approve, a retry from a dashboard): its copy queued for memory,
+// if any, is dropped, so the queue never runs it again. True when one was there. Never fails a merge.
+export async function forgetQueuedMerge(prUrl, exec = execFileAsync) {
+  try {
+    const { stdout } = await exec(VENV_PYTHON, [MEMORY_GUARD_SCRIPT, 'forget', '--key', `merge:${prUrl}`], { timeout: 30_000 })
+    return JSON.parse(String(stdout || '').trim().split('\n').pop()).forgotten === true
+  } catch {
+    return false
   }
 }
 

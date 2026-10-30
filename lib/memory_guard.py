@@ -29,6 +29,7 @@ other work while a merge runs; the merge ending is the trigger (the webhook's `k
     memory_guard.py drain      # start the oldest queued item if pressure is normal
     memory_guard.py kick       # drain in the background, only when something is queued
     memory_guard.py status     # one JSON line: level, swap, what waits (Health's memory:pressure card)
+    memory_guard.py forget --key K   # drop a queued item that started some other way (prints {"forgotten": bool})
 """
 from __future__ import annotations
 
@@ -297,6 +298,19 @@ def drain(level_reader: Callable[[], str | None] = read_level, start: Callable[[
     return entry
 
 
+def forget(key: str) -> bool:
+    """Drop the queued item with this key, if it is still waiting (marvin#940): a merge queued for memory that was
+    approved again and started, or that another Mac is about to merge. False when it was not there (never queued, or
+    already started): under the queue lock, so a drain and a forget never both have it."""
+    with _queue_lock():
+        for path, entry in _entries():
+            if entry.get("key") == key:
+                path.unlink(missing_ok=True)
+                record("forgotten", what=entry.get("what"))
+                return True
+    return False
+
+
 def kick() -> None:
     """After a guarded job ends: drain in the background, only when something is waiting (a directory listing)."""
     if QUEUE_DIR.is_dir() and any(QUEUE_DIR.glob("*.json")):
@@ -467,6 +481,8 @@ def main(argv: list[str] | None = None) -> int:
     c.add_argument("command", nargs=argparse.REMAINDER)
     for name in ("watch", "drain", "kick", "status"):
         sub.add_parser(name)
+    f = sub.add_parser("forget")
+    f.add_argument("--key", required=True)
     a = ap.parse_args(argv)
     if a.cmd == "check":
         command = a.command[1:] if a.command[:1] == ["--"] else a.command
@@ -482,6 +498,8 @@ def main(argv: list[str] | None = None) -> int:
         print(json.dumps({"started": e.get("what") if e else None}))
     elif a.cmd == "kick":
         kick()
+    elif a.cmd == "forget":
+        print(json.dumps({"forgotten": forget(a.key)}))
     else:
         print(json.dumps(status()))
     return 0

@@ -13,12 +13,17 @@ import { approveOnAnyMachine } from './merge_failover.js'
 // unreachable, missing from the list, or answering ALREADY_MERGING (its webhook still has the merge) means nothing
 // started: the approval stays interrupted and waiting, the try not counted, and the card goes back to "interrupted".
 //
+// marvin#940: a machine that refuses for memory AND queues it (MEMORY_PRESSURE, action retry) has kept the approval:
+// it runs there by itself when pressure drops. That is waiting-memory, not a failure: saved in the ledger with the
+// machine, the card says "Approved: waiting for memory on the Mac mini". A retry of it that finds that machine already
+// merging it (ALREADY_MERGING: its queued copy just started) stays waiting, the try not counted.
+//
 // send(prUrl, url, { onEvent }) is approveMrStream's shape; push(url, op) forwards an op change to the card.
 export function createApproveFlow({ mergeOps, ledger, machines, send, push = () => {}, confirm = async () => true, after = () => {} }) {
   return async function approve(url, { number = null, head = null, retry = false, machine: pinned } = {}) {
     const pin = pinned !== undefined
     const targets = pin ? machines().filter((m) => m.id === pinned) : machines()
-    const before = pin ? ledger.get(url) : null
+    const before = pin || retry ? ledger.get(url) : null
     const stillInterrupted = (why) => {
       ledger.conclude(url, 'interrupted', { machine: pinned, reason: before?.reason ?? why, unsent: true })
       push(url, mergeOps.interrupt(url))
@@ -48,6 +53,15 @@ export function createApproveFlow({ mergeOps, ledger, machines, send, push = () 
       try { after(url, result) } catch { /* list bookkeeping never turns a merge into an error */ }
       return { ...result, cancelled: false }
     } catch (err) {
+      const queuedForMemory = err?.payload?.code === 'MEMORY_PRESSURE' && err.payload.action === 'retry'
+      const stillQueuedThere = retry && before?.outcome === 'waiting-memory' && err?.payload?.code === 'ALREADY_MERGING'
+      if (queuedForMemory || stillQueuedThere) {
+        const id = err.machine?.id ?? before?.machine ?? null
+        const reason = queuedForMemory ? err.payload.message : before?.reason ?? err.payload.message
+        ledger.conclude(url, 'waiting-memory', { machine: id, reason, unsent: stillQueuedThere })
+        push(url, mergeOps.waitMemory(url, reason, err.machine?.label ?? null))
+        return { merged: false, waitingMemory: true, machine: id, machineLabel: err.machine?.label ?? null, reason, cancelled: false }
+      }
       if (pin && (err?.noMachine || err?.payload?.code === 'ALREADY_MERGING')) return stillInterrupted(err.message)
       if (err?.noMachine) {
         ledger.conclude(url, 'queued', { reason: err.message })

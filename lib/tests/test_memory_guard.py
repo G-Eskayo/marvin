@@ -375,3 +375,26 @@ def test_drain_starts_no_helper_while_a_merge_runs_and_the_merge_ending_lets_it(
     assert mg.drain(level_reader=_level("normal"), start=lambda e: pytest.fail("a merge is running")) is None
     _end(merge_running)
     assert mg.drain(level_reader=_level("normal"), start=lambda e: None)["what"] == "helper"
+
+
+# ── marvin#940: the threshold, and forgetting a queued merge that started some other way ─────────────────────────
+
+def test_left_over_swap_alone_never_refuses(never_kill):
+    """16:46 on 2026-10-30 read warn with 2.6-3.0 GB of swap. Only the kernel's level counts; swap is for the words."""
+    r = mg.guard("PR #238", ["true"], "/tmp", key="merge:u", level_reader=_level("normal"),
+                 swap_reader=lambda: pytest.fail("swap is not read at normal"), start_watcher=_no_watcher)
+    assert r["ok"] is True
+
+
+def test_forget_removes_a_queued_merge_once():
+    mg.guard("PR #238", ["true"], "/tmp", key="merge:u238", level_reader=_level("warn"), start_watcher=_no_watcher)
+    mg.guard("helper", ["true"], "/tmp", level_reader=_level("warn"), start_watcher=_no_watcher)
+    assert mg.forget("merge:u238") is True
+    assert [e["what"] for e in mg.queued()] == ["helper"]
+    assert mg.forget("merge:u238") is False   # already gone (or started): nothing to forget
+
+
+def test_forget_on_the_command_line_prints_whether_it_was_there(tmp_path):
+    mg.guard("PR #1", ["true"], "/tmp", key="merge:u1", level_reader=_level("warn"), start_watcher=_no_watcher)
+    assert mg.main(["forget", "--key", "merge:u1"]) == 0
+    assert mg.queued() == []
