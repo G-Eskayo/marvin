@@ -6,3 +6,25 @@
    move the window; anything clickable inside stays clickable. */
 .titlebar { -webkit-app-region: drag; }
 .titlebar button, .titlebar a, .titlebar input, .titlebar select { -webkit-app-region: no-drag; }
+
+/* MR Review's merge motion (marvin#838, lib/merge_motion.js; approved as the #761 mock-up). The solid band that
+   crosses a card is the brand blue with the site's focus-glow halo. Its leading edge carries the light bar, round 1's
+   look the owner asked back for (round 2 notes): a bright core line with a blue bloom. --mm-lightbar-lead and
+   --mm-lightbar-trail set how strong each edge's light bar is (0 to 1); the trailing one is off. */
+.mm-band { position: absolute; top: 0; left: 0; width: 0; opacity: 0; pointer-events: none; z-index: 2;
+           background: #198fd9; box-shadow: 0 0 8px 2px rgba(102, 175, 233, 0.6); }
+.mm-band::before, .mm-band::after { content: ''; position: absolute; top: -1px; bottom: -1px; width: 3px; border-radius: 2px;
+           background: linear-gradient(180deg, rgba(230, 244, 255, 0), #e6f4ff 18%, #ffffff 50%, #e6f4ff 82%, rgba(230, 244, 255, 0));
+           box-shadow: 0 0 6px 2px rgba(186, 225, 255, 0.95), 0 0 18px 6px rgba(102, 175, 233, 0.75), 0 0 36px 12px rgba(25, 143, 217, 0.45);
+           mix-blend-mode: screen; }
+.mm-band::after { right: -1px; opacity: var(--mm-lightbar-lead, 1); }
+.mm-band::before { left: -1px; opacity: var(--mm-lightbar-trail, 0); }
+
+/* The merge bar turning into the check mark once GitHub confirms (round 2 note on "waiting"). */
+.mm-check { position: absolute; z-index: 3; display: grid; place-items: center; pointer-events: none;
+            box-shadow: 0 0 10px 1px rgba(52, 211, 153, 0.55); }
+.mm-check svg { width: 15px; height: 15px; fill: none; stroke: #052e16; stroke-width: 2.8; stroke-linecap: round; stroke-linejoin: round;
+                stroke-dasharray: 1; stroke-dashoffset: var(--mm-tick, 1); }
+
+/* "↑ #741 merged above you", at the top of the list's view. */
+.mm-chip { border-color: #198fd9; background: #0a0a0a; box-shadow: 0 0 10px rgba(102, 175, 233, 0.28); }

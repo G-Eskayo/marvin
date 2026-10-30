@@ -12,6 +12,8 @@ import CheckProgress from './CheckProgress.jsx'
 import MergeProgress from './MergeProgress.jsx'
 import { opForHead } from '../lib/merge_progress.js'
 import { displayTitle } from '../lib/pr_title.js'
+import { useMergeMotion, MotionSlot, MotionChip, AwayNote } from './MergeMotion.jsx'
+import { BLUE } from '../lib/merge_motion.js'
 
 const MR_LIST_REFRESH_MS = 120000
 
@@ -166,6 +168,23 @@ function DenyModal({ pr, onClose, onDenied }) {
   )
 }
 
+// Inside an MR when it merges (the owner's round-1 answer on #761): nothing throws you out; the buttons give way to
+// this line, with one soft blue glow, and the card's sweep plays when you go back to the list.
+function MergedLine({ pr, at, elsewhere }) {
+  const ref = useRef(null)
+  useEffect(() => {
+    if (!ref.current || window.matchMedia?.('(prefers-reduced-motion: reduce)').matches) return undefined
+    const glow = ref.current.animate?.([{ boxShadow: '0 0 0 0 rgba(102, 175, 233, 0)' }, { boxShadow: `0 0 16px 2px ${BLUE.halo}` }, { boxShadow: '0 0 0 0 rgba(102, 175, 233, 0)' }], { duration: 900, easing: 'ease-in-out' })
+    return () => glow?.cancel()
+  }, [])
+  const time = at ? new Date(at).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' }) : null
+  return (
+    <p ref={ref} data-merged-line className="max-w-xs rounded-lg border px-3 py-2 text-right text-sm text-neutral-200" style={{ borderColor: BLUE.core }}>
+      <b className="font-medium" style={{ color: BLUE.core }}>✓ Merged</b> into {pr.baseRefName || 'main'}{time ? ` at ${time}` : ''}{elsewhere ? ' on GitHub' : ' by you'}. It leaves the Open list when you go back.
+    </p>
+  )
+}
+
 // Shared by PrCard (the list row) and MrDetail (the deep-dive page) so
 // approve/deny behave and look identical in both places, per Gil's
 // request -- one implementation, not a second copy that could drift.
@@ -189,13 +208,14 @@ export function statusFromOp(m) {
 }
 const MERGE_STATUSES = new Set(['approving', 'error', 'reengaged', 'interrupted', 'merged', 'queued'])
 
-export function ApproveDenyActions({ pr, onApproved, onDenied }) {
+export function ApproveDenyActions({ pr, onApproved, onDenied, inDetail = false }) {
   const [status, setStatus] = useState('idle') // idle | approving | error | reengaged | interrupted | merged | queued
   const [errorMessage, setErrorMessage] = useState(null)
   const [showDenyModal, setShowDenyModal] = useState(false)
   const [clearing, setClearing] = useState(null) // null | 'confirm' | 'working' | 'done' | { failed }
   const [optionsAsk, setOptionsAsk] = useState(null) // null | 'working' | 'done' | { failed }
   const [progress, setProgress] = useState(null) // the merge's stages (marvin#568)
+  const [mergedAt, setMergedAt] = useState(null) // when GitHub confirmed it (the merged line inside an MR, #838)
 
   // The merge runs in the main process, so this button can be unmounted (you navigate away) and remounted mid-merge.
   // One read when the card mounts (or the PR's head changes) picks up a merge already running; after that every
@@ -206,6 +226,7 @@ export function ApproveDenyActions({ pr, onApproved, onDenied }) {
     const apply = (m) => {
       const v = statusFromOp(m)
       setProgress(v.progress)
+      if (v.status === 'merged') setMergedAt((t) => t ?? m.at ?? Date.now())
       if (v.status === 'idle') {
         // Nothing running, or the last failure was on an older commit than this PR's head (a fix was pushed).
         setStatus((s) => (MERGE_STATUSES.has(s) ? 'idle' : s))
@@ -257,6 +278,7 @@ export function ApproveDenyActions({ pr, onApproved, onDenied }) {
         return
       }
       setStatus('merged')
+      setMergedAt((t) => t ?? Date.now())
       onApproved(pr.number)
     } catch (err) {
       setStatus('error')
@@ -330,6 +352,7 @@ export function ApproveDenyActions({ pr, onApproved, onDenied }) {
       {view.checkProgress && <CheckProgress checks={pr.checks} tone={view.tone} />}
       {progress && MERGE_STATUSES.has(status) && <MergeProgress progress={progress} />}
       {view.note && <p className="text-right text-xs text-emerald-400">{view.note}</p>}
+      {inDetail && status === 'merged' && <MergedLine pr={pr} at={mergedAt} elsewhere={!!errorMessage} />}
       {view.rework && (
         <div className={`max-w-xs rounded-md border px-2 py-1 text-right text-xs ${REWORK_TONE[view.rework.state] || 'border-neutral-700 text-neutral-300'}`} data-rework={view.rework.state}>
           <p className="font-medium">{view.rework.headline}</p>
@@ -439,7 +462,7 @@ function ParitySummary({ parity }) {
   )
 }
 
-function PrCard({ pr, parity, onOpenTicket, onApproved, onDenied, onSelect }) {
+function PrCard({ pr, parity, onOpenTicket, onApproved, onDenied, onSelect, waiting = false }) {
   const [prEvents, setPrEvents] = useState([])
 
   useEffect(() => {
@@ -448,6 +471,7 @@ function PrCard({ pr, parity, onOpenTicket, onApproved, onDenied, onSelect }) {
     }
   }, [pr.ticketNumber, pr.repo])
 
+  // While GitHub confirms a merge, the card's border is the brand blue (round 2 on #761).
   return (
     <div
       onClick={() => onSelect(pr)}
@@ -456,7 +480,9 @@ function PrCard({ pr, parity, onOpenTicket, onApproved, onDenied, onSelect }) {
       onKeyDown={(e) => {
         if (e.key === 'Enter' || e.key === ' ') onSelect(pr)
       }}
-      className="cursor-pointer rounded-lg border border-neutral-800 bg-neutral-900 p-4 transition-colors hover:border-neutral-700 hover:bg-neutral-800/50"
+      data-waiting={waiting ? '1' : undefined}
+      className={`cursor-pointer rounded-lg border bg-neutral-900 p-4 transition-colors hover:bg-neutral-800/50 ${waiting ? '' : 'border-neutral-800 hover:border-neutral-700'}`}
+      style={waiting ? { borderColor: BLUE.core } : undefined}
     >
       <div className="mb-2 flex flex-wrap items-center justify-between gap-3">
         <div className="min-w-0 flex-1 basis-80">
@@ -665,6 +691,23 @@ function OpenPrs({ nav, onOpenDocs, onOpenBoard, onOpenTicket, onCount }) {
   // An open PR opens at its top; Back lands exactly where you clicked in the list (#755).
   useScrollPlace('mr-open-pr', selected ? `pr:${selected.key}` : null)
 
+  // The merge motion (#838): a merge GitHub confirms sweeps its card out, a new MR sweeps in where it belongs. Inside an
+  // MR the list is off screen: the one you were inside plays when you go back, the rest are counted.
+  const lastSelected = useRef(null)
+  if (selected) lastSelected.current = selected.url
+  const prsRef = useRef(prs)
+  prsRef.current = prs
+  const motion = useMergeMotion(prs, {
+    visible: !selected,
+    focus: selected ? null : lastSelected.current,
+    watch: true,
+    onRefused: (url, why) => {
+      const pr = (prsRef.current || []).find((p) => p.url === url)
+      // GitHub refused the merge: the existing notice, and the card stays in Open (it never moved).
+      setNotice({ url, number: pr?.number ?? null, message: `${why || 'The merge didn’t go through.'} It stays in Open.`, at: Date.now() })
+    }
+  })
+
   if (selected) {
     return (
       <MrDetail
@@ -675,7 +718,7 @@ function OpenPrs({ nav, onOpenDocs, onOpenBoard, onOpenTicket, onCount }) {
         onOpenBoard={onOpenBoard}
         onOpenTicket={onOpenTicket}
         onBack={() => setSelected(null)}
-        onApproved={reloadAndReturnToList}
+        onApproved={reload}
         onDenied={reloadAndReturnToList}
       />
     )
@@ -687,7 +730,7 @@ function OpenPrs({ nav, onOpenDocs, onOpenBoard, onOpenTicket, onCount }) {
   if (prs === null) {
     return <div className="flex h-full items-center justify-center text-neutral-500">Loading…</div>
   }
-  if (prs.length === 0) {
+  if (prs.length === 0 && motion.shown.length === 0) {
     // #422: an empty list because GitHub couldn't be reached is not "nothing to review".
     return fetchStatus?.errors?.length ? <div className="p-6"><FetchBanner status={fetchStatus} /></div> : <EmptyState />
   }
@@ -705,18 +748,25 @@ function OpenPrs({ nav, onOpenDocs, onOpenBoard, onOpenTicket, onCount }) {
       )}
       <FetchBanner status={fetchStatus} />
       {notice && <CorrectionNotice notice={notice} onDismiss={() => setNotice(null)} />}
+      <AwayNote note={motion.note} />
       <ParitySummary parity={parity} />
-      {prs.map((pr) => (
-        <PrCard
-          key={pr.key}
-          pr={pr}
-          parity={parity?.prs.find((r) => r.key === pr.key)}
-          onOpenTicket={onOpenTicket}
-          onApproved={reloadAndReturnToList}
-          onDenied={reloadAndReturnToList}
-          onSelect={setSelected}
-        />
-      ))}
+      <MotionChip chip={motion.chip} onDone={motion.nextChip} />
+      {/* The motion holds your place itself (scrollPlan), so the browser's own scroll anchoring is off here. */}
+      <div style={{ overflowAnchor: 'none' }}>
+        {motion.shown.map((pr) => (
+          <MotionSlot key={pr.key} slotRef={motion.slotRef(pr.url)} waiting={motion.entering.has(pr.url)}>
+            <PrCard
+              pr={pr}
+              parity={parity?.prs.find((r) => r.key === pr.key)}
+              onOpenTicket={onOpenTicket}
+              onApproved={reloadAndReturnToList}
+              onDenied={reloadAndReturnToList}
+              onSelect={setSelected}
+              waiting={motion.isBlue(pr.url)}
+            />
+          </MotionSlot>
+        ))}
+      </div>
     </div>
   )
 }

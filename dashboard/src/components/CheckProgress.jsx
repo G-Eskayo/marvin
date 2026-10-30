@@ -37,7 +37,7 @@ export default function CheckProgress({ checks, tone = 'wait', now: fixedNow = n
         className="w-full text-right text-neutral-400 hover:text-neutral-200"
       >
         <span className="flex items-center gap-2">
-          <span className="h-1.5 flex-1 overflow-hidden rounded-sm bg-neutral-800">
+          <span data-progress-bar className="h-1.5 flex-1 overflow-hidden rounded-sm bg-neutral-800">
             <span className={`block h-full transition-[width] ${BAR_TONE[tone] || BAR_TONE.wait}`} style={{ width: `${s.percent}%` }} />
           </span>
           <span className="shrink-0 text-neutral-300">{open ? '▾' : '▸'} {s.done} of {s.total} done</span>

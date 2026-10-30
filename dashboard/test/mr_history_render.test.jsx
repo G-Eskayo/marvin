@@ -14,6 +14,22 @@ const rows = [
   { kind: 'merged', url: 'u135', number: 135, title: 'ADR 0024 beta ingest', repo: 'G-Eskayo/clarity-captions', at: at('2026-10-12T11:51:00'), by: 'unrecorded' }
 ]
 
+describe('HistoryList: the "reverted by #N" pill (#838, the owner\'s round-2 look on #761)', () => {
+  const reverts = [
+    { kind: 'merged', url: 'u760', number: 760, title: 'Revert "Fix red main"', repo: 'o/r', at: at('2026-10-13T14:00:00'), by: 'you' },
+    { kind: 'merged', url: 'u414', number: 414, title: 'Fix red main', repo: 'o/r', at: at('2026-10-13T12:47:00'), by: 'you' }
+  ]
+  const html = renderToStaticMarkup(<HistoryList data={{ rows: reverts, updatedAt: 1, errors: [] }} page={0} setPage={noop} onOpen={noop} now={NOW} />)
+  it('the original gets a small grey outline pill after its title', () => {
+    expect(html).toContain('Fix red main<span data-reverted-by="760"')
+    expect(html).toContain('>reverted by #760</span>')
+    expect(html.match(/data-reverted-by/g)).toHaveLength(1)
+  })
+  it('a list with no revert has no pill', () => {
+    expect(renderToStaticMarkup(<HistoryList data={{ rows: [reverts[1]], updatedAt: 1 }} page={0} setPage={noop} onOpen={noop} now={NOW} />)).not.toContain('reverted by')
+  })
+})
+
 describe('HistoryList', () => {
   const html = renderToStaticMarkup(<HistoryList data={{ rows, updatedAt: 1, errors: [] }} page={0} setPage={noop} onOpen={noop} now={NOW} />)
   it('groups by day with Today and Yesterday', () => {

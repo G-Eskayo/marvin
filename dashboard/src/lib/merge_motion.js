@@ -14,6 +14,8 @@ import * as MotionModule from '../vendor/motion-14.8.0.js'
 
 // The vendored Motion build is UMD: a CommonJS module under the tests, a global (window.Motion) in the app's build.
 const Motion = MotionModule.spring ? MotionModule : MotionModule.default?.spring ? MotionModule.default : globalThis.Motion
+// Motion's animate(), for the components that play these plans on real elements.
+export const animate = (...args) => Motion.animate(...args)
 
 // The website's blue: the brand blue (gileskayo.me brand.css --blue) with the live site's focus-glow halo.
 export const BLUE = { core: '#198fd9', halo: 'rgba(102, 175, 233, 0.6)' }
@@ -144,8 +146,8 @@ export function motionDone(state) {
 // caller; whatever was waiting is handed back to settle without playing (the result, not the motion).
 export function flushMotions(state) {
   const done = motionDone(state)
-  const settled = (state.playing ? [state.playing] : []).concat(state.queue)
-  return { state: { ...done, queue: [], played: settled.reduce((p, m) => remember(p, idOf(m)), done.played) }, settled }
+  const unplayed = (state.playing ? [state.playing] : []).concat(state.queue)
+  return { state: { ...done, queue: [], played: unplayed.reduce((p, m) => remember(p, idOf(m)), done.played) }, unplayed }
 }
 
 // Chips when scrolled away: one shows at a time, the rest wait their turn in the order they came; an event (kind + MR)
@@ -201,8 +203,8 @@ export function onListShown(state, { focus = null } = {}) {
   const pending = state.pending || []
   const next = { ...state, listVisible: true, pending: [] }
   const play = pending.includes(focus) ? [focus] : []
-  const settled = pending.filter((k) => k !== focus)
-  return { state: next, play, settled, note: settled.length ? `${settled.length} merged while you were away` : null }
+  const missed = pending.filter((k) => k !== focus)
+  return { state: next, play, missed, note: missed.length ? `${missed.length} merged while you were away` : null }
 }
 
 // Where the change is relative to what you're looking at. Off screen it happens without playing; above you, the page

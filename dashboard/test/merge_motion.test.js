@@ -247,9 +247,9 @@ describe('the live queue: merges and arrivals play one at a time, in the order t
   it('flush (a swipe, leaving the list): what was waiting is handed back to settle without playing', () => {
     const r = M.nextMotion(add(M.initialMotions(), { kind: 'leave', key: 'a' }, { kind: 'leave', key: 'b' }, { kind: 'enter', key: 'c' }))
     const f = M.flushMotions(r.state)
-    expect(f.settled).toEqual([{ kind: 'leave', key: 'a' }, { kind: 'leave', key: 'b' }, { kind: 'enter', key: 'c' }])
+    expect(f.unplayed).toEqual([{ kind: 'leave', key: 'a' }, { kind: 'leave', key: 'b' }, { kind: 'enter', key: 'c' }])
     expect(M.nextMotion(f.state).item).toBeNull()
-    expect(M.nextMotion(M.addMotion(f.state, { kind: 'leave', key: 'b' })).item).toBeNull() // settled counts as played
+    expect(M.nextMotion(M.addMotion(f.state, { kind: 'leave', key: 'b' })).item).toBeNull() // an unplayed one counts as played
   })
 
   it('remembers a bounded number of played motions', () => {
@@ -446,14 +446,14 @@ describe('deferral: inside an MR, another tab, or the dashboard asleep', () => {
   it('the MR you were inside still plays on the way back; the others are counted', () => {
     const back = M.onListShown({ listVisible: false, pending: ['a', 'b'] }, { focus: 'b' })
     expect(back.play).toEqual(['b'])
-    expect(back.settled).toEqual(['a'])
+    expect(back.missed).toEqual(['a'])
     expect(back.note).toBe('1 merged while you were away')
   })
 
   it('merges you missed just show the result, with the count', () => {
     const back = M.onListShown({ listVisible: false, pending: ['a', 'b'] }, {})
-    expect(back).toMatchObject({ play: [], settled: ['a', 'b'], note: '2 merged while you were away' })
-    expect(M.onListShown({ listVisible: false, pending: [] }, {})).toMatchObject({ play: [], settled: [], note: null })
+    expect(back).toMatchObject({ play: [], missed: ['a', 'b'], note: '2 merged while you were away' })
+    expect(M.onListShown({ listVisible: false, pending: [] }, {})).toMatchObject({ play: [], missed: [], note: null })
   })
 })
 
