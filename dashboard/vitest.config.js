@@ -30,6 +30,9 @@ const config = {
     // A hung test fails fast, by name (pipeline review 2026-10-21, F3). Vitest's own defaults, stated so nobody
     // raises them without seeing this: 5 s per test (a test that needs longer says so itself), 10 s per hook.
     testTimeout: 5_000,
-    hookTimeout: 10_000
+    hookTimeout: 10_000,
+    // marvin#940: inside the merge gate, the worker count sized to free memory (MARVIN_TEST_WORKERS); otherwise
+    // vitest's own default.
+    ...(/^[1-9]\d*$/.test(process.env.MARVIN_TEST_WORKERS || '') ? { minWorkers: 1, maxWorkers: Number(process.env.MARVIN_TEST_WORKERS) } : {})
   }
 }

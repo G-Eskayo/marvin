@@ -24,8 +24,9 @@ from pathlib import Path
 
 HERE = Path(__file__).resolve().parent
 sys.path.insert(0, str(HERE))
+import instance  # noqa: E402
 
-MARVIN_REPO = "G-Eskayo/marvin"
+MARVIN_REPO = instance.engine_repo()
 POWER_SUPPLY = Path("/sys/class/power_supply")
 
 
