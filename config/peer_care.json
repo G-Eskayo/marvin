@@ -1,0 +1,19 @@
+{
+  "_doc": "Peer care and the nightly reset (marvin#847, owner answers on #769, ADR 0081). lib/nightly_reset.py and lib/peer_care.py read this.",
+  "reset": {
+    "slots": {"mac-mini-1": "00:30", "macbook-pro-1": "02:30"},
+    "limit": "05:00",
+    "recheck_minutes": 15,
+    "notice_minutes": 5,
+    "postpone_minutes": 30,
+    "home_and_power_only": ["macbook-pro-1"],
+    "needs_up": {"mac-mini-1": ["mac-mini-2012"], "macbook-pro-1": ["mac-mini-1"]}
+  },
+  "home_anchor": "mac-mini-1",
+  "watch": {"mac-mini-1": ["mac-mini-2012"], "mac-mini-2012": ["mac-mini-1"]},
+  "attempts_per_incident": 3,
+  "back_within_minutes": 10,
+  "wake_wait_seconds": 120,
+  "smart_plugs": {},
+  "remote_unlock": {"mac-mini-1": true}
+}

@@ -1,0 +1,78 @@
+#!/bin/bash
+# marvin-peer-unlock: unlock a peer Mac's FileVault screen over SSH after a crash or power cut
+# (marvin#847, owner decision `remote-unlock` on #769, ADR 0081; `man fdesetup`, REMOTE UNLOCKING VIA SSH).
+#
+# Installed by marvin-peer-unlock-setup as /usr/local/libexec/marvin-peer-unlock (root, 0755) on a watcher: the Mac
+# mini or the 2012 Linux mini. sudoers lets the owner's account run it with no password. It takes one peer name and
+# nothing else: the address and user come from the root-owned config written at setup, never from the caller.
+#
+# The password never passes through argv, the environment or a pipe the caller can see. ssh gets it by running this
+# same script as its SSH_ASKPASS program, which reads the secret itself: on macOS from a System keychain item only
+# root can read, on Linux from a root-only file (0600 in a 0700 directory). The script never prints it.
+#
+#   marvin-peer-unlock <peer> --dry-run   say what would happen; read no password, connect nowhere
+set -uo pipefail
+
+SERVICE_PREFIX="marvin-peer-unlock"
+KEYCHAIN="/Library/Keychains/System.keychain"
+DIR="/usr/local/etc/marvin-peer-unlock"
+if [ "$(id -u)" -eq 0 ]; then
+  PATH=/usr/bin:/bin:/usr/sbin:/sbin                       # root never runs the caller's PATH or config dir
+else
+  DIR="${MARVIN_PEER_UNLOCK_DIR:-$DIR}"                    # tests only: as non-root the secret isn't readable anyway
+fi
+
+secret() {    # $1 = peer; prints the password to stdout (only ever ssh's askpass pipe)
+  if [ -f "$DIR/$1.secret" ]; then
+    cat "$DIR/$1.secret"
+  elif [ "$(uname -s)" = Darwin ]; then
+    security find-generic-password -s "$SERVICE_PREFIX-$1" -w "$KEYCHAIN" 2>/dev/null
+  fi
+}
+
+# ssh runs us as its askpass program: answer with the secret and nothing else.
+if [ -n "${MARVIN_PEER_UNLOCK_ASKPASS:-}" ]; then
+  case "$MARVIN_PEER_UNLOCK_ASKPASS" in *[!A-Za-z0-9-]*) exit 1 ;; esac
+  secret "$MARVIN_PEER_UNLOCK_ASKPASS" | tr -d '\n'
+  exit 0
+fi
+
+say() { echo "marvin-peer-unlock: $*"; }
+peer="${1:-}"
+DRY=0
+case "${2:-}" in
+  --dry-run) DRY=1 ;;
+  "") ;;
+  *) echo "usage: marvin-peer-unlock <peer> [--dry-run]" >&2; exit 64 ;;
+esac
+case "$peer" in
+  ""|-*|*[!A-Za-z0-9-]*) echo "usage: marvin-peer-unlock <peer> [--dry-run]  (peer: letters, digits, dashes)" >&2; exit 64 ;;
+esac
+
+conf="$DIR/$peer.conf"
+target=""
+[ -f "$conf" ] && target=$(sed -n 's/^TARGET=\([A-Za-z0-9._-]*@[A-Za-z0-9.:_-]*\)$/\1/p' "$conf" | head -1)
+
+if [ "$DRY" -eq 1 ]; then
+  say "dry run: no password is read and nothing is contacted"
+  if [ -n "$target" ]; then say "would unlock $peer at $target"; else say "no setup for $peer yet: run marvin-peer-unlock-setup"; fi
+  say "would run: ssh -o PubkeyAuthentication=no $target (the password comes from askpass, read by root)"
+  exit 0
+fi
+
+[ "$(id -u)" -eq 0 ] || [ "${MARVIN_PEER_UNLOCK_TEST:-}" = 1 ] || { say "must run as root (sudo -n /usr/local/libexec/marvin-peer-unlock)" >&2; exit 77; }
+[ -n "$target" ] || { say "refusing: no setup for $peer; run marvin-peer-unlock-setup" >&2; exit 78; }
+
+self="$0"
+case "$self" in /*) ;; *) self="$PWD/$self" ;; esac
+say "unlocking $peer at $target"
+# The pre-boot sshd offers password auth only. Once the password is accepted the Mac unlocks and closes the session,
+# so ssh's exit code says little: the caller re-probes to see whether it came up.
+MARVIN_PEER_UNLOCK_ASKPASS="$peer" SSH_ASKPASS="$self" SSH_ASKPASS_REQUIRE=force DISPLAY="${DISPLAY:-none}" \
+  ssh -o PubkeyAuthentication=no -o PreferredAuthentications=password,keyboard-interactive \
+      -o NumberOfPasswordPrompts=1 -o ConnectTimeout=10 \
+      -o StrictHostKeyChecking=accept-new -o UserKnownHostsFile="$DIR/$peer.known_hosts" \
+      "$target" true </dev/null
+rc=$?
+say "ssh finished (exit $rc); the watcher re-probes to see whether $peer came up"
+exit 0
