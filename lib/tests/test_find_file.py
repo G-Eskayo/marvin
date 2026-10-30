@@ -7,10 +7,14 @@ import subprocess
 import sys
 from pathlib import Path
 
+import pytest
+
 ORGANIZE = Path.home() / ".claude" / "organize"
 sys.path.insert(0, str(ORGANIZE))
 
-import find_file as ff  # noqa: E402
+# The tool lives in the private ~/.claude, not in this repo. A machine without it (a box build VM gets no ~/.claude,
+# ADR 0069 amendment 2) skips these tests instead of failing the whole suite's collection (found live, marvin #951).
+ff = pytest.importorskip("find_file", reason="~/.claude/organize/find_file.py isn't on this machine")
 
 HOME = Path.home()
 
