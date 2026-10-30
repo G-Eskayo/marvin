@@ -323,6 +323,45 @@ def _pair(t):
     return outcome, [], kind
 
 
+class _Stopped(Exception):
+    """The Mac-side runner was told to stop (SIGTERM/SIGHUP): settle as the box's failure, never leave the claim."""
+
+
+def _on_stop(signum, _frame):
+    raise _Stopped(f"signal {signum}")
+
+
+def ssh_holding_stdin(cmd: list[str], input: str, timeout: float, **_kw):
+    """Run ssh, write `input` (the secrets) to its stdin, and keep stdin OPEN until it ends. The box reads EOF on its
+    stdin as "the dispatching Mac is gone" (this process killed, the Mac asleep, the link down past ssh's keepalive)
+    and destroys the VM at once, instead of building on with nobody to settle it (found live 2026-10-30)."""
+    proc = subprocess.Popen(cmd, stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+    out: list[str] = []
+    err: list[str] = []
+    readers = [threading.Thread(target=lambda: out.append(proc.stdout.read()), daemon=True),
+               threading.Thread(target=lambda: err.append(proc.stderr.read()), daemon=True)]
+    for t in readers:
+        t.start()
+    try:
+        proc.stdin.write(input)
+        proc.stdin.flush()
+        proc.wait(timeout=timeout)
+    except subprocess.TimeoutExpired:
+        proc.kill()
+        raise
+    finally:
+        try:
+            proc.stdin.close()
+        except OSError:
+            pass
+        if proc.poll() is None:
+            proc.kill()
+            proc.wait()
+        for t in readers:
+            t.join(timeout=10)
+    return subprocess.CompletedProcess(cmd, proc.returncode, "".join(out), "".join(err))
+
+
 def _box_command(ref: str, sha: str, run_id: str, login: str, s: dict, box_agents: str) -> str:
     """The remote command line: names and numbers only, never a secret. Every value is checked before it gets here."""
     if not _BOX_AGENTS.match(box_agents):
@@ -335,7 +374,7 @@ def _box_command(ref: str, sha: str, run_id: str, login: str, s: dict, box_agent
             f"--reserve-mb {int(s['reserve_mb'])}")
 
 
-def run(ref: str, run_id: str, *, settings: dict | None = None, ssh=subprocess.run, settle=None, sha: str | None = None,
+def run(ref: str, run_id: str, *, settings: dict | None = None, ssh=ssh_holding_stdin, settle=None, sha: str | None = None,
         box_agents: str = "$HOME/.agents", label_pr=None, record_failure=None, records_dir: Path | None = None,
         host: str = BOX) -> dict:
     """One box build, start to settle. Never raises; returns the settled outcome plus the box's numbers."""
@@ -381,6 +420,9 @@ def run(ref: str, run_id: str, *, settings: dict | None = None, ssh=subprocess.r
                 rc, out, err, late = None, (exc.stdout or "") if isinstance(exc.stdout, str) else "", "", True
             _save_run_log(run_id, scrub(out + ("\n--- stderr ---\n" + err if err else ""), secrets))
             outcome, findings, kind, result = classify(rc, out, ssh_timed_out=late)
+    except _Stopped as exc:
+        outcome, findings, kind = _infra(f"the Mac-side runner was stopped mid-build ({exc}); the box destroyed the VM "
+                                         "when its link closed")[0], [], "infra"
     except Exception as exc:  # noqa: BLE001 -- a crash here must still settle the claim
         outcome, findings, kind = _infra(f"the Mac-side runner crashed: {exc}")[0], [], "infra"
     finally:
@@ -538,9 +580,24 @@ class Sampler:
         self.sample()
 
 
+def _watch_for_hangup(stdin, kill=os.kill) -> threading.Thread:
+    """The dispatching Mac holds our stdin open for the whole run; EOF means it is gone. Then SIGTERM ourselves: the
+    handler raises SystemExit in the main thread, and vm_run's cleanup destroys the VM."""
+    def wait():
+        try:
+            while stdin.read(4096):
+                pass
+        except (OSError, ValueError):
+            pass
+        kill(os.getpid(), __import__("signal").SIGTERM)
+    t = threading.Thread(target=wait, daemon=True)
+    t.start()
+    return t
+
+
 def box_vm(ref: str, sha: str, run_id: str, login: str, *, timeout: float, memory_mb: int, vcpus: int,
            min_disk_gb: float, reserve_mb: int, stdin=None, vm=None, meminfo=_meminfo, disk_free_gb=None,
-           lock_path: Path | None = None, sampler=None) -> dict:
+           lock_path: Path | None = None, sampler=None, watch_stdin: bool = False) -> dict:
     """Run one ticket build in a fresh VM on this box. Returns the result `vm` prints. Never raises."""
     if vm is None:
         import vm_run as vm
@@ -554,6 +611,8 @@ def box_vm(ref: str, sha: str, run_id: str, login: str, *, timeout: float, memor
         return {"refused": "engine-sha", "why": str(exc)}
     if not gh_token or not key:
         return {"refused": "no-secret", "why": "the bot token or the Claude login was missing on stdin"}
+    if watch_stdin:
+        _watch_for_hangup(stdin)
     lock_path = lock_path or BOX_LOCK
     lock_path.parent.mkdir(parents=True, exist_ok=True)
     lock = open(lock_path, "a+")
@@ -635,6 +694,9 @@ def main(argv: list[str] | None = None) -> int:
     if a.cmd == "start":
         return 0 if start(a.ref, a.run_id) else 1
     if a.cmd == "run":
+        import signal
+        for sig in (signal.SIGTERM, signal.SIGHUP):
+            signal.signal(sig, _on_stop)   # stopped mid-build: settle it, and the box sees its stdin close
         r = run(a.ref, a.run_id, sha=a.sha, box_agents=a.box_agents)
         print(json.dumps(r.get("box", r)))
         return 0 if r.get("raised") else 1
@@ -644,7 +706,7 @@ def main(argv: list[str] | None = None) -> int:
         for sig in (signal.SIGTERM, signal.SIGHUP):
             signal.signal(sig, vm_run._terminate_cleanly)   # GNU timeout's TERM still runs the VM's cleanup
         r = box_vm(a.ref, a.sha, a.run_id, a.login, timeout=a.timeout, memory_mb=a.memory_mb, vcpus=a.vcpus,
-                   min_disk_gb=a.min_disk_gb, reserve_mb=a.reserve_mb)
+                   min_disk_gb=a.min_disk_gb, reserve_mb=a.reserve_mb, watch_stdin=True)
         tail = r.pop("tail", "")
         if tail:
             print(tail)

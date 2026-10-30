@@ -461,3 +461,40 @@ def test_the_sampler_keeps_the_peaks():
     s.sample()
     s.sample()
     assert s.peak_used == 9000 and s.min_avail == 7000 and s.peak_rss == 3000
+
+
+# ── the dispatching Mac going away (found live 2026-10-30: the box kept building after the Mac's runner died) ─────
+
+def test_ssh_holding_stdin_writes_the_secrets_and_keeps_stdin_open_until_the_end():
+    import sys
+    child = ("import sys, select\n"
+             "a, b = sys.stdin.readline().strip(), sys.stdin.readline().strip()\n"
+             "r, _, _ = select.select([sys.stdin], [], [], 0.5)\n"
+             "print(a, b, 'closed' if r and not sys.stdin.read(1) else 'open')\n")
+    r = bb.ssh_holding_stdin([sys.executable, "-c", child], input="one\ntwo\n", timeout=20)
+    assert r.returncode == 0 and r.stdout.strip() == "one two open"
+
+
+def test_ssh_holding_stdin_kills_a_hung_child_on_timeout():
+    import sys
+    with pytest.raises(subprocess.TimeoutExpired):
+        bb.ssh_holding_stdin([sys.executable, "-c", "import time; time.sleep(30)"], input="x\n", timeout=0.5)
+
+
+def test_the_box_tears_down_when_its_stdin_closes():
+    r, w = os.pipe()
+    killed = threading.Event()
+    with os.fdopen(r) as rf:
+        t = bb._watch_for_hangup(rf, kill=lambda pid, sig: killed.set())
+        assert not killed.wait(0.3), "an open link must not stop the build"
+        os.close(w)
+        assert killed.wait(5), "EOF means the Mac is gone: stop and clean up"
+        t.join(2)
+
+
+def test_a_stopped_mac_runner_settles_as_the_boxs_failure_and_removes_its_record(isolated):
+    def ssh(cmd, input=None, **kw):
+        raise bb._Stopped("signal 15")
+    _, settled, failures, _ = run_box(ssh)
+    assert settled[0][1]["timed_out"] and "stopped" in settled[0][1]["reason"] and failures
+    assert not list(bb.RECORDS_DIR.glob("*.json"))
