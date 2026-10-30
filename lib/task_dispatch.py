@@ -277,7 +277,7 @@ def _log_fallback(entry: dict) -> None:
 
 
 def _fall_back(command: str, need: str, reason: str, box: str | None, box_error: str | None, mode: str,
-               timeout: int, label: str, ticket: str | None, repo: str | None) -> DispatchResult:
+               timeout: int, label: str, ticket: str | None, repo: str | None, stdin: str | None = None) -> DispatchResult:
     """Rerun `command` once on the less busy Mac. Only for FALLBACK_NEEDS; the caller has checked."""
     base = {"need": need, "label": label, "from": box, "reason": reason, "box_error": (box_error or "")[:300]}
     if _fallback_runs_in_progress() >= FALLBACK_CAP:
@@ -304,8 +304,9 @@ def _fall_back(command: str, need: str, reason: str, box: str | None, box_error:
     try:
         script = _build_wrapper_script(command, str(uuid.uuid4())[:8], label, device_id, ticket=ticket, repo=repo,
                                        need=need)
-        result = (_run_local(script, mode, timeout) if info["is_self"]
-                  else _run_remote(info["tailscale_hostname"], script, mode, timeout, device_id, info.get("os", "macos")))
+        result = (_run_local(script, mode, timeout, stdin=stdin) if info["is_self"]
+                  else _run_remote(info["tailscale_hostname"], script, mode, timeout, device_id, info.get("os", "macos"),
+                                   stdin=stdin))
     finally:
         slot.unlink(missing_ok=True)
     result.fell_back_from = box
@@ -421,7 +422,7 @@ fi
 def dispatch(command: str, target: str | None = None, mode: str = "sync",
              timeout: int = 300, task_label: str | None = None, ticket: str | None = None,
              repo: str | None = None, need: str | None = None, queue_argv: list[str] | None = None,
-             fallback: bool = True) -> DispatchResult:
+             fallback: bool = True, stdin: str | None = None) -> DispatchResult:
     """Run `command` on an available device. mode: "sync" (wait, capture
     output) or "async" (fire-and-forget, returns immediately). Fails loud,
     no automatic retry on a different machine -- except `test`/`bench` work (FALLBACK_NEEDS, ADR 0069's amendment,
@@ -431,8 +432,12 @@ def dispatch(command: str, target: str | None = None, mode: str = "sync",
     in the task record for tracking and UI display.
     Work for this Mac first passes the memory guard (marvin#845): at warn or critical pressure it is refused with a
     plain message; given `queue_argv` (a command that re-runs this dispatch) that is queued until pressure drops and
-    the result says `waiting`. Nothing running is stopped."""
+    the result says `waiting`. Nothing running is stopped.
+    `stdin` (sync only) is fed to the command's standard input and never written to disk on the machine that runs it:
+    how a file the box must not keep (the retrieval questions, which live only in the instance) is handed in per run."""
     tag = _normalise_need(need)
+    if stdin is not None and mode == "async":
+        return DispatchResult(ok=False, error="stdin can only be handed to a sync dispatch")
     label = task_label or command[:60]
     may_fall_back = fallback and tag in FALLBACK_NEEDS
     if may_fall_back and mode == "async":
@@ -442,7 +447,7 @@ def dispatch(command: str, target: str | None = None, mode: str = "sync",
     if selected is None:
         if may_fall_back:
             return _fall_back(command, tag, "unavailable", target, "no box that accepts it is online and idle",
-                              mode, timeout, label, ticket, repo)
+                              mode, timeout, label, ticket, repo, stdin=stdin)
         reason = (f"target '{target}' unavailable or doesn't accept '{tag}' work" if target
                   else f"no machine that accepts '{tag}' work is currently available")
         return DispatchResult(ok=False, error=reason)
@@ -457,15 +462,16 @@ def dispatch(command: str, target: str | None = None, mode: str = "sync",
     script = _build_wrapper_script(command, task_id, label, device_id, ticket=ticket, repo=repo, need=tag)
 
     if info["is_self"]:
-        return _run_local(script, mode, timeout)
-    result = _run_remote(info["tailscale_hostname"], script, mode, timeout, device_id, info.get("os", "macos"))
+        return _run_local(script, mode, timeout, stdin=stdin)
+    result = _run_remote(info["tailscale_hostname"], script, mode, timeout, device_id, info.get("os", "macos"),
+                         stdin=stdin)
     if may_fall_back and (result.timed_out or result.unreachable):
         return _fall_back(command, tag, "timeout" if result.timed_out else "unreachable", device_id, result.error,
-                          mode, timeout, label, ticket, repo)
+                          mode, timeout, label, ticket, repo, stdin=stdin)
     return result
 
 
-def _run_local(script: str, mode: str, timeout: int) -> DispatchResult:
+def _run_local(script: str, mode: str, timeout: int, stdin: str | None = None) -> DispatchResult:
     tmp = Path(f"/tmp/dispatch-{uuid.uuid4().hex[:8]}.sh")
     tmp.write_text(script)
     tmp.chmod(0o755)
@@ -478,7 +484,7 @@ def _run_local(script: str, mode: str, timeout: int) -> DispatchResult:
                 start_new_session=True,
             )
             return DispatchResult(ok=True, device_id=self_id, output=None)
-        proc = subprocess.run(["/bin/bash", str(tmp)], capture_output=True, text=True, timeout=timeout)
+        proc = subprocess.run(["/bin/bash", str(tmp)], capture_output=True, text=True, timeout=timeout, input=stdin)
         if proc.returncode != 0:
             return DispatchResult(ok=False, device_id=self_id, error=f"exit {proc.returncode}: {proc.stderr[:500]}")
         return DispatchResult(ok=True, device_id=self_id, output=proc.stdout, stderr=proc.stderr)
@@ -489,7 +495,7 @@ def _run_local(script: str, mode: str, timeout: int) -> DispatchResult:
 
 
 def _run_remote(host: str, script: str, mode: str, timeout: int, device_id: str,
-                remote_os: str = "macos") -> DispatchResult:
+                remote_os: str = "macos", stdin: str | None = None) -> DispatchResult:
     remote_path = f"/tmp/dispatch-{uuid.uuid4().hex[:8]}.sh"
     try:
         write_proc = subprocess.run(
@@ -510,7 +516,7 @@ def _run_remote(host: str, script: str, mode: str, timeout: int, device_id: str,
         remote_cmd, ssh_wait = _remote_invocation(remote_path, timeout, remote_os)
         proc = subprocess.run(
             ["ssh", *SSH_OPTS, host, remote_cmd],
-            capture_output=True, text=True, timeout=ssh_wait,
+            capture_output=True, text=True, timeout=ssh_wait, input=stdin,
         )
         if proc.returncode != 0:
             stall = _classify_remote_exit(proc.returncode) if remote_os == "linux" else (

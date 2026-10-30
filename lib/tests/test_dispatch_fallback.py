@@ -44,12 +44,16 @@ class World:
         monkeypatch.setattr(td, "_read_local_dispatch_state", lambda: {"busy": self_id in self.busy})
         monkeypatch.setattr(td, "machine_load", lambda device_id, info: self.load.get(device_id))
 
-        def run_remote(host, script, mode, timeout, device_id, remote_os="macos"):
+        self.stdin = []
+
+        def run_remote(host, script, mode, timeout, device_id, remote_os="macos", stdin=None):
             self.ran.append((device_id, timeout))
+            self.stdin.append((device_id, stdin))
             return self.behaviour.get(device_id, lambda t: td.DispatchResult(ok=True, device_id=device_id, output="ok"))(timeout)
 
-        def run_local(script, mode, timeout):
+        def run_local(script, mode, timeout, stdin=None):
             self.ran.append((self_id, timeout))
+            self.stdin.append((self_id, stdin))
             return self.behaviour.get(self_id, lambda t: td.DispatchResult(ok=True, device_id=self_id, output="ok"))(timeout)
 
         monkeypatch.setattr(td, "_run_remote", run_remote)
@@ -344,3 +348,25 @@ def test_a_fallback_run_is_built_as_tagged_work(world, monkeypatch):
     world.behaviour["mac-mini-2012"] = hangs("mac-mini-2012")
     assert td.dispatch("pytest", need="test", timeout=480).ok
     assert seen == ["test", "test"]
+
+
+# ── stdin: a file handed in for one run (#932) ───────────────────────────────────────────────────────────────
+
+def test_stdin_reaches_the_box_and_the_fallback_mac_alike(world):
+    world.behaviour["mac-mini-2012"] = hangs("mac-mini-2012")
+    world.load = {"mac-mini-1": (5.0, 10, 1), "macbook-pro-1": (0.5, 8, 0)}
+    assert td.dispatch("eval --questions /dev/stdin", need="bench", timeout=60, stdin="[1]").ok
+    assert world.stdin == [("mac-mini-2012", "[1]"), ("macbook-pro-1", "[1]")]
+
+
+def test_stdin_with_async_is_refused_rather_than_silently_dropped(world):
+    r = td.dispatch("eval", need="quarantine", mode="async", stdin="[1]")
+    assert not r.ok and "sync" in r.error and world.ran == []
+
+
+def test_stdin_really_reaches_a_local_command_and_never_touches_disk(tmp_path, monkeypatch):
+    monkeypatch.setenv("HOME", str(tmp_path))
+    script = td._build_wrapper_script("cat /dev/stdin | tr a-z A-Z", "abc", "l", "box", need="bench")
+    r = td._run_local(script, "sync", 30, stdin="secret questions")
+    assert r.ok and r.output.strip() == "SECRET QUESTIONS"
+    assert not any("secret" in p.read_text(errors="ignore") for p in tmp_path.rglob("*") if p.is_file())
