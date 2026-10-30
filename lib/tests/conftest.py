@@ -333,3 +333,22 @@ def _full_node_by_default(request, monkeypatch):
         return
     import machine_profile
     monkeypatch.setattr(machine_profile, "pull_only", lambda: False)
+
+
+@pytest.fixture(autouse=True)
+def _mock_disposable_basetemp(request, monkeypatch):
+    # #866: disposable_basetemp() creates unique paths for test isolation, but this breaks
+    # tests that check for command equality (test_build_type_measure's baseline assertions).
+    # Skip mocking for basetemp-specific tests that need real behavior.
+    module_name = request.module.__name__
+    if any(name in module_name for name in ("test_pytest_basetemp_hygiene", "test_cleanup_sweep")):
+        return
+
+    import contextlib
+    import cleanup_sweep
+
+    @contextlib.contextmanager
+    def mock_disposable():
+        yield []
+
+    monkeypatch.setattr(cleanup_sweep, "disposable_basetemp", mock_disposable)

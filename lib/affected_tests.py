@@ -171,10 +171,12 @@ def main(argv: list[str]) -> int:
         print(__doc__)
         return 2
     cmd, env = plan(repo, os.environ.get("MARVIN_BASE") or None)
+    import cleanup_sweep
     try:
-        code = subprocess.run(cmd, cwd=repo, env=env).returncode
-        # 5 = nothing collected: every selected file was left out on this machine (conftest's portfolio guard)
-        return 0 if code == 5 and env.get("MARVIN_SELECTED_TESTS") else code
+        with cleanup_sweep.disposable_basetemp() as basetemp_args:
+            code = subprocess.run(cmd + basetemp_args, cwd=repo, env=env).returncode
+            # 5 = nothing collected: every selected file was left out on this machine (conftest's portfolio guard)
+            return 0 if code == 5 and env.get("MARVIN_SELECTED_TESTS") else code
     finally:
         if env.get("MARVIN_SELECTED_TESTS"):
             Path(env["MARVIN_SELECTED_TESTS"]).unlink(missing_ok=True)

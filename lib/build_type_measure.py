@@ -143,6 +143,8 @@ def measure(worktree_path: Path) -> dict:
     Raises MeasureError if a suite produced no summary and did not say it found
     nothing to run: a crash is an error, not a zero. Raises TestTimedOut if a
     suite exceeded its timeout."""
+    import cleanup_sweep
+
     commands = _measure_commands(worktree_path)
     if len(commands) > 1:
         _ensure_dashboard_deps(worktree_path)
@@ -150,7 +152,11 @@ def measure(worktree_path: Path) -> dict:
     passed = failed = 0
     for command in commands:
         label = _suite_label(command)
-        parsed = capture_test_results(worktree_path, command)
+        if label == "pytest":
+            with cleanup_sweep.disposable_basetemp() as basetemp_args:
+                parsed = capture_test_results(worktree_path, command + basetemp_args)
+        else:
+            parsed = capture_test_results(worktree_path, command)
         if parsed.get("passed") is None and parsed.get("failed") is None:
             tail = parsed.get("output_tail") or ""
             if not any(marker in tail.lower() for marker in _NO_TESTS_MARKERS):
