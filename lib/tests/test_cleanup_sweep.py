@@ -11,7 +11,9 @@ import pytest
 LIB = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(LIB))
 
+import os  # noqa: E402
 import subprocess  # noqa: E402
+import time  # noqa: E402
 import cleanup_sweep as cs  # noqa: E402
 
 
@@ -849,3 +851,202 @@ def test_clear_rebuildable_reads_a_garbled_cache_answer_as_nothing_freed(log_pat
     for answer in (None, "x", {"total_kb_freed": "lots"}, {"total_kb_freed": -5}):
         monkeypatch.setattr(disk_trim, "trim_with_logging", lambda dry_run=True, a=answer: a)
         assert cs.clear_rebuildable()["freed_bytes"] == 0
+
+
+# ── marvin#866: the sweep's gh calls carry the token file's GH_TOKEN (no keychain in launchd) ─────────────────────
+
+from test_gh_env import EXPIRED, GOOD, fake_gh  # noqa: E402
+
+
+@pytest.fixture
+def token_file(tmp_path, monkeypatch):
+    import gh_env
+    p = tmp_path / "claude" / ".gh-token"
+    p.parent.mkdir()
+    monkeypatch.setattr(gh_env, "TOKEN_FILE", p)
+    monkeypatch.delenv("GH_TOKEN", raising=False)   # conftest's second _no_real_github shadows the one that clears it
+    return p
+
+
+def test_pr_state_reaches_github_through_the_token_file(tmp_path, monkeypatch, token_file):
+    fake_gh(tmp_path, monkeypatch, stdout="MERGED\n")
+    token_file.write_text(GOOD)
+    assert cs._default_pr_state("G-Eskayo/marvin", "fix/866") == "MERGED"
+
+
+def test_is_claimed_and_issue_state_reach_github_through_the_token_file(tmp_path, monkeypatch, token_file):
+    fake_gh(tmp_path, monkeypatch, stdout='{"state": "OPEN", "labels": [{"name": "claimed:mac-mini"}]}')
+    token_file.write_text(GOOD)
+    assert cs._default_is_claimed("G-Eskayo/marvin", 866) is True
+    fake_gh(tmp_path, monkeypatch, stdout="CLOSED\n")
+    assert cs._default_issue_state("G-Eskayo/marvin", 866) == "CLOSED"
+
+
+def test_claimed_issue_listing_reaches_github_through_the_token_file(tmp_path, monkeypatch, token_file):
+    fake_gh(tmp_path, monkeypatch, stdout='[{"number": 9, "labels": [{"name": "claimed:x"}], "updatedAt": "z"}]')
+    token_file.write_text(GOOD)
+    assert [i["number"] for i in cs._default_list_claimed_open_issues()] == [9]
+
+
+def test_issue_state_with_no_token_raises_plainly_rather_than_reading_as_no_issue(tmp_path, monkeypatch, token_file):
+    fake_gh(tmp_path, monkeypatch)
+    with pytest.raises(Exception) as e:
+        cs._default_issue_state("G-Eskayo/marvin", 866)
+    assert "no GitHub token" in str(e.value)
+
+
+def test_the_sweep_with_no_token_keeps_every_worktree_and_says_why(tmp_path, monkeypatch, token_file):
+    fake_gh(tmp_path, monkeypatch)
+    wt = _wt(tmp_path, age_hours=100)
+    r = cs.sweep_worktrees(list_worktrees=lambda: [wt], remove_worktree=lambda w: pytest.fail("removed blind"))
+    assert r["removed"] == [] and "no GitHub token" in r["review"][0]["reason"]
+
+
+def test_the_sweep_with_an_expired_token_keeps_everything_and_never_logs_the_token(tmp_path, monkeypatch, token_file,
+                                                                                   log_path):
+    fake_gh(tmp_path, monkeypatch)
+    token_file.write_text(EXPIRED)
+    wt = _wt(tmp_path, age_hours=100)
+    cs.run_daily_sweep(list_claimed_open_issues=lambda: [], list_worktrees=lambda: [wt],
+                       remove_worktree=lambda w: pytest.fail("removed blind"), now=NOW)
+    log = log_path.read_text()
+    assert "refused" in log and EXPIRED not in log
+
+
+# ── marvin#866: pytest's temp dirs ($TMPDIR/pytest-of-<user>/pytest-N) are trimmed: old, unused, never the newest ──
+
+HOUR = 3600
+
+
+def _pytest_root(tmp_path):
+    root = tmp_path / "T" / "pytest-of-someone"
+    root.mkdir(parents=True)
+    return root
+
+
+def _basetemp(root, n, hours_old, size=2**20, now=None):
+    d = root / f"pytest-{n}"
+    (d / "test_x0").mkdir(parents=True)
+    (d / "test_x0" / "blob").write_bytes(b"x" * size)
+    t = (now or time.time()) - hours_old * HOUR
+    for p in (d / "test_x0" / "blob", d / "test_x0", d):
+        os.utime(p, (t, t))
+    return d
+
+
+def _trim(tmp_path, open_paths=frozenset(), **k):
+    return cs.trim_pytest_temps(roots=[tmp_path / "T"], open_paths=set(open_paths), **k)
+
+
+def test_old_pytest_basetemps_go_and_the_newest_stays(tmp_path):
+    root = _pytest_root(tmp_path)
+    old = [_basetemp(root, n, hours_old=10 - n) for n in range(3)]   # pytest-2 is the newest (8 h old)
+    r = _trim(tmp_path)
+    assert not old[0].exists() and not old[1].exists() and old[2].exists()
+    assert sorted(r["removed"]) == ["pytest-0", "pytest-1"] and r["freed_bytes"] >= 2 * 2**20
+
+
+def test_the_newest_is_picked_by_age_not_by_name(tmp_path):
+    root = _pytest_root(tmp_path)
+    a = _basetemp(root, 9, hours_old=5)
+    b = _basetemp(root, 10, hours_old=3)   # "pytest-10" sorts before "pytest-9" as text
+    _trim(tmp_path)
+    assert b.exists() and not a.exists()
+
+
+def test_a_basetemp_younger_than_an_hour_stays(tmp_path):
+    root = _pytest_root(tmp_path)
+    young = _basetemp(root, 1, hours_old=0.5)
+    _basetemp(root, 2, hours_old=0.1)
+    _trim(tmp_path)
+    assert young.exists()
+
+
+def test_a_basetemp_a_running_suite_just_wrote_into_counts_as_fresh(tmp_path):
+    root = _pytest_root(tmp_path)
+    running = _basetemp(root, 1, hours_old=5)
+    os.utime(running / "test_x0", None)   # a test dir created/touched just now
+    _basetemp(root, 2, hours_old=0.1)
+    _trim(tmp_path)
+    assert running.exists()
+
+
+def test_an_old_basetemp_a_process_has_open_stays(tmp_path):
+    root = _pytest_root(tmp_path)
+    held = _basetemp(root, 1, hours_old=5)
+    _basetemp(root, 2, hours_old=4)
+    _basetemp(root, 3, hours_old=0.1)
+    r = _trim(tmp_path, open_paths={str((held / "test_x0" / "blob").resolve())})
+    assert held.exists() and not (root / "pytest-2").exists()
+    assert any(k["name"] == "pytest-1" and "open" in k["reason"] for k in r["kept"])
+
+
+def test_a_process_whose_working_folder_is_inside_keeps_it(tmp_path):
+    root = _pytest_root(tmp_path)
+    held = _basetemp(root, 1, hours_old=5)
+    _basetemp(root, 2, hours_old=0.1)
+    _trim(tmp_path, open_paths={str((held / "test_x0").resolve())})
+    assert held.exists()
+
+
+def test_when_open_files_cannot_be_listed_nothing_is_removed(tmp_path, monkeypatch):
+    root = _pytest_root(tmp_path)
+    old = _basetemp(root, 1, hours_old=5)
+    _basetemp(root, 2, hours_old=0.1)
+    monkeypatch.setattr(cs, "_open_paths", lambda: None)
+    r = cs.trim_pytest_temps(roots=[tmp_path / "T"])
+    assert old.exists() and r["removed"] == [] and "open files" in r["detail"]
+
+
+def test_pytest_current_symlink_target_is_kept_and_links_are_never_followed(tmp_path):
+    root = _pytest_root(tmp_path)
+    cur = _basetemp(root, 1, hours_old=5)
+    _basetemp(root, 2, hours_old=0.1)
+    (root / "pytest-current").symlink_to(cur)
+    outside = tmp_path / "precious"
+    outside.mkdir()
+    (outside / "keep.txt").write_text("mine")
+    (root / "pytest-99").symlink_to(outside)                      # a basetemp-looking link to elsewhere
+    old = _basetemp(root, 3, hours_old=6)
+    (old / "test_x0" / "link").symlink_to(outside)                # a link inside a removed basetemp
+    os.utime(old / "test_x0", (time.time() - 6 * HOUR,) * 2)      # adding the link touched it; still 6 h old
+    _trim(tmp_path)
+    assert cur.exists() and (root / "pytest-current").is_symlink()
+    assert not old.exists() and (outside / "keep.txt").read_text() == "mine"
+    assert (root / "pytest-99").is_symlink()
+
+
+def test_only_pytest_basetemps_are_touched(tmp_path):
+    root = _pytest_root(tmp_path)
+    _basetemp(root, 1, hours_old=0.1)
+    other = tmp_path / "T" / "mr-merge-gate-abc"
+    other.mkdir()
+    stray = root / "notes"
+    stray.mkdir()
+    for p in (other, stray):
+        os.utime(p, (time.time() - 50 * HOUR,) * 2)
+    _trim(tmp_path)
+    assert other.exists() and stray.exists()
+
+
+def test_no_pytest_folder_is_nothing_to_do(tmp_path):
+    (tmp_path / "T").mkdir()
+    assert _trim(tmp_path)["freed_bytes"] == 0
+    assert cs.trim_pytest_temps(roots=[tmp_path / "missing"], open_paths=set())["removed"] == []
+
+
+def test_the_suite_points_the_pytest_trim_at_a_temp_root_never_the_real_tmpdir():
+    import tempfile
+    roots = cs.pytest_temp_roots()
+    assert roots and all(Path(tempfile.gettempdir()).resolve() != Path(r).resolve() for r in roots)
+
+
+def test_the_daily_run_trims_pytest_temps_and_logs_it(log_path, monkeypatch):
+    root = Path(cs.pytest_temp_roots()[0]) / "pytest-of-someone"   # conftest's temp root
+    root.mkdir(parents=True)
+    old = _basetemp(root, 1, hours_old=5, size=3 * 2**20)
+    _basetemp(root, 2, hours_old=0.1)
+    monkeypatch.setattr(cs, "_open_paths", lambda: set())
+    cs.run_daily_sweep(list_claimed_open_issues=lambda: [], list_worktrees=lambda: [], now=NOW)
+    assert not old.exists()
+    assert "pytest" in log_path.read_text() and "3 MiB" in log_path.read_text()

@@ -31,7 +31,6 @@ import json
 import os
 import plistlib
 import shutil
-import subprocess
 import sys
 import time
 from datetime import datetime, timezone
@@ -40,6 +39,7 @@ from typing import Callable
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import cleanup_sweep as cs  # noqa: E402
+import gh_env  # noqa: E402
 
 MARVIN_ROOT = Path(__file__).resolve().parent.parent
 CONFIG_PATH = MARVIN_ROOT / "config" / "disk_triggers.json"
@@ -114,11 +114,12 @@ def load_config() -> dict:
 
 def reclaim() -> dict:
     """Everything already ruled disposable, in one pass: the sweep's first aid (old aerial videos, disk_trim's
-    allowlisted caches), merged PRs' worktrees on this Mac, and the download cache back under its cap. No rule of its
-    own. Each part is independent: one breaking is reported and the others still run."""
+    allowlisted caches), merged PRs' worktrees on this Mac, old unused pytest temp folders (#866), and the download
+    cache back under its cap. No rule of its own. Each part is independent: one breaking is reported and the others still run."""
     import download_cache
     parts = [("rebuildable", cs.clear_rebuildable),
              ("merged worktrees", lambda: clean_merged_worktrees()),
+             ("pytest temp", lambda: cs.trim_pytest_temps()),
              ("download cache", lambda: download_cache.enforce_cap())]
     freed, notes = 0, []
     for label, fn in parts:
@@ -207,9 +208,10 @@ def _repo_of(clone: Path) -> str | None:
 
 def _default_merged(repo: str) -> dict[str, list[str]]:
     """{branch: [head SHAs of its merged PRs]} for the repo's recent merged PRs. Raises on any gh failure, so an
-    outage never reads as "nothing merged" (or worse, as permission)."""
-    r = subprocess.run(["gh", "pr", "list", "--repo", repo, "--state", "merged", "--limit", str(MERGED_PR_LIMIT),
-                        "--json", "headRefName,headRefOid"], capture_output=True, text=True, timeout=60, check=True)
+    outage never reads as "nothing merged" (or worse, as permission). Runs with gh_env's GH_TOKEN: over ssh or from
+    launchd the keychain is locked and plain gh answers 401 (#866)."""
+    r = gh_env.run(["gh", "pr", "list", "--repo", repo, "--state", "merged", "--limit", str(MERGED_PR_LIMIT),
+                    "--json", "headRefName,headRefOid"])
     out: dict[str, list[str]] = {}
     for pr in json.loads(r.stdout or "[]"):
         out.setdefault(pr["headRefName"], []).append(pr["headRefOid"])
@@ -262,7 +264,7 @@ def clean_merged_worktrees(clones: list[Path] | None = None, merged: Callable[[s
                            cwds: set[str] | None = None, derived_data: Path | None = None) -> dict:
     """Remove the worktrees of merged PRs on this Mac, plus their Xcode build products. Lossless like the sweep:
     plain `git worktree remove` (git refuses anything uncommitted or untracked) and the branch stays, so every commit
-    stays reachable. Returns {"removed", "kept", "freed_bytes"}."""
+    stays reachable. Returns {"removed", "kept", "freed_bytes", "github_errors": {repo: reason}}."""
     clones = discover_clones() if clones is None else clones
     merged = merged or _default_merged
     cwds = cs._cwds_in_use() if cwds is None else cwds
@@ -285,7 +287,7 @@ def clean_merged_worktrees(clones: list[Path] | None = None, merged: Callable[[s
         known = by_repo[repo]
         for wt in wts:
             if isinstance(known, Exception):
-                kept.append({"path": str(wt["path"]), "reason": f"could not check GitHub: {str(known)[:120]}"})
+                kept.append({"path": str(wt["path"]), "reason": f"could not check GitHub: {str(known)[:300]}"})
                 continue
             heads = known.get(wt["branch"])
             if not heads:
@@ -308,7 +310,8 @@ def clean_merged_worktrees(clones: list[Path] | None = None, merged: Callable[[s
                 freed += n
             removed.append({"path": str(wt["path"]), "branch": wt["branch"], "reason": reason,
                             "derived_data": [d.name for d in dds]})
-    return {"removed": removed, "kept": kept, "freed_bytes": freed}
+    errors = {repo: str(v)[:300] for repo, v in by_repo.items() if isinstance(v, Exception)}
+    return {"removed": removed, "kept": kept, "freed_bytes": freed, "github_errors": errors}
 
 
 def merged_worktrees_step() -> dict:
@@ -316,8 +319,14 @@ def merged_worktrees_step() -> dict:
     r = clean_merged_worktrees()
     n, freed = len(r["removed"]), r["freed_bytes"]
     detail = f"removed {n} worktree(s) of merged PRs, freed {MIB(freed)}"
-    if r["kept"]:
-        detail += f"; kept {len(r['kept'])} (" + "; ".join(f"{Path(k['path']).name}: {k['reason']}" for k in r["kept"][:5]) + ")"
+    errors = r.get("github_errors") or {}
+    blind = [k for k in r["kept"] if k["reason"].startswith("could not check GitHub")]
+    looked = [k for k in r["kept"] if not k["reason"].startswith("could not check GitHub")]
+    if blind:   # one reason per repo, said once, not the same 401 repeated for each of 31 worktrees (#866)
+        detail += f"; kept {len(blind)} unchecked, could not check GitHub (" + "; ".join(
+            f"{repo}: {why}" for repo, why in errors.items()) + ")"
+    if looked:
+        detail += f"; kept {len(looked)} (" + "; ".join(f"{Path(k['path']).name}: {k['reason']}" for k in looked[:5]) + ")"
     if n or r["kept"]:
         record("after-merge", freed, detail, removed=[x["path"] for x in r["removed"]])
     return {"changed": n > 0, "freed_bytes": freed, "detail": detail}
