@@ -249,3 +249,20 @@ describe('MockupLauncher', () => {
     expect(openOutcome(null, new Error("Error invoking remote method 'mr:openMockup': Error: boom")).reason).toBe('boom')
   })
 })
+
+describe('Jump to the Decisions (owner\'s answer on PR #953)', () => {
+  it('shows the link at the top and lands on the Decisions, which come after the screenshots', async () => {
+    const html = renderToStaticMarkup(<MrDetail pr={await pr934()} onBack={() => {}} />)
+    const link = html.indexOf('data-jump-decisions'), anchor = html.indexOf('id="mr-decisions"')
+    expect(link).toBeGreaterThan(-1)
+    expect(anchor).toBeGreaterThan(link)
+    expect(html.indexOf('Images &amp; recordings')).toBeLessThan(anchor)
+  })
+  it('no link without Decisions, and none on a read-only (merged) PR', async () => {
+    const none = renderToStaticMarkup(<MrDetail pr={{ number: 1, title: 't', url: 'u', repo: 'o/r', hasSchema: false, rawBody: 'x', images: [], decisions: { present: false } }} onBack={() => {}} />)
+    expect(none).not.toContain('data-jump-decisions')
+    const ro = renderToStaticMarkup(<MrDetail pr={{ ...(await pr934()), readOnly: true, state: 'MERGED' }} onBack={() => {}} />)
+    expect(ro).not.toContain('data-jump-decisions')
+    expect(ro).not.toContain('id="mr-decisions"')
+  })
+})

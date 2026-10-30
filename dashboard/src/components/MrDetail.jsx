@@ -148,6 +148,8 @@ function SummarySection({ summary, repo, headRef, onOpenTicket, onOpenDocs }) {
   )
 }
 
+// Where "Jump to the Decisions" lands.
+const DECISIONS_ANCHOR = 'mr-decisions'
 // The main gallery's anchors (Decisions link to them) and how many images show before "Show all".
 const GALLERY = 'pr-image'
 export const GALLERY_LIMIT = 6
@@ -217,6 +219,13 @@ export default function MrDetail({ pr, onBack, onApproved, onDenied, onOpenDocs,
                 Board →
               </button>
             )}
+            {/* The screenshots come first, so the Decisions can be far down (owner's answer on PR #953). */}
+            {pr.decisions?.present && !pr.readOnly && (
+              <button data-jump-decisions="1" onClick={() => document.getElementById(DECISIONS_ANCHOR)?.scrollIntoView({ behavior: 'smooth', block: 'start' })}
+                className="ml-2 text-sky-400 hover:text-sky-300">
+                Jump to the Decisions ↓
+              </button>
+            )}
           </p>
         </div>
         {pr.readOnly ? (
@@ -254,6 +263,7 @@ export default function MrDetail({ pr, onBack, onApproved, onDenied, onOpenDocs,
 
       {/* What the PR asks the owner to choose: answered here, and Approve waits until the required ones are. */}
       {pr.decisions?.present && !pr.readOnly && (
+        <div id={DECISIONS_ANCHOR} className="scroll-mt-4">
         <Decisions
           key={JSON.stringify(pr.decisions.questions.map((q) => [q.id, q.question, q.options.map((o) => o.label)]))}
           repo={pr.repo}
@@ -263,6 +273,7 @@ export default function MrDetail({ pr, onBack, onApproved, onDenied, onOpenDocs,
           onSeeImage={(index) => showImage(GALLERY, index)}
           onSubmitted={(r) => onChanged?.(r)}
         />
+        </div>
       )}
 
       {prEvents.length > 0 && (
