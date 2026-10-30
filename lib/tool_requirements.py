@@ -55,5 +55,14 @@ def pytest_runtest_setup(item):
 
 
 def pytest_terminal_summary(terminalreporter):
-    for what, n in sorted(_missing.items()):
+    # Counted from the skip reports, which reach the controller under pytest-xdist; a worker's own counter doesn't.
+    counts: Counter = Counter()
+    prefix = _infra("")
+    for rep in terminalreporter.stats.get("skipped", []):
+        reason = rep.longrepr[2] if isinstance(rep.longrepr, tuple) else str(rep.longrepr or "")
+        if prefix in reason:
+            what = reason.split(prefix, 1)[1].split(" (")[0]
+            for t in what.split(", "):
+                counts[t] += 1
+    for what, n in sorted((counts or _missing).items()):
         terminalreporter.write_line(f"{_infra(what)} ({n} test{'s' if n != 1 else ''} did not run)", yellow=True)

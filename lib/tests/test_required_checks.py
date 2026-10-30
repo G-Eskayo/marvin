@@ -217,3 +217,26 @@ def test_ci_runs_the_python_suite_in_parallel_as_the_gate_does():
     # Serial on GitHub's 3-core macOS runner the full suite passed its 40-minute limit at 86% (2026-10-30).
     job = _jobs(ROOT)["python-tests"]
     assert "-n auto" in job["env"]["PYTEST_ADDOPTS"] and job["timeout-minutes"] >= 60
+
+
+def test_ci_sets_the_runner_up_as_a_clean_marvin_machine_before_the_python_checks():
+    # The suite reads ~/.agents (the venv, skills) and the read-only inputs under ~/.claude (memory index, manifest,
+    # lexicon): 83 tests failed on GitHub's bare runner (2026-10-30). CI provisions a minimal install, never the
+    # owner's data.
+    script = (ROOT / ".github" / "ci-machine.sh").read_text()
+    for needed in ('"$HOME/.agents"', "venv", "autoMemoryDirectory", "MEMORY.md", "lexicon.md", "rebuild-manifest.py"):
+        assert needed in script, needed
+    for job in ("python-tests", "rules"):
+        runs = [s.get("run", "") for s in _jobs(ROOT)[job]["steps"]]
+        setup = next(i for i, r in enumerate(runs) if ".github/ci-machine.sh" in r)
+        check = next(i for i, r in enumerate(runs) if ".github/run-check.sh" in r)
+        assert setup < check, job
+
+
+def test_the_fake_claude_refuses():
+    # Every test sees a claude that refuses, as it sees a gh that refuses (conftest.py): no test spends tokens, and
+    # code that only looks the binary up finds one on a runner without Claude Code.
+    found = shutil.which("claude")
+    assert found and "no-claude" in found
+    r = subprocess.run([found, "-p", "hi"], capture_output=True, text=True)
+    assert r.returncode != 0 and "disabled in tests" in r.stderr
