@@ -97,7 +97,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate {
     var demoTimer: Timer?
     var livenessTimer: Timer?
     var renderTimer: Timer?
-    var lastActivityLineCount = 0
+    var lastActivityLine: String? // by content: the file is trimmed to 500 lines, so its count stops growing
     var lastDemoLineCount = 0
     var lastDeviceOnline: [String: Bool] = [:]
     // Last renderFrame outcome per window ("ok", "missing", "error: ..."),
@@ -115,7 +115,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate {
         applyReconcile()
 
         lastMTime = mtime()
-        lastActivityLineCount = currentLines(activityURL).count
+        lastActivityLine = currentLines(activityURL).last
         lastDemoLineCount = currentLines(demoEventsURL).count
         // Cheap poll (a single stat() call), not continuous work — a real
         // update pushes fresh tree/synapses data in place (see
@@ -392,18 +392,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate {
 
     func checkForActivity() {
         let lines = currentLines(activityURL)
-        guard lines.count > lastActivityLineCount else {
-            if lines.count < lastActivityLineCount { lastActivityLineCount = lines.count } // trimmed/rotated
-            return
-        }
-        let newLines = lines[lastActivityLineCount...]
-        lastActivityLineCount = lines.count
+        let newLines = newActivityLines(lines, after: lastActivityLine)
+        if let tail = lines.last { lastActivityLine = tail }
+        // The whole line goes to the page (Activity.swift): it pairs a skill call with the next event in the same
+        // session to light a thread (#843), which a bare skill id can't do.
         for line in newLines {
-            guard let data = line.data(using: .utf8),
-                  let obj = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
-                  let skill = obj["skill"] as? String else { continue }
-            let escaped = skill.replacingOccurrences(of: "\\", with: "\\\\").replacingOccurrences(of: "'", with: "\\'")
-            let js = "if (window.triggerActivity) window.triggerActivity('\(escaped)');"
+            guard let js = activityCall(line: String(line)) else { continue }
             for webView in webViews { webView.evaluateJavaScript(js, completionHandler: nil) }
         }
     }

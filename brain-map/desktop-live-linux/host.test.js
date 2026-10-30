@@ -19,7 +19,7 @@ function runOnPage(js) {
 test('a hostile skill name arrives as plain text and runs nothing', () => {
   const evil = "x'); window.pwned = 1; ('"
   const [js] = h.activityCalls([JSON.stringify({ skill: evil })])
-  const ctx = { window: { triggerActivity: (s) => { ctx.got = s } } }
+  const ctx = { window: { triggerActivity: (o) => { ctx.got = o.skill } } }
   vm.runInNewContext(js, ctx)
   assert.strictEqual(ctx.got, evil)
   assert.strictEqual(ctx.window.pwned, undefined)
@@ -34,7 +34,35 @@ test('only new lines count, and a trimmed file starts over', () => {
 
 test('bad activity lines are skipped, good ones fire', () => {
   const calls = h.activityCalls(['not json', '{"no_skill": 1}', '{"skill": 7}', '{"skill": "tdd"}'])
-  assert.deepStrictEqual(calls.flatMap(runOnPage), [['triggerActivity', 'tdd']])
+  assert.deepStrictEqual(calls.flatMap(runOnPage), [['triggerActivity', { skill: 'tdd' }]])
+})
+
+// #843: the page pairs a skill call with the next event in its session, so the whole line reaches it, not just
+// the skill id. Only the fields the page reads are passed, each only with the type it expects.
+test('the whole activity line reaches the page, limited to the fields it reads', () => {
+  const line = { skill: 'MARVIN', ts: 1.5, tool: 'Edit', session: 's1', file: 'skills/tdd/SKILL.md', ok: false, extra: 'x' }
+  assert.deepStrictEqual(h.activityCalls([JSON.stringify(line)]).flatMap(runOnPage),
+    [['triggerActivity', { skill: 'MARVIN', ts: 1.5, tool: 'Edit', session: 's1', file: 'skills/tdd/SKILL.md', ok: false }]])
+  const odd = { skill: 'tdd', ts: 'soon', tool: 3, session: null, file: ['a'], ok: 'yes' }
+  assert.deepStrictEqual(h.activityCalls([JSON.stringify(odd)]).flatMap(runOnPage), [['triggerActivity', { skill: 'tdd' }]])
+})
+
+// #843: activity.jsonl is trimmed to its last 500 lines on every write, so once it is full the count never
+// grows and a count-based reader saw nothing new again. Activity is read by the last line seen instead.
+test('activity lines are found after the last line seen, even when the file is full and trimmed', () => {
+  const full = Array.from({ length: 500 }, (_, i) => `{"skill":"MARVIN","ts":${i}}`)
+  const start = h.linesAfter(full.join('\n') + '\n', null, true)
+  assert.deepStrictEqual(start, { lines: [], last: full[499] }, 'history replayed at start')
+  const trimmed = full.slice(1).concat(['{"skill":"tdd","ts":500}'])
+  assert.deepStrictEqual(h.linesAfter(trimmed.join('\n') + '\n', start.last), { lines: ['{"skill":"tdd","ts":500}'], last: trimmed[499] })
+  assert.deepStrictEqual(h.linesAfter(trimmed.join('\n') + '\n', trimmed[499]), { lines: [], last: trimmed[499] })
+  // The last line seen is gone (the file was replaced): everything in it is new.
+  assert.deepStrictEqual(h.linesAfter('a\nb\n', 'zzz'), { lines: ['a', 'b'], last: 'b' })
+  // Emptied, then written again.
+  assert.deepStrictEqual(h.linesAfter('', 'b'), { lines: [], last: 'b' })
+  assert.deepStrictEqual(h.linesAfter('c\n', 'b'), { lines: ['c'], last: 'c' })
+  // Nothing seen yet (no file at start): all lines are new.
+  assert.deepStrictEqual(h.linesAfter('a\n', null), { lines: ['a'], last: 'a' })
 })
 
 test('demo add and remove reach the page with their data intact', () => {

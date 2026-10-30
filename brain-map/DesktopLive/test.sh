@@ -9,5 +9,8 @@ swiftc EventLog.swift "$out/main.swift" -o "$out/eventlog-tests"
 mkdir "$out/recovery" && cp tests/RecoveryTests.swift "$out/recovery/main.swift"
 swiftc Recovery.swift "$out/recovery/main.swift" -o "$out/recovery-tests"
 "$out/recovery-tests"
-swiftc -typecheck main.swift EventLog.swift Recovery.swift
+mkdir "$out/activity" && cp tests/ActivityTests.swift "$out/activity/main.swift"
+swiftc Activity.swift "$out/activity/main.swift" -o "$out/activity-tests"
+"$out/activity-tests"
+swiftc -typecheck main.swift EventLog.swift Recovery.swift Activity.swift
 echo "main.swift typechecks"
