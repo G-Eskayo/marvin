@@ -24,6 +24,8 @@ and `CONTEXT.md` "Third node". Every file the box needs outside the repos is in 
 - VM disks on subvolume `@var@lib@libvirt@images` (nodatacow).
 - Claude Code native installer; sign in once with the subscription (`~/.claude/.credentials.json`).
 - `uv`, then `uv venv --python 3.11 ~/.agents/venv` and the Macs' `pip freeze` minus `mlx*` (Apple-only).
+- The test harness, declared in `~/.agents/requirements-test.txt` (the venv has no pip):
+  `uv pip install --python ~/.agents/venv/bin/python -r ~/.agents/requirements-test.txt`. Re-run it when that file changes.
 - `marvin-do` (this folder) → `~/.local/bin/`: mirrors steps into the on-screen activity window.
 
 ## 4. Repos (pull-only)
