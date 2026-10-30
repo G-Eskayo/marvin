@@ -3,6 +3,8 @@ import { waitingOn, baseProblem } from './pr_order.js'
 import { ciState, checkRuns } from '../../webhook-server/ci_status.js'
 import { uiFiles, hasImage, unpinnedImages } from '../../webhook-server/ui_evidence.js'
 import { parsePrImages } from './pr_images.js'
+import { detectMockups } from './mockups.js'
+import { prSummary } from './pr_summary.js'
 import { summarizeDecisions, vagueness } from '../../webhook-server/decisions.js'
 
 // Reads open PRs and identifies which follow the MR pipeline's evidence
@@ -348,6 +350,12 @@ export async function listPipelinePrs(listOpenPrs, { canMerge = canMergeFromDash
       images: parsePrImages(pr.body || '', { repo: pr.repo || MARVIN_REPO, headRef: pr.headRefName }),
       // The PR's own branch: repo-relative images in its description resolve there.
       headRef: pr.headRefName || null,
+      // Its head commit: a mock-up is read at exactly this commit (marvin#938), so a later push or a deleted branch
+      // can't change what the owner is looking at.
+      headSha: pr.headRefOid || null,
+      // What it is, in the PR's words, shown first in the detail; and the clickable mock-ups it carries (#938).
+      summary: prSummary(pr.body || ''),
+      mockups: detectMockups(pr.body || '', pr.files),
       baseProblem: baseProblem(prs.map((p) => ({ ...p, repo: p.repo || MARVIN_REPO })), { ...pr, repo: pr.repo || MARVIN_REPO }),
       waitingOn: waitingOn(withState, { ...pr, repo: pr.repo || MARVIN_REPO }),
       hasSchema,
