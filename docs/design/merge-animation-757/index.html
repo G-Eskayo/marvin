@@ -1,0 +1,588 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>MR Review merge motion: mock-up, round 2 (marvin#757)</title>
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<!-- Mock-up only (marvin#757): the real dashboard is untouched until the owner approves the motion.
+     Every frame is a pure function of time t (render(t)), so the live view, the scrubber and the recorder
+     (record.mjs) all show exactly the same thing. The choreography (timings, order, edge-case rules) is
+     merge_motion.js, tested in dashboard/test/merge_motion_proto.test.js. Round 2 follows the owner's answers on
+     PR #761, so the alternatives from round 1 are gone: only theme and Reduce Motion switch. -->
+<style>
+  :root { color-scheme: dark; }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: #0b0c10; color: #d4d4d4; font: 14px/1.4 -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; }
+  body.record { background: transparent; }
+
+  /* The controls. Hidden when recording. */
+  .controls { display: flex; flex-wrap: wrap; gap: 10px 18px; align-items: center; padding: 14px 18px; border-bottom: 1px solid #262626; font-size: 13px; }
+  .controls label { display: flex; gap: 6px; align-items: center; color: #a3a3a3; }
+  .controls select, .controls button { background: #171717; color: #e5e5e5; border: 1px solid #404040; border-radius: 6px; padding: 4px 8px; font: inherit; }
+  .controls button.primary { background: #198fd9; border-color: #198fd9; color: #fff; }
+  .controls input[type=range] { width: 220px; }
+  .caption { padding: 10px 18px 0; color: #a3a3a3; max-width: 860px; }
+  body.record .controls, body.record .caption { display: none; }
+  .wrap { padding: 18px; }
+  body.record .wrap { padding: 0; }
+
+  /* The stage: a stand-in for the dashboard window, in its own colours (dark is the dashboard today). */
+  .stage { --bg: #0f1117; --card: #171717; --border: #262626; --text: #fafafa; --text-2: #d4d4d4;
+           --muted: #737373; --chip: #262626; --accent-blue: #2563eb; --ok: #34d399; --amber: #f59e0b; --amber-bg: rgba(69, 26, 3, .45);
+           --blue: #198fd9; --halo: rgba(102, 175, 233, .6); --halo-soft: rgba(102, 175, 233, .28);
+           position: relative; width: 860px; height: 540px; overflow: hidden; background: var(--bg); color: var(--text-2);
+           border: 1px solid var(--border); border-radius: 10px; }
+  .stage[data-theme=light] { --bg: #f5f5f4; --card: #ffffff; --border: #e5e5e5; --text: #171717; --text-2: #404040;
+           --muted: #737373; --chip: #ececec; --accent-blue: #2563eb; --ok: #059669; --amber: #b45309; --amber-bg: #fffbeb;
+           --halo: rgba(25, 143, 217, .38); --halo-soft: rgba(25, 143, 217, .18); }
+  body.record .stage { border: 0; border-radius: 0; }
+
+  .titlebar { height: 38px; display: flex; align-items: center; gap: 4px; padding: 0 14px 0 78px; border-bottom: 1px solid var(--border); font-size: 13px; }
+  .lights { position: absolute; left: 14px; top: 13px; display: flex; gap: 7px; }
+  .lights i { width: 12px; height: 12px; border-radius: 50%; background: #ff5f57; } .lights i:nth-child(2) { background: #febc2e; } .lights i:nth-child(3) { background: #28c840; }
+  .tab { padding: 5px 10px; border-radius: 6px; color: var(--muted); }
+  .tab.on { background: var(--chip); color: var(--text); }
+  .toggle { display: flex; gap: 4px; padding: 14px 24px 0; }
+  .toggle span { padding: 5px 11px; border-radius: 6px; font-size: 13px; color: var(--muted); }
+  .toggle span.on { background: var(--chip); color: var(--text); }
+  .viewport { position: absolute; left: 0; right: 0; top: 84px; bottom: 0; overflow: hidden; }
+  .scroller { position: absolute; inset: 0; overflow: hidden; }
+  .list { padding: 14px 24px 24px; }
+  .hint { font-size: 13px; color: var(--muted); margin: 0 0 14px; }
+
+  /* A slot holds one card; its height is what opens and closes the space. */
+  .slot { position: relative; overflow: hidden; }
+  .card { position: relative; height: 104px; margin-bottom: 14px; border: 1px solid var(--border); border-radius: 8px; background: var(--card);
+          padding: 12px 14px; display: flex; justify-content: space-between; gap: 14px; overflow: hidden; will-change: clip-path, opacity; }
+  .card .t { font: 600 13px/1.3 ui-monospace, Menlo, monospace; color: var(--text); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .card .s { font-size: 12px; color: var(--muted); margin-top: 3px; }
+  .card .k { font-size: 12px; color: var(--muted); margin-top: 6px; }
+  .card .k b { font-weight: 400; color: var(--text-2); }
+  .badge { display: inline-block; font-size: 10px; padding: 1px 6px; border-radius: 99px; background: rgba(52, 211, 153, .14); color: var(--ok); margin-left: 6px; }
+  .acts { display: flex; gap: 8px; align-items: flex-start; flex-shrink: 0; }
+  .btn { font-size: 12px; padding: 5px 12px; border-radius: 6px; border: 1px solid var(--border); color: var(--text-2); }
+  .btn.go { background: var(--accent-blue); border-color: var(--accent-blue); color: #fff; }
+  /* The solid blue band between the fill's leading edge and the closing sweep (or, coming in, the card behind it). */
+  .band { position: absolute; top: 0; bottom: 0; left: 0; width: 0; pointer-events: none; opacity: 0; z-index: 2;
+          background: var(--blue); box-shadow: 0 0 8px 2px var(--halo); }
+
+  /* A stand-in for the existing merge progress bar (MergeProgress.jsx), unchanged by this ticket. */
+  .prog { display: none; flex-direction: column; align-items: flex-end; gap: 5px; width: 200px; font-size: 12px; color: var(--muted); }
+  .prog .bar { width: 100%; height: 5px; border-radius: 3px; background: var(--chip); overflow: hidden; }
+  .prog .bar i { display: block; height: 100%; width: 0; background: var(--accent-blue); }
+
+  .compact .card { height: 86px; }
+  .compact .card .k { display: none; }
+
+  /* Split view: Open beside Merged. */
+  .cols { display: grid; grid-template-columns: 1fr 1fr; gap: 18px; padding: 14px 24px 0; }
+  .col h4 { margin: 0 0 10px; font-size: 11px; font-weight: 600; letter-spacing: .06em; text-transform: uppercase; color: var(--muted); }
+
+  /* Merged rows (the History list's look). */
+  .day { font-size: 11px; font-weight: 600; letter-spacing: .06em; text-transform: uppercase; color: var(--muted); margin: 4px 0 6px; }
+  .row { position: relative; height: 34px; display: grid; grid-template-columns: 18px 1fr auto; gap: 10px; align-items: center; padding: 0 8px;
+         border-radius: 6px; font-size: 13px; overflow: hidden; will-change: clip-path, opacity; }
+  .row .ok { color: var(--ok); } .row .n { font-family: ui-monospace, Menlo, monospace; color: var(--muted); }
+  .row .tt { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; color: var(--text-2); } .row .m { font-size: 12px; color: var(--muted); }
+  .rtag { display: inline-block; margin-left: 8px; font-size: 11px; padding: 0 7px; border-radius: 99px; border: 1px solid var(--border); color: var(--muted); opacity: 0; }
+
+  /* Inside an MR. */
+  .detail { position: absolute; inset: 84px 0 0 0; padding: 14px 24px; }
+  .back { display: inline-block; font-size: 13px; color: var(--muted); padding: 4px 8px; border-radius: 6px; margin-left: -8px; }
+  .detail h2 { margin: 10px 0 4px; font: 600 16px/1.3 ui-monospace, Menlo, monospace; color: var(--text); }
+  .detail .meta { font-size: 12px; color: var(--muted); }
+  .detail .acts { margin-top: 14px; }
+  .done { margin-top: 14px; border: 1px solid var(--blue); border-radius: 8px; padding: 12px 14px; font-size: 13px; color: var(--text); opacity: 0; }
+  .done b { color: var(--blue); }
+  .detail .body { margin-top: 16px; display: grid; gap: 8px; }
+  .detail .body i { display: block; height: 10px; border-radius: 4px; background: var(--chip); }
+
+  .notice { overflow: hidden; height: 0; }
+  .notice div { border: 1px solid var(--amber); background: var(--amber-bg); color: var(--amber); border-radius: 8px; padding: 9px 14px; font-size: 13px; margin-bottom: 14px; }
+  .note { overflow: hidden; }
+  .note div { border: 1px solid var(--blue); border-radius: 8px; padding: 9px 14px; font-size: 13px; margin-bottom: 14px; color: var(--text); }
+  .chip { position: absolute; top: 10px; left: 50%; transform: translateX(-50%); padding: 5px 12px; border-radius: 99px; font-size: 12px;
+          border: 1px solid var(--blue); background: var(--bg); color: var(--text); box-shadow: 0 0 10px var(--halo-soft); opacity: 0; z-index: 3; }
+  .thumb { position: absolute; right: 3px; width: 5px; border-radius: 3px; background: var(--muted); opacity: .45; }
+  .sleep { position: absolute; inset: 0; background: #000; display: grid; place-items: center; color: #737373; font-size: 13px; z-index: 5; }
+  .page { position: absolute; inset: 38px 0 0 0; background: var(--bg); }
+  .page .viewport { top: 46px; }
+  .prev { position: absolute; inset: 38px 0 0 0; background: var(--bg); padding: 24px; }
+  .prev h3 { margin: 0 0 10px; font-size: 13px; color: var(--muted); font-weight: 600; letter-spacing: .06em; text-transform: uppercase; }
+  .prev i { display: block; height: 46px; margin-bottom: 10px; border-radius: 8px; border: 1px solid var(--border); background: var(--card); }
+  .fingers { position: absolute; top: 46%; width: 40px; height: 22px; z-index: 6; opacity: 0; }
+  .fingers i { position: absolute; top: 0; width: 16px; height: 22px; border-radius: 9px; background: rgba(160, 160, 160, .55); border: 1px solid rgba(255, 255, 255, .5); }
+  .fingers i + i { left: 22px; }
+  .tap { position: absolute; width: 28px; height: 28px; border-radius: 50%; background: rgba(160, 160, 160, .5); opacity: 0; z-index: 6; }
+  /* Annotations for whoever watches the mock-up (not dashboard UI): the corner label, and what just happened. */
+  .label { position: absolute; right: 10px; bottom: 8px; font: 11px ui-monospace, Menlo, monospace; color: var(--text-2); z-index: 7;
+           background: var(--bg); border: 1px dashed var(--border); border-radius: 5px; padding: 2px 7px; }
+  .ev { position: absolute; left: 10px; bottom: 8px; font: 11px ui-monospace, Menlo, monospace; color: var(--text-2); z-index: 7;
+        background: var(--bg); border: 1px dashed var(--border); border-radius: 5px; padding: 2px 7px; opacity: 0; }
+</style>
+</head>
+<body>
+<div class="controls">
+  <label>Scene <select id="scene"></select></label>
+  <label>Theme <select id="theme"><option value="dark">Dark (today)</option><option value="light">Light</option></select></label>
+  <label><input type="checkbox" id="reduced"> Reduce Motion</label>
+  <button class="primary" id="play">▶ Play</button>
+  <label><input type="range" id="scrub" min="0" max="1000" value="0"> <span id="tlabel">0 ms</span></label>
+</div>
+<p class="caption" id="caption"></p>
+<div class="wrap"><div class="stage" id="stage"></div></div>
+
+<script src="vendor/motion-14.8.0.js"></script>
+<script src="merge_motion.js"></script>
+<script>
+'use strict'
+const M = globalThis.MergeMotion
+const LEAD = 700 // still frames before anything happens
+const HOLD = 1000 // the end state, held
+const CARD = 104 + 14, CARD_SPLIT = 86 + 14, ROW = 34
+
+const PRS = [
+  { n: 748, t: 'Docs: search inside PDFs', s: 'docs · verdict pass', k: 'closes #739 Search the text of PDF deliverables' },
+  { n: 741, t: 'Vitals: disk headroom per machine', s: 'vitals · verdict pass', k: 'closes #733 Show free disk on each machine' },
+  { n: 744, t: 'bin/gh refuses unreadable Decisions', s: 'gate · verdict pass', k: 'closes #742 Decisions the dashboard can read' },
+  { n: 752, t: 'Activity: helper tabs show their group colour', s: 'activity · verdict pass', k: 'closes #750 Colour helpers by group' },
+  { n: 739, t: 'Support: link opens the right check', s: 'support · verdict pass', k: 'closes #731 Deep link from Support to Vitals' },
+  { n: 746, t: 'Usage: hourly budget line', s: 'usage · verdict pass', k: 'closes #729 Show the budget line on the chart' },
+  { n: 738, t: 'Board: stale claims released after 6 h', s: 'board · verdict pass', k: 'closes #730 Release dead claims' },
+  { n: 735, t: 'MR Review: images pinned by full SHA', s: 'review · verdict pass', k: 'closes #734 Pin PR images' },
+  { n: 749, t: 'Docs: keep your place when you go back', s: 'docs · verdict pass', k: 'closes #755 Return to the same place' },
+  { n: 751, t: 'Home: next-up queue shows the owner first', s: 'home · verdict pass', k: 'closes #747 Owner items first' },
+  { n: 743, t: 'Mobile: offline banner on the MR list', s: 'mobile · verdict pass', k: 'closes #726 Say when the phone is offline' },
+  { n: 737, t: 'Work loop: rules as invariants', s: 'design · verdict pass', k: 'closes #740 One system, rules at choke points' }
+]
+const NEW = { n: 753, t: 'Vitals: battery health on the laptop', s: 'vitals · verdict pass', k: 'closes #754 Battery cycle count' }
+const MERGED = [
+  { n: 732, t: 'Gate: low disk refuses merges', m: 'marvin · 11:42 · you' },
+  { n: 730, t: 'helper-tab: labelled WezTerm tabs', m: 'marvin · 10:15 · you' },
+  { n: 727, t: 'macOS screenshot capture', m: 'marvin · 09:03 · auto-merge' },
+  { n: 725, t: 'Seal: Hebrew language pack spike', m: 'clarity-captions · 08:50 · you' },
+  { n: 721, t: 'Board: parity check per project', m: 'marvin · 08:12 · you' }
+]
+
+// ---------- small helpers ----------
+const $ = (s, r = document) => r.querySelector(s)
+const clamp = (x) => Math.max(0, Math.min(1, x))
+// The motion's easing comes from Motion (motion.dev, vendored in vendor/, MIT), the tool the build will use. The gap
+// opening and closing is a Motion spring with no bounce, so cards settle without overshooting into each other; the
+// sweep is Motion's easeInOut. A spring sampled at a fixed time is a pure function of t, so seeking still works.
+// `out` is only for the stand-ins (the merge progress bar, notices), which the build keeps as they are today.
+const SPRING = Motion.spring({ keyframes: [0, 1], visualDuration: 1, bounce: 0 })
+const SPRING_END = SPRING.next(1000).value
+const ease = { out: (x) => 1 - Math.pow(1 - x, 3), io: (x) => (x >= 1 ? 1 : SPRING.next(x * 1000).value / SPRING_END), sweep: Motion.easeInOut }
+const bell = (x) => (x <= 0 || x >= 1 ? 0 : Math.sin(Math.PI * x))
+const prog = (ph, t) => (ph ? clamp((t - ph.start) / Math.max(1, ph.end - ph.start)) : 0)
+const find = (phases, name, extra = {}) => phases.find((p) => p.name === name && Object.entries(extra).every(([k, v]) => p[k] === v))
+const shifted = (plan, by) => ({ ...plan, phases: plan.phases.map((p) => ({ ...p, start: p.start + by, end: p.end + by })), total: plan.total + by })
+const goneAt = (phases) => (find(phases, 'clear') || find(phases, 'fade')).end
+function h(html) { const d = document.createElement('div'); d.innerHTML = html.trim(); return d.firstChild }
+
+function cardHtml(pr) {
+  return `<div class="slot" data-n="${pr.n}"><div class="card"><div style="min-width:0"><div class="t">#${pr.n} — ${pr.t}</div>
+    <div class="s">${pr.s}<span class="badge">ready</span></div><div class="k">${pr.k} <b>→</b></div></div>
+    <div class="acts"><span class="btn">Deny</span><span class="btn go">Approve &amp; Merge</span></div>
+    <div class="prog"><div class="bar"><i></i></div><span>Merging on GitHub</span></div>
+    <div class="band"></div></div></div>`
+}
+function rowHtml(r) {
+  return `<div class="slot" data-n="${r.n}"><div class="row"><span class="ok">✓</span><span class="tt"><span class="n">#${r.n}</span> ${r.t}<span class="rtag"></span></span>
+    <span class="m">${r.m}</span><div class="band"></div></div></div>`
+}
+function chrome(stage, { toggle = 'open', openCount = 4 }) {
+  stage.innerHTML = `<div class="lights"><i></i><i></i><i></i></div>
+    <div class="titlebar"><span class="tab">Home</span><span class="tab">Activity</span><span class="tab on">MR Review</span><span class="tab">Docs</span><span class="tab">Vitals</span></div>
+    <div class="toggle"><span data-v="open" class="${toggle === 'open' ? 'on' : ''}">Open (<b class="count" style="font-weight:400">${openCount}</b>)</span>
+      <span data-v="merged" class="${toggle === 'merged' ? 'on' : ''}">Merged</span><span>Proposals</span>
+      <span data-v="split" class="${toggle === 'split' ? 'on' : ''}" style="margin-left:auto">Open | Merged</span></div>
+    <div class="viewport"><div class="scroller"></div></div>`
+  return $('.scroller', stage)
+}
+const openList = (n, prs = PRS.slice(0, n)) => `<div class="list"><p class="hint"><span class="hc">${n}</span> pipeline-raised PRs awaiting review. Click a title for the full detail view.</p>
+  <div class="notice"><div></div></div>${prs.map(cardHtml).join('')}</div>`
+function setCount(stage, n) { stage.querySelectorAll('.count, .hc').forEach((c) => (c.textContent = n)) }
+function evLabel(stage) { const e = h('<div class="ev"></div>'); stage.appendChild(e); return e }
+function showEv(el, text, t, from, to) { const on = t >= from && t < to; el.style.opacity = on ? 1 : 0; if (on) el.textContent = text }
+// Where an element sits on the stage, for the tap marker.
+function spot(stage, el) { const a = stage.getBoundingClientRect(), b = el.getBoundingClientRect(); return { x: b.left - a.left + b.width / 2 - 14, y: b.top - a.top + b.height / 2 - 14 } }
+
+// ---------- the effects, each a pure function of t ----------
+// The card shows only between `lo` and `hi` (percent of its width); the solid band runs from `bLo` to `bHi`.
+function wipe(el, lo, hi, bLo, bHi) {
+  const band = el.querySelector('.band')
+  el.style.clipPath = lo <= 0 && hi >= 100 ? '' : `inset(0 ${100 - hi}% 0 ${lo}%)`
+  band.style.left = bLo + '%'; band.style.width = Math.max(0, bHi - bLo) + '%'
+  band.style.opacity = bHi - bLo > 0.05 ? 1 : 0
+}
+// The band's two edges (percent of the card): one eased trip from the fill's start to the trailing sweep's end, so the
+// band stays a third of the card wide (M.LAG) all the way across instead of stretching where the two would ease apart.
+function edges(lead, trail, t) {
+  const w = 100 * M.LAG, x = (100 + w) * ease.sweep(prog({ start: lead.start, end: trail.end }, t))
+  return [Math.max(0, x - w), Math.min(100, x)]
+}
+// Leaving, in place: the fill crosses left to right, the closing sweep follows a third behind and leaves the space
+// empty; then the slot closes, so the cards below fall together. Reduce Motion: a fade, then a 0.2 s close.
+function leaveFx(slot, phases, t, full) {
+  const el = slot.firstElementChild, fade = find(phases, 'fade')
+  if (fade) { el.style.opacity = 1 - prog(fade, t); wipe(el, 0, 100, 0, 0) }
+  else {
+    const [c, f] = edges(find(phases, 'fill'), find(phases, 'clear'), t)
+    wipe(el, c, 100, c, f)
+    el.style.borderColor = f > 0 && c < 100 ? 'var(--blue)' : ''
+  }
+  slot.style.height = full * (1 - ease.io(prog(find(phases, 'close'), t))) + 'px'
+}
+// Coming in: the space opens where the card belongs, the fill sweeps across it, and the card shows behind the fill.
+// Reduce Motion: the space opens in 0.2 s, then the card fades in.
+// `dir` is the plan's direction: 'ltr' (into Open, into Merged in the split view) or 'rtl' (onto the Merged tab, page
+// to page), which mirrors the same edges.
+function enterFx(slot, phases, t, full, dir = 'ltr') {
+  const el = slot.firstElementChild, fadeIn = find(phases, 'fadeIn')
+  slot.style.height = full * ease.io(prog(find(phases, 'gapOpen'), t)) + 'px'
+  if (fadeIn) { el.style.opacity = prog(fadeIn, t); wipe(el, 0, 100, 0, 0); return }
+  const [r, f] = edges(find(phases, 'fill'), find(phases, 'reveal'), t)
+  if (dir === 'rtl') wipe(el, 100 - f, 100, 100 - f, 100 - r)
+  else wipe(el, 0, f, r, f)
+}
+
+// ---------- scenes ----------
+// Each scene: build(stage, opts) → { total, render(t) }.
+const SCENES = {
+  single: {
+    title: '1. Leaving Open: the fill and the closing sweep, in place, then the gap closes',
+    caption: 'An MR merges while the Open list is on screen. A solid blue fill crosses its card left to right; the closing sweep follows a third of a card behind and leaves the space empty. The card never moves. When the sweep is done, the cards below fall together.',
+    build(stage, o) {
+      const sc = chrome(stage, { openCount: 4 })
+      sc.innerHTML = openList(4)
+      const slot = sc.querySelectorAll('.slot')[1]
+      const plan = shifted(M.planMerge({ reduced: o.reduced }), LEAD)
+      return { total: plan.total + HOLD, render(t) {
+        leaveFx(slot, plan.phases, t, CARD)
+        setCount(stage, t >= goneAt(plan.phases) ? 3 : 4)
+      } }
+    }
+  },
+
+  incoming: {
+    title: '2. A new MR comes in: the space opens where it belongs, the fill sweeps it in',
+    caption: 'The mirror of leaving. A new MR (#753) is raised while you watch: a space opens at its place in the list (here, between #748 and #741), the blue fill sweeps across it left to right, and the card shows behind the fill.',
+    build(stage, o) {
+      const sc = chrome(stage, { openCount: 4 })
+      const list = PRS.slice(0, 4)
+      // The real order is the server's; for the mock-up, place by an example order that puts #753 second.
+      const at = M.placeOf(list, NEW, (a, b) => (a.n === 748 ? -1 : 1))
+      sc.innerHTML = openList(4, [...list.slice(0, at), NEW, ...list.slice(at)])
+      const slot = sc.querySelectorAll('.slot')[at]
+      const plan = shifted(M.planEnter({ reduced: o.reduced }), LEAD)
+      return { total: plan.total + HOLD, render(t) {
+        enterFx(slot, plan.phases, t, CARD)
+        setCount(stage, t >= plan.phases[0].start ? 5 : 4)
+      } }
+    }
+  },
+
+  hold: {
+    title: '3. Approve: nothing moves until GitHub confirms the merge',
+    caption: 'You press Approve & Merge. The card shows its usual merge progress (the bar that is there today) and stays put. Only when GitHub confirms the merge does the sweep play, so a card never has to come back.',
+    build(stage, o) {
+      const sc = chrome(stage, { openCount: 4 })
+      sc.innerHTML = openList(4)
+      const slot = sc.querySelectorAll('.slot')[1], card = slot.firstElementChild
+      const acts = $('.acts', card), pg = $('.prog', card), bar = $('.bar i', card)
+      const tap = h('<div class="tap"></div>'); stage.appendChild(tap)
+      const where = spot(stage, $('.btn.go', card)); tap.style.left = where.x + 'px'; tap.style.top = where.y + 'px'
+      const ev = evLabel(stage)
+      const TAP = LEAD, CONFIRM = TAP + 2600
+      const plan = shifted(M.planMerge({ reduced: o.reduced }), CONFIRM)
+      return { total: plan.total + HOLD, render(t) {
+        tap.style.opacity = 0.8 * bell(clamp((t - (TAP - 240)) / 480))
+        const waiting = t >= TAP && t < CONFIRM
+        acts.style.display = t >= TAP ? 'none' : ''
+        pg.style.display = t >= TAP ? 'flex' : 'none'
+        bar.style.width = (t >= CONFIRM ? 100 : 92 * ease.out(clamp((t - TAP) / (CONFIRM - TAP)))) + '%'
+        showEv(ev, 'waiting for GitHub…', t, TAP, CONFIRM)
+        if (!waiting && t >= CONFIRM) showEv(ev, 'GitHub confirmed the merge', t, CONFIRM, CONFIRM + 1400)
+        leaveFx(slot, plan.phases, t, CARD)
+        setCount(stage, t >= goneAt(plan.phases) ? 3 : 4)
+      } }
+    }
+  },
+
+  refused: {
+    title: '4. GitHub refuses: the card never moved, so nothing comes back',
+    caption: 'The same Approve, but GitHub refuses the merge (here, a required check failed). The progress gives way to the buttons again and the existing "GitHub disagreed" notice says why. The card was never swept, so it simply stays.',
+    build(stage, o) {
+      const sc = chrome(stage, { openCount: 4 })
+      sc.innerHTML = openList(4)
+      const slot = sc.querySelectorAll('.slot')[1], card = slot.firstElementChild
+      const acts = $('.acts', card), pg = $('.prog', card), bar = $('.bar i', card), notice = $('.notice', sc)
+      notice.firstElementChild.innerHTML = '<strong>GitHub disagreed on #741.</strong> The merge didn\'t go through: a required check failed. It stays in Open.'
+      const tap = h('<div class="tap"></div>'); stage.appendChild(tap)
+      const where = spot(stage, $('.btn.go', card)); tap.style.left = where.x + 'px'; tap.style.top = where.y + 'px'
+      const ev = evLabel(stage)
+      const TAP = LEAD, REFUSE = TAP + 2600, NH = 54
+      return { total: REFUSE + 1600 + HOLD, render(t) {
+        tap.style.opacity = 0.8 * bell(clamp((t - (TAP - 240)) / 480))
+        const waiting = t >= TAP && t < REFUSE
+        acts.style.display = waiting ? 'none' : ''
+        pg.style.display = waiting ? 'flex' : 'none'
+        bar.style.width = 92 * ease.out(clamp((t - TAP) / (REFUSE - TAP))) + '%'
+        const n = o.reduced ? (t >= REFUSE ? 1 : 0) : ease.out(clamp((t - REFUSE) / 260))
+        notice.style.height = NH * n + 'px'; notice.firstElementChild.style.opacity = o.reduced ? clamp((t - REFUSE) / 220) : 1
+        showEv(ev, 'waiting for GitHub…', t, TAP, REFUSE)
+        if (t >= REFUSE) showEv(ev, 'GitHub refused the merge', t, REFUSE, REFUSE + 1400)
+      } }
+    }
+  },
+
+  detail: {
+    title: '5. Inside the MR when it merges: shown plainly, the sweep plays on the way back',
+    caption: 'You are reading the MR when it merges. Nothing throws you out: the buttons give way to a plain "Merged" line. When you go back, the list shows the card in its place, then the sweep plays.',
+    build(stage, o) {
+      const sc = chrome(stage, { openCount: 4 })
+      sc.innerHTML = openList(4)
+      const slot = sc.querySelectorAll('.slot')[1]
+      const pr = PRS[1]
+      const det = h(`<div class="detail"><span class="back">← Back to list</span><h2>#${pr.n} — ${pr.t}</h2><div class="meta">${pr.k}</div>
+        <div class="acts"><span class="btn">Deny</span><span class="btn go">Approve &amp; Merge</span></div>
+        <div class="done"><b>✓ Merged</b> into main at 14:02 by you. It leaves the Open list when you go back.</div>
+        <div class="body"><i style="width:92%"></i><i style="width:84%"></i><i style="width:88%"></i><i style="width:60%"></i></div></div>`)
+      stage.appendChild(det)
+      const tap = h('<div class="tap"></div>'); stage.appendChild(tap)
+      const MERGE = LEAD + 300, BACK = MERGE + 2200, SHOWN = BACK + 220
+      const plan = shifted(M.planMerge({ reduced: o.reduced }), SHOWN + 450)
+      const acts = $('.acts', det), done = $('.done', det), back = $('.back', det), view = $('.viewport', stage)
+      return { total: plan.total + HOLD, render(t) {
+        const inDetail = t < SHOWN
+        det.style.display = inDetail ? '' : 'none'; view.style.display = inDetail ? 'none' : ''
+        const d = clamp((t - MERGE) / (o.reduced ? 220 : 360))
+        acts.style.display = t >= MERGE ? 'none' : ''
+        done.style.opacity = t >= MERGE ? (o.reduced ? d : 1) : 0
+        done.style.transform = o.reduced || t < MERGE ? '' : `translateY(${(1 - ease.out(d)) * -6}px)`
+        const g = o.reduced ? 0 : bell(clamp((t - MERGE) / 900))
+        done.style.boxShadow = g ? `0 0 ${Math.round(16 * g)}px var(--halo)` : ''
+        const tp = clamp((t - (BACK - 260)) / 480)
+        tap.style.left = '22px'; tap.style.top = '92px'; tap.style.opacity = tp > 0 && tp < 1 ? 0.8 * bell(tp) : 0
+        back.style.background = t > BACK - 120 && t < SHOWN ? 'var(--chip)' : ''
+        if (t < SHOWN) return
+        leaveFx(slot, plan.phases, t, CARD)
+        setCount(stage, t >= goneAt(plan.phases) ? 3 : 4)
+      } }
+    }
+  },
+
+  arrive: {
+    title: '6. Arriving in Merged: a space opens at the top, the fill sweeps it in from the right',
+    caption: 'On the Merged tab the merged MR comes in the way a new MR comes into Open, but from the right: a space opens at the top, and the fill sweeps across it right to left with the row showing behind it. It left Open moving right, so it reads like turning to the next page.',
+    build(stage, o) {
+      const sc = chrome(stage, { toggle: 'merged', openCount: 3 })
+      const pr = PRS[1], fresh = { n: pr.n, t: pr.t, m: 'marvin · 14:02 · you' }
+      sc.innerHTML = `<div class="list"><p class="hint">Merged PRs across every project, and every Approve that was refused.</p><div class="day">Today</div>
+        ${rowHtml(fresh)}${MERGED.map(rowHtml).join('')}</div>`
+      const slot = sc.querySelector('.slot')
+      const plan = shifted(M.planArrival({ reduced: o.reduced }), LEAD)
+      return { total: plan.total + HOLD, render(t) { enterFx(slot, plan.phases, t, ROW, plan.direction) } }
+    }
+  },
+
+  split: {
+    title: '7. Split view: one path, left to right, out of Open and into Merged',
+    caption: 'Open beside Merged. The fill and the closing sweep cross the card left to right and the gap closes; a moment later a space opens at the top of Merged and the fill sweeps the row in from the left, so the card reads as travelling right.',
+    build(stage, o) {
+      const sc = chrome(stage, { toggle: 'split', openCount: 4 })
+      const pr = PRS[1], fresh = { n: pr.n, t: pr.t, m: '14:02 · you' }
+      sc.innerHTML = `<div class="cols compact"><div class="col"><h4>Open</h4>${PRS.slice(0, 4).map(cardHtml).join('')}</div>
+        <div class="col"><h4>Merged · today</h4>${rowHtml(fresh)}${MERGED.map((r) => rowHtml({ ...r, m: r.m.split(' · ').slice(1).join(' · ') })).join('')}</div></div>`
+      sc.querySelectorAll('.col .card .acts').forEach((a) => (a.innerHTML = '<span class="btn go">Merge</span>'))
+      const slot = sc.querySelectorAll('.col')[0].querySelectorAll('.slot')[1], into = sc.querySelectorAll('.col')[1].querySelector('.slot')
+      const plan = shifted(M.planMerge({ layout: 'split', reduced: o.reduced }), LEAD)
+      const outPh = plan.phases.filter((p) => p.column === 'open'), inPh = plan.phases.filter((p) => p.column === 'merged')
+      return { total: plan.total + HOLD, render(t) {
+        leaveFx(slot, outPh, t, CARD_SPLIT)
+        enterFx(into, inPh, t, ROW, M.planArrival({ layout: 'split' }).direction)
+        setCount(stage, t >= goneAt(outPh) ? 3 : 4)
+      } }
+    }
+  },
+
+  queue: {
+    title: '8. Several merges: one at a time, in the order GitHub confirms them',
+    caption: 'Three MRs merge close together. GitHub confirms #752 first, then #741, then #748, which is not the order of the list. Each plays in full, gap closed, before the next; one confirmed while another plays waits its turn.',
+    build(stage, o) {
+      const sc = chrome(stage, { openCount: 5 })
+      sc.innerHTML = openList(5)
+      const slots = [...sc.querySelectorAll('.slot')]
+      const bySlot = { '752': slots[3], '741': slots[1], '748': slots[0] }
+      const events = [{ key: '752', at: 0 }, { key: '741', at: 500 }, { key: '748', at: 2400 }]
+      const plan = shifted(M.planQueue(events, { reduced: o.reduced }), LEAD)
+      const ev = evLabel(stage)
+      return { total: plan.total + HOLD, render(t) {
+        for (const c of plan.cards) leaveFx(bySlot[c.key], plan.phases.filter((p) => p.key === c.key), t, CARD)
+        const last = events.filter((e) => t >= LEAD + e.at).pop()
+        if (last) showEv(ev, `GitHub confirmed #${last.key}`, t, LEAD + last.at, LEAD + last.at + 1300)
+        else showEv(ev, '', t, 0, 0)
+        setCount(stage, 5 - plan.cards.filter((c) => t >= goneAt(plan.phases.filter((p) => p.key === c.key))).length)
+      } }
+    }
+  },
+
+  reverted: {
+    title: '9. A later PR reverts a merged one: a small tag on the original',
+    caption: 'A revert PR (#760) merges and comes into Merged as usual. The original it reverts (#741) gets a small "reverted by #760" tag on its row.',
+    build(stage, o) {
+      const sc = chrome(stage, { toggle: 'merged', openCount: 3 })
+      const rev = { n: 760, t: 'Revert "Vitals: disk headroom per machine"', m: 'marvin · 14:20 · you' }
+      const orig = { n: 741, t: PRS[1].t, m: 'marvin · 14:02 · you' }
+      sc.innerHTML = `<div class="list"><p class="hint">Merged PRs across every project, and every Approve that was refused.</p><div class="day">Today</div>
+        ${rowHtml(rev)}${rowHtml(orig)}${MERGED.map(rowHtml).join('')}</div>`
+      const slot = sc.querySelector('.slot'), tag = sc.querySelectorAll('.rtag')[1]
+      tag.textContent = 'reverted by #760'
+      const plan = shifted(M.planArrival({ reduced: o.reduced }), LEAD)
+      const TAG = plan.total + 150
+      return { total: TAG + 400 + HOLD, render(t) {
+        enterFx(slot, plan.phases, t, ROW, plan.direction)
+        tag.style.opacity = clamp((t - TAG) / (o.reduced ? 220 : 400))
+      } }
+    }
+  },
+
+  scrolled: {
+    title: '10. Scrolled far down: the list changes length out of view, your place holds',
+    caption: 'You are reading near the bottom of a long list. A card above you merges: it goes without animating and the page shifts by its height, so nothing you are looking at moves; a chip says what happened. A new MR comes in above you: the same, the other way. Then a card on screen merges and plays as usual.',
+    build(stage, o) {
+      const sc = chrome(stage, { openCount: 12 })
+      const list = PRS.slice()
+      list.splice(3, 0, NEW)
+      sc.innerHTML = openList(12, list)
+      const vp = $('.viewport', stage), chip = h('<div class="chip">↑ #741 merged above you</div>'), thumb = h('<div class="thumb"></div>')
+      vp.appendChild(chip); vp.appendChild(thumb)
+      const slots = [...sc.querySelectorAll('.slot')], above = slots[1], fresh = slots[3], onScreen = slots[9]
+      fresh.style.height = '0px'
+      const START = onScreen.offsetTop - CARD - 40, view = vp.clientHeight
+      const leaving = M.scrollPlan({ top: above.offsetTop, height: CARD - 14, gap: 14, scrollTop: START, viewport: view })
+      const coming = M.scrollPlan({ top: fresh.offsetTop, height: CARD - 14, gap: 14, scrollTop: START + leaving.scrollDelta, viewport: view, change: 'enter' })
+      const A = LEAD, B = LEAD + 2400, C = LEAD + 4400
+      const plan = shifted(M.planMerge({ reduced: o.reduced }), C)
+      const ev = evLabel(stage)
+      return { total: plan.total + HOLD, render(t) {
+        const gone = t >= A, came = t >= B
+        above.style.height = gone ? '0px' : CARD + 'px'
+        fresh.style.height = came ? CARD + 'px' : '0px'
+        sc.scrollTop = START + (gone ? leaving.scrollDelta : 0) + (came ? coming.scrollDelta : 0)
+        const c = clamp((t - A) / 2000)
+        chip.style.opacity = c > 0 && c < 1 ? Math.min(1, c * 8, (1 - c) * 5) : 0
+        showEv(ev, 'new MR #753 came in above you', t, B, B + 1600)
+        leaveFx(onScreen, plan.phases, t, CARD)
+        const total = sc.scrollHeight
+        thumb.style.height = Math.max(24, (view * view) / total) + 'px'; thumb.style.top = (sc.scrollTop / total) * view + 'px'
+        setCount(stage, 12 - (gone ? 1 : 0) + (came ? 1 : 0) - (t >= goneAt(plan.phases) ? 1 : 0))
+      } }
+    }
+  },
+
+  away: {
+    title: '11. Back after the dashboard was asleep: the result, with a count',
+    caption: 'Four MRs merged while the dashboard was asleep. When it wakes, the list is already in its new state, with a note saying how many merged while you were away. Nothing replays.',
+    build(stage, o) {
+      const back = M.onListShown({ listVisible: false, pending: ['748', '744', '752', '746'] }, {})
+      const sc = chrome(stage, { openCount: 2 })
+      const keep = PRS.slice(0, 6).filter((p) => !back.settled.includes(String(p.n)))
+      sc.innerHTML = `<div class="list"><p class="hint">${keep.length} pipeline-raised PRs awaiting review. Click a title for the full detail view.</p>
+        <div class="note"><div><b style="color:var(--blue)">${back.note}</b> · see Merged</div></div>${keep.map(cardHtml).join('')}</div>`
+      const note = $('.note', sc)
+      const sleep = h('<div class="sleep">Dashboard asleep · 2 h</div>'); stage.appendChild(sleep)
+      const WAKE = LEAD + 300
+      return { total: WAKE + 900 + HOLD, render(t) {
+        const w = clamp((t - WAKE) / (o.reduced ? 250 : 400))
+        sleep.style.opacity = 1 - w; sleep.style.display = w >= 1 ? 'none' : ''
+        note.firstElementChild.style.opacity = clamp((t - WAKE - 200) / 300)
+      } }
+    }
+  },
+
+  swipe: {
+    title: '12. A swipe back (#756) in the middle of the animation',
+    caption: 'You swipe back to the previous tab half-way through. The animation finishes at once, so the list you swipe away (and later return to) is already in its end state.',
+    build(stage, o) {
+      const sc = chrome(stage, { openCount: 4 })
+      sc.innerHTML = openList(4)
+      const slot = sc.querySelectorAll('.slot')[1]
+      // The previous page (Activity) sits under the MR Review page; the swipe slides MR Review off to the right.
+      const prev = h('<div class="prev"><h3>Activity</h3><i></i><i></i><i style="width:70%"></i><i></i></div>')
+      const page = h('<div class="page"></div>')
+      ;[...stage.children].filter((c) => !c.classList.contains('lights') && !c.classList.contains('titlebar')).forEach((c) => page.appendChild(c))
+      stage.appendChild(prev); stage.appendChild(page)
+      const fingers = h('<div class="fingers"><i></i><i></i></div>'); stage.appendChild(fingers)
+      const plan = shifted(M.planMerge({ reduced: o.reduced }), LEAD)
+      const ASK = LEAD + 520
+      const r = M.interrupt(plan)
+      const GO = ASK + r.navigateIn, SW = o.reduced ? 260 : 380, BACKAT = GO + SW + 1100
+      return { total: BACKAT + SW + HOLD, render(t) {
+        const at = t >= ASK ? Math.max(t, r.seekTo) : t
+        leaveFx(slot, plan.phases, at, CARD)
+        setCount(stage, at >= goneAt(plan.phases) ? 3 : 4)
+        const out = ease.io(clamp((t - GO) / SW)), back = ease.io(clamp((t - BACKAT) / SW)), x = out * (1 - back)
+        const tabs = stage.querySelectorAll('.titlebar .tab'); tabs[1].classList.toggle('on', x > 0.5); tabs[2].classList.toggle('on', x <= 0.5)
+        if (o.reduced) { page.style.transform = ''; page.style.opacity = 1 - x; prev.style.opacity = x }
+        else { page.style.transform = `translateX(${x * 860}px)`; page.style.opacity = 1; prev.style.opacity = 1 }
+        // Two fingers: the swipe right (back), then left (forward).
+        const f1 = clamp((t - (ASK - 120)) / (GO - ASK + SW + 240)), f2 = clamp((t - (BACKAT - 120)) / (SW + 240))
+        const show = f1 > 0 && f1 < 1 ? f1 : f2 > 0 && f2 < 1 ? f2 : 0
+        fingers.style.opacity = show ? Math.min(1, show * 6, (1 - show) * 6) * 0.9 : 0
+        fingers.style.left = (f1 > 0 && f1 < 1 ? 330 + 200 * f1 : 530 - 200 * f2) + 'px'
+      } }
+    }
+  }
+}
+
+// ---------- the player ----------
+const params = new URLSearchParams(location.search)
+const reducedPref = matchMedia('(prefers-reduced-motion: reduce)').matches
+const opts = {
+  scene: params.get('scene') || 'single',
+  theme: params.get('theme') || 'dark',
+  reduced: params.has('reduced') ? params.get('reduced') === '1' : reducedPref
+}
+if (params.has('record')) document.body.classList.add('record')
+const stage = $('#stage')
+let scene = null, raf = 0
+
+function load() {
+  cancelAnimationFrame(raf)
+  stage.dataset.theme = opts.theme
+  document.documentElement.style.colorScheme = opts.theme
+  scene = SCENES[opts.scene].build(stage, opts)
+  const label = h(`<div class="label">${opts.theme} · ${opts.reduced ? 'Reduce Motion' : 'normal motion'}</div>`); stage.appendChild(label)
+  $('#caption').textContent = `${SCENES[opts.scene].title}. ${SCENES[opts.scene].caption}`
+  $('#scrub').max = scene.total
+  seek(0)
+}
+function seek(t) { scene.render(t); $('#scrub').value = t; $('#tlabel').textContent = `${Math.round(t)} / ${scene.total} ms` }
+function play() {
+  cancelAnimationFrame(raf)
+  const t0 = performance.now()
+  const tick = (now) => { const t = Math.min(scene.total, now - t0); seek(t); if (t < scene.total) raf = requestAnimationFrame(tick) }
+  raf = requestAnimationFrame(tick)
+}
+
+const sel = $('#scene')
+for (const [id, s] of Object.entries(SCENES)) sel.appendChild(new Option(s.title, id))
+for (const id of ['scene', 'theme']) {
+  $('#' + id).value = opts[id]
+  $('#' + id).addEventListener('change', (e) => { opts[id] = e.target.value; load(); play() })
+}
+$('#reduced').checked = opts.reduced
+$('#reduced').addEventListener('change', (e) => { opts.reduced = e.target.checked; load(); play() })
+$('#play').addEventListener('click', () => { load(); play() })
+$('#scrub').addEventListener('input', (e) => { cancelAnimationFrame(raf); seek(+e.target.value) })
+
+// For record.mjs: load a scene, then seek frame by frame.
+window.__proto = { scenes: Object.keys(SCENES), get total() { return scene.total }, seek, ready: true }
+load()
+if (!params.has('record')) setTimeout(play, 400)
+</script>
+</body>
+</html>
