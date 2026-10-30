@@ -173,6 +173,18 @@ def _isolate_sweep_home(tmp_path_factory, monkeypatch):
     fake = tmp_path_factory.mktemp("sweep-home")
     monkeypatch.setattr(cleanup_sweep, "HOME", fake)
     monkeypatch.setattr(cleanup_sweep, "WORKTREES_ROOT", fake / ".agents-pipeline-worktrees")
+    # #866: the sweep deletes old pytest basetemps under $TMPDIR; a test's sweep only ever sees a temp root of its own
+    # (the suite itself writes its basetemps in the real $TMPDIR, which must never be trimmed from inside a test).
+    tmp_root = fake / "tmpdir"
+    tmp_root.mkdir()
+    monkeypatch.setattr(cleanup_sweep, "TMP_ROOTS", [tmp_root])
+
+
+@pytest.fixture(autouse=True)
+def _no_real_gh_token(tmp_path_factory, monkeypatch):
+    # #866: gh_env reads ~/.claude/.gh-token; a test must never pick up (or depend on) this machine's real token.
+    import gh_env
+    monkeypatch.setattr(gh_env, "TOKEN_FILE", tmp_path_factory.mktemp("gh-token") / ".gh-token")
 
 
 @pytest.fixture(autouse=True)

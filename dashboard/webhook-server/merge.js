@@ -1,6 +1,6 @@
 import { execFile, spawn } from 'child_process'
 import { promisify } from 'util'
-import { mkdtemp, rm, statfs } from 'fs/promises'
+import { mkdtemp, rm, statfs, readdir, lstat } from 'fs/promises'
 import { readdirSync } from 'fs'
 import { tmpdir } from 'os'
 import path from 'path'
@@ -229,12 +229,80 @@ function testOutputOf(err) {
   return out ? `${out}\n${rest}` : rest
 }
 
+// marvin#866: the gate's temporary clones ($TMPDIR/mr-merge-gate-*, ~660 MB each, and the baseline's mr-baseline-*)
+// outlived their merges: two were still there hours later on 2026-10-29, and the Mac mini's disk filled. Each one is
+//   - named with this process's pid, and listed in `live` while its merge runs;
+//   - removed in a finally (git's record, then the folder, with retries), on success, failure, a throw or the gate's
+//     time limit;
+//   - and, if the process died first (a restart mid-merge never runs the finally), removed by sweepGateClones when the
+//     webhook next starts: anything older than GATE_CLONE_MAX_AGE_MS that is not in flight here and does not name
+//     another live process.
+// The in-flight record (merge_progress.js, ~/.claude/logs/merge-inflight.json) is per PR and holds no folder; it is
+// emptied at startup by takeInterruptedMerges, so `live` (this process) plus the pid in the name (any other) is what
+// says a clone is still in use. `root` is the seam tests point at a temp folder; never the real $TMPDIR there.
+export const GATE_CLONE_PREFIXES = ['mr-merge-gate-', 'mr-baseline-']
+export const GATE_CLONE_MAX_AGE_MS = 2 * 60 * 60_000
+export const gateClones = { root: () => tmpdir(), live: new Set() }
+const PID_IN_NAME = /^mr-(?:merge-gate|baseline)-(\d+)-/
+
+async function makeGateClone(prefix) {
+  const dir = await mkdtemp(path.join(gateClones.root(), `${prefix}${process.pid}-`))
+  gateClones.live.add(dir)
+  return dir
+}
+
+async function dropGateClone(dir, exec, repoPath) {
+  try {
+    await Promise.resolve().then(() => exec('git', ['worktree', 'remove', '--force', dir], { cwd: repoPath })).catch(() => {})
+    try {
+      await rm(dir, { recursive: true, force: true, maxRetries: 3, retryDelay: 200 })
+    } catch (e) {
+      console.warn(`[merge] could not remove the gate's temporary copy ${dir}: ${e?.code || e?.message || e}; the next startup sweep will`)
+    }
+  } finally {
+    gateClones.live.delete(dir)
+  }
+}
+
+const pidAlive = (pid) => {
+  try { process.kill(pid, 0); return true } catch (e) { return e?.code === 'EPERM' }
+}
+
+// O(entries in the temp folder) plus one rm per stale clone. Never throws; never follows a link.
+export async function sweepGateClones({ root = gateClones.root(), live = gateClones.live, now = Date.now(), maxAgeMs = GATE_CLONE_MAX_AGE_MS, isAlive = pidAlive, repoPath = REPO_PATH, exec = execFileAsync, log = console.log } = {}) {
+  const removed = [], kept = []
+  let names = []
+  try { names = await readdir(root) } catch { return { removed, kept } }
+  for (const name of names) {
+    if (!GATE_CLONE_PREFIXES.some((p) => name.startsWith(p))) continue
+    const dir = path.join(root, name)
+    let st
+    try { st = await lstat(dir) } catch { continue }
+    if (!st.isDirectory()) continue   // a link or a file with the name: not ours to delete
+    const pid = Number((name.match(PID_IN_NAME) || [])[1]) || null
+    let why = null
+    if (live.has(dir)) why = 'its merge is running'
+    else if (pid && pid !== process.pid && isAlive(pid)) why = `gate process ${pid} is still running`
+    else if (now - st.mtimeMs < maxAgeMs) why = 'younger than the age limit'
+    if (why) { kept.push({ name, reason: why }); continue }
+    try {
+      await rm(dir, { recursive: true, force: true, maxRetries: 3, retryDelay: 200 })
+      removed.push(name)
+    } catch (e) {
+      kept.push({ name, reason: `could not remove: ${e?.code || e?.message || e}` })
+    }
+  }
+  if (removed.length && repoPath) await exec('git', ['worktree', 'prune'], { cwd: repoPath }).catch(() => {})
+  if (removed.length) log(`[merge] startup sweep removed ${removed.length} leftover gate cop${removed.length === 1 ? 'y' : 'ies'}: ${removed.join(', ')}`)
+  return { removed, kept }
+}
+
 // Which of these failing tests ALSO fail on a clean checkout of the base branch? If they do, the PR did not break them:
 // the base was already red. Only pytest ids (`path::name`) can be re-run individually; anything else returns null
 // ("cannot tell"), and the caller behaves as before. Used by the webhook; tests inject their own.
 export async function baselineFailsOnMain(names, exec = execFileAsync, repoPath = REPO_PATH, base = 'main') {
   if (!names.length || names.some((n) => !n.includes('::'))) return null
-  const dir = await mkdtemp(path.join(tmpdir(), 'mr-baseline-'))
+  const dir = await makeGateClone('mr-baseline-')
   try {
     await exec('git', ['fetch', 'origin', base], { cwd: repoPath })
     await exec('git', ['worktree', 'add', '--detach', dir, `origin/${base}`], { cwd: repoPath })
@@ -248,8 +316,7 @@ export async function baselineFailsOnMain(names, exec = execFileAsync, repoPath 
   } catch {
     return null
   } finally {
-    await exec('git', ['worktree', 'remove', '--force', dir], { cwd: repoPath }).catch(() => {})
-    await rm(dir, { recursive: true, force: true }).catch(() => {})
+    await dropGateClone(dir, exec, repoPath)
   }
 }
 
@@ -303,9 +370,9 @@ export async function rebaseAndRetest(headRef, exec = execFileAsync, repoPath = 
     // infraCause can name the disk and both numbers.
     return { ok: false, reason: `Disk check before rebasing onto ${base}:\n\nNo space left on device for the check: ${gb(free)} free, the gate needs ${gb(MIN_GATE_FREE_BYTES)}. Free up space on this Mac, then approve again.${aidNote}` }
   }
-  const scratchDir = await mkdtemp(path.join(tmpdir(), 'mr-merge-gate-'))
-  progress('rebasing', 'running', { detail: `onto ${base}` })
+  const scratchDir = await makeGateClone('mr-merge-gate-')
   try {
+    progress('rebasing', 'running', { detail: `onto ${base}` })   // inside the try: a throw here must not leak the clone
     await exec('git', ['fetch', 'origin', base, headRef], { cwd: repoPath })
     await exec('git', ['worktree', 'add', '--detach', scratchDir, `origin/${headRef}`], { cwd: repoPath })
 
@@ -336,8 +403,7 @@ export async function rebaseAndRetest(headRef, exec = execFileAsync, repoPath = 
     })
     return { ok: true }
   } finally {
-    await exec('git', ['worktree', 'remove', '--force', scratchDir], { cwd: repoPath }).catch(() => {})
-    await rm(scratchDir, { recursive: true, force: true }).catch(() => {})
+    await dropGateClone(scratchDir, exec, repoPath)
   }
 }
 

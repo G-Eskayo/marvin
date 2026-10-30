@@ -2,7 +2,7 @@ import { readFileSync } from 'fs'
 import os from 'os'
 import path from 'path'
 import { createServer } from 'http'
-import { mergePr, baselineFailsOnMain, mergesAhead, execWithGroupTimeout, runDiskFirstAid, memoryGuardCheck, kickMemoryGuard } from './merge.js'
+import { mergePr, baselineFailsOnMain, mergesAhead, execWithGroupTimeout, runDiskFirstAid, memoryGuardCheck, kickMemoryGuard, sweepGateClones } from './merge.js'
 import { snapshotExec } from './pr_snapshot.js'
 import { createMergeTracker, createInflightStore, takeInterruptedMerges, recordMergeDuration, estimateMergeMs, machineLoad, approveResponder, wantsStream, createMergeLatch, alreadyMergingBody } from './merge_progress.js'
 import { resolveDeviceId, peerHosts } from '../electron/main/device_identity.js'
@@ -305,6 +305,9 @@ server.listen(PORT, () => {
   for (const { url, event } of takeInterruptedMerges()) {
     forwardRefreshPing(DASHBOARD_REFRESH_URL, (u) => postJson(u, { topics: ['merge'], source: 'merge', merge: { url, event } }))
   }
+  // marvin#866: ...and that merge's temporary clone (~660 MB) died with it, its finally never ran. Clear any older than
+  // 2 h; a merge that has started since this process did is kept (merge.js sweepGateClones).
+  sweepGateClones().catch((e) => console.warn(`[merge] startup sweep of gate copies failed: ${e?.message || e}`))
 
   // marvin#762: this Mac can merge again. Saved approvals (on this Mac's dashboard, and on the other Mac's, which
   // could not reach this one) are retried on this, not on a timer.
