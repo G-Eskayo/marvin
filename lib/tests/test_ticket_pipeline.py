@@ -1606,3 +1606,49 @@ def test_dry_run_reports_the_pause_without_recording_anything(monkeypatch, capsy
     monkeypatch.setattr(tp.failure_breaker, "code_freshness", lambda *a, **k: {"state": "stale", "detail": "", "behind": 1, "oldest_hours": 3.0})
     tp.main()
     assert called == [] and "dispatch PAUSED" in capsys.readouterr().err
+
+
+# ── plan first, credit for overflow (#849): credit slots open on top while that Mac's credit is ready ────
+
+def _credit(monkeypatch, ready: dict, **kw):
+    got = _parallel(monkeypatch, **kw)
+    settings = {**tp.dispatch_concurrency.load(), "credit_slots": {"mac-mini-1": 2}}
+    monkeypatch.setattr(tp.dispatch_concurrency, "load", lambda path=None: settings)
+    monkeypatch.setattr(tp, "_credit_readiness", lambda s: dict(ready))
+    return got
+
+
+def _many(n):
+    return [_ticket(5 + i, f"2026-02-{i + 1:02d}T00:00:00Z") for i in range(n)]
+
+
+def test_with_the_minis_credit_ready_two_more_tickets_start_on_the_mini(monkeypatch):
+    got = _credit(monkeypatch, {"mac-mini-1": True}, marvin=_many(6), total=3, per_project=3, local_used=2)
+    tp.main()
+    assert _targets(got).count("mac-mini-1") == 2 and _targets(got).count("macbook-pro-1") == 1
+
+
+def test_without_credit_the_plans_limits_hold(monkeypatch):
+    got = _credit(monkeypatch, {"mac-mini-1": False}, marvin=_many(6), total=3, per_project=3, local_used=2)
+    tp.main()
+    assert _targets(got) == ["macbook-pro-1"]
+
+
+def test_a_readiness_probe_that_fails_opens_nothing(monkeypatch):
+    got = _parallel(monkeypatch, marvin=_many(6), total=3, per_project=3, local_used=2)
+    settings = {**tp.dispatch_concurrency.load(), "credit_slots": {"mac-mini-1": 2}}
+    monkeypatch.setattr(tp.dispatch_concurrency, "load", lambda path=None: settings)
+    monkeypatch.setattr(tp, "_machine_registry", lambda: {"mac-mini-1": {"is_self": True}})
+    monkeypatch.setattr(tp.dispatch_concurrency, "credit_ready_local", lambda *a, **k: (_ for _ in ()).throw(OSError("x")))
+    tp.main()
+    assert _targets(got) == ["macbook-pro-1"]
+
+
+def test_credit_readiness_only_asks_machines_that_have_credit_slots(monkeypatch):
+    asked = []
+    monkeypatch.setattr(tp.dispatch_concurrency, "credit_ready_local", lambda *a, **k: asked.append("local") or True)
+    monkeypatch.setattr(tp.dispatch_concurrency, "credit_ready_remote", lambda host, **k: asked.append(host) or True)
+    monkeypatch.setattr(tp, "_machine_registry", lambda: {"mac-mini-1": {"is_self": False, "tailscale_hostname": "mini"},
+                                                          "macbook-pro-1": {"is_self": True, "tailscale_hostname": "mbp"}})
+    ready = tp._credit_readiness({"credit_slots": {"mac-mini-1": 2, "macbook-pro-1": 0}})
+    assert ready == {"mac-mini-1": True} and asked == ["mini"]

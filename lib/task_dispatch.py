@@ -24,6 +24,8 @@ from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
 
+import dispatch_concurrency
+
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from machine_profile import registry_id, remote_devices, _load_registry  # noqa: E402
 import host_os  # noqa: E402
@@ -196,6 +198,7 @@ def _build_wrapper_script(command: str, task_id: str, task_label: str, device_id
     record_prefix = record_json[:-1]
 
     tasks_dir, state = SHELL_TASKS_DIR, SHELL_STATE_PATH
+    plan_slots = dispatch_concurrency.effective_limit(dispatch_concurrency.load(), device_id)   # the plan's, not the credit's
     return f"""#!/bin/bash
 mkdir -p {tasks_dir}
 mkdir -p "$HOME/.claude"
@@ -212,9 +215,9 @@ export PATH="$HOME/.local/bin:/opt/homebrew/bin:/usr/local/bin:$PATH"
 if [ -f "$HOME/.claude/.oauth-token" ]; then
   export CLAUDE_CODE_OAUTH_TOKEN="$(cat "$HOME/.claude/.oauth-token")"
 fi
-# The plan's monthly API credit, when this machine has a key and the credit isn't spent (#775).
+# Plan first; the monthly API credit only for builds beyond this machine's plan slots (#775, #849).
 if [ -f "$HOME/.agents/lib/builder_auth.sh" ]; then
-  . "$HOME/.agents/lib/builder_auth.sh" && marvin_builder_auth {task_id}
+  . "$HOME/.agents/lib/builder_auth.sh" && marvin_builder_auth {task_id} {plan_slots}
 fi
 if [ -f "$HOME/.claude/.gh-token" ]; then
   export GH_TOKEN="$(cat "$HOME/.claude/.gh-token")"

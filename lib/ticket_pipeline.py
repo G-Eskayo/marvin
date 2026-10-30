@@ -771,6 +771,35 @@ def _inflight_by_repo(repos) -> dict[str, int]:
     return out
 
 
+def _machine_registry() -> dict:
+    import task_dispatch
+    return task_dispatch._candidates()
+
+
+def _credit_readiness(settings: dict) -> dict[str, bool]:
+    """{machine: its API credit can take a build}, asked only of machines with credit slots. Anything that can't be
+    asked counts as not ready: the plan's slots only, never extra builds on a guess (#849)."""
+    want = [m for m, n in settings.get("credit_slots", {}).items() if n]
+    if not want:
+        return {}
+    try:
+        registry = _machine_registry()
+    except Exception:  # noqa: BLE001
+        return {m: False for m in want}
+    out = {}
+    for m in want:
+        info = registry.get(m) or {}
+        try:
+            if info.get("is_self"):
+                out[m] = bool(dispatch_concurrency.credit_ready_local())
+            else:
+                host = info.get("tailscale_hostname")
+                out[m] = bool(host and dispatch_concurrency.credit_ready_remote(host))
+        except Exception:  # noqa: BLE001
+            out[m] = False
+    return out
+
+
 def _select_for_profile(profile: dict, settings: dict | None = None, taken: dict | None = None,
                         local_base: int = 0, refusals: list | None = None):
     """A machine the profile allows, that is free, and (if it is this one) has the tools its required
@@ -799,6 +828,7 @@ def _select_for_profile(profile: dict, settings: dict | None = None, taken: dict
             used = (local_base if is_self else 0) + taken.get(device, 0)
             ok, why = dispatch_concurrency.can_start_another(
                 device, settings, slots_in_use=lambda m, used=used: used,
+                credit_ready=lambda m: settings.get("credit_ready", {}).get(m, False),
                 disk_free_gb=lambda m, s=is_self: _free_disk_gb() if s else None,
                 github_budget_pct=_github_budget_pct,
                 breaker_tripped=lambda: [],   # a tripped breaker already removed that project from this scan
@@ -912,6 +942,13 @@ def _scan(run, dry_run: bool) -> str | None:
 
     settings = dispatch_concurrency.load()
     parallel = bool(settings["parallel"])
+    if parallel:
+        # Plan first (#849): each Mac's credit slots open on top of its plan slots only while its credit is ready, and
+        # the scan-wide and per-project caps grow by the same number, or the extra slots could never fill.
+        ready = _credit_readiness(settings)
+        extra = sum(n for m, n in settings.get("credit_slots", {}).items() if ready.get(m))
+        settings = {**settings, "credit_ready": ready, "max_total": settings["max_total"] + extra,
+                    "max_per_project": settings["max_per_project"] + extra}
     step("Scanning tickets", ", ".join(r.split("/")[-1] for r in repos) + ": ready-for-agent, unclaimed, unblocked")
     pools: dict[str, list] = {}
     for r in repos:

@@ -14,6 +14,7 @@ import json
 import os
 import subprocess
 import tempfile
+from datetime import datetime, timezone
 from pathlib import Path
 
 PATH = Path(__file__).resolve().parents[1] / "config" / "dispatch.json"
@@ -26,6 +27,8 @@ DEFAULTS = {
     "max_total": 2,
     "max_per_project": 1,
     "machine_slots": {"mac-mini-1": 2, "macbook-pro-1": 1},
+    # Extra slots that open only while that machine's API credit is ready (#849): the plan's slots come first.
+    "credit_slots": {},
     "guards": {"min_disk_gb": 15, "min_github_budget_pct": 20},
 }
 
@@ -56,6 +59,12 @@ def validate(raw: dict) -> tuple[dict, list[str]]:
                 out["machine_slots"][machine] = n
             else:
                 problems.append(f"machine_slots.{machine} must be a whole number from 1 to {MAX_LIMIT}")
+    if isinstance(raw.get("credit_slots"), dict):
+        for machine, n in raw["credit_slots"].items():
+            if isinstance(n, int) and not isinstance(n, bool) and 0 <= n <= MAX_LIMIT:
+                out["credit_slots"][machine] = n
+            else:
+                problems.append(f"credit_slots.{machine} must be a whole number from 0 to {MAX_LIMIT}")
     guards = raw.get("guards")
     if isinstance(guards, dict):
         for key, hi in (("min_disk_gb", 10_000), ("min_github_budget_pct", 100)):
@@ -92,11 +101,13 @@ def save(settings: dict, path: Path | None = None) -> dict:
     return clean
 
 
-def effective_limit(settings: dict, machine: str) -> int:
-    """Tickets this machine may run at once: one when parallel is off, else the smaller of its slots and max_total."""
+def effective_limit(settings: dict, machine: str, credit_ready: bool = False) -> int:
+    """Tickets this machine may run at once: one when parallel is off, else the smaller of its slots and max_total
+    (the plan's slots), plus its credit_slots on top while its API credit is ready (#849)."""
     if not settings.get("parallel"):
         return 1
-    return max(1, min(settings["machine_slots"].get(machine, 1), settings["max_total"]))
+    plan = max(1, min(settings["machine_slots"].get(machine, 1), settings["max_total"]))
+    return plan + (settings.get("credit_slots", {}).get(machine, 0) if credit_ready else 0)
 
 
 def _safe(reader, *args):
@@ -107,8 +118,9 @@ def _safe(reader, *args):
 
 
 def can_start_another(machine: str, settings: dict, *, slots_in_use, disk_free_gb, github_budget_pct,
-                      breaker_tripped, missing_tools) -> tuple[bool, str | None]:
-    limit = effective_limit(settings, machine)
+                      breaker_tripped, missing_tools, credit_ready=None) -> tuple[bool, str | None]:
+    # An unreadable credit state means the plan's slots only: never a block, never extra builds on a guess.
+    limit = effective_limit(settings, machine, credit_ready=bool(credit_ready and _safe(credit_ready, machine)))
     used = slots_in_use(machine)
     if used >= limit:
         return False, f"{machine} is full: {used} of {limit} slots in use"
@@ -129,6 +141,49 @@ def can_start_another(machine: str, settings: dict, *, slots_in_use, disk_free_g
     if missing:
         return False, f"{machine} lacks tools the project needs: {', '.join(missing)}"
     return True, None
+
+
+CREDIT_RETRY_S = 6 * 3600   # a failed credit check keeps the extra slots shut this long, then the next build retries
+
+
+def credit_ready_local(home: Path | None = None, now: datetime | None = None) -> bool:
+    """This machine's API credit can take a build: its key file holds a key, and the last check (written by
+    lib/builder_auth.sh to ~/.claude/dispatch/credit-state.json) didn't fail in the last CREDIT_RETRY_S. A state that
+    can't be read leaves it to the key; the next real check rewrites it."""
+    home = home or Path.home()
+    try:
+        if not (home / ".claude" / ".anthropic-api-key").read_text().strip():
+            return False
+    except OSError:
+        return False
+    try:
+        state = json.loads((home / ".claude" / "dispatch" / "credit-state.json").read_text())
+        if state.get("ok") is False:
+            at = datetime.strptime(state["at"], "%Y-%m-%dT%H:%M:%SZ").replace(tzinfo=timezone.utc)
+            return ((now or datetime.now(timezone.utc)) - at).total_seconds() >= CREDIT_RETRY_S
+    except (OSError, ValueError, KeyError, TypeError, AttributeError):
+        pass
+    return True
+
+
+def credit_ready_remote(host: str, run=None) -> bool | None:
+    """credit_ready_local on another machine over ssh; None when it can't be asked."""
+    run = run or subprocess.run
+    try:
+        proc = run(["ssh", "-o", "ConnectTimeout=5", "-o", "BatchMode=yes", "-o", "StrictHostKeyChecking=accept-new",
+                    host, 'cd "$HOME/.agents" && "$HOME/.agents/venv/bin/python" -m lib.dispatch_concurrency credit-ready'],
+                   capture_output=True, text=True, timeout=10)
+        if proc.returncode != 0:
+            return None
+        return proc.stdout.strip() == "true"
+    except Exception:
+        return None
+
+
+def others_running(task_id: str, reader=None) -> int:
+    """Live builds on this machine other than `task_id`: how builder_auth.sh tells a plan slot from an overflow one."""
+    records = (reader or slots_in_use)()
+    return sum(1 for r in records if r.get("task_id") != task_id)
 
 
 def partition_alive(records: list[dict], is_alive) -> tuple[list[dict], list[dict]]:
@@ -254,6 +309,12 @@ def _cli(argv: list[str]) -> int:
         if len(argv) >= 3 and argv[1] == "--machine":
             machine = argv[2]
         print(json.dumps(slots_in_use(machine)))
+        return 0
+    if argv[:1] == ["credit-ready"]:
+        print("true" if credit_ready_local() else "false")
+        return 0
+    if argv[:1] == ["others-running"] and len(argv) == 3 and argv[1] == "--exclude":
+        print(others_running(argv[2]))
         return 0
     if argv[:1] == ["refresh-summary"]:
         refresh_dispatch_state_summary()
