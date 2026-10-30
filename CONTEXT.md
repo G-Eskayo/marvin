@@ -490,9 +490,23 @@ ever been closed unmerged. Gil approves almost everything; the wait is the cost.
   amber at the top of that system, with the reason and a fix. It is red only when it has also blocked something
   else (a deadline, another system). It is not the same as a **decision**: a real choice for Gil (retire a producer,
   lower a target), which goes to the decision lane.
+- **Independence** (measured): for each kind of work (coding tickets, research, review, embeddings and search,
+  transcription, voice), the share of runs done on our own machines and models. A run counts only if it holds the
+  bar: quality within 5% of the paid baseline and latency within 1.5×. These are starting bars; *beating* the paid
+  baseline on both is a stretch north star. Paid thinking (the Claude plan, the API credit, other paid models) still
+  does part of the work and is counted, but the direction is always less of it.
+- **Outside dependency**: rented infrastructure we rely on but don't think with (GitHub, Tailscale, ngrok, hosting,
+  the Apple developer account). Tracked separately from Independence. The aim is that builds lower it over time.
 - **Truthful motion** (the live map and Vitals views): nothing moves unless something real happened, at a speed a
   person can follow. A part lights when it works and stays red when it fails until it passes. A link lights only
   when real traffic crosses it. Idle parts are still. The camera never moves by itself.
+- **Body and Work** (the map's two halves): **Body** is what MARVIN is made of, grouped by the Vitals regions.
+  **Work** is what MARVIN is working on: one node per monitored system or project, holding its **workers** (chat
+  helpers, pipeline builders, spawned agents, the scheduled jobs that serve it) and the files they touch. Links
+  between the halves are real traffic.
+- **Worker**: anything that does work on a project while it runs: a chat helper, a pipeline builder for a ticket, an
+  agent a session spawned, a scheduled job. Different from the **Autonomous Agents** branch of today's map, which is
+  only the scheduled jobs.
 - **Leaf node**: the outermost parts on the map (files, functions, sub-agents). They light when touched, the same as
   any other part.
 
