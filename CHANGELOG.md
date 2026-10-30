@@ -1,5 +1,7 @@
 # Changelog
 
+- MR Review: blue sweep slide-out when an MR merges, and an Open | Merged split view ([#761](https://github.com/G-Eskayo/marvin/pull/761))
+
 - bin/gh refuses Decisions the dashboard can't read (rule I2) ([#744](https://github.com/G-Eskayo/marvin/pull/744))
 
 - Builders run on the plan's monthly API credit when the machine has an API key, and fall back to the plan when it runs out ([#776](https://github.com/G-Eskayo/marvin/pull/776))
