@@ -379,3 +379,55 @@ test('the one layout setting drives the wallpaper too, and the hosts\' pushes ke
     unlinkSync(path.join(MAP, file))
   }
 })
+
+// ── shape is a second cue for every kind of part (Gil, 2026-10-30, proposed for review) ──
+
+test('each kind of part has its own shape: regions circles, projects diamonds, workers by kind, files dots', async (t) => {
+  if (skipReason) return t.skip(skipReason)
+  const page = await openMap()
+  const p = await aProject(page)
+  await apply(page, { workers: [helperW('s-h', p.projectId), helperW('s-a', p.projectId, { kind: 'agent' }),
+    { id: 'builder:o/r#1', name: '#1', kind: 'builder', state: 'running', project: p.projectId },
+    { id: 'job:s-j', name: 's-j', kind: 'job', state: 'running', project: p.projectId }] })
+  const owner = await m(page, () => window.__map.codeOwnerWithFile())
+  await m(page, (f) => window.triggerActivity({ skill: 'MARVIN', tool: 'Read', ts: 1.8e9, agent: 's-h', file: f }), owner.file)
+  await page.waitForTimeout(700)
+  await frames(page, 2)
+  const shape = (id) => m(page, (id) => window.__map.shapeOf(id), id)
+  assert.equal(await shape('region:Pipeline'), 'circle')
+  assert.equal(await shape(owner.node), 'circle')
+  assert.equal(await shape(p.id), 'diamond')
+  assert.equal(await shape('Unassigned'), 'diamond')
+  assert.equal(await shape('helper:s-h'), 'triangle')
+  assert.equal(await shape('helper:s-a'), 'triangle-dot')
+  assert.equal(await shape('builder:o/r#1'), 'square')
+  assert.equal(await shape('job:s-j'), 'hexagon')
+  assert.equal(await shape(`file:s-h:${owner.file}`), 'dot')
+  // the shape is what gets drawn: each one's drawn record carries it
+  const drawn = Object.fromEntries((await m(page, () => window.__map.nodes())).map((n) => [n.id, n.shape]))
+  assert.equal(drawn['builder:o/r#1'], 'square')
+  assert.equal(await m(page, () => window.__map.layout()), 'work')
+  await page.close()
+})
+
+test('shapes stay readable at 860 px: no project or worker is drawn smaller than 4 px', async (t) => {
+  if (skipReason) return t.skip(skipReason)
+  const page = await browser.newPage({ viewport: { width: 860, height: 900 } })
+  await page.goto(pathToFileURL(path.join(MAP, 'index.html')).href + '?layout=work')
+  await page.evaluate(() => window.__map.driveExternally())
+  const p = (await page.evaluate(() => window.__map.workProjects())).find((x) => x.projectId)
+  await page.evaluate((d) => window.__map.applyWork(d), { workers: Array.from({ length: 12 }, (_, i) => ({ id: `helper:sz${i}`, name: 'x', kind: ['helper', 'agent', 'builder', 'job'][i % 4], state: 'running', project: p.projectId })) })
+  await page.waitForTimeout(700)
+  await frames(page, 2 * SECOND)
+  const small = (await page.evaluate(() => window.__map.nodes())).filter((n) => n.shape !== 'circle' && n.shape !== 'dot' && n.r < 4)
+  assert.deepEqual(small, [])
+  await page.close()
+})
+
+test('the default layout draws every node as a circle, as before', async (t) => {
+  if (skipReason) return t.skip(skipReason)
+  const page = await openMap({ work: false })
+  await frames(page, 2)
+  assert.ok((await m(page, () => window.__map.nodes())).every((n) => n.shape === undefined || n.shape === 'circle'))
+  await page.close()
+})

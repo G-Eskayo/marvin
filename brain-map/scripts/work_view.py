@@ -12,10 +12,14 @@ projects, MARVIN included), each holding its **workers**:
   project, a north star (`ns<N>`) is MARVIN's own, and no goal is Unassigned. A job loaded on this Mac that the
   catalog doesn't know is Unassigned too.
 
-A worker whose project can't be found goes under **Unassigned**, never dropped. Gil, 2026-10-30: nothing fades. A
+A worker whose project can't be found goes under **Unassigned**, never dropped. The owner, 2026-10-30: nothing fades. A
 worker shows only while it runs, and one that finished cleanly leaves at once. One that died (failed, crashed, or
 killed with no stop) stays, red, until a retry passes (its ticket's or job's next run) or someone dismisses it in the
-page's tray. Its `ended` names that one failure, so dismissing it never hides a later one. Jobs follow the same rule:
+page's tray. It also clears once its ticket was done or its PR merged (the owner, 2026-10-30: keep the map accurate
+to what is actually there), read from what this Mac already has: the project's own clone (its main branch as last fetched) and the
+dashboard's merged-PR list. No GitHub call per worker. When that can't be read (no clone here, or a helper whose
+report names no ticket or PR), it stays red and says it couldn't confirm. Its `ended` names that one failure, so
+dismissing it never hides a later one. Jobs follow the same rule:
 idle and switched-off jobs aren't drawn.
 
 A helper's project: the catalog project whose local folder holds its working folder (longest wins), else the repo
@@ -45,6 +49,7 @@ HERE = Path(__file__).resolve().parent
 LIB = HERE.parents[1] / "lib"
 sys.path.insert(0, str(LIB))
 import chat_helpers  # noqa: E402  (state_of: the one rule for a helper killed mid-run)
+import ticket_evidence  # noqa: E402  (what counts as a commit that did a ticket)
 
 UNASSIGNED = "Unassigned"
 HALF_ID, HALF_NAME = "half:work", "Work"
@@ -106,9 +111,58 @@ def git_remote(folder: str) -> str | None:
     return m.group(1) if m else None
 
 
+# ── was the work done since? ────────────────────────────────────────────────
+
+class RepoState:
+    """One repo's merged work as this Mac knows it: commit subjects on main and the merged PRs."""
+
+    def __init__(self, subjects, merged_prs=()):
+        self.subjects = [s for s in subjects if isinstance(s, str)]
+        self.merged_prs = set(merged_prs)
+
+    @staticmethod
+    def from_clone(folder: str):
+        """From a clone's origin/main (as last fetched), else its main. None if it isn't a readable clone."""
+        if not folder or not os.path.isdir(folder):
+            return None
+        for ref in ("origin/main", "main", "origin/master", "master"):
+            try:
+                p = subprocess.run(["git", "-C", folder, "log", ref, "--format=%s", "-n", "5000"], capture_output=True,
+                                   text=True, timeout=10)
+            except (OSError, subprocess.SubprocessError):
+                return None
+            if p.returncode == 0:
+                return RepoState(p.stdout.splitlines())
+        return None
+
+    def ticket_done(self, n: int) -> bool:
+        return any(ticket_evidence._commit_claims(s, n) and not re.search(r"\brevert", s, re.I) for s in self.subjects)
+
+    def pr_merged(self, n: int) -> bool:
+        if n in self.merged_prs:
+            return True
+        return any(re.match(rf"Merge pull request #{n}(?!\d)", s) or re.search(rf"\(#{n}\)\s*$", s) for s in self.subjects)
+
+
+def settled_by(states: dict):
+    """settled(repo, tickets, prs) -> True (one was done or merged), False (read, and none was), None (can't tell)."""
+    def settled(repo, tickets=(), prs=()):
+        st = states.get((repo or "").lower())
+        if st is None or not (tickets or prs):
+            return None
+        return any(st.ticket_done(n) for n in tickets) or any(st.pr_merged(n) for n in prs)
+    return settled
+
+
+def _red_desc(base: str, verdict) -> tuple[str, bool]:
+    if verdict is None:
+        return base + "; couldn't confirm whether its ticket or PR was done since", False
+    return base, True
+
+
 # ── workers ─────────────────────────────────────────────────────────────────
 
-def helper_workers(docs: list[dict], projects: list[dict], now: float, remote_of=None) -> list[dict]:
+def helper_workers(docs: list[dict], projects: list[dict], now: float, remote_of=None, settled=None) -> list[dict]:
     """One worker per helper that is running or died. A clean finish leaves at once."""
     remote_of = remote_of or git_remote
     remotes: dict[str, str | None] = {}
@@ -144,13 +198,21 @@ def helper_workers(docs: list[dict], projects: list[dict], now: float, remote_of
                 if pid:
                     break
         kind = "helper" if h.get("chat") else "agent"
-        out.append({"id": f"helper:{aid}", "name": str(doc.get("label") or aid)[:80], "kind": kind, "state": state,
-                    "project": pid, "agent": aid, "ended": end,
-                    "desc": ("Chat helper" if kind == "helper" else "Spawned agent") + f": {state}"})
+        desc = ("Chat helper" if kind == "helper" else "Spawned agent") + f": {state}"
+        w = {"id": f"helper:{aid}", "name": str(doc.get("label") or aid)[:80], "kind": kind, "state": state,
+             "project": pid, "agent": aid, "ended": end, "desc": desc}
+        if state == "failed" and settled is not None:
+            links = [l for l in h.get("links") or [] if isinstance(l, dict) and isinstance(l.get("number"), int)]
+            verdicts = [settled(l.get("repo"), [l["number"]] if l.get("kind") == "ticket" else [],
+                                [l["number"]] if l.get("kind") == "pr" else []) for l in links]
+            if any(v is True for v in verdicts):
+                continue  # what it was working on has been merged since
+            w["desc"], w["confirmed"] = _red_desc(desc, None if not verdicts or all(v is None for v in verdicts) else False)
+        out.append(w)
     return out
 
 
-def builder_workers(stages: dict, projects: list[dict], now: float) -> list[dict]:
+def builder_workers(stages: dict, projects: list[dict], now: float, settled=None) -> list[dict]:
     """One worker per ticket whose pipeline run is going, or whose last run died. `stages`: (repo, n) -> events."""
     out = []
     for key, events in (stages or {}).items():
@@ -172,9 +234,15 @@ def builder_workers(stages: dict, projects: list[dict], now: float) -> list[dict
         else:
             state, end = "running", None
         title = next((e.get("title") for e in events if e.get("title")), None)
-        out.append({"id": f"builder:{repo}#{number}", "name": f"#{number}" + (f" {title}" if title else ""),
-                    "kind": "builder", "state": state, "project": project_for_repo(repo, projects), "ended": end,
-                    "desc": f"Pipeline builder: {last.get('stage')} {last.get('status')}"})
+        w = {"id": f"builder:{repo}#{number}", "name": f"#{number}" + (f" {title}" if title else ""),
+             "kind": "builder", "state": state, "project": project_for_repo(repo, projects), "ended": end,
+             "desc": f"Pipeline builder: {last.get('stage')} {last.get('status')}"}
+        if state == "failed" and settled is not None:
+            verdict = settled(repo, [number], [])
+            if verdict is True:
+                continue  # the ticket was done since, by another run or by hand
+            w["desc"], w["confirmed"] = _red_desc(w["desc"], verdict)
+        out.append(w)
     return out
 
 
@@ -328,9 +396,35 @@ def read_live(claude_dir: Path | None = None, jobs: dict | None = None, loaded: 
         events = _read_json(f) if key else None
         if key and isinstance(events, list):
             stages[key] = events
-    workers = (helper_workers(helpers, projects, now, remote_of) + builder_workers(stages, projects, now)
+    settled = settled_by(_repo_states(claude_dir, projects))
+    workers = (helper_workers(helpers, projects, now, remote_of, settled) + builder_workers(stages, projects, now, settled)
                + job_workers(jobs or {}, logs, loaded or [], projects, now, goals, paths))
     return {"generated_at": now, "projects": projects, "workers": workers}
+
+
+def _repo_states(claude_dir: Path, projects: list[dict]) -> dict:
+    """repo (lowercase) -> RepoState, from each project's first local clone plus the dashboard's merged-PR list
+    (~/.claude/logs/mr-history.json). A repo with neither is left out: "couldn't confirm". One git log per clone."""
+    merged: dict[str, set] = {}
+    titles: dict[str, list] = {}
+    doc = _read_json(claude_dir / "logs" / "mr-history.json")
+    for pr in (doc or {}).get("merged", []) if isinstance(doc, dict) else []:
+        if isinstance(pr, dict) and isinstance(pr.get("repo"), str) and isinstance(pr.get("number"), int):
+            merged.setdefault(pr["repo"].lower(), set()).add(pr["number"])
+            titles.setdefault(pr["repo"].lower(), []).append(str(pr.get("title") or ""))
+    states = {}
+    for p in projects:
+        repo = (p.get("repo") or "").lower()
+        if not repo or repo in states:
+            continue
+        st = next((s for s in (RepoState.from_clone(path) for path in p.get("paths", [])[:1]) if s), None)
+        if st is None and repo not in merged:
+            continue
+        st = st or RepoState([])
+        st.subjects += titles.get(repo, [])
+        st.merged_prs |= merged.get(repo, set())
+        states[repo] = st
+    return states
 
 
 def write(out: Path, doc: dict) -> None:

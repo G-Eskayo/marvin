@@ -318,3 +318,104 @@ def test_the_cli_runs_with_an_empty_home(tmp_path):
                        capture_output=True, text=True, timeout=60)
     assert r.returncode == 0, r.stderr
     assert json.loads(out.read_text())["workers"] is not None
+
+
+# ── a dead worker also clears when its ticket closed or its PR merged (Gil, 2026-10-30) ──
+# Read from what is already on this Mac: each project's own clone (its main branch as last fetched) and the
+# dashboard's merged-PR list. No GitHub call per worker. What can't be read stays red, saying so.
+
+def git_repo(tmp_path, subjects):
+    d = tmp_path / "clone"
+    d.mkdir()
+    env = {"GIT_AUTHOR_NAME": "t", "GIT_AUTHOR_EMAIL": "t@x", "GIT_COMMITTER_NAME": "t", "GIT_COMMITTER_EMAIL": "t@x",
+           "HOME": str(tmp_path), "PATH": "/usr/bin:/bin"}
+    run = lambda *a: subprocess.run(["git", *a], cwd=d, env=env, check=True, capture_output=True)
+    run("init", "-q", "-b", "main")
+    for s in subjects:
+        run("commit", "-q", "--allow-empty", "-m", s)
+    run("update-ref", "refs/remotes/origin/main", "HEAD")
+    return d
+
+
+def test_the_clones_main_says_which_tickets_were_done_and_which_prs_merged(tmp_path):
+    clone = git_repo(tmp_path, ["Fix the thing (#12)", "Merge pull request #30 from o/ticket-31-x", "docs: notes on #13",
+                                "Implements #14 and more", "Revert \"Fix other (#15)\""])
+    st = wv.RepoState.from_clone(str(clone))
+    assert st.ticket_done(12) and st.ticket_done(14)
+    assert not st.ticket_done(13) and not st.ticket_done(15)  # a docs mention and a revert don't count
+    assert st.pr_merged(30) and not st.pr_merged(12 + 100)
+
+
+def test_a_folder_that_is_not_a_clone_reads_as_unknown(tmp_path):
+    assert wv.RepoState.from_clone(str(tmp_path)) is None
+    assert wv.RepoState.from_clone(str(tmp_path / "gone")) is None
+
+
+def test_the_dashboards_merged_pr_list_counts_too():
+    st = wv.RepoState([], merged_prs={41})
+    assert st.pr_merged(41)
+
+
+def dead_builder(n, at=T0 - timedelta(days=3)):
+    return {(f"{OWNER}/marvin", n): stages(("verifying", "failed", at, None))}
+
+
+def settled_by(states):
+    return wv.settled_by(states)
+
+
+def test_a_dead_builder_whose_ticket_was_merged_since_leaves():
+    states = {f"{OWNER}/marvin".lower(): wv.RepoState(["Close the gap (#7)"])}
+    assert wv.builder_workers(dead_builder(7), wv.monitored_projects(catalog()), NOW, settled=settled_by(states)) == []
+
+
+def test_a_dead_builder_with_nothing_merged_stays_red():
+    states = {f"{OWNER}/marvin".lower(): wv.RepoState(["Something else (#8)"])}
+    w = wv.builder_workers(dead_builder(7), wv.monitored_projects(catalog()), NOW, settled=settled_by(states))
+    assert w[0]["state"] == "failed" and "couldn't confirm" not in w[0]["desc"]
+
+
+def test_a_dead_builder_whose_repo_cant_be_read_stays_red_saying_so():
+    w = wv.builder_workers(dead_builder(7), wv.monitored_projects(catalog()), NOW, settled=settled_by({}))
+    assert w[0]["state"] == "failed" and "couldn't confirm" in w[0]["desc"]
+    assert w[0]["confirmed"] is False
+
+
+def test_a_dead_helper_clears_when_a_pr_or_ticket_its_report_names_has_merged():
+    states = {f"{OWNER}/seal": wv.RepoState(["Merge pull request #5 from o/x"]), f"{OWNER}/marvin": wv.RepoState(["Do it (#9)"])}
+    dead = lambda aid, links: helper(aid, status="failed", finished=T0, links=links)
+    docs = [dead("pr", [{"kind": "pr", "repo": f"{OWNER}/Seal", "number": 5}]),
+            dead("ticket", [{"kind": "ticket", "repo": f"{OWNER}/marvin", "number": 9}]),
+            dead("open", [{"kind": "ticket", "repo": f"{OWNER}/marvin", "number": 10}]),
+            dead("nothing", [])]
+    w = by_id(wv.helper_workers(docs, wv.monitored_projects(catalog()), NOW, remote_of=lambda _c: None,
+                                settled=settled_by(states)))
+    assert set(w) == {"helper:open", "helper:nothing"}
+    assert "couldn't confirm" not in w["helper:open"]["desc"]
+    assert "couldn't confirm" in w["helper:nothing"]["desc"]  # its report names no ticket or PR to check
+
+
+def test_a_running_worker_is_never_cleared_by_old_merges():
+    states = {f"{OWNER}/seal": wv.RepoState(["Done (#7)"])}
+    st = {(f"{OWNER}/seal", 7): stages(("executing", "started", T0, None))}
+    assert wv.builder_workers(st, wv.monitored_projects(catalog()), NOW, settled=settled_by(states))[0]["state"] == "running"
+
+
+def test_read_live_reads_each_projects_clone_once(tmp_path, monkeypatch):
+    clone = git_repo(tmp_path, ["Fix (#7)"])
+    claude = tmp_path / "claude"
+    (claude / "logs" / "ticket-stages").mkdir(parents=True)
+    (claude / "catalog").mkdir()
+    (claude / "catalog" / "projects.m.json").write_text(json.dumps({"projects": [
+        project("seal", repo=f"{OWNER}/seal", paths=[str(clone)])]}))
+    for n in (7, 8):
+        (claude / "logs" / "ticket-stages" / f"{OWNER}__seal-{n}.json").write_text(
+            json.dumps(stages(("verifying", "failed", T0, None))))
+    (claude / "logs" / "mr-history.json").write_text(json.dumps({"merged": [{"repo": f"{OWNER}/seal", "number": 8,
+                                                                              "title": "Implement #8"}]}))
+    reads = []
+    real = wv.RepoState.from_clone
+    monkeypatch.setattr(wv.RepoState, "from_clone", staticmethod(lambda p: reads.append(p) or real(p)))
+    doc = wv.read_live(claude_dir=claude, jobs={}, loaded=[], now=NOW, remote_of=lambda _c: None)
+    assert [w["id"] for w in doc["workers"]] == []  # 7 merged on main; 8's PR is in the dashboard's merged list
+    assert reads == [str(clone)]

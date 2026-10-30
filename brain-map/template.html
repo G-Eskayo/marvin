@@ -1755,6 +1755,10 @@
       // Body and Work (#854, Gil 2026-10-30): activity is brightness of the part's own hue; amber is kept for a missed
       // purpose and red for failure, so neither is used to mean "busy" here.
       var litRGB = LAYOUT_WORK ? brightRGB(color, pulse) : SYNAPSE_COLOR;
+      // Shape is the second cue for what a part is (Body and Work only; today's layout stays all circles).
+      var shape = LAYOUT_WORK ? shapeOf(nd) : "circle";
+      if (shape === "dot") r = Math.max(1.8, Math.min(r, 2.6)) * bf;
+      else if (shape !== "circle") r = Math.max(r, SHAPE_MIN_R * bf); // readable at 860 px
 
       if (r < 0.4) return; // still basically zero-sized — nothing to draw yet
 
@@ -1771,7 +1775,7 @@
       }
 
       ctx.beginPath();
-      ctx.arc(p.sx, p.sy, r + pulse * 2, 0, Math.PI * 2);
+      traceShape(shape, p.sx, p.sy, r + pulse * 2);
       ctx.fillStyle = dim ? "rgba(110,118,129,0.25)" : (failed ? "rgb(" + FAIL_RGB + ")" : (pulse > 0 ? "rgba(" + litRGB + ",1)" : color));
       ctx.globalAlpha = bf * (dim ? 0.4 : Math.min(1, 0.6 + depthT * 0.4 + pulse * 0.4));
       ctx.save();
@@ -1780,6 +1784,14 @@
       if (glowAmt > 0) { ctx.shadowBlur = glowAmt; ctx.shadowColor = pulse > 0 ? "rgba(" + litRGB + ",0.95)" : color; }
       ctx.fill();
       ctx.restore();
+      if (shape === "triangle-dot") { // a spawned agent: a triangle with a dot in it
+        ctx.beginPath();
+        ctx.arc(p.sx, p.sy + r * 0.15, Math.max(1, r * 0.3), 0, Math.PI * 2);
+        ctx.fillStyle = "#0d1117";
+        ctx.fill();
+        ctx.beginPath();
+        traceShape(shape, p.sx, p.sy, r + pulse * 2); // keep the outline below on the shape itself
+      }
 
       if (nd.expandable) {
         ctx.beginPath();
@@ -1795,7 +1807,7 @@
       }
       ctx.globalAlpha = 1;
 
-      discs.push({ id: nd.id, sx: p.sx, sy: p.sy, r: r });
+      discs.push({ id: nd.id, sx: p.sx, sy: p.sy, r: r, shape: LAYOUT_WORK ? shape : undefined });
       var alwaysLabel = nd.depth <= 2; // MARVIN, the trunks, and the skill sub-categories
       var eligible = alwaysLabel || r > 6 || isSel || isHover || isConn || pulse > 0.1;
       if (LAYOUT_WORK) {
@@ -1959,6 +1971,7 @@
     layout: function () { return LAYOUT_WORK ? "work" : "today"; },
     dismiss: dismissWorker,
     hovered: function () { return hovered ? hovered.id : null; },
+    shapeOf: function (id) { return byId[id] ? (LAYOUT_WORK ? shapeOf(byId[id]) : "circle") : null; },
     red: function () { return redWorkers().map(function (n) { return n.id; }); },
     nodeCount: function () { return allNodes.length; },
     openTray: function () { trayOpen = true; trayList.classList.add("show"); buildTrayList(clockNow()); },
@@ -1984,6 +1997,33 @@
     }
   };
 
+  // Body and Work shapes (Gil, 2026-10-30, for review): body parts circles, projects diamonds, workers by kind (chat
+  // helper triangle, pipeline builder square, spawned agent small triangle with a dot, scheduled job hexagon), and the
+  // files they touch small dots. Drawn on the canvas path, sized to match a circle of radius r.
+  var SHAPE_MIN_R = 4.5;
+  var WORKER_SHAPES = { helper: "triangle", agent: "triangle-dot", builder: "square", job: "hexagon" };
+  function shapeOf(nd) {
+    if (nd.fileLeaf) return "dot";
+    if (nd.worker) return WORKER_SHAPES[nd.worker.kind] || "triangle";
+    if (nd.parent && nd.parent.id === "half:work") return "diamond";
+    return "circle";
+  }
+  function traceShape(shape, x, y, r) {
+    var pts = null;
+    if (shape === "diamond") { var d = r * 1.3; pts = [[0, -d], [d, 0], [0, d], [-d, 0]]; }
+    else if (shape === "square") { var q = r * 0.9; pts = [[-q, -q], [q, -q], [q, q], [-q, q]]; }
+    else if (shape === "triangle" || shape === "triangle-dot") {
+      var t = shape === "triangle-dot" ? r * 1.15 : r * 1.35;
+      pts = [[0, -t], [t * 0.87, t * 0.5], [-t * 0.87, t * 0.5]];
+    } else if (shape === "hexagon") {
+      pts = [];
+      for (var k = 0; k < 6; k++) { var a = Math.PI / 6 + k * Math.PI / 3; pts.push([Math.cos(a) * r * 1.1, Math.sin(a) * r * 1.1]); }
+    }
+    if (!pts) { ctx.arc(x, y, r, 0, Math.PI * 2); return; }
+    ctx.moveTo(x + pts[0][0], y + pts[0][1]);
+    for (var i = 1; i < pts.length; i++) ctx.lineTo(x + pts[i][0], y + pts[i][1]);
+    ctx.closePath();
+  }
   function isRegionOrProject(nd) {
     return nd.id.indexOf("region:") === 0 || !!(nd.parent && nd.parent.id === "half:work");
   }
