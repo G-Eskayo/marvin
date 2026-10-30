@@ -1,5 +1,7 @@
 # Changelog
 
+- bin/gh refuses Decisions the dashboard can't read (rule I2) ([#744](https://github.com/G-Eskayo/marvin/pull/744))
+
 - Builders run on the plan's monthly API credit when the machine has an API key, and fall back to the plan when it runs out ([#776](https://github.com/G-Eskayo/marvin/pull/776))
 
 - Screenshot gate blocks every MARVIN UI PR: images in marvin-instance are looked up in marvin (UI_EVIDENCE_UNCHECKED) ([#774](https://github.com/G-Eskayo/marvin/pull/774))
