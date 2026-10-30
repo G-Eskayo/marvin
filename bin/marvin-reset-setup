@@ -1,0 +1,86 @@
+#!/bin/bash
+# marvin-reset-setup: the owner's one-time setup for the planned nightly restart (marvin#847, decision `credential`
+# on #769, ADR 0081). Run once at each Mac that has a nightly reset slot, by the owner:
+#
+#   sudo ~/.agents/bin/marvin-reset-setup
+#
+# It does three things, then a dry run of the result:
+#   1. installs bin/marvin-authrestart as /usr/local/libexec/marvin-authrestart (root:wheel 0755)
+#   2. lets the owner's account run exactly that script (and its --dry-run) with no password, via
+#      /etc/sudoers.d/marvin-authrestart, checked with visudo before it is put in place
+#   3. stores the FileVault password in the System keychain (item `marvin-filevault`), where only root can read it.
+#      `security` asks for the password itself: it never passes through this script, its argv or a file.
+#
+#   marvin-reset-setup --dry-run   say what it would do; change nothing
+set -uo pipefail
+
+SRC="$(cd "$(dirname "$0")" && pwd)/marvin-authrestart"
+DEST="/usr/local/libexec/marvin-authrestart"
+SUDOERS="/etc/sudoers.d/marvin-authrestart"
+KEYCHAIN="/Library/Keychains/System.keychain"
+SERVICE="marvin-filevault"
+DRY=0
+case "${1:-}" in
+  --dry-run) DRY=1 ;;
+  "") ;;
+  *) echo "usage: sudo marvin-reset-setup [--dry-run]" >&2; exit 64 ;;
+esac
+
+user="${SUDO_USER:-$(id -un)}"
+case "$user" in ""|root|*[!A-Za-z0-9._-]*) echo "marvin-reset-setup: run it with sudo from your own account" >&2; exit 64 ;; esac
+rule="$user ALL=(root) NOPASSWD: $DEST \"\", $DEST --dry-run"
+say() { echo "marvin-reset-setup: $*"; }
+
+if [ "$DRY" -eq 1 ]; then
+  say "dry run: nothing is installed and the keychain isn't touched"
+  say "1. would install $SRC as $DEST (root:wheel 0755)"
+  say "2. would write $SUDOERS (0440), after visudo checks it:"
+  echo "--- sudoers ---"
+  echo "$rule"
+  echo "--- end ---"
+  say "3. would ask for your FileVault password (security prompts you) and store it in the System keychain as $SERVICE, account $user"
+  exit 0
+fi
+
+[ "$(id -u)" -eq 0 ] || { echo "marvin-reset-setup: run it with sudo: sudo $0" >&2; exit 77; }
+PATH=/usr/bin:/bin:/usr/sbin:/sbin
+[ "$(uname -s)" = Darwin ] || { say "this is for the Macs; the 2012 mini has no nightly reset" >&2; exit 69; }
+[ -f "$SRC" ] || { say "can't find $SRC" >&2; exit 66; }
+
+mkdir -p /usr/local/libexec
+install -o root -g wheel -m 0755 "$SRC" "$DEST" || exit 1
+say "1. installed $DEST"
+
+tmp=$(mktemp /tmp/marvin-authrestart.sudoers.XXXXXX)
+echo "$rule" > "$tmp"
+if visudo -cf "$tmp" >/dev/null; then
+  install -o root -g wheel -m 0440 "$tmp" "$SUDOERS"
+  rm -f "$tmp"
+  say "2. wrote $SUDOERS"
+else
+  rm -f "$tmp"
+  say "visudo rejected the rule; nothing changed in sudoers" >&2
+  exit 1
+fi
+
+if security find-generic-password -s "$SERVICE" -a "$user" "$KEYCHAIN" >/dev/null 2>&1; then
+  say "3. the keychain item is already there (to change it: sudo security delete-generic-password -s $SERVICE $KEYCHAIN, then run this again)"
+else
+  say "3. type your FileVault (login) password for $user when asked; it goes straight into the System keychain"
+  # `security` prompts only when -w is the very last argument, and then takes no keychain argument: the item goes to
+  # the default keychain. So root's default is the System keychain for this one call, then put back, then checked.
+  prev=$(HOME=/var/root security default-keychain -d user 2>/dev/null | tr -d ' "')
+  HOME=/var/root security default-keychain -d user -s "$KEYCHAIN"
+  HOME=/var/root security add-generic-password -s "$SERVICE" -a "$user" -l "MARVIN nightly reset" -w
+  added=$?
+  if [ -n "$prev" ]; then HOME=/var/root security default-keychain -d user -s "$prev"; else HOME=/var/root security default-keychain -d user -s; fi
+  [ "$added" -eq 0 ] || { say "the keychain item wasn't stored" >&2; exit 1; }
+  security find-generic-password -s "$SERVICE" -a "$user" "$KEYCHAIN" >/dev/null 2>&1 || {
+    say "the item didn't land in the System keychain; removing it so the password isn't left elsewhere" >&2
+    HOME=/var/root security delete-generic-password -s "$SERVICE" -a "$user" >/dev/null 2>&1
+    exit 1
+  }
+fi
+
+say "checking the result (dry run, nothing restarts):"
+"$DEST" --dry-run

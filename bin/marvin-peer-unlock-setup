@@ -1,0 +1,97 @@
+#!/bin/bash
+# marvin-peer-unlock-setup: the owner's one-time setup for unlocking a peer Mac's FileVault over SSH from a watcher
+# (marvin#847, decision `remote-unlock` on #769, ADR 0081). Run once on the watcher (the 2012 Linux mini, or a Mac), by
+# the owner, naming the Mac to unlock and its LAN login:
+#
+#   sudo ~/.agents/bin/marvin-peer-unlock-setup mac-mini-1 gileskayo@192.168.0.41
+#
+# It installs bin/marvin-peer-unlock as /usr/local/libexec/marvin-peer-unlock (root, 0755), writes the target to a
+# root-only directory (/usr/local/etc/marvin-peer-unlock, 0700), lets the owner's account run the script with no
+# password (/etc/sudoers.d/marvin-peer-unlock, checked with visudo), and stores the peer's FileVault password where
+# only root can read it: on a Mac the System keychain (`security` prompts for it itself), on Linux a 0600 file, typed
+# at a hidden prompt and written by a shell builtin, never in argv.
+#
+#   marvin-peer-unlock-setup <peer> <user@address> --dry-run   say what it would do; change nothing
+set -uo pipefail
+
+SRC="$(cd "$(dirname "$0")" && pwd)/marvin-peer-unlock"
+DEST="/usr/local/libexec/marvin-peer-unlock"
+DIR="/usr/local/etc/marvin-peer-unlock"
+SUDOERS="/etc/sudoers.d/marvin-peer-unlock"
+KEYCHAIN="/Library/Keychains/System.keychain"
+usage() { echo "usage: sudo marvin-peer-unlock-setup <peer> <user@address> [--dry-run]" >&2; exit 64; }
+
+peer="${1:-}"; target="${2:-}"; DRY=0
+case "${3:-}" in --dry-run) DRY=1 ;; "") ;; *) usage ;; esac
+case "$peer" in ""|-*|*[!A-Za-z0-9-]*) usage ;; esac
+[[ "$target" =~ ^[A-Za-z0-9._][A-Za-z0-9._-]*@[A-Za-z0-9.:_-]+$ ]] || usage
+
+user="${SUDO_USER:-$(id -un)}"
+case "$user" in ""|root|*[!A-Za-z0-9._-]*) echo "marvin-peer-unlock-setup: run it with sudo from your own account" >&2; exit 64 ;; esac
+rule="$user ALL=(root) NOPASSWD: $DEST"
+say() { echo "marvin-peer-unlock-setup: $*"; }
+
+if [ "$DRY" -eq 1 ]; then
+  say "dry run: nothing is installed and no password is asked for"
+  say "1. would install $SRC as $DEST (root, 0755)"
+  say "2. would write $DIR/$peer.conf (root, 0600): TARGET=$target"
+  say "3. would write $SUDOERS (0440), after visudo checks it:"
+  echo "--- sudoers ---"
+  echo "$rule"
+  echo "--- end ---"
+  say "4. would ask for $peer's FileVault password and keep it where only root can read it"
+  exit 0
+fi
+
+[ "$(id -u)" -eq 0 ] || { echo "marvin-peer-unlock-setup: run it with sudo: sudo $0 $peer $target" >&2; exit 77; }
+PATH=/usr/bin:/bin:/usr/sbin:/sbin
+[ -f "$SRC" ] || { say "can't find $SRC" >&2; exit 66; }
+umask 077
+
+mkdir -p /usr/local/libexec "$DIR"
+chmod 0700 "$DIR"
+install -o root -g 0 -m 0755 "$SRC" "$DEST" || exit 1
+say "1. installed $DEST"
+printf 'TARGET=%s\n' "$target" > "$DIR/$peer.conf"
+say "2. wrote $DIR/$peer.conf"
+
+tmp=$(mktemp /tmp/marvin-peer-unlock.sudoers.XXXXXX)
+echo "$rule" > "$tmp"
+if visudo -cf "$tmp" >/dev/null; then
+  install -o root -g 0 -m 0440 "$tmp" "$SUDOERS"
+  rm -f "$tmp"
+  say "3. wrote $SUDOERS"
+else
+  rm -f "$tmp"
+  say "visudo rejected the rule; nothing changed in sudoers" >&2
+  exit 1
+fi
+
+if [ "$(uname -s)" = Darwin ]; then
+  say "4. type $peer's FileVault password when asked; it goes straight into the System keychain"
+  svc="marvin-peer-unlock-$peer"
+  security delete-generic-password -s "$svc" "$KEYCHAIN" >/dev/null 2>&1
+  # As in marvin-reset-setup: `security` prompts only with -w last and no keychain argument, so the System keychain
+  # is root's default for this one call, then put back, then checked.
+  prev=$(HOME=/var/root security default-keychain -d user 2>/dev/null | tr -d ' "')
+  HOME=/var/root security default-keychain -d user -s "$KEYCHAIN"
+  HOME=/var/root security add-generic-password -s "$svc" -a "$peer" -l "MARVIN unlock $peer" -w
+  added=$?
+  if [ -n "$prev" ]; then HOME=/var/root security default-keychain -d user -s "$prev"; else HOME=/var/root security default-keychain -d user -s; fi
+  [ "$added" -eq 0 ] || { say "the keychain item wasn't stored" >&2; exit 1; }
+  security find-generic-password -s "$svc" "$KEYCHAIN" >/dev/null 2>&1 || {
+    say "the item didn't land in the System keychain; removing it" >&2
+    HOME=/var/root security delete-generic-password -s "$svc" >/dev/null 2>&1
+    exit 1
+  }
+else
+  IFS= read -r -s -p "marvin-peer-unlock-setup: 4. $peer's FileVault password (not shown): " pw; echo
+  [ -n "$pw" ] || { say "no password typed; nothing stored" >&2; exit 1; }
+  printf '%s' "$pw" > "$DIR/$peer.secret"
+  pw=""
+  chmod 0600 "$DIR/$peer.secret"
+  say "4. stored in $DIR/$peer.secret (root only)"
+fi
+
+say "checking the result (dry run, nothing is contacted):"
+"$DEST" "$peer" --dry-run
