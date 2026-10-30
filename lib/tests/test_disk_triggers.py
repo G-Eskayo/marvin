@@ -376,3 +376,110 @@ def test_summarize_lists_refusals_and_skips_garbled_lines():
                                     "what": "helper: #60"})]
     s = dt.summarize(lines, since=NOW - timedelta(hours=1))
     assert s["refused"] == ["helper: #60"]
+
+
+# ── marvin#866: after a merge with no keychain (ssh / launchd), gh still reaches GitHub through the token file ─────
+
+from test_gh_env import EXPIRED, GOOD, fake_gh  # noqa: E402
+
+
+@pytest.fixture
+def token_file(tmp_path, monkeypatch):
+    import gh_env
+    p = tmp_path / "claude" / ".gh-token"
+    p.parent.mkdir()
+    monkeypatch.setattr(gh_env, "TOKEN_FILE", p)
+    monkeypatch.delenv("GH_TOKEN", raising=False)   # conftest's second _no_real_github shadows the one that clears it
+    return p
+
+
+def _merged_wt(name="marvin-866", branch="fix/866"):
+    clone = _repo()
+    wt = cs.HOME / "Developer" / name
+    head = _worktree(clone, branch, wt)
+    return clone, wt, head
+
+
+def _gh_merged(tmp_path, monkeypatch, branch, head):
+    fake_gh(tmp_path, monkeypatch, stdout=json.dumps([{"headRefName": branch, "headRefOid": head}]))
+
+
+def test_no_keychain_but_a_token_file_still_removes_the_merged_worktree(tmp_path, monkeypatch, token_file):
+    clone, wt, head = _merged_wt()
+    _gh_merged(tmp_path, monkeypatch, "fix/866", head)
+    token_file.write_text(GOOD + "\n")
+    r = dt.clean_merged_worktrees(clones=[clone], cwds=set(), derived_data=cs.HOME / "DD")   # the real gh path
+    assert not wt.exists()
+    assert [Path(x["path"]).name for x in r["removed"]] == ["marvin-866"]
+
+
+def test_no_keychain_and_no_token_file_keeps_everything_and_says_so_plainly(tmp_path, monkeypatch, token_file):
+    clone, wt, head = _merged_wt()
+    _gh_merged(tmp_path, monkeypatch, "fix/866", head)
+    monkeypatch.setattr(dt, "discover_clones", lambda: [clone])
+    monkeypatch.setattr(cs, "_cwds_in_use", lambda: set())
+    r = dt.merged_worktrees_step()
+    assert wt.exists()
+    assert "no GitHub token" in r["detail"] and ".gh-token" in r["detail"]
+    last = json.loads(dt.LOG_PATH.read_text().splitlines()[-1])
+    assert "no GitHub token" in last["detail"]
+
+
+@pytest.mark.parametrize("content", ["", "  \n"])
+def test_an_empty_token_file_keeps_everything_and_says_there_is_no_token(tmp_path, monkeypatch, token_file, content):
+    clone, wt, head = _merged_wt()
+    _gh_merged(tmp_path, monkeypatch, "fix/866", head)
+    token_file.write_text(content)
+    r = dt.clean_merged_worktrees(clones=[clone], cwds=set(), derived_data=cs.HOME / "DD")
+    assert wt.exists() and r["removed"] == []
+    assert "no GitHub token" in r["kept"][0]["reason"]
+
+
+def test_an_expired_token_keeps_everything_says_why_and_never_logs_the_token(tmp_path, monkeypatch, token_file):
+    clone, wt, head = _merged_wt()
+    _gh_merged(tmp_path, monkeypatch, "fix/866", head)
+    token_file.write_text(EXPIRED)
+    monkeypatch.setattr(dt, "discover_clones", lambda: [clone])
+    monkeypatch.setattr(cs, "_cwds_in_use", lambda: set())
+    r = dt.merged_worktrees_step()
+    assert wt.exists()
+    assert "refused" in r["detail"] and "expired" in r["detail"]
+    assert EXPIRED not in r["detail"] and EXPIRED not in dt.LOG_PATH.read_text()
+
+
+def test_the_github_reason_is_said_once_not_once_per_worktree(tmp_path, monkeypatch, token_file):
+    clone = _repo()
+    for n in range(4):
+        _worktree(clone, f"feat/{n}", cs.HOME / "Developer" / f"marvin-{n}")
+    fake_gh(tmp_path, monkeypatch)
+    monkeypatch.setattr(dt, "discover_clones", lambda: [clone])
+    monkeypatch.setattr(cs, "_cwds_in_use", lambda: set())
+    r = dt.merged_worktrees_step()
+    assert r["detail"].count("no GitHub token") == 1 and "kept 4" in r["detail"]
+
+
+def test_github_reachable_still_never_removes_uncommitted_work(tmp_path, monkeypatch, token_file):
+    clone, wt, head = _merged_wt()
+    (wt / "f").write_text("edited, not committed")
+    _gh_merged(tmp_path, monkeypatch, "fix/866", head)
+    token_file.write_text(GOOD)
+    r = dt.clean_merged_worktrees(clones=[clone], cwds=set(), derived_data=cs.HOME / "DD")
+    assert (wt / "f").read_text() == "edited, not committed" and "uncommitted" in r["kept"][0]["reason"]
+
+
+def test_github_reachable_still_never_removes_a_worktree_a_process_is_in(tmp_path, monkeypatch, token_file):
+    clone, wt, head = _merged_wt()
+    _gh_merged(tmp_path, monkeypatch, "fix/866", head)
+    token_file.write_text(GOOD)
+    r = dt.clean_merged_worktrees(clones=[clone], cwds={str(wt.resolve())}, derived_data=cs.HOME / "DD")
+    assert wt.exists() and "process" in r["kept"][0]["reason"]
+
+
+def test_reclaim_also_trims_pytest_temp_dirs(monkeypatch):
+    import download_cache
+    monkeypatch.setattr(cs, "clear_rebuildable", lambda: {"freed_bytes": 0})
+    monkeypatch.setattr(dt, "clean_merged_worktrees", lambda **k: {"removed": [], "kept": [], "freed_bytes": 0})
+    monkeypatch.setattr(download_cache, "enforce_cap", lambda **k: {"removed": [], "freed_bytes": 0})
+    monkeypatch.setattr(cs, "trim_pytest_temps", lambda **k: {"removed": ["pytest-1"], "kept": [], "freed_bytes": 4 * GiB})
+    r = dt.reclaim()
+    assert r["freed_bytes"] == 4 * GiB and "pytest temp" in r["detail"]

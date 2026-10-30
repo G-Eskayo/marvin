@@ -53,6 +53,7 @@ from pathlib import Path
 from typing import Callable
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
+import gh_env  # noqa: E402
 import ticket_claim  # noqa: E402
 from sandbox_orchestration import WORKTREES_ROOT  # noqa: E402
 
@@ -70,13 +71,20 @@ HOME = Path.home()  # one seam: tests point it (and WORKTREES_ROOT) at a temp di
 AERIAL_SUBPATH = Path("Library") / "Application Support" / "com.apple.wallpaper" / "aerials" / "videos"
 ISSUE_NUMBER_RE = re.compile(r"#(\d+)$|^ticket/(\d+)(?:-|$)")  # pipeline/…#N, or ticket/<n>-<slug> (#226)
 GITHUB_REPO_RE = re.compile(r"github\.com[:/]([^/]+/[^/]+?)(?:\.git)?/?$")
+# #866: pytest's basetemps ($TMPDIR/pytest-of-<user>/pytest-N) reached 4.9 GB on the Mac mini. None = this Mac's temp
+# folders (pytest_temp_roots); tests point it at a temp dir of their own (conftest).
+TMP_ROOTS: list[Path] | None = None
+PYTEST_TEMP_MIN_AGE_S = 3600
+PYTEST_BASETEMP_RE = re.compile(r"^pytest-\d+$")
+
+# Every gh call below runs through gh_env (#866): launchd and ssh shells have a locked keychain, so plain gh answered
+# 401 and the sweep kept every worktree as "could not check GitHub".
 
 
 def _default_list_claimed_open_issues() -> list[dict]:
-    result = subprocess.run(
+    result = gh_env.run(
         ["gh", "issue", "list", "--repo", ticket_claim.REPO, "--state", "open",
          "--json", "number,labels,updatedAt"],
-        capture_output=True, text=True, check=True,
     )
     issues = json.loads(result.stdout)
     return [
@@ -162,18 +170,16 @@ def _list_root(root: Path, cwds: set[str]) -> list[dict]:
 def _default_pr_state(repo: str, branch: str) -> str | None:
     """MERGED / CLOSED / OPEN for the newest PR from this branch, None if there is none.
     Raises on a gh failure so an outage never reads as "no PR"."""
-    result = subprocess.run(
+    result = gh_env.run(
         ["gh", "pr", "list", "--repo", repo, "--head", branch, "--state", "all",
          "--json", "state", "--jq", ".[0].state"],
-        capture_output=True, text=True, check=True,
     )
     return result.stdout.strip() or None
 
 
 def _default_is_claimed(repo: str, number: int) -> bool:
-    result = subprocess.run(
+    result = gh_env.run(
         ["gh", "issue", "view", str(number), "--repo", repo, "--json", "labels,state"],
-        capture_output=True, text=True, check=True,
     )
     issue = json.loads(result.stdout)
     return issue.get("state") == "OPEN" and any(l["name"].startswith("claimed:") for l in issue.get("labels", []))
@@ -239,6 +245,128 @@ def trim_aerial_videos(folder: Path | None = None) -> int:
         freed += old.stat().st_size
         old.unlink()
     return freed
+
+
+def pytest_temp_roots() -> list[Path]:
+    """The temp folders pytest-of-<user> can live in on this Mac: $TMPDIR (what pytest uses), macOS's per-user temp
+    folder (launchd jobs may run with a different $TMPDIR), and /tmp. TMP_ROOTS overrides (tests)."""
+    if TMP_ROOTS is not None:
+        return list(TMP_ROOTS)
+    import tempfile
+    cands = [Path(tempfile.gettempdir())]
+    try:
+        darwin = os.confstr("CS_DARWIN_USER_TEMP_DIR")
+        if darwin:
+            cands.append(Path(darwin))
+    except (ValueError, OSError, AttributeError):
+        pass
+    cands.append(Path("/tmp"))
+    out: list[Path] = []
+    for c in cands:
+        try:
+            r = c.resolve()
+        except OSError:
+            continue
+        if r.is_dir() and r not in out:
+            out.append(r)
+    return out
+
+
+def _open_paths() -> set[str] | None:
+    """Every path a running process has open, its working folder included (one lsof call). None when that can't be
+    read: the caller then removes nothing, since it can't tell what is in use."""
+    try:
+        r = subprocess.run(["/usr/sbin/lsof", "-n", "-w", "-Fn"], capture_output=True, text=True, timeout=120)
+    except (OSError, subprocess.SubprocessError):
+        return None
+    if not r.stdout.strip():   # lsof exits 1 on a few unreadable processes but still lists the rest
+        return None
+    return {line[1:] for line in r.stdout.splitlines() if line.startswith("n/")}
+
+
+def _tree_bytes(path: Path) -> int:
+    total = 0
+    for dirpath, dirnames, filenames in os.walk(path, followlinks=False):
+        for name in filenames + dirnames:
+            try:
+                st = os.lstat(os.path.join(dirpath, name))
+            except OSError:
+                continue
+            total += getattr(st, "st_blocks", 0) * 512 or st.st_size
+    return total
+
+
+def _last_write(d: Path) -> float:
+    """The newest mtime of the basetemp and its direct children: a running suite makes a folder per test there."""
+    newest = d.lstat().st_mtime
+    try:
+        for c in os.scandir(d):
+            try:
+                newest = max(newest, c.stat(follow_symlinks=False).st_mtime)
+            except OSError:
+                pass
+    except OSError:
+        pass
+    return newest
+
+
+def trim_pytest_temps(roots: list[Path] | None = None, open_paths: set[str] | None = None,
+                      now: float | None = None, min_age_s: float = PYTEST_TEMP_MIN_AGE_S) -> dict:
+    """pytest is meant to keep its last 3 basetemps, but helpers' parallel runs defeat that: $TMPDIR/pytest-of-<user>
+    held 4.9 GB on the Mac mini (pytest-23 … pytest-420, 2026-10-30). Removes each `pytest-<n>` folder there that was
+    last written over `min_age_s` ago and that no process has open (no open file, no working folder inside). Always
+    kept: the newest in each pytest-of folder, and whatever `pytest-current` points at. Links are never followed or
+    removed. If open files can't be listed, nothing is removed. Cost: one lsof, then one directory walk per removal.
+    Returns {"removed": [names], "kept": [{"name", "reason"}], "freed_bytes", "detail"}."""
+    roots = pytest_temp_roots() if roots is None else roots
+    now = time.time() if now is None else now
+    owners = []
+    for root in roots:
+        try:
+            owners += [p for p in sorted(Path(root).glob("pytest-of-*")) if p.is_dir() and not p.is_symlink()]
+        except OSError:
+            continue
+    removed, kept, freed = [], [], 0
+    cands: list[tuple[Path, Path, float]] = []
+    for owner in owners:
+        try:
+            dirs = [d for d in owner.iterdir()
+                    if PYTEST_BASETEMP_RE.match(d.name) and not d.is_symlink() and d.is_dir()]
+        except OSError:
+            continue
+        if not dirs:
+            continue
+        current = owner / "pytest-current"
+        current_target = current.resolve() if current.is_symlink() else None
+        stamped = sorted(((d, _last_write(d)) for d in dirs), key=lambda x: x[1], reverse=True)
+        kept.append({"name": stamped[0][0].name, "reason": "the newest"})
+        for d, t in stamped[1:]:
+            if current_target is not None and d.resolve() == current_target:
+                kept.append({"name": d.name, "reason": "pytest-current points at it"})
+            elif now - t < min_age_s:
+                kept.append({"name": d.name, "reason": "written in the last hour"})
+            else:
+                cands.append((owner, d, t))
+    if not cands:
+        return {"removed": [], "kept": kept, "freed_bytes": 0, "detail": "no old pytest temp folders"}
+    opened = _open_paths() if open_paths is None else open_paths
+    if opened is None:
+        return {"removed": [], "kept": kept + [{"name": d.name, "reason": "open files unknown"} for _, d, _ in cands],
+                "freed_bytes": 0, "detail": "kept all: could not list open files (lsof), so can't tell what is in use"}
+    for _owner, d, _t in cands:
+        real = str(d.resolve())
+        if any(p == real or p.startswith(real + "/") for p in opened):
+            kept.append({"name": d.name, "reason": "a process has a file open inside it"})
+            continue
+        size = _tree_bytes(d)
+        shutil.rmtree(d, ignore_errors=True)   # rmtree removes links, never what they point at
+        if d.exists():
+            kept.append({"name": d.name, "reason": "could not remove all of it"})
+            continue
+        removed.append(d.name)
+        freed += size
+    return {"removed": removed, "kept": kept, "freed_bytes": freed,
+            "detail": f"removed {len(removed)} pytest temp folder(s), {freed // 2**20} MiB"}
 
 
 def drop_build_output(worktree: Path, rel_paths: list[str]) -> list[str]:
@@ -407,12 +535,12 @@ def _default_delete_simulator(sim: dict) -> bool:
 
 def _default_issue_state(repo: str, number: int) -> str | None:
     """OPEN / CLOSED, None when the repo has no such issue. Raises on any other gh failure."""
-    result = subprocess.run(["gh", "issue", "view", str(number), "--repo", repo, "--json", "state", "-q", ".state"],
-                            capture_output=True, text=True)
+    result = gh_env.run(["gh", "issue", "view", str(number), "--repo", repo, "--json", "state", "-q", ".state"],
+                        check=False)
     if result.returncode != 0:
         if "Could not resolve" in result.stderr or "not found" in result.stderr.lower():
             return None
-        raise RuntimeError(result.stderr.strip()[:200])
+        raise gh_env.GhError(gh_env.explain(result.stderr, gh_env.env()))
     return result.stdout.strip() or None
 
 
@@ -490,7 +618,7 @@ def _default_compress_transcripts() -> dict | None:
 
 
 def _write_log(stale: list[dict], worktrees: dict, simulators: dict | None = None,
-               compressed: dict | None = None, aerials_freed: int = 0) -> None:
+               compressed: dict | None = None, aerials_freed: int = 0, pytest_temps: dict | None = None) -> None:
     timestamp = datetime.now(timezone.utc).isoformat()
     lines = [
         f"- Released stale claim: issue #{e['issue_number']} held by `{e['machine_id']}`, "
@@ -510,6 +638,12 @@ def _write_log(stale: list[dict], worktrees: dict, simulators: dict | None = Non
     lines += [f"- Transcript not compressed ({f['reason']}): `{f['path']}`" for f in (compressed or {}).get("failed", [])]
     if aerials_freed:
         lines.append(f"- Removed old aerial screen-saver videos: {aerials_freed // 2**20} MiB (kept the newest)")
+    pt = pytest_temps or {}
+    if pt.get("removed"):
+        lines.append(f"- Removed {len(pt['removed'])} old pytest temp folder(s): {pt.get('freed_bytes', 0) // 2**20} MiB "
+                     "(kept the newest and any in use)")
+    elif str(pt.get("detail", "")).startswith(("kept all", "pytest temp trim failed")):
+        lines.append(f"- pytest temp folders: {pt['detail']}")
     body = "\n".join(lines) + "\n" if lines else "Nothing to clean up: no stale claims, no resolved worktrees.\n"
     OUTPUT_PATH.parent.mkdir(parents=True, exist_ok=True)
     existing = OUTPUT_PATH.read_text() if OUTPUT_PATH.exists() else "# MR pipeline cleanup sweep\n\n"
@@ -580,7 +714,12 @@ def run_daily_sweep(
     except OSError:
         aerials_freed = 0
 
-    _write_log(stale, worktrees, simulators, compressed, aerials_freed)
+    try:
+        pytest_temps = trim_pytest_temps()
+    except Exception as exc:  # noqa: BLE001 -- never stops the sweep
+        pytest_temps = {"removed": [], "freed_bytes": 0, "detail": f"pytest temp trim failed: {type(exc).__name__}"}
+
+    _write_log(stale, worktrees, simulators, compressed, aerials_freed, pytest_temps)
     return {"stale_claims_released": len(stale), "worktrees_removed": len(worktrees["removed"]),
             "worktrees_for_review": len(worktrees["review"]), "simulators_removed": len(simulators["removed"])}
 
