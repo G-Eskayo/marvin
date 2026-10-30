@@ -244,7 +244,7 @@ def audit_rows(ctx: Ctx) -> list[dict]:
 
 
 def _load_config(ctx: Ctx) -> dict:
-    """{layer: N or None}. Unreadable means every layer waits for Gil."""
+    """{layer: N or None}. Unreadable means every layer waits for the owner."""
     try:
         needed = json.loads(Path(ctx.config_path).read_text())["needed"]
     except (OSError, ValueError, KeyError, TypeError):
