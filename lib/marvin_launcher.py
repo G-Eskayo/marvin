@@ -85,13 +85,15 @@ def assemble_context(kind: str) -> str:
     sections = []
     if "north-stars" in layers:
         sections.append(("North stars (docs/north-stars.md)", north_stars.load()))
-    if "memory" in layers:
+    # A machine without the private ~/.claude (a box build VM, ADR 0069 amendment 2: no private data in a VM) has no
+    # memory or lexicon: those layers are left out rather than failing the run (found live, marvin #951).
+    if "memory" in layers and (MEMORY_DIR / "MEMORY.md").is_file():
         sections.append(("MARVIN memory index (open a note with Read when it matters: "
                          f"{MEMORY_DIR})", (MEMORY_DIR / "MEMORY.md").read_text().strip()))
-    if "work-rules" in layers:
+    if "work-rules" in layers and MEMORY_DIR.is_dir():
         rules = "\n\n".join(f"### {n.stem}\n{_body(n)}" for n in work_rule_notes())
         sections.append(("Work rules (how work gets done here)", rules))
-    if "lexicon" in layers:
+    if "lexicon" in layers and LEXICON.is_file():
         sections.append(("Lexicon (apply these terms without explanation)", LEXICON.read_text().strip()))
     if "output-rules" in layers:
         sections.append(("Output rules", _OUTPUT_RULES))
