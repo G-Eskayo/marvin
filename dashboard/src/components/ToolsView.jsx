@@ -55,49 +55,51 @@ function Table({ rows, keys, nameKey = 'name', showVia = false, kind, showPurpos
   const shown = rows.filter((r) => callsOf(r) > 0)
   if (shown.length === 0) return <p className="text-xs text-neutral-600">Nothing for this filter.</p>
   return (
-    <table className="w-full text-sm">
-      <thead>
-        <tr className="text-left text-xs text-neutral-500">
-          <th className="pb-1 font-normal">Name</th>
-          {showPurpose && <th className="pb-1 font-normal">Purpose</th>}
-          <th className="pb-1 text-right font-normal">Calls</th>
-          <th className="pb-1 text-right font-normal" title="errors + invalid calls, as a share of all calls (all runs)">Failed</th>
-          <th className="pb-1 text-right font-normal" title="expected non-zero exits (grep no match, tests failing)">Expected</th>
-          <th className="pb-1 text-right font-normal" title="wrong parameters, tool used before its schema was loaded, unknown skill">Invalid</th>
-          <th className="pb-1 text-right font-normal" title="you declined the call">Declined</th>
-          <th className="pb-1 pl-4 font-normal">Last 30 days (each cell is a day)</th>
-          <th className="pb-1 pl-2 font-normal">Last used</th>
-        </tr>
-      </thead>
-      <tbody className="font-mono text-neutral-300">
-        {shown.map((r) => {
-          const rate = r.calls ? (r.error + r.invalid) / r.calls : 0
-          const expectedRate = r.calls ? (r.expected || 0) / r.calls : 0
-          return (
-            <tr key={r[nameKey]} className="border-t border-neutral-900">
-              <td className="max-w-[16rem] truncate py-1 pr-2" title={r[nameKey]}>
-                {r[nameKey]}
-                {showVia && (
-                  <span className="ml-2 font-sans text-[10px] text-neutral-600">
-                    {r.via?.skill_tool ? `${r.via.skill_tool} via Skill tool` : ''}
-                    {r.via?.skill_tool && r.via?.read ? ' · ' : ''}
-                    {r.via?.read ? `${r.via.read} via SKILL.md read` : ''}
-                  </span>
-                )}
-              </td>
-              {showPurpose && <td className="py-1 pr-2 text-xs text-neutral-400 max-w-xs truncate" title={r.purpose}>{r.purpose}</td>}
-              <td className="py-1 text-right">{callsOf(r).toLocaleString()}</td>
-              <td className={`py-1 text-right ${rate > 0.25 ? 'text-amber-300' : ''}`}>{pct(rate)}</td>
-              <td className={`py-1 text-right ${expectedRate > 0.1 ? 'text-blue-400' : 'text-neutral-600'}`}>{(r.expected || 0)}</td>
-              <td className={`py-1 text-right ${r.invalid ? 'text-red-400' : 'text-neutral-600'}`}>{r.invalid}</td>
-              <td className="py-1 text-right text-neutral-500">{r.rejected}</td>
-              <td className="py-1 pl-4"><Strip byDay={r.by_day} keys={keys} /></td>
-              <td className="py-1 pl-2 font-sans text-xs text-neutral-500">{ago(r.last_used)}</td>
-            </tr>
-          )
-        })}
-      </tbody>
-    </table>
+    <div className="overflow-x-auto">
+      <table className="w-full text-sm">
+        <thead>
+          <tr className="text-left text-xs text-neutral-500">
+            <th className="pb-1 font-normal">Name</th>
+            {showPurpose && <th className="pb-1 font-normal">Purpose</th>}
+            <th className="pb-1 text-right font-normal">Calls</th>
+            <th className="pb-1 text-right font-normal" title="errors + invalid calls, as a share of all calls (all runs)">Failed</th>
+            <th className="pb-1 text-right font-normal" title="expected non-zero exits (grep no match, tests failing)">Expected</th>
+            <th className="pb-1 text-right font-normal" title="wrong parameters, tool used before its schema was loaded, unknown skill">Invalid</th>
+            <th className="pb-1 text-right font-normal" title="you declined the call">Declined</th>
+            <th className="pb-1 pl-4 font-normal">Last 30 days (each cell is a day)</th>
+            <th className="pb-1 pl-2 font-normal">Last used</th>
+          </tr>
+        </thead>
+        <tbody className="font-mono text-neutral-300">
+          {shown.map((r) => {
+            const rate = r.calls ? (r.error + r.invalid) / r.calls : 0
+            const expectedRate = r.calls ? (r.expected || 0) / r.calls : 0
+            return (
+              <tr key={r[nameKey]} className="border-t border-neutral-900">
+                <td className="max-w-[16rem] truncate py-1 pr-2" title={r[nameKey]}>
+                  {r[nameKey]}
+                  {showVia && (
+                    <span className="ml-2 font-sans text-[10px] text-neutral-600">
+                      {r.via?.skill_tool ? `${r.via.skill_tool} via Skill tool` : ''}
+                      {r.via?.skill_tool && r.via?.read ? ' · ' : ''}
+                      {r.via?.read ? `${r.via.read} via SKILL.md read` : ''}
+                    </span>
+                  )}
+                </td>
+                {showPurpose && <td className="py-1 pr-2 text-xs text-neutral-400 max-w-xs truncate" title={r.purpose}>{r.purpose}</td>}
+                <td className="py-1 text-right">{callsOf(r).toLocaleString()}</td>
+                <td className={`py-1 text-right ${rate > 0.25 ? 'text-amber-300' : ''}`}>{pct(rate)}</td>
+                <td className={`py-1 text-right ${expectedRate > 0.1 ? 'text-blue-400' : 'text-neutral-600'}`}>{(r.expected || 0)}</td>
+                <td className={`py-1 text-right ${r.invalid ? 'text-red-400' : 'text-neutral-600'}`}>{r.invalid}</td>
+                <td className="py-1 text-right text-neutral-500">{r.rejected}</td>
+                <td className="py-1 pl-4"><Strip byDay={r.by_day} keys={keys} /></td>
+                <td className="py-1 pl-2 font-sans text-xs text-neutral-500">{ago(r.last_used)}</td>
+              </tr>
+            )
+          })}
+        </tbody>
+      </table>
+    </div>
   )
 }
 

@@ -44,26 +44,28 @@ export function EvidenceTable({ metrics }) {
     return <p className="text-sm text-neutral-500">No metrics table attached.</p>
   }
   return (
-    <table className="w-full text-sm">
-      <thead>
-        <tr className="text-left text-neutral-500">
-          <th className="pb-1 pr-4 font-normal">Metric</th>
-          <th className="pb-1 pr-4 font-normal">Baseline</th>
-          <th className="pb-1 pr-4 font-normal">Current</th>
-          <th className="pb-1 font-normal">Delta</th>
-        </tr>
-      </thead>
-      <tbody className="font-mono text-neutral-200">
-        {metrics.map((m) => (
-          <tr key={m.name}>
-            <td className="pr-4 py-0.5">{m.name}</td>
-            <td className="pr-4 py-0.5 text-neutral-400">{m.baseline}</td>
-            <td className="pr-4 py-0.5">{m.current}</td>
-            <td className={`py-0.5 ${m.direction === 'up' ? 'text-green-400' : 'text-amber-400'}`}>{m.delta}</td>
+    <div className="overflow-x-auto">
+      <table className="w-full text-sm">
+        <thead>
+          <tr className="text-left text-neutral-500">
+            <th className="pb-1 pr-4 font-normal">Metric</th>
+            <th className="pb-1 pr-4 font-normal">Baseline</th>
+            <th className="pb-1 pr-4 font-normal">Current</th>
+            <th className="pb-1 font-normal">Delta</th>
           </tr>
-        ))}
-      </tbody>
-    </table>
+        </thead>
+        <tbody className="font-mono text-neutral-200">
+          {metrics.map((m) => (
+            <tr key={m.name}>
+              <td className="pr-4 py-0.5">{m.name}</td>
+              <td className="pr-4 py-0.5 text-neutral-400">{m.baseline}</td>
+              <td className="pr-4 py-0.5">{m.current}</td>
+              <td className={`py-0.5 ${m.direction === 'up' ? 'text-green-400' : 'text-amber-400'}`}>{m.delta}</td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    </div>
   )
 }
 
@@ -294,7 +296,7 @@ export function ApproveDenyActions({ pr, onApproved, onDenied }) {
   }
 
   return (
-    <div className="flex shrink-0 flex-col items-end gap-1" data-state={view.kind}>
+    <div className="ml-auto flex shrink-0 flex-col items-end gap-1" data-state={view.kind}>
       {view.approve !== 'hidden' || view.deny !== 'hidden' ? (
         <div className="flex gap-2">
           {view.deny !== 'hidden' && (
@@ -450,8 +452,8 @@ function PrCard({ pr, parity, onOpenTicket, onApproved, onDenied, onSelect }) {
       }}
       className="cursor-pointer rounded-lg border border-neutral-800 bg-neutral-900 p-4 transition-colors hover:border-neutral-700 hover:bg-neutral-800/50"
     >
-      <div className="mb-2 flex items-center justify-between gap-3">
-        <div>
+      <div className="mb-2 flex flex-wrap items-center justify-between gap-3">
+        <div className="min-w-0 flex-1 basis-80">
           <p className="font-mono text-sm font-semibold text-white">
             #{pr.number} — {displayTitle(pr.title, parity?.ticket?.title)}{' '}
             {pr.repo !== 'G-Eskayo/marvin' && <span className="rounded bg-sky-950 px-1.5 py-0.5 font-sans text-[10px] font-normal text-sky-300">{pr.repo.split('/')[1]}</span>}
