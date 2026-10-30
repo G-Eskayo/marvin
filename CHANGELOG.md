@@ -1,5 +1,7 @@
 # Changelog
 
+- Disk keeps filling on the Mini: the cleanup can't reach GitHub over ssh, the merge gate leaks temp clones, pytest temp dirs pile up ([#880](https://github.com/G-Eskayo/marvin/pull/880))
+
 - Docs tab: doc-relative image paths render broken, and new docs/plans files may not appear in a running app ([#885](https://github.com/G-Eskayo/marvin/pull/885))
 
 - Build #769: nightly resets with guardrails, recovery between the M4 and 2012 minis, and a Health card ([#856](https://github.com/G-Eskayo/marvin/pull/856))
