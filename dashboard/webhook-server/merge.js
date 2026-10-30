@@ -5,7 +5,7 @@ import { readdirSync } from 'fs'
 import { tmpdir } from 'os'
 import path from 'path'
 import { classifyFailure, summarizeGateFailure, withRetry, MergeFailure, refusal } from './failure.js'
-import { recordFailure } from './failure_log.js'
+import { recordFailure, recordFlaky } from './failure_log.js'
 import { assertUiEvidence } from './ui_evidence.js'
 import { assertDecisions } from './decisions_gate.js'
 import { fileURLToPath } from 'url'
@@ -349,7 +349,66 @@ export async function runDiskFirstAid(exec = execFileAsync) {
   }
 }
 
-export async function rebaseAndRetest(headRef, exec = execFileAsync, repoPath = REPO_PATH, runTests = _defaultRunTests, base = 'main', resolveConflicts = null, sleep = null, progress = noProgress, freeBytes = freeDiskBytes, firstAid = null) {
+// Failure containment (2026-10-30): PR #892 was sent back for rework because test/fits_window.test.jsx, a dashboard test
+// it never touched, failed once in the gate. A few failing tests that the PR did not change get ONE more run; if they
+// pass, they are flaky, not the PR's fault: the gate passes and names them (mergePr tells the owner). Anything else
+// (more than FLAKY_RERUN_MAX failures, a test file the PR changed, no test names, a rerun that fails or errors) is
+// reported exactly as before. Fails closed: only an explicit `true` from the rerun counts as a pass.
+export const FLAKY_RERUN_MAX = 3
+const TEST_FILE = /\.(test|spec)\.[cm]?[jt]sx?$/
+
+// The repo-relative file a failing test name lives in, or null when it can't be told (or looks unsafe to pass on).
+function testFileOf(name) {
+  const n = String(name || '').trim()
+  if (!n || n.startsWith('-') || n.split(/[\\/]/).includes('..')) return null
+  if (n.includes('::')) {
+    const file = n.split('::')[0]
+    return /\.py$/.test(file) ? { runner: 'pytest', file, repoPath: file } : null
+  }
+  const file = n.split(/\s+>\s+|\s+\[/)[0].trim()   // vitest: "test/x.test.jsx > suite > case [ ... ]"
+  return TEST_FILE.test(file) && !/\s/.test(file) ? { runner: 'vitest', file, repoPath: `dashboard/${file}` } : null
+}
+
+// Runs the named failing tests once more in the gate's checkout. A Python failure stopped the run before the dashboard
+// suite started (_defaultRunTests runs pytest, then vitest), so after a Python rerun the whole dashboard suite runs too.
+export async function rerunFailingTests(cwd, names, exec = execFileAsync, progress = noProgress) {
+  const parsed = (names || []).map(testFileOf)
+  if (!parsed.length || parsed.some((p) => p === null)) return false
+  const ids = names.filter((_, i) => parsed[i].runner === 'pytest')
+  const vitestFiles = [...new Set(parsed.filter((p) => p.runner === 'vitest').map((p) => p.file))]
+  try {
+    if (ids.length) {
+      progress('tests', 'running', { detail: `rerunning ${ids.length} failing Python test(s) once`, logDetail: true })
+      await exec(VENV_PYTHON, ['-m', 'pytest', '-q', '-p', 'no:cacheprovider', ...ids], { cwd, env: { ...process.env, MARVIN_MERGE_GATE: '1' } })
+      progress('tests', 'running', { detail: 'Dashboard', logDetail: true })
+      await exec('npx', ['vitest', 'run'], { cwd: path.join(cwd, 'dashboard') })
+    } else {
+      progress('tests', 'running', { detail: `rerunning ${vitestFiles.length} failing dashboard test file(s) once`, logDetail: true })
+      await exec('npx', ['vitest', 'run', ...vitestFiles], { cwd: path.join(cwd, 'dashboard') })
+    }
+    return true
+  } catch {
+    return false
+  }
+}
+
+// Which of the failing tests may be rerun: a few, all named, none in a file this PR changed. [] = rerun nothing.
+async function rerunnable(reason, scratchDir, base, exec) {
+  const names = summarizeGateFailure(reason).failingTests
+  if (!names.length || names.length > FLAKY_RERUN_MAX) return []
+  const files = names.map(testFileOf)
+  if (files.some((f) => f === null)) return []
+  let changed
+  try {
+    const { stdout } = await exec('git', ['diff', '--name-only', `origin/${base}`, 'HEAD'], { cwd: scratchDir })
+    changed = new Set(String(stdout).split('\n').map((l) => l.trim()).filter(Boolean))
+  } catch {
+    return []   // can't tell what the PR changed: no rerun
+  }
+  return files.some((f) => changed.has(f.repoPath)) ? [] : names
+}
+
+export async function rebaseAndRetest(headRef, exec = execFileAsync, repoPath = REPO_PATH, runTests = _defaultRunTests, base = 'main', resolveConflicts = null, sleep = null, progress = noProgress, freeBytes = freeDiskBytes, firstAid = null, rerun = null) {
   let free = await freeBytes(tmpdir()).catch(() => null) // unreadable: carry on, as before this check
   const gb = (n) => `${(n / 1024 ** 3).toFixed(1)} GB`
   let aidNote = ''
@@ -389,10 +448,18 @@ export async function rebaseAndRetest(headRef, exec = execFileAsync, repoPath = 
     }
 
     progress('rebasing', 'done')
+    let flaky = null
     try {
       await runTests(scratchDir, exec, progress)
     } catch (err) {
-      return { ok: false, reason: `Tests failed after rebasing onto main:\n\n${testOutputOf(err)}` }
+      const reason = `Tests failed after rebasing onto main:\n\n${testOutputOf(err)}`
+      const names = rerun ? await rerunnable(reason, scratchDir, base, exec) : []
+      let passed = false
+      if (names.length) {
+        try { passed = (await rerun(scratchDir, names, exec, progress)) === true } catch { passed = false }
+      }
+      if (!passed) return { ok: false, reason }
+      flaky = names
     }
     progress('tests', 'done')
 
@@ -401,7 +468,7 @@ export async function rebaseAndRetest(headRef, exec = execFileAsync, repoPath = 
       classify: (e) => classifyFailure({ stage: 'gate', error: e }),
       ...(sleep ? { sleep } : {})
     })
-    return { ok: true }
+    return flaky ? { ok: true, flaky } : { ok: true }
   } finally {
     await dropGateClone(scratchDir, exec, repoPath)
   }
@@ -746,7 +813,7 @@ async function mergePrUnqueued(
     const result = await withGateTimeout(
       Promise.resolve(ctx
         ? rebaseAndRetestFn(headRefName, run, ctx.clone, ctx.runTests, ctx.base, ctx.resolveConflicts, sleep ?? null, progress, undefined, diskFirstAid)
-        : rebaseAndRetestFn(headRefName, run, REPO_PATH, _defaultRunTests, 'main', generatedResolver(MARVIN_REPO, run), sleep ?? null, progress, undefined, diskFirstAid)),
+        : rebaseAndRetestFn(headRefName, run, REPO_PATH, _defaultRunTests, 'main', generatedResolver(MARVIN_REPO, run), sleep ?? null, progress, undefined, diskFirstAid, rerunFailingTests)),
       gateTimeoutMs,
       () => gateExtension({ baseMs: gateTimeoutMs, load: loadNow(), lastOutputAt, now: now() }),
       (reason) => progress('tests', 'running', { detail: reason, logDetail: true }),
@@ -796,7 +863,16 @@ async function mergePrUnqueued(
       return { merged: false, reengaged: true, code: summary.code, stage: 'gate', action: 'reengage',
                failingTests: summary.failingTests, reason: summary.comment }
     }
-    stage('gate', 'passed', 'rebased and retested clean')
+    if (Array.isArray(result.flaky) && result.flaky.length) {
+      // Flaky, not the PR's fault: say which test, where the owner reads it, and keep it out of the breaker's log.
+      const list = result.flaky.slice(0, FLAKY_RERUN_MAX).join(', ')
+      stage('gate', 'passed', `rebased and retested; flaky test(s) failed once, then passed on one rerun: ${list}`)
+      recordFlaky({ tests: result.flaky, prUrl, project: repo })
+      const note = `**Merge gate: flaky test**\n\nThis PR passed the gate, but ${result.flaky.length === 1 ? 'this test' : 'these tests'} failed once and passed when run again. The PR doesn't change ${result.flaky.length === 1 ? 'it' : 'them'}, so it was not sent back:\n\n${result.flaky.map((t) => `- \`${t}\``).join('\n')}\n\nA test that fails at random can send a good PR back; it needs fixing on its own.`
+      await exec('gh', ['pr', 'comment', prUrl, '--body', note]).catch(() => {})   // a refused comment never blocks the merge
+    } else {
+      stage('gate', 'passed', 'rebased and retested clean')
+    }
   }
 
   // No code review here: it runs in the build loop before the PR opens (sandbox_orchestration.execute_ticket).
