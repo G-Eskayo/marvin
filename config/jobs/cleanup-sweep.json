@@ -1,0 +1,9 @@
+{
+  "name": "cleanup-sweep",
+  "description": "Daily cleanup sweep (lib/cleanup_sweep.py): stale claims, resolved worktrees, disposable caches; logs to mr-pipeline-sweep.md",
+  "command": ["~/.agents/venv/bin/python", "~/.agents/lib/cleanup_sweep.py"],
+  "schedule": {"calendar": {"hour": 4, "minute": 15}},
+  "env": {"HOME": "~", "PATH": "~/.local/bin:/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:~/.agents/venv/bin"},
+  "low_priority": true,
+  "log": "cleanup-sweep"
+}

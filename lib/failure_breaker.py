@@ -55,6 +55,8 @@ def signature(reason: str) -> str:
         return f"verdict:{m.group(1)}"
     if re.search(r"the [\w-]+ model run failed", low):
         return "model-unavailable"   # usage limit or outage: every ticket fails alike, so three in a row pause dispatch
+    if re.search(r"timed out after \d+s running", low):
+        return "verify-timeout"      # #881: the progress dots cut off at the kill differ every time; it is one failure
     if re.search(r"claude'\s*,", low) and "timed out" in low:   # the path is absolute in real runs (#597)
         return "claude-timeout"
     if "no such file or directory: 'claude'" in low:

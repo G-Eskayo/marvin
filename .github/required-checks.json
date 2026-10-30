@@ -1,0 +1,59 @@
+{
+  "_readme": "This repo's required checks (marvin#826). GitHub CI runs each one as a job with this exact name, the merge gate runs the same ones through .github/run-check.sh, and branch protection on main requires these names. Format and rules: lib/required_checks.py. A check with \"paths\" runs only when the change touches one (globs, * crosses /); with $MARVIN_BASE unset (main after a merge) every check runs. Check CI matches: venv/bin/python lib/required_checks.py drift",
+  "checks": [
+    {
+      "id": "rules",
+      "name": "Rules",
+      "cwd": ".",
+      "command": [
+        "python",
+        "lib/rule_checks.py",
+        "ci"
+      ],
+      "requires": [
+        "python",
+        "node"
+      ],
+      "timeout_s": 300
+    },
+    {
+      "id": "python",
+      "name": "Python tests",
+      "cwd": ".",
+      "command": [
+        "python",
+        "lib/affected_tests.py"
+      ],
+      "parser": "pytest",
+      "requires": [
+        "python"
+      ],
+      "timeout_s": 1800
+    },
+    {
+      "id": "dashboard",
+      "name": "Dashboard unit tests",
+      "cwd": "dashboard",
+      "install": "npm",
+      "command": [
+        "npx",
+        "vitest",
+        "run"
+      ],
+      "parser": "vitest",
+      "requires": [
+        "node",
+        "npm"
+      ],
+      "timeout_s": 1200,
+      "paths": [
+        "dashboard/*"
+      ]
+    },
+    {
+      "id": "secret-scan",
+      "name": "Secret and transcript scan",
+      "where": "ci"
+    }
+  ]
+}

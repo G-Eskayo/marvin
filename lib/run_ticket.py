@@ -247,6 +247,25 @@ def _drop_build_output(worktree_path, profile: dict | None) -> None:
         print(f"[run_ticket] could not drop build output in {worktree_path}: {exc}", file=sys.stderr)
 
 
+# #881: every outcome that isn't a success feeds the cross-ticket breaker (failure_breaker.py). How an outcome is
+# classified decides whose strike it is and how it's retried, never whether it is counted: 20 timed-out builds in a row
+# on 11 tickets (2026-10-29/30) went uncounted because the timed_out branch skipped it. An exception must be named here
+# with its reason; lib/tests/test_run_ticket.py walks every outcome kind against this list.
+BREAKER_EXEMPT = {
+    "env_missing": "a machine lacking a tool hands the ticket to a capable machine, whose success proves the environment",
+    "too_vague": "the planner judged this ticket's text (P6, 2026-10-21): it goes to a person, it is the ticket, not the system",
+}
+
+
+def _feed_breaker(issue_number: int, reason: str, repo: str = REPO) -> None:
+    """Record a non-success for the cross-ticket breaker. Never raises: a full disk or unwritable log must not stop the
+    run from releasing its claim (the breaker then reads as before, and Health shows its own state)."""
+    try:
+        failure_breaker.record_failure(issue_number, reason, **({"project": repo} if repo != REPO else {}))
+    except Exception as exc:
+        print(f"[run_ticket] could not record #{issue_number} for the breaker: {exc}", file=sys.stderr)
+
+
 def run(issue_number: int, repo: str = REPO) -> dict:
     ticket_ref = f"{repo}#{issue_number}"
     other = repo != REPO
@@ -338,13 +357,14 @@ def run(issue_number: int, repo: str = REPO) -> dict:
                  f"and it goes back to the queue, not before {when}.\n{marker}"],
                 check=False,
             )
-            failure_breaker.record_failure(issue_number, outcome["reason"], **({"project": repo} if other else {}))
+            _feed_breaker(issue_number, outcome["reason"], repo)
             ts.record_stage(issue_number, "done", "failed", outcome["reason"][:300], **kw)
             _trigger_redispatch()
             return outcome
         if outcome.get("timed_out"):
             tries = sum(_trailing_streaks(issue_number, **kw)) + 1
             ts.record_stage(issue_number, "verifying", "failed", outcome["reason"][:300], **kw)
+            _feed_breaker(issue_number, outcome["reason"], repo)   # no strike for the ticket, but counted (#881)
             if tries >= MAX_CONSECUTIVE_RETRIES:
                 _park_stuck_ticket(issue_number, tries, **kw, reason=outcome["reason"])
                 ts.record_stage(issue_number, "done", "failed", f"parked after {tries} consecutive failed or timed-out runs", **kw)
@@ -372,7 +392,7 @@ def run(issue_number: int, repo: str = REPO) -> dict:
         _comment_failure(issue_number, outcome["reason"], **kw, **({} if parking else {"retry": _retry_line(prior_streak + 1)}))
         # Feed the cross-ticket breaker (failure_breaker.py): the SAME failure across
         # different tickets means the system is broken, not the tickets.
-        failure_breaker.record_failure(issue_number, outcome["reason"], **({"project": repo} if other else {}))
+        _feed_breaker(issue_number, outcome["reason"], repo)
         if prior_streak + 1 >= MAX_CONSECUTIVE_FAILURES:
             _park_stuck_ticket(issue_number, prior_streak + 1, **kw, reason=outcome["reason"], findings=findings)
             ts.record_stage(issue_number, "done", "failed", f"parked after {prior_streak + 1} consecutive failures", **kw)

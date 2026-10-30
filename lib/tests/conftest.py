@@ -322,3 +322,14 @@ def _isolate_disk_triggers(tmp_path_factory, monkeypatch):
     d = tmp_path_factory.mktemp("disk-triggers")
     monkeypatch.setattr(disk_triggers, "LOG_PATH", d / "disk-triggers.jsonl")
     monkeypatch.setattr(download_cache, "CACHE_DIR", d / "marvin-downloads")
+
+
+@pytest.fixture(autouse=True)
+def _full_node_by_default(request, monkeypatch):
+    # marvin#911: the cleanup sweep and the health check skip GitHub and sync writes on a pull-only node, read from the
+    # registry. The suite must give the same answers on any machine (mac-mini-2012 is the test machine, ADR 0069), so
+    # every test sees a full node unless it says otherwise; test_pull_only_node tests the real lookup.
+    if request.module.__name__.rsplit(".", 1)[-1] == "test_pull_only_node":
+        return
+    import machine_profile
+    monkeypatch.setattr(machine_profile, "pull_only", lambda: False)

@@ -5,6 +5,8 @@
     "lib/auto_merge_policy.py",
     "lib/trust_ramp.py",
     "lib/auto_merge*.py",
+    "config/box_memory_trust.json",
+    "lib/box_memory_*.py",
     "dashboard/webhook-server/merge.js",
     "dashboard/webhook-server/post_merge_rebase.js",
     "dashboard/webhook-server/merge_queue*.js",

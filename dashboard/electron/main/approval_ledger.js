@@ -6,7 +6,8 @@ import path from 'path'
 // reason, attempts, updatedAt }. On 2026-10-29 seven clicks failed and nothing recorded which PRs they were for.
 //
 // outcome: sending (written, not yet answered) | merged | reengaged | refused | interrupted | queued (no machine could
-// take it) | merged-elsewhere | closed. Waiting for a retry: `queued`, and `interrupted` (the webhook went away
+// take it) | waiting-memory (marvin#940: `machine` refused it for memory and queued it to run by itself) |
+// merged-elsewhere | closed. Waiting for a retry: `queued`, `waiting-memory`, and `interrupted` (the webhook went away
 // mid-merge; owner decision on #766) when the Mac it was on is known and it has been sent fewer than 3 times. Every
 // other outcome is a machine's answer. An interrupted one is only ever retried on that same Mac (approve_flow.js).
 //
@@ -16,7 +17,7 @@ import path from 'path'
 export const APPROVALS_PATH = path.join(homedir(), '.claude', 'logs', 'approvals.json')
 // A PR whose merge keeps killing its webhook is not re-run on every wake and unlock: 3 sends, then Approve by hand.
 export const INTERRUPTED_RETRIES = 3
-const isWaiting = (a) => a.outcome === 'queued' || (a.outcome === 'interrupted' && !!a.machine && (a.attempts || 0) < INTERRUPTED_RETRIES)
+const isWaiting = (a) => a.outcome === 'queued' || a.outcome === 'waiting-memory' || (a.outcome === 'interrupted' && !!a.machine && (a.attempts || 0) < INTERRUPTED_RETRIES)
 
 export function createApprovalLedger(file = APPROVALS_PATH, { now = Date.now, cap = 200 } = {}) {
   const read = () => {
