@@ -212,6 +212,10 @@ export PATH="$HOME/.local/bin:/opt/homebrew/bin:/usr/local/bin:$PATH"
 if [ -f "$HOME/.claude/.oauth-token" ]; then
   export CLAUDE_CODE_OAUTH_TOKEN="$(cat "$HOME/.claude/.oauth-token")"
 fi
+# The plan's monthly API credit, when this machine has a key and the credit isn't spent (#775).
+if [ -f "$HOME/.agents/lib/builder_auth.sh" ]; then
+  . "$HOME/.agents/lib/builder_auth.sh" && marvin_builder_auth {task_id}
+fi
 if [ -f "$HOME/.claude/.gh-token" ]; then
   export GH_TOKEN="$(cat "$HOME/.claude/.gh-token")"
   # git itself asks the macOS keychain for credentials, which is locked in a non-interactive shell (every push from the macbook
