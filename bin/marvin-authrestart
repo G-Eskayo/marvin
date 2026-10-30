@@ -71,6 +71,9 @@ acct=$(security find-generic-password -s "$SERVICE" "$KEYCHAIN" 2>/dev/null | se
 pw=$(security find-generic-password -s "$SERVICE" -w "$KEYCHAIN" 2>/dev/null) || pw=""
 [ -n "$acct" ] && [ -n "$pw" ] || { say "refusing: no $SERVICE item in the System keychain; run marvin-reset-setup" >&2; exit 78; }
 
+# bash 5.2 (Linux) turns an unquoted & in a ${s//pat/rep} replacement into the matched text, so "&lt;" became "<lt;"
+# and the plist broke (marvin#915). macOS's bash 3.2 has no such option; turning it off is a no-op there.
+shopt -u patsub_replacement 2>/dev/null || true
 xml() { local s=$1; s=${s//&/&amp;}; s=${s//</&lt;}; s=${s//>/&gt;}; printf '%s' "$s"; }
 rm -f "$token"                                    # one restart per token
 say "restarting now (fdesetup authrestart)"
