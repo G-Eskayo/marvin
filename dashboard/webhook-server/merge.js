@@ -238,9 +238,9 @@ export async function _defaultRunTests(cwd, exec, progress = noProgress, paralle
     // run in the main-branch health check instead (lib/main_health.py).
     const env = { ...baseEnv }
     if (c.parser === 'pytest') {
+      // lib/affected_tests.py adds -n auto itself where pytest-xdist is installed; asked here only to say so.
       const parallel = await parallelArgs()
-      if (parallel.length) env.PYTEST_ADDOPTS = [process.env.PYTEST_ADDOPTS, ...parallel].filter(Boolean).join(' ')
-      else label = `${label} (serial: pytest-xdist missing)`
+      if (!parallel.length) label = `${label} (serial: pytest-xdist missing)`
       progress('tests', 'running', { detail: label, logDetail: !parallel.length })
     } else {
       progress('tests', 'running', { detail: label, logDetail: true })
