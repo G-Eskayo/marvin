@@ -13,6 +13,31 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  rules:
+    # The repo's rules (lib/rule_checks.py): the instance split, the Decisions format in changed docs. Also a
+    # pre-commit hook on every Mac; the secret scan is its own job below.
+    name: Rules
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    env:
+      MARVIN_BASE: ${{ github.event.pull_request.base.sha || github.event.before }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+          cache-dependency-path: requirements-ci.txt
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+      - run: python -m pip install -r requirements-ci.txt
+      - name: Git identity for tests that commit in temp repos
+        run: git config --global user.name ci && git config --global user.email ci@example.invalid && git config --global init.defaultBranch main
+      - run: .github/run-check.sh rules
+
   python-tests:
     # macOS, like the Macs that run MARVIN: some tests use macOS tools (plutil, launchctl's file formats).
     name: Python tests

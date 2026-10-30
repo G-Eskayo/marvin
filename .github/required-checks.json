@@ -2,12 +2,34 @@
   "_readme": "This repo's required checks (marvin#826). GitHub CI runs each one as a job with this exact name, the merge gate runs the same ones through .github/run-check.sh, and branch protection on main requires these names. Format and rules: lib/required_checks.py. Check CI matches: venv/bin/python lib/required_checks.py drift",
   "checks": [
     {
+      "id": "rules",
+      "name": "Rules",
+      "cwd": ".",
+      "command": [
+        "python",
+        "lib/rule_checks.py",
+        "ci"
+      ],
+      "requires": [
+        "python",
+        "node"
+      ],
+      "timeout_s": 300
+    },
+    {
       "id": "python",
       "name": "Python tests",
       "cwd": ".",
-      "command": ["python", "-m", "pytest", "-q"],
+      "command": [
+        "python",
+        "-m",
+        "pytest",
+        "-q"
+      ],
       "parser": "pytest",
-      "requires": ["python"],
+      "requires": [
+        "python"
+      ],
       "timeout_s": 1800
     },
     {
@@ -15,9 +37,16 @@
       "name": "Dashboard unit tests",
       "cwd": "dashboard",
       "install": "npm",
-      "command": ["npx", "vitest", "run"],
+      "command": [
+        "npx",
+        "vitest",
+        "run"
+      ],
       "parser": "vitest",
-      "requires": ["node", "npm"],
+      "requires": [
+        "node",
+        "npm"
+      ],
       "timeout_s": 1200
     },
     {
