@@ -43,11 +43,17 @@ function makeCheck(body, bar) {
   return { el, bar, box: { left: r.left - b.left, top: r.top - b.top, width: r.width, height: Math.max(2, r.height) } }
 }
 const D = 22 // the circle's diameter
+// Where the green pill sits as it becomes the circle. Its right edge stays on the bar's right end, so the bar
+// collapses left to right into the check, the same direction as the sweep (owner, 2026-10-30), never to the middle.
+export function checkRect(box, morph) {
+  const w = box.width + (D - box.width) * morph, h = box.height + (D - box.height) * morph
+  return { left: box.left + box.width - w, top: box.top + (box.height - h) / 2, width: w, height: h }
+}
 function drawCheck(check, c) {
   const { el, bar, box } = check
-  const w = box.width + (D - box.width) * c.morph, h = box.height + (D - box.height) * c.morph
+  const { left, top, width: w, height: h } = checkRect(box, c.morph)
   Object.assign(el.style, {
-    left: `${box.left + (box.width - w) / 2}px`, top: `${box.top + (box.height - h) / 2}px`, width: `${w}px`, height: `${h}px`,
+    left: `${left}px`, top: `${top}px`, width: `${w}px`, height: `${h}px`,
     borderRadius: `${Math.min(w, h) / 2}px`, opacity: String(c.opacity), background: GREEN
   })
   el.style.setProperty('--mm-tick', String(1 - c.tick))
