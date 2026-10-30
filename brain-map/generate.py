@@ -849,7 +849,7 @@ def attach_code_layers(tree: dict) -> None:
             if graph and path:
                 code_layer = _compute_code_layer(graph, path)
             else:
-                code_layer = {"files": [], "functions": [], "edges": [], "borrowed": []}
+                code_layer = {"files": [], "functions": [], "edges": [], "borrowed": [], "tests": []}
             node["code"] = code_layer
         for c in node.get("children", []):
             walk(c)

@@ -66,6 +66,9 @@ entries `"accepts": ["general", "macos"]`.
 - The wallpaper is the Linux twin of `brain-map/DesktopLive` (same page, same hooks and timers). It must NOT use
   Electron's `type: 'desktop'`: on X11 that makes an unmanaged window drawn over everything. It sets
   `_NET_WM_WINDOW_TYPE_DESKTOP` with `xprop` before the window maps, so Xfwm keeps it behind every window.
+- **Off while jobs run** (#931): `lib/job_hooks.py`, called by every dispatched job's wrapper at start and from its EXIT
+  trap, stops the wallpaper at the first job and starts it again (same X session variables) after the last. A
+  wallpaper that wasn't running when the job began stays off. Events: `~/.claude/logs/box-display.jsonl`.
 
 ## 9. Mac data on the box (observer key)
 - The box reads from the Macs only through `marvin-observer.sh`, a forced command that matches the request against a
@@ -75,6 +78,18 @@ entries `"accepts": ["general", "macos"]`.
   in `~/.ssh/authorized_keys`. On the box, `~/.ssh/config` maps each Mac's Tailscale name to `User gileskayo`,
   `IdentityFile ~/.ssh/marvin_observer`, `IdentitiesOnly yes`.
 - Health: `marvin-observer-feed.timer` copies the M4 Mini's `health-status.json` every 2 minutes (it covers all three
-  machines), so the box doesn't run health checks of its own.
+  machines) for the dashboard. The box's own health sweep (section 10) writes `health-status.local.json` beside it.
 - GitHub on the box: a fine-grained **read-only** token (Issues, Pull requests, Checks, Commit statuses, Metadata) in
   `gh auth`. The bot's write token never lives on the box.
+
+## 10. Scheduled jobs (marvin#911)
+- One definition per job in `config/jobs/<name>.json`; `lib/job_units.py` renders it as a launchd plist on the Macs
+  and as `marvin-<name>.service` + `.timer` (systemd user units) here, with the same command, schedule and logs.
+  Never hand-edit the units in `~/.config/systemd/user/`: change the definition and reinstall.
+- Install: `~/.agents/venv/bin/python ~/.agents/lib/job_units.py install health-check cleanup-sweep usage-scan`
+  (needs linger, section 4). Re-running is a no-op when nothing changed. Check: `systemctl --user list-timers`,
+  `journalctl --user -u marvin-<name>.service`, and `~/.claude/logs/<name>.log` / `<name>-error.log`.
+- What they do here: the health sweep writes `health-status.local.json`; usage-scan writes `token-usage.json`; the
+  cleanup sweep runs only its local, lossless steps. This is a pull-only node (`machine_profile.pull_only()`: its
+  registry entry doesn't accept `general` work), so the sweep never releases claims, pushes backups or rewrites
+  `~/.claude/suggestions.md`, and its log says so. With no GitHub token, anything it would need GitHub for is kept.

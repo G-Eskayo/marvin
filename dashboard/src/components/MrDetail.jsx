@@ -3,7 +3,9 @@ import { EvidenceTable, ApproveDenyActions, CorrectionNotice } from './MrReview.
 import { projectIdOf } from '../lib/projects.js'
 import StageStrip from './StageStrip.jsx'
 import Related, { useRelated } from './Related.jsx'
-import PrImages from './PrImages.jsx'
+import PrImages, { showImage } from './PrImages.jsx'
+import MockupLauncher from './MockupLauncher.jsx'
+import { imageRefsFor } from '../lib/decision_refs.js'
 import Decisions from './Decisions.jsx'
 import IssueBodyView from './IssueBody.jsx'
 
@@ -121,6 +123,37 @@ function IssueBody({ label, issue, repo, onOpenTicket, onOpenDocs }) {
   )
 }
 
+// A long summary opens clamped, so the mock-up and the first pictures still show in the first screen at 1200 px.
+export const SUMMARY_CLAMP_CHARS = 420
+function SummarySection({ summary, repo, headRef, onOpenTicket, onOpenDocs }) {
+  const long = summary.length > SUMMARY_CLAMP_CHARS
+  const [open, setOpen] = useState(!long)
+  return (
+    <Section title="What it is">
+      <div data-summary="1" data-clamped={open ? undefined : '1'} className={open ? '' : 'relative max-h-[9.5rem] overflow-hidden'}>
+        <IssueBodyView
+          body={summary}
+          ctx={{ repo }}
+          headRef={headRef}
+          onLink={(l) => (l.type === 'ticket' ? onOpenTicket?.(l.repo, l.number) : onOpenDocs?.(l.project, l.path))}
+        />
+        {!open && <div className="pointer-events-none absolute inset-x-0 bottom-0 h-10 bg-gradient-to-t from-neutral-900 to-transparent" />}
+      </div>
+      {long && (
+        <button type="button" onClick={() => setOpen((o) => !o)} className="mt-1 text-xs text-sky-400 hover:text-sky-300 hover:underline">
+          {open ? 'Show less' : 'Read the rest'}
+        </button>
+      )}
+    </Section>
+  )
+}
+
+// Where "Jump to the Decisions" lands.
+const DECISIONS_ANCHOR = 'mr-decisions'
+// The main gallery's anchors (Decisions link to them) and how many images show before "Show all".
+const GALLERY = 'pr-image'
+export const GALLERY_LIMIT = 6
+
 export default function MrDetail({ pr, onBack, onApproved, onDenied, onOpenDocs, onOpenBoard, onOpenTicket, onChanged, notice = null }) {
   const rel = useRelated(() => window.api.relations.pr(pr.repo, pr.number), [pr.repo, pr.number])
   const [context, setContext] = useState(null)
@@ -186,6 +219,13 @@ export default function MrDetail({ pr, onBack, onApproved, onDenied, onOpenDocs,
                 Board →
               </button>
             )}
+            {/* The screenshots come first, so the Decisions can be far down (owner's answer on PR #953). */}
+            {pr.decisions?.present && !pr.readOnly && (
+              <button data-jump-decisions="1" onClick={() => document.getElementById(DECISIONS_ANCHOR)?.scrollIntoView({ behavior: 'smooth', block: 'start' })}
+                className="ml-2 text-sky-400 hover:text-sky-300">
+                Jump to the Decisions ↓
+              </button>
+            )}
           </p>
         </div>
         {pr.readOnly ? (
@@ -206,29 +246,41 @@ export default function MrDetail({ pr, onBack, onApproved, onDenied, onOpenDocs,
         </div>
       )}
 
-      {prEvents.length > 0 && (
-        <Section title="Pipeline">
-          <StageStrip events={prEvents} />
+      {/* What to look at comes before the choices (#938): what it is, the mock-up and the pictures, then the Decisions.
+          You can't answer choices you can't see. */}
+      {pr.summary && (
+        <SummarySection summary={pr.summary} repo={pr.repo} headRef={pr.headRef} onOpenTicket={onOpenTicket} onOpenDocs={onOpenDocs} />
+      )}
+
+      <MockupLauncher pr={pr} />
+
+      {pr.images?.length > 0 && (
+        <Section title={`Images & recordings (${pr.images.length})`}>
+          <PrImages images={pr.images} size="large" anchorPrefix={GALLERY} limit={GALLERY_LIMIT} />
         </Section>
       )}
+      {!pr.images?.length && pr.needsImages && <NeedsImages needsImages={pr.needsImages} />}
 
       {/* What the PR asks the owner to choose: answered here, and Approve waits until the required ones are. */}
       {pr.decisions?.present && !pr.readOnly && (
+        <div id={DECISIONS_ANCHOR} className="scroll-mt-4">
         <Decisions
           key={JSON.stringify(pr.decisions.questions.map((q) => [q.id, q.question, q.options.map((o) => o.label)]))}
           repo={pr.repo}
           number={pr.number}
           decisions={pr.decisions}
+          refsFor={(q) => imageRefsFor(q.question, pr.images)}
+          onSeeImage={(index) => showImage(GALLERY, index)}
           onSubmitted={(r) => onChanged?.(r)}
         />
+        </div>
       )}
 
-      {pr.images?.length > 0 && (
-        <Section title={`Images & recordings (${pr.images.length})`}>
-          <PrImages images={pr.images} />
+      {prEvents.length > 0 && (
+        <Section title="Pipeline">
+          <StageStrip events={prEvents} />
         </Section>
       )}
-      {!pr.images?.length && pr.needsImages && <NeedsImages needsImages={pr.needsImages} />}
 
       {pr.hasSchema ? (
         <>

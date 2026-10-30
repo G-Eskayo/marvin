@@ -48,7 +48,7 @@ function Badge({ children, tone }) {
   return <span className={`rounded-full border px-2 py-0.5 text-[11px] ${tones[tone]}`}>{children}</span>
 }
 
-function Question({ q, d, onChange, readOnly }) {
+function Question({ q, d, onChange, readOnly, refs = [], onSeeImage }) {
   const [showNote, setShowNote] = useState(!!d.note)
   const answered = isDraftAnswered(q, d)
   return (
@@ -58,6 +58,12 @@ function Question({ q, d, onChange, readOnly }) {
         <p className="text-base font-medium text-white">{q.question}</p>
         {q.required ? <Badge tone={answered ? 'done' : 'req'}>{answered ? 'Answered' : 'Required'}</Badge> : <Badge tone="opt">Optional</Badge>}
         {q.kind === 'multi' && <Badge tone="multi">Pick any</Badge>}
+        {/* What the question is about, when it names a scene or quotes a screenshot's caption (#938). */}
+        {refs.map((r) => (
+          <button key={r.index} type="button" data-see-image={r.index} onClick={() => onSeeImage?.(r.index)} className="text-xs text-sky-400 hover:text-sky-300 hover:underline">
+            See {r.label} ↑
+          </button>
+        ))}
       </div>
       {q.kind === 'text' ? (
         <textarea
@@ -128,7 +134,7 @@ export function followGithub({ questions, editing, status }) {
   return { draft: initialDraft(questions), status: stale ? { state: 'error', message: 'GitHub now has different answers than the ones you saved (the note above says what changed).' } : status }
 }
 
-export default function Decisions({ repo, number, decisions, onSubmitted, submit = (p) => window.api.decisions.submit(p), onRecorded = (cb) => window.api.decisions.onRecorded?.(cb) }) {
+export default function Decisions({ repo, number, decisions, onSubmitted, refsFor = () => [], onSeeImage, submit = (p) => window.api.decisions.submit(p), onRecorded = (cb) => window.api.decisions.onRecorded?.(cb) }) {
   const questions = decisions?.questions || []
   const [draft, setDraft] = useState(() => initialDraft(questions))
   const [editing, setEditing] = useState(() => (decisions?.pending || []).length > 0)
@@ -184,7 +190,7 @@ export default function Decisions({ repo, number, decisions, onSubmitted, submit
       </div>
       <div className="flex flex-col gap-3">
         {questions.map((q) => (
-          <Question key={q.id} q={q} d={draft[q.id]} readOnly={!editing} onChange={(d) => setDraft((prev) => ({ ...prev, [q.id]: d }))} />
+          <Question key={q.id} q={q} d={draft[q.id]} readOnly={!editing} refs={refsFor(q)} onSeeImage={onSeeImage} onChange={(d) => setDraft((prev) => ({ ...prev, [q.id]: d }))} />
         ))}
       </div>
       {editing && (
