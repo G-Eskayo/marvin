@@ -1,5 +1,7 @@
 # Changelog
 
+- Live map: nothing moves unless something real happened; leaf nodes and links light from real activity ([#851](https://github.com/G-Eskayo/marvin/pull/851))
+
 - Plan first, credit for overflow: builds bill the API credit only when a Mac's normal slots are busy (extra slots on the Mini) ([#850](https://github.com/G-Eskayo/marvin/pull/850))
 
 - MR Review: blue sweep slide-out when an MR merges, and an Open | Merged split view ([#761](https://github.com/G-Eskayo/marvin/pull/761))
