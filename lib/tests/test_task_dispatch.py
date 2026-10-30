@@ -97,3 +97,31 @@ def test_a_finished_task_starts_the_next_one_queued_for_memory():
     script = td._build_wrapper_script("echo hi", "task123", "my task", "mac-mini-1")
     trap = script[script.index("trap "):script.index("' EXIT")]
     assert '"$HOME/.agents/lib/memory_guard.py" kick' in trap
+
+
+def test_online_hosts_says_none_when_tailscale_cannot_run_and_dispatch_still_gets_a_set(monkeypatch):
+    # marvin#889: "the CLI can't run" must be distinguishable from "every peer is offline".
+    import task_dispatch as td
+
+    def missing(*a, **k):
+        raise FileNotFoundError("no tailscale")
+    monkeypatch.setattr(td.subprocess, "run", missing)
+    assert td.tailscale_online_hosts_or_none() is None
+    assert td._tailscale_online_hosts() == set()
+
+
+def test_online_hosts_says_none_when_tailscale_exits_non_zero(monkeypatch):
+    import subprocess as sp
+    import task_dispatch as td
+    monkeypatch.setattr(td.subprocess, "run", lambda *a, **k: sp.CompletedProcess(a, 1, "", "failed to connect to local tailscaled"))
+    assert td.tailscale_online_hosts_or_none() is None
+
+
+def test_online_hosts_reads_peers_when_tailscale_answers(monkeypatch):
+    import subprocess as sp
+    import task_dispatch as td
+    out = ("100.82.55.107    gils-mac-mini   geskayo@  macOS  -\n"
+           "100.80.189.85    mbp             geskayo@  macOS  active; direct 192.168.0.40:41641\n"
+           "100.102.243.126  box             geskayo@  linux  offline, last seen 1d ago\n")
+    monkeypatch.setattr(td.subprocess, "run", lambda *a, **k: sp.CompletedProcess(a, 0, out, ""))
+    assert td.tailscale_online_hosts_or_none() == {"gils-mac-mini", "mbp"}

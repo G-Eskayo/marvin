@@ -43,6 +43,9 @@ def _row(device_id, device_entry, is_self, state, why=None, slotsUsed=None, slot
     return row
 
 
+_CANT_CHECK = object()  # online() answered None: Tailscale itself couldn't be asked (marvin#889)
+
+
 def device_statuses(devices: dict, self_id: str, local, online, probe, local_slots=None, remote_slots=None) -> list[dict]:
     local_slots = local_slots or (lambda m: None)
     remote_slots = remote_slots or (lambda h, m: None)
@@ -73,7 +76,13 @@ def device_statuses(devices: dict, self_id: str, local, online, probe, local_slo
             continue
         if online_hosts is None:
             online_hosts = online()
+            if online_hosts is None:
+                online_hosts = _CANT_CHECK
         host = info.get("tailscale_hostname")
+        if online_hosts is _CANT_CHECK:
+            out.append({**_row(device_id, info, False, None), "state": "unreachable",
+                        "why": "can't check: Tailscale isn't answering on this Mac (CLI missing or failing)"})
+            continue
         if host not in online_hosts:
             out.append({**_row(device_id, info, False, None), "state": "unreachable", "why": "not online in Tailscale"})
             continue
@@ -111,7 +120,7 @@ def main() -> None:
         except Exception:
             return None
 
-    print(json.dumps(device_statuses(_load_registry(), registry_id(), local, td._tailscale_online_hosts, probe_remote,
+    print(json.dumps(device_statuses(_load_registry(), registry_id(), local, td.tailscale_online_hosts_or_none, probe_remote,
                                     local_slots=local_slots_reader, remote_slots=remote_slots_reader)))
 
 

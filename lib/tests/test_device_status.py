@@ -87,3 +87,11 @@ def test_slots_absent_when_readers_return_none():
         remote_slots=lambda h, m: None,
     )
     assert all("slotsUsed" not in row for row in r)
+
+
+def test_tailscale_that_cannot_be_checked_is_not_reported_as_offline():
+    # marvin#889: a missing or failing tailscale CLI made every peer read "not online in Tailscale" for four days.
+    r = ds.device_statuses(DEVICES, "mac-mini-1", lambda: {"busy": False}, lambda: None, lambda h: {"busy": False})
+    for row in r[1:]:
+        assert row["state"] == "unreachable"
+        assert "can't check" in row["why"] and "not online" not in row["why"]
