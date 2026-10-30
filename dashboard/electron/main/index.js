@@ -155,6 +155,7 @@ import { postTicketInput } from './ticket_input.js'
 import { createImageLoader, mediaFileFor } from './pr_images.js'
 import { resolveServiceDefaults, resolveDeviceId, peerHosts, primaryDeviceId } from './device_identity.js'
 import { createHelpersReader } from './chat_helpers.js'
+import { createAccounts } from './accounts.js'
 
 // The pipeline's screenshot copy runs unattended beside the real dashboard: log, never show a modal (#384).
 if (isEvidenceCapture(process.env)) installCaptureGuard(process)
@@ -163,6 +164,7 @@ if (isEvidenceCapture(process.env)) installCaptureGuard(process)
 instrumentIpc(ipcMain)
 
 const execFileAsync = promisify(execFile)
+const accountsView = createAccounts({ machine: () => resolveDeviceId(), execFile: execFileAsync })
 
 adoptLoginShellPath()
 adoptSharedGhToken()
@@ -435,6 +437,10 @@ function registerHealthHandlers() {
     return { ...result, status: readHealthStatus() }
   })
   ipcMain.handle('health:readiness', () => readOnboardingPlans(readRegistry()))
+  // Vitals > Accounts (marvin#974; the card itself waits on Gil's approval, #640): saved view first, then this
+  // machine checked live; Renew opens a helper tab where the person approves or pastes the login.
+  ipcMain.handle('accounts:list', (_event, opts) => accountsView.list({ fresh: !!opts?.fresh }))
+  ipcMain.handle('accounts:renew', (_event, id, machine) => accountsView.renew(String(id || ''), machine ? String(machine) : null))
   ipcMain.handle('health:setMergeFromDashboard', async (_event, repo, value) => {
     if (value === true) {
       const plans = readOnboardingPlans(readRegistry())
