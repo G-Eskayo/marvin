@@ -6,12 +6,15 @@ import { _defaultRunTests, makeBoxRunner, noBoxRunner } from '../webhook-server/
 
 const cache = { seed: async () => {}, store: async () => {} }
 const serial = async () => []
+// The gate runs each required check through .github/run-check.sh (#826); the Python one is `python`.
+const slot = async () => ({ release: async () => {} })
+const run = (exec, box) => _defaultRunTests('/scratch', exec, undefined, serial, cache, null, slot, box)
 
 function gateExec({ pytestFails = false } = {}) {
   const calls = []
   const exec = vi.fn(async (cmd, args) => {
     calls.push([cmd, args[0], args[1]])
-    if (pytestFails && args[1] === 'pytest') {
+    if (pytestFails && args[1] === 'python') {
       const err = new Error('Command failed')
       err.stdout = 'FAILED lib/tests/test_x.py::test_y - boom\n1 failed'
       throw err
@@ -32,7 +35,7 @@ describe('the gate with the box beside it', () => {
   it("hands the box the gate's own tree and records the Mac's pass", async () => {
     const { exec } = gateExec()
     const box = fakeBox()
-    await _defaultRunTests('/scratch', exec, undefined, serial, cache, box)
+    await run(exec, box)
     expect(box.sent).toEqual(['/scratch'])
     expect(box.verdicts).toEqual([['a'.repeat(40), 'passed', '']])
   })
@@ -40,7 +43,7 @@ describe('the gate with the box beside it', () => {
   it("records the Mac's failure with its output, and the failure is still the gate's (thrown, unchanged)", async () => {
     const { exec } = gateExec({ pytestFails: true })
     const box = fakeBox()
-    await expect(_defaultRunTests('/scratch', exec, undefined, serial, cache, box)).rejects.toThrow('Command failed')
+    await expect(run(exec, box)).rejects.toThrow('Command failed')
     const [[sha, outcome, output]] = box.verdicts
     expect([sha, outcome]).toEqual(['a'.repeat(40), 'failed'])
     expect(output).toContain('FAILED lib/tests/test_x.py::test_y')
@@ -50,8 +53,8 @@ describe('the gate with the box beside it', () => {
     for (const submit of [async () => { throw new Error('ssh exploded') }, () => { throw new Error('sync throw') }]) {
       const { exec, calls } = gateExec()
       const box = fakeBox({ submit })
-      await expect(_defaultRunTests('/scratch', exec, undefined, serial, cache, box)).resolves.toBeUndefined()
-      expect(calls.some((c) => c[2] === 'pytest')).toBe(true)
+      await expect(run(exec, box)).resolves.toBeUndefined()
+      expect(calls.some((c) => c[2] === 'python')).toBe(true)
       expect(box.verdicts).toEqual([[null, 'passed', '']])
     }
   })
@@ -61,10 +64,10 @@ describe('the gate with the box beside it', () => {
     const order = []
     const box = fakeBox({ submit: () => new Promise((r) => { release = () => { order.push('hand-off done'); r({ id: 'r', sha: 'b'.repeat(40) }) } }) })
     const exec = vi.fn(async (cmd, args) => {
-      if (args[1] === 'pytest') { order.push('pytest started'); setTimeout(() => release(), 20) }
+      if (args[1] === 'python') { order.push('pytest started'); setTimeout(() => release(), 20) }
       return { stdout: '', stderr: '' }
     })
-    await _defaultRunTests('/scratch', exec, undefined, serial, cache, box)
+    await run(exec, box)
     expect(order).toEqual(['pytest started', 'hand-off done'])
     expect(box.verdicts[0][0]).toBe('b'.repeat(40))
   })
@@ -72,13 +75,13 @@ describe('the gate with the box beside it', () => {
   it('the box runs the Python suite only: vitest results are never recorded against it', async () => {
     const { exec } = gateExec()
     const box = fakeBox()
-    await _defaultRunTests('/scratch', exec, undefined, serial, cache, box)
+    await run(exec, box)
     expect(box.verdicts).toHaveLength(1)
   })
 
   it('by default (every other caller and test) there is no box runner at all', async () => {
     const { exec, calls } = gateExec()
-    await _defaultRunTests('/scratch', exec, undefined, serial, cache)
+    await run(exec)
     expect(calls.some((c) => String(c[1]).includes('box_runner'))).toBe(false)
     await expect(noBoxRunner.submit('/x')).resolves.toBeNull()
   })

@@ -70,7 +70,7 @@ describe('Decisions panel', () => {
     expect(renderToStaticMarkup(<Decisions repo="o/r" number={1} decisions={null} />)).toBe('')
   })
 
-  it('the PR detail puts Decisions above the images', () => {
+  it('the PR detail puts the images above the Decisions (#938: you can\'t answer choices you can\'t see)', () => {
     globalThis.window = { api: { relations: { pr: () => new Promise(() => {}) }, mr: { ticketContext: () => new Promise(() => {}), mergeState: () => new Promise(() => {}) } } }
     const pr = {
       number: 99, title: 'Seal dance', url: 'https://github.com/G-Eskayo/clarity-captions/pull/99', repo: 'G-Eskayo/clarity-captions',
@@ -79,7 +79,8 @@ describe('Decisions panel', () => {
     }
     const html = renderToStaticMarkup(<MrDetail pr={pr} onBack={() => {}} />)
     expect(html.indexOf('data-decisions')).toBeGreaterThan(0)
-    expect(html.indexOf('data-decisions')).toBeLessThan(html.indexOf('Images &amp; recordings'))
+    expect(html.indexOf('Images &amp; recordings')).toBeGreaterThan(0)
+    expect(html.indexOf('Images &amp; recordings')).toBeLessThan(html.indexOf('data-decisions'))
     expect(html).toContain('Answer the decisions first')
   })
 })

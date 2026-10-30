@@ -85,3 +85,24 @@ def test_quarantine_dedup_is_scoped_per_loop_not_global(tmp_path, monkeypatch):
     v.quarantine("same-shaped content", 0.6, "research_colony", 0.3)
 
     assert quarantine_file.read_text() != before
+
+
+class _Result:
+    def __init__(self, code, text):
+        self.exit_code, self.text, self.stderr = code, text, ""
+
+
+def test_verify_fails_open_by_default_and_closed_when_asked(monkeypatch):
+    """ADR 0082: box memory may pass on its own, so a judge that didn't answer must read as "not scored", not 0."""
+    for result in (_Result(1, ""), _Result(0, "no number here")):
+        monkeypatch.setattr(v.marvin_launcher, "launch", lambda *a, _r=result, **k: _r)
+        assert v.verify("text", "box_memory") == 0.0
+        assert v.verify("text", "box_memory", fail_value=None) is None
+    monkeypatch.setattr(v.marvin_launcher, "launch", lambda *a, **k: 1 / 0)
+    assert v.verify("text", "box_memory", fail_value=None) is None
+    monkeypatch.setattr(v.marvin_launcher, "launch", lambda *a, **k: _Result(0, "0.42"))
+    assert v.verify("text", "box_memory", fail_value=None) == 0.42
+
+
+def test_the_box_memory_rubric_exists():
+    assert "Linux box" in v._load_rubric("box_memory")

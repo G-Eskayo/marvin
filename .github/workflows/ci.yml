@@ -1,7 +1,10 @@
 name: CI
 
-# The dashboard's unit tests on every PR and on main. The Python suite (lib/tests) is not run here yet: it needs a
-# pinned requirements file (chromadb, sentence-transformers, torch) and some tests read machine-local state.
+# Runs exactly the required checks in .github/required-checks.json (marvin#826): one job per check, named as the list
+# names it, each running `.github/run-check.sh <id>`, the same runner MARVIN's merge gate uses. Branch protection on
+# main requires these names. lib/tests/test_required_checks.py fails if this file and the list drift apart.
+# On a PR, MARVIN_BASE makes each check run only what the change affects (lib/affected_tests.py, run-check.sh's
+# "paths"); on main, after every merge, it is empty and the full suite runs.
 on:
   pull_request:
   push:
@@ -12,22 +15,106 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  rules:
+    # The repo's rules (lib/rule_checks.py): the instance split, the Decisions format in changed docs. Also a
+    # pre-commit hook on every Mac; the secret scan is its own job below.
+    name: Rules
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    env:
+      MARVIN_BASE: ${{ github.event.pull_request.base.sha || github.event.before }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+          cache-dependency-path: requirements-ci.txt
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+      - name: A clean MARVIN install (~/.agents, its venv, an empty ~/.claude)
+        run: .github/ci-machine.sh
+      - name: Git identity for tests that commit in temp repos
+        run: git config --global user.name ci && git config --global user.email ci@example.invalid && git config --global init.defaultBranch main
+      - run: .github/run-check.sh rules
+
+  python-tests:
+    # macOS, like the Macs that run MARVIN: some tests use macOS tools (plutil, launchctl's file formats).
+    name: Python tests
+    runs-on: macos-15
+    timeout-minutes: 60
+    env:
+      MARVIN_MERGE_GATE: "1" # leave out the tests that read another repo's data, as the gate does
+      MARVIN_BASE: ${{ github.event.pull_request.base.sha }} # a PR runs the tests it affects; main runs them all
+      MARVIN_REQUIRE_TOOLS: "1" # CI installs every tool a test declares: a missing one fails here, never skips
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+          cache-dependency-path: requirements-ci.txt
+      - name: A clean MARVIN install (~/.agents, its venv, an empty ~/.claude)
+        run: .github/ci-machine.sh
+      - name: Tools the tests declare (ripgrep)
+        run: brew install ripgrep
+      - name: Git identity for tests that commit in temp repos
+        run: git config --global user.name ci && git config --global user.email ci@example.invalid && git config --global init.defaultBranch main
+      - run: .github/run-check.sh python
+
   dashboard-tests:
     name: Dashboard unit tests
     runs-on: ubuntu-latest
     timeout-minutes: 15
-    defaults:
-      run:
-        working-directory: dashboard
+    env:
+      MARVIN_BASE: ${{ github.event.pull_request.base.sha }}
     steps:
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Does this change touch the dashboard?
+        id: affected
+        run: echo "run=$(.github/run-check.sh dashboard --affected)" >> "$GITHUB_OUTPUT"
       - uses: actions/setup-node@v4
+        if: steps.affected.outputs.run == 'true'
         with:
           node-version: 20
           cache: npm
           cache-dependency-path: dashboard/package-lock.json
       - run: npm ci --ignore-scripts --no-audit --no-fund
-      - run: npx vitest run
+        if: steps.affected.outputs.run == 'true'
+        working-directory: dashboard
+      - run: .github/run-check.sh dashboard
+
+  main-red:
+    # After every merge to main (the full suite: no MARVIN_BASE on a push), open the fix-forward ticket if a check
+    # failed, or close it once main is green again (lib/main_red.py, #826). PRs never run this.
+    name: Main health ticket
+    if: always() && github.event_name == 'push'
+    needs: [rules, python-tests, dashboard-tests]
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      issues: write
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - run: python -m pip install PyYAML==6.0.3
+      - name: Report main's state
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RESULTS: ${{ toJSON(needs) }}
+        run: >-
+          python lib/main_red.py report --sha "$GITHUB_SHA"
+          --run "$GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID" --results "$RESULTS"
 
   secret-scan:
     # ADR 0071: the server-side gate. Scans only the commits this PR or push adds, with gitleaks and with the same

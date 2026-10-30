@@ -580,3 +580,11 @@ def test_code_layer_live_regression_guard_no_vendor_in_borrowing():
     assert "external_func" in borrowed_ids
     # vendor_motion should NOT be borrowed, despite being called
     assert "vendor_motion" not in borrowed_ids
+
+
+def test_without_a_code_graph_a_node_gets_an_empty_code_layer_of_the_same_shape(monkeypatch):
+    # graphify-out/ is never committed: a fresh clone or CI has no graph (#826, failed on GitHub's runner).
+    monkeypatch.setattr(generate, "load_graphify_graph", lambda: None)
+    tree = {"id": "root", "children": [{"id": "audit", "openable": True, "path": "skills/audit"}]}
+    generate.attach_code_layers(tree)
+    assert tree["children"][0]["code"] == {"files": [], "functions": [], "edges": [], "borrowed": [], "tests": []}
