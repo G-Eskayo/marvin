@@ -193,7 +193,7 @@ export default function MrDetail({ pr, onBack, onApproved, onDenied, onOpenDocs,
             {pr.state === 'MERGED' ? `Merged${pr.mergedAt ? ` ${new Date(pr.mergedAt).toLocaleString([], { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' })}` : ''}` : (pr.state || 'Read-only').toLowerCase()} · read-only
           </span>
         ) : (
-          <ApproveDenyActions pr={pr} onApproved={onApproved} onDenied={onDenied} />
+          <ApproveDenyActions pr={pr} onApproved={onApproved} onDenied={onDenied} inDetail />
         )}
       </div>
 
