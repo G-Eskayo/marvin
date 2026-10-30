@@ -302,7 +302,8 @@ def _fall_back(command: str, need: str, reason: str, box: str | None, box_error:
     slot.write_text(json.dumps({"pid": os.getpid(), "need": need, "label": label, "to": device_id}))
     started = time.monotonic()
     try:
-        script = _build_wrapper_script(command, str(uuid.uuid4())[:8], label, device_id, ticket=ticket, repo=repo)
+        script = _build_wrapper_script(command, str(uuid.uuid4())[:8], label, device_id, ticket=ticket, repo=repo,
+                                       need=need)
         result = (_run_local(script, mode, timeout) if info["is_self"]
                   else _run_remote(info["tailscale_hostname"], script, mode, timeout, device_id, info.get("os", "macos")))
     finally:
@@ -346,7 +347,7 @@ def _classify_remote_exit(code: int) -> str | None:
 
 
 def _build_wrapper_script(command: str, task_id: str, task_label: str, device_id: str,
-                          ticket: str | None = None, repo: str | None = None) -> str:
+                          ticket: str | None = None, repo: str | None = None, need: str | None = None) -> str:
     """A script that writes a task record to TASKS_DIR/<task_id>.json (with metadata including the real runtime PID),
     marks the dispatch-state file busy, runs the real command, and on exit (via trap — fires even if the command
     fails or crashes, not just on clean exit) removes the task record and clears the state file and deletes its
@@ -382,6 +383,12 @@ def _build_wrapper_script(command: str, task_id: str, task_label: str, device_id
 
     tasks_dir, state = SHELL_TASKS_DIR, SHELL_STATE_PATH
     plan_slots = dispatch_concurrency.effective_limit(dispatch_concurrency.load(), device_id)   # the plan's, not the credit's
+    # Only general work (builds) chooses plan or API credit. Tagged work (test, bench, quarantine, security) runs no
+    # model, and a test job falling back to a busy Mac must not send even builder_auth's 1-token probe (#930).
+    builder_auth = (f'''if [ -f "$HOME/.agents/lib/builder_auth.sh" ]; then
+  . "$HOME/.agents/lib/builder_auth.sh" && marvin_builder_auth {task_id} {plan_slots}
+fi
+''' if _normalise_need(need) == GENERAL else "")
     return f"""#!/bin/bash
 mkdir -p {tasks_dir}
 mkdir -p "$HOME/.claude"
@@ -400,10 +407,7 @@ if [ -f "$HOME/.claude/.oauth-token" ]; then
   export CLAUDE_CODE_OAUTH_TOKEN="$(cat "$HOME/.claude/.oauth-token")"
 fi
 # Plan first; the monthly API credit only for builds beyond this machine's plan slots (#775, #849).
-if [ -f "$HOME/.agents/lib/builder_auth.sh" ]; then
-  . "$HOME/.agents/lib/builder_auth.sh" && marvin_builder_auth {task_id} {plan_slots}
-fi
-if [ -f "$HOME/.claude/.gh-token" ]; then
+{builder_auth}if [ -f "$HOME/.claude/.gh-token" ]; then
   export GH_TOKEN="$(cat "$HOME/.claude/.gh-token")"
   # git itself asks the macOS keychain for credentials, which is locked in a non-interactive shell (every push from the macbook
   # died with exit 128, 2026-10-07); gh's credential helper reads GH_TOKEN instead. Set through the environment so it reaches
@@ -450,7 +454,7 @@ def dispatch(command: str, target: str | None = None, mode: str = "sync",
         if not held["ok"]:
             return DispatchResult(ok=False, device_id=device_id, error=held["message"], waiting=bool(held["queued"]))
     task_id = str(uuid.uuid4())[:8]
-    script = _build_wrapper_script(command, task_id, label, device_id, ticket=ticket, repo=repo)
+    script = _build_wrapper_script(command, task_id, label, device_id, ticket=ticket, repo=repo, need=tag)
 
     if info["is_self"]:
         return _run_local(script, mode, timeout)

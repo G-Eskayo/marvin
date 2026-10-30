@@ -326,3 +326,21 @@ def test_async_quarantine_work_is_not_detached_that_way(world, monkeypatch):
     monkeypatch.setattr(td.subprocess, "Popen", lambda *a, **k: pytest.fail("no detached rerun for untrusted work"))
     r = td.dispatch("x", need="quarantine", mode="async", timeout=300)
     assert r.ok and world.ran == [("mac-mini-2012", 300)]
+
+
+def test_tagged_work_never_runs_the_builders_credit_probe():
+    # builder_auth.sh can send a 1-token API call when a Mac's plan slots are full; a test job falling back to a busy
+    # Mac must spend nothing (no paid tokens for test/bench/quarantine/security work).
+    for need in ("test", "bench", "quarantine", "security"):
+        assert "builder_auth" not in td._build_wrapper_script("true", "abc", "l", "mac-mini-1", need=need)
+    assert "marvin_builder_auth abc" in td._build_wrapper_script("true", "abc", "l", "mac-mini-1")
+    assert "marvin_builder_auth abc" in td._build_wrapper_script("true", "abc", "l", "mac-mini-1", need="general")
+
+
+def test_a_fallback_run_is_built_as_tagged_work(world, monkeypatch):
+    seen = []
+    real = td._build_wrapper_script
+    monkeypatch.setattr(td, "_build_wrapper_script", lambda *a, **k: seen.append(k.get("need")) or real(*a, **k))
+    world.behaviour["mac-mini-2012"] = hangs("mac-mini-2012")
+    assert td.dispatch("pytest", need="test", timeout=480).ok
+    assert seen == ["test", "test"]
