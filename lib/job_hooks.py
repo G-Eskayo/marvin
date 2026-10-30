@@ -2,8 +2,8 @@
 """Job start/stop hooks, called by task_dispatch's wrapper on whichever machine runs a dispatched job (marvin #931).
 
 Today it does one thing: on mac-mini-2012 the live brain-map display (Electron with software WebGL, ~2 to 3 of the box's
-8 threads all the time) is stopped when the first job starts and started again when the last one ends (Gil's
-`box-display` decision on G-Eskayo/marvin-instance PR #6). Triggered by the job's own start and EXIT trap, never by
+8 threads all the time) is stopped when the first job starts and started again when the last one ends (the owner's
+`box-display` decision on the instance's calibration PR #6, marvin #623). Triggered by the job's own start and EXIT trap, never by
 polling.
 
 - start: if the display is running, remember its X session environment in PAUSE_FILE and stop it.
