@@ -2,7 +2,7 @@
 
 ## Status
 
-Proposed (2026-10-29, marvin#763). Design: [docs/design/763-macs-look-after-each-other.md](../design/763-macs-look-after-each-other.md).
+Accepted (2026-10-30: the owner answered the Decisions on PR #769; being built in marvin#847). Design: [docs/design/763-macs-look-after-each-other.md](../design/763-macs-look-after-each-other.md).
 Builds on #679's buddy-restart design (owner decisions of 2026-10-26: password in the keychain for `authrestart`; a
 smart plug with a local API). Not accepted until the owner answers the Decisions on the design PR.
 
