@@ -476,7 +476,7 @@ describe('rebaseAndRetest with generated-file conflict resolution', () => {
         return { ok: true }
       })
       const runTests = vi.fn().mockResolvedValue(undefined)
-      const result = await rebaseAndRetest('feature', realExec, repoDir, runTests, 'main', resolve)
+      const result = await rebaseAndRetest('feature', realExec, repoDir, runTests, 'main', resolve, null, undefined, plentyOfDisk)
       expect(result).toEqual({ ok: true })
       expect(resolve).toHaveBeenCalledTimes(1)
       expect(runTests).toHaveBeenCalledTimes(1)
@@ -492,7 +492,7 @@ describe('rebaseAndRetest with generated-file conflict resolution', () => {
       const before = currentRemoteSha(repoDir, 'feature')
       const resolve = vi.fn().mockResolvedValue({ ok: false, reason: 'conflicts in files that are not generated: src.js' })
       const runTests = vi.fn()
-      const result = await rebaseAndRetest('feature', realExec, repoDir, runTests, 'main', resolve)
+      const result = await rebaseAndRetest('feature', realExec, repoDir, runTests, 'main', resolve, null, undefined, plentyOfDisk)
       expect(result.ok).toBe(false)
       expect(result.reason).toContain('not generated: src.js')
       expect(runTests).not.toHaveBeenCalled()
@@ -535,7 +535,7 @@ describe('rebaseAndRetest when GitHub fails the push', () => {
     try {
       const before = currentRemoteSha(repoDir, 'feature')
       const runTests = vi.fn().mockResolvedValue(undefined)
-      const result = await rebaseAndRetest('feature', flakyPush(2), repoDir, runTests, 'main', undefined, async () => {})
+      const result = await rebaseAndRetest('feature', flakyPush(2), repoDir, runTests, 'main', undefined, async () => {}, undefined, plentyOfDisk)
       expect(result).toEqual({ ok: true })
       expect(runTests).toHaveBeenCalledTimes(1)
       expect(currentRemoteSha(repoDir, 'feature')).not.toBe(before)
@@ -546,7 +546,7 @@ describe('rebaseAndRetest when GitHub fails the push', () => {
     const { root, repoDir } = featureFixture()
     try {
       const runTests = vi.fn().mockResolvedValue(undefined)
-      await expect(rebaseAndRetest('feature', flakyPush(99), repoDir, runTests, 'main', undefined, async () => {}))
+      await expect(rebaseAndRetest('feature', flakyPush(99), repoDir, runTests, 'main', undefined, async () => {}, undefined, plentyOfDisk))
         .rejects.toMatchObject({ stderr: expect.stringMatching(/Internal Server Error/), attempts: 4 })
     } finally { rmSync(root, { recursive: true, force: true }) }
   })
@@ -571,7 +571,7 @@ describe('rebaseAndRetest', () => {
       const beforeSha = currentRemoteSha(repoDir, 'feature')
       const runTests = vi.fn().mockResolvedValue(undefined)
 
-      const result = await rebaseAndRetest('feature', realExec, repoDir, runTests)
+      const result = await rebaseAndRetest('feature', realExec, repoDir, runTests, 'main', null, null, undefined, plentyOfDisk)
 
       expect(result).toEqual({ ok: true })
       expect(runTests).toHaveBeenCalledTimes(1)
@@ -601,7 +601,7 @@ describe('rebaseAndRetest', () => {
       const beforeSha = currentRemoteSha(repoDir, 'feature')
       const runTests = vi.fn()
 
-      const result = await rebaseAndRetest('feature', realExec, repoDir, runTests)
+      const result = await rebaseAndRetest('feature', realExec, repoDir, runTests, 'main', null, null, undefined, plentyOfDisk)
 
       expect(result.ok).toBe(false)
       expect(result.reason).toContain('Rebase')
@@ -630,7 +630,7 @@ describe('rebaseAndRetest', () => {
       const beforeSha = currentRemoteSha(repoDir, 'feature')
       const runTests = vi.fn().mockRejectedValue(new Error('2 tests failed'))
 
-      const result = await rebaseAndRetest('feature', realExec, repoDir, runTests)
+      const result = await rebaseAndRetest('feature', realExec, repoDir, runTests, 'main', null, null, undefined, plentyOfDisk)
 
       expect(result.ok).toBe(false)
       expect(result.reason).toContain('Tests failed')
@@ -641,6 +641,10 @@ describe('rebaseAndRetest', () => {
     }
   })
 })
+
+// The gate refuses below 5 GB free (MIN_GATE_FREE_BYTES). Tests about other things say how much disk there is, so they
+// pass on a full Mac too (#826: they failed on the Mac mini at 4.6 GB free and passed on the MacBook).
+const plentyOfDisk = async () => 100 * 1024 ** 3
 
 describe('_defaultRunTests', () => {
   it('installs dashboard dependencies before running the dashboard check', async () => {
@@ -953,7 +957,7 @@ describe('base branches other than main', () => {
       sh('git', ['commit', '-q', '-m', 'trunk moved'], repoDir)
       sh('git', ['push', 'origin', 'trunk'], repoDir)
       const runTests = vi.fn().mockResolvedValue(undefined)
-      const result = await rebaseAndRetest('feature', realExec, repoDir, runTests, 'trunk')
+      const result = await rebaseAndRetest('feature', realExec, repoDir, runTests, 'trunk', null, null, undefined, plentyOfDisk)
       expect(result).toEqual({ ok: true })
       expect(runTests).toHaveBeenCalledTimes(1)
       sh('git', ['fetch', 'origin', 'feature'], repoDir)
@@ -1229,7 +1233,7 @@ describe('the gate tells a red main apart from a bad PR', () => {
       sh('git', ['checkout', '-q', '-b', 'feature'], repoDir)
       writeFileSync(path.join(repoDir, 'f.txt'), 'x\n'); sh('git', ['add', '.'], repoDir); sh('git', ['commit', '-q', '-m', 'feature'], repoDir)
       sh('git', ['push', '-u', 'origin', 'feature'], repoDir)
-      const r = await rebaseAndRetest('feature', realExec, repoDir, async () => { throw pytestFailure })
+      const r = await rebaseAndRetest('feature', realExec, repoDir, async () => { throw pytestFailure }, 'main', null, null, undefined, plentyOfDisk)
       expect(r.ok).toBe(false)
       expect(r.reason).toContain('FAILED tests/test_render_diagrams.py::test_every_figure')
     } finally { rmSync(root, { recursive: true, force: true }) }

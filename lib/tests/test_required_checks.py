@@ -200,3 +200,14 @@ def test_verify_dir_runs_the_list_through_the_runner(tmp_path):
         return 0, "ok"
     r = pp.verify_dir(pp._validate({"repo": "o/p", "verify": []}, "t"), tmp_path, runner=runner, have=lambda c, e: True)
     assert r["ok"] and seen == [(["bash", ".github/run-check.sh", "unit"], tmp_path)]
+
+
+def test_a_check_the_pr_does_not_affect_passes_the_gate_whatever_its_parser(tmp_path):
+    # run-check.sh prints this and exits 0 when no path the check covers changed (step 3); every parser must read it
+    # as "nothing to run", not as a crash with no result.
+    _repo(tmp_path, [{"id": "unit", "name": "Unit", "command": ["swift", "test"], "parser": "swift-test"},
+                     {"id": "app", "name": "App", "command": ["xcodebuild"], "parser": "xcodebuild"}])
+    out = "run-check: unit: not affected by this change (nothing it covers changed since origin/main): no tests ran\n"
+    r = pp.verify_dir(pp._validate({"repo": "o/p", "verify": []}, "t"), tmp_path,
+                      runner=lambda cmd, cwd, env, timeout: (0, out), have=lambda c, e: True)
+    assert r["ok"] and r["kind"] == "passed", r

@@ -12,6 +12,29 @@ sys.path.insert(0, str(SCRIPTS))
 
 import daily_digest as dd  # noqa: E402
 
+import pytest  # noqa: E402
+
+sys.path.insert(0, str(Path(__file__).resolve().parents[4] / "lib"))
+import brief_fallback  # noqa: E402  (main() imports it by name; the same module object, so the pin below holds)
+
+
+@pytest.fixture(autouse=True)
+def _pinned_machine_role(monkeypatch):
+    """No test here reads which Mac is primary (#826): test_main_short_circuits_when_out_file_exists passed on the
+    primary and failed on the standby MacBook, because main() asked the real role. Every test runs as the primary;
+    a test about the gate pins its own answer over this one, and asking the real role fails the test."""
+    monkeypatch.setattr(brief_fallback, "should_run", lambda *a, **k: brief_fallback.Decision(True, "primary (pinned by the test)"))
+
+    def _real_role(*_a, **_k):
+        raise AssertionError("a test asked this machine's real role (scanner_role.is_primary): pin it instead")
+    monkeypatch.setattr(brief_fallback, "is_primary", _real_role)
+
+
+def test_no_test_here_reads_the_real_machine_role():
+    assert brief_fallback.should_run().should_build is True
+    with pytest.raises(AssertionError, match="real role"):
+        brief_fallback.is_primary("mac-mini-1")
+
 
 # ── bench_summary tests ────────────────────────────────────────────────────────
 
