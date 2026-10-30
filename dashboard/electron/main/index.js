@@ -591,8 +591,11 @@ function registerDocsHandlers() {
     fallbackRepos: () => readCachedRepos().repos,
     saved: savedDocs,
     deliverables,
-    onStatesChanged: () => triggerHub.emit('docs-states', 'git-status')
+    onStatesChanged: () => triggerHub.emit('docs-states', 'git-status'),
+    // A GitHub-only project's images, fetched signed in (a private repo's raw URL 404s for a plain <img>, #539).
+    loadRemoteImage: (url) => docsImages.load(url, 'image')
   })
+  const docsImages = createImageLoader({ cacheDir: prMediaDir() })
 
   // Relationships between tickets, PRs and docs, derived from their text (relations.js). Docs come from
   // local clones when there are any, else the GitHub index; the cache is dropped on the same triggers
@@ -777,6 +780,9 @@ function registerDocsHandlers() {
     if (err) throw new Error(err)
   })
   // Once per open of a GitHub-only project (#565): one conditional request; a 304 is free, a change comes back in place.
+  // An image a doc embeds, resolved against the doc's folder (#539). Registered outside the click table: a GitHub-only
+  // project's image is a network read, made when the doc renders, not on a click.
+  ipcMain.handle('docs:image', (_event, id, docPath, src) => docsService.image(String(id), String(docPath || ''), src))
   ipcMain.handle('docs:revalidate', async (_event, id) => {
     const r = await docsService.revalidate(String(id))
     if (r.status === 'changed') docsIndexer.reindex() // the search sees the new text (saved copies, no network)
