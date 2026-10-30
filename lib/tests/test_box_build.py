@@ -498,3 +498,8 @@ def test_a_stopped_mac_runner_settles_as_the_boxs_failure_and_removes_its_record
     _, settled, failures, _ = run_box(ssh)
     assert settled[0][1]["timed_out"] and "stopped" in settled[0][1]["reason"] and failures
     assert not list(bb.RECORDS_DIR.glob("*.json"))
+
+
+def test_the_vm_ignores_only_the_tests_that_need_the_private_claude_folder():
+    cmd = bb.vm_command("G-Eskayo/marvin#7", SHA, "abc123def456")
+    assert "PYTEST_ADDOPTS='--ignore=lib/tests/test_find_file.py'" in cmd

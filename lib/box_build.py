@@ -501,13 +501,18 @@ def start(ref: str, run_id: str) -> bool:
 
 # ── the box side ────────────────────────────────────────────────────────────────────────────────────────────────
 
+# Test files that need the private ~/.claude, which a build VM never gets: ignored in both the baseline and the verify, so
+# the comparison stays fair. test_find_file skips itself once this PR's change to it is on main; then drop it here.
+VM_PYTEST_IGNORE = ("lib/tests/test_find_file.py",)
+
+
 def vm_command(ref: str, sha: str, run_id: str) -> str:
     """What runs inside the VM. Checked values only; the secrets are already exported by vm_run (from stdin)."""
     if not _REF.match(ref) or not _SHA.match(sha) or not _RUN_ID.match(run_id):
         raise ValueError("bad ticket, engine commit or run id")
     return "; ".join([
         'export PATH="$HOME/.local/bin:/usr/local/bin:$PATH" DISABLE_AUTOUPDATER=1 MARVIN_BOX_BUILD=1 '
-        f"MARVIN_RUN_ID={run_id}",
+        f"MARVIN_RUN_ID={run_id} PYTEST_ADDOPTS={shlex.quote(' '.join('--ignore=' + f for f in VM_PYTEST_IGNORE))}",
         # git asks gh for the bot token (GH_TOKEN); repo and global config stay untouched
         "export GIT_CONFIG_COUNT=2 GIT_CONFIG_KEY_0=credential.helper GIT_CONFIG_VALUE_0= "
         "GIT_CONFIG_KEY_1=credential.helper GIT_CONFIG_VALUE_1='!gh auth git-credential'",
