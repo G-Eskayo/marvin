@@ -2,7 +2,7 @@ import { readFileSync } from 'fs'
 import os from 'os'
 import path from 'path'
 import { createServer } from 'http'
-import { mergePr, baselineFailsOnMain, mergesAhead, execWithGroupTimeout, runDiskFirstAid } from './merge.js'
+import { mergePr, baselineFailsOnMain, mergesAhead, execWithGroupTimeout, runDiskFirstAid, memoryGuardCheck, kickMemoryGuard } from './merge.js'
 import { snapshotExec } from './pr_snapshot.js'
 import { createMergeTracker, createInflightStore, takeInterruptedMerges, recordMergeDuration, estimateMergeMs, machineLoad, approveResponder, wantsStream, createMergeLatch, alreadyMergingBody } from './merge_progress.js'
 import { resolveDeviceId, peerHosts } from '../electron/main/device_identity.js'
@@ -238,7 +238,9 @@ const server = createServer(async (req, res) => {
           progress: tracker ? tracker.progress : undefined,
           loadNow: () => ({ ...machineLoad(), id: machineId }),
           // A nearly full disk gets the cleanup sweep's rebuildable trims once before the gate refuses (2026-10-28).
-          diskFirstAid: () => runDiskFirstAid()
+          diskFirstAid: () => runDiskFirstAid(),
+          // marvin#845: no rebase + retest while memory pressure is at warn or critical; this Approve is queued instead.
+          memoryCheck: (url) => memoryGuardCheck(url, PORT)
         })
         tracker?.finish(result)
         if (result?.merged) appendMerge(payload.pr_url, payload.by === 'auto' ? 'auto' : 'you')
@@ -256,6 +258,7 @@ const server = createServer(async (req, res) => {
       }
     } finally {
       if (prUrl) mergeLatch.release(prUrl)
+      kickMemoryGuard()   // marvin#845: a merge ending may let the next item queued for memory start
     }
     return
   }

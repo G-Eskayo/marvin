@@ -76,6 +76,7 @@ export const REMEDIATION_BY_CODE = {
   MERGE_REFUSED: 'The merge was refused. See the ticket for details.',
   CI_FAILED: 'CI failed. Fix the failing tests and approve again.',
   GATE_INFRA: 'The merge gate infrastructure failed (no test command, full disk, database locked). Retry once fixed.',
+  MEMORY_PRESSURE: 'The Mac\'s memory is under pressure, so the check waits. It starts by itself when pressure drops; nothing was stopped.',
   MAIN_RED: 'main branch is failing tests. Approve again once main is green.',
   GATE_TESTS_FAILED: 'Tests failed in the merge gate. Fix the failing tests and approve again.',
   VERSION_BUMP_FAILED: 'Version bump failed. Check the CHANGELOG format and ticket metadata.',

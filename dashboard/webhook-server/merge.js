@@ -25,6 +25,7 @@ const REPO_PATH = path.resolve(__dirname, '..', '..')
 const REBUILD_SCRIPT = path.resolve(__dirname, '..', 'scripts', 'rebuild_and_install.sh')
 const TICKET_PIPELINE_SCRIPT = path.resolve(__dirname, '..', '..', 'lib', 'ticket_pipeline.py')
 const DISK_TRIGGERS_SCRIPT = path.resolve(__dirname, '..', '..', 'lib', 'disk_triggers.py')
+const MEMORY_GUARD_SCRIPT = path.resolve(__dirname, '..', '..', 'lib', 'memory_guard.py')
 const VENV_PYTHON = path.resolve(__dirname, '..', '..', 'venv', 'bin', 'python')
 const PROFILE_SCRIPT = path.resolve(__dirname, '..', '..', 'lib', 'project_profile.py')
 const GENERATED_SCRIPT = path.resolve(__dirname, '..', '..', 'lib', 'generated_paths.py')
@@ -589,7 +590,7 @@ async function mergePrUnqueued(
   deps = {}
 ) {
   const { sleep, recordFailureFn = recordFailure, gateContext = defaultGateContext, baselineFails = null, gateTimeoutMs = GATE_TIMEOUT_MS, rebaseOpen = checkOpenPrs, uiEvidence = assertUiEvidence, decisions = assertDecisions,
-    progress: report = noProgress, loadNow = () => machineLoad(), now = Date.now, diskFirstAid = null } = deps
+    progress: report = noProgress, loadNow = () => machineLoad(), now = Date.now, diskFirstAid = null, memoryCheck = null } = deps
   if (typeof prUrl !== 'string' || !prUrl.startsWith('https://github.com/')) {
     throw new MergeFailure(classifyFailure({ stage: 'request', error: new Error(`Not a GitHub PR URL: ${prUrl}`) }))
   }
@@ -660,6 +661,17 @@ async function mergePrUnqueued(
     const reason = shared.length ? `${baseName} changed files this PR also changes`
       : rules.length ? `${baseName} has new or changed tests or guard rules since this PR was tested (${rules.slice(0, 3).join(', ')})`
       : `${baseName} moved on and the overlap could not be read`
+    // marvin#845: the rebase + retest is heavy work; it waits while memory pressure is at warn or critical. The check
+    // queues this Approve to run again when macOS reports pressure back at normal. Nothing running is stopped. A check
+    // that can't run never blocks a merge (as an unreadable disk).
+    let held = null
+    if (memoryCheck) { try { held = await memoryCheck(prUrl) } catch { held = null } }
+    if (held && held.ok === false) {
+      stage('gate', 'failed', `MEMORY_PRESSURE: ${held.message}`)
+      throw new MergeFailure(refusal('MEMORY_PRESSURE', 'gate', held.message,
+        held.queued ? 'Nothing to do: it starts by itself when memory pressure drops.' : 'Approve it again when memory pressure drops.',
+        held.queued ? 'retry' : 'escalate'))
+    }
     stage('gate', 'started', `rebasing onto ${baseName} + retesting (${reason})`)
     // One clock (pipeline review 2026-10-21, F3): the gate's limit, extended at most once under load. Its commands run
     // with no per-command limit of their own and are killed through this signal when it finally runs out.
@@ -837,6 +849,29 @@ export function triggerTicketPipeline(spawnFn = spawn) {
 // marvin#765: a merge is also when the space its work used can come back. Every Mac removes the worktrees of merged
 // PRs (wherever they are, ~/Developer/<repo>-<n> included) and their Xcode build products; anything with uncommitted
 // work, a process inside, or commits the PR lacks is kept (lib/disk_triggers.py). Fire-and-forget, like the scan.
+// marvin#845: ask lib/memory_guard.py before the gate's heavy work. Refused (exit 3), this same Approve is queued as a
+// POST to this Mac's webhook, to run when macOS reports memory pressure back at normal. Any other failure: go ahead.
+export async function memoryGuardCheck(prUrl, port, exec = execFileAsync) {
+  const what = `PR #${prNumberOf(prUrl) ?? '?'}`
+  const approve = ['/usr/bin/curl', '-sS', '-X', 'POST', '-H', 'Content-Type: application/json',
+    '--data', JSON.stringify({ pr_url: prUrl, by: 'you' }), `http://127.0.0.1:${port}/approve`]
+  try {
+    await exec(VENV_PYTHON, [MEMORY_GUARD_SCRIPT, 'check', '--what', what, '--key', `merge:${prUrl}`, '--', ...approve], { timeout: 30_000 })
+    return { ok: true }
+  } catch (e) {
+    if (e?.code !== 3) return { ok: true }
+    const message = String(e.stderr || '').trim().split('\n').pop() || `This Mac's memory is under pressure, so ${what} waits.`
+    let queued = true
+    try { queued = JSON.parse(String(e.stdout || '').trim().split('\n').pop()).queued !== false } catch { /* default: queued */ }
+    return { ok: false, queued, message }
+  }
+}
+
+// marvin#845: a merge ending is a trigger to start the next item queued for memory (a no-op when nothing waits).
+export function kickMemoryGuard(spawnFn = spawn) {
+  try { spawnFn(VENV_PYTHON, [MEMORY_GUARD_SCRIPT, 'kick'], { detached: true, stdio: 'ignore' }).unref() } catch { /* never breaks a merge */ }
+}
+
 export function triggerDiskCleanup(spawnFn = spawn) {
   spawnFn(VENV_PYTHON, [DISK_TRIGGERS_SCRIPT, 'after-merge'], { detached: true, stdio: 'ignore' }).unref()
 }
