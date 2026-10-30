@@ -463,9 +463,31 @@ ever been closed unmerged. Gil approves almost everything; the wait is the cost.
   fit-to-width. Gotcha behind "✕ doesn't work": the header strip is a `-webkit-app-region: drag` title bar, and
   Electron hit-tests drag regions above the page, so any overlay drawn over the header must declare `no-drag`.
 
+## Vitals (v5 grilling with Gil, 2026-10-29)
+
+- **Vitals**: the one place that answers "is the system behaving the way we want, and if not, why, where and how do
+  we fix it". It replaces the Health and Metrics tabs. It is also the **portal** where problems get fixed, not just
+  seen. It covers everything we build that needs monitoring (MARVIN, and the features and products built with it),
+  not only MARVIN. It shows what is real, live, and independently of whatever it monitors.
+- **Healthy**: three measured things together:
+  - **Independence**: how much of the work runs without paid services, at the same quality and latency.
+  - **Flow**: every budget is used up to just before its limit, and no capacity runs out.
+  - **Nothing broken silently**: the precondition for the other two.
+- **Flow** (Gil's "like a river"): MARVIN throttles itself, the agents and the experience *just before* a limit, so
+  work keeps moving and never hits the wall. Using a budget to about 99% is the goal; hitting 100% (a refusal, a
+  throttle, a stalled queue) is a failure.
+- **Budget vs capacity**: a **budget** is a use-it-or-lose-it allowance (the Claude plan's usage window, the monthly
+  API credit, GitHub's hourly calls, our own machines' idle compute), where unused is waste. A **capacity** is space
+  that must stay free (disk, memory, thermal headroom), where nearly full is a stall about to happen. Flow means
+  budgets near their limit and capacities below their safe line.
+- **Monitored system**: MARVIN, plus anything MARVIN is connected to: work MARVIN does on a project (its
+  pipeline, agents and helpers), and products MARVIN runs or keeps updated (the portfolio site, whose purpose is to
+  stay current with what we're working on). A product that runs on its own with no tie to MARVIN is *not* one:
+  the Seal Speak app itself isn't watched, but the agents working on Seal Speak are.
+
 ## Health monitoring (in design, 2026-10-01)
 
-- **Check**: a single, named assertion about one piece of MARVIN's own infrastructure (a token
+- **Check**: a single, named assertion about one piece of a monitored system (see Vitals) (a token
   file, a ChromaDB collection, a dispatch lock, a cron job) that resolves to a severity plus a
   human-readable detail message. The atomic unit of the whole system — everything else (coverage,
   the dashboard tab, the anomaly layer) is built out of a growing list of these.
