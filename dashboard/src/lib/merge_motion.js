@@ -17,7 +17,7 @@ const Motion = MotionModule.spring ? MotionModule : MotionModule.default?.spring
 // Motion's animate(), for the components that play these plans on real elements.
 export const animate = (...args) => Motion.animate(...args)
 
-// The website's blue: the brand blue (gileskayo.me brand.css --blue) with the live site's focus-glow halo.
+// The website's blue: the brand blue (the website's brand.css --blue) with the live site's focus-glow halo.
 export const BLUE = { core: '#198fd9', halo: 'rgba(102, 175, 233, 0.6)' }
 
 // Round 1's timings; round 2 slowed them 1.3x, and the owner then asked for about 0.8x of that.
