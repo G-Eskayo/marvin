@@ -191,8 +191,8 @@ const startScreen = () => [
 ]
 const unbuilt = (qs) => qs.map((q) => ({ ...q, options: q.options.map((o) => ({ ...o, built: false })) }))
 
-const PR = { number: 931, title: 'Start screen: hand-off and sound', sub: 'clarity-captions — verdict: pass', repo: 'G-Eskayo/clarity-captions' }
-const PLAN = { number: 934, title: 'Mock-up: start screen hand-off (draft)', sub: 'Design mock-up — nothing to merge', repo: 'G-Eskayo/clarity-captions' }
+const PR = { number: 931, title: 'Start screen: hand-off and sound', sub: 'example-app — verdict: pass', repo: 'example/example-app' }
+const PLAN = { number: 934, title: 'Mock-up: start screen hand-off (draft)', sub: 'Design mock-up — nothing to merge', repo: 'example/example-app' }
 
 const SCENES = {
   a: { name: 'a. All built: one press merges', pr: PR, decisions: startScreen, picks: {}, notes: {},
