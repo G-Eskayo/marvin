@@ -13,5 +13,12 @@
   "guards": {
     "min_disk_gb": 15,
     "min_github_budget_pct": 20
+  },
+  "box_builds": {
+    "slots": 1,
+    "memory_mb": 6144,
+    "vcpus": 4,
+    "timeout_s": 5400,
+    "reserve_mb": 3072
   }
 }

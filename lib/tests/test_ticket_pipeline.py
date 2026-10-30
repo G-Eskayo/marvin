@@ -1697,3 +1697,65 @@ def test_another_macs_dispatch_does_not_read_this_macs_memory(monkeypatch):
     monkeypatch.setattr(tp, "dispatch", lambda *a, **kw: sent.append(kw["target"]) or SimpleNamespace(ok=True, device_id="macbook-pro-1"))
     tp.main()
     assert sent == ["macbook-pro-1"]
+
+
+# ── box builds (marvin #951): a Linux-safe ticket can go to a VM on mac-mini-2012 ──────────────────────────────────
+
+def _box_env(monkeypatch, routes=(True, None), start_ok=True, claim_ok=True):
+    import box_build
+    calls = {"claims": [], "starts": [], "releases": [], "dispatches": []}
+    monkeypatch.setattr(box_build, "routes", lambda repo, ticket, settings: routes)
+    monkeypatch.setattr(box_build, "start", lambda ref, run_id: calls["starts"].append((ref, run_id)) or start_ok)
+    monkeypatch.setattr(tp, "_claim", lambda n, label, **kw: calls["claims"].append((n, label, kw)) or claim_ok)
+    monkeypatch.setattr(tp, "_release", lambda n, label, *a, **kw: calls["releases"].append((n, label)))
+    monkeypatch.setattr(tp, "dispatch", lambda cmd, **kw: calls["dispatches"].append(cmd) or SimpleNamespace(ok=True))
+    monkeypatch.setattr(tp, "select_machine", lambda target=None: ("mac-mini-1", {"is_self": True}))
+    run = SimpleNamespace(step=lambda *a: None, summary=lambda *a: None, fail=lambda *a: calls.setdefault("fail", a))
+    return calls, run
+
+
+def test_a_box_routed_ticket_is_claimed_for_the_box_and_never_dispatched_to_a_mac_or_the_box_host(monkeypatch):
+    calls, run = _box_env(monkeypatch)
+    out = tp._dispatch_one(tp.REPO, {"number": 21, "title": "t"}, 1, run.step, run.summary, run.fail, False, {}, {}, 0, [])
+    assert out == "started"
+    assert calls["claims"][0][1] == "mac-mini-2012" and calls["claims"][0][2]["repo"] == tp.REPO
+    assert calls["starts"] == [("G-Eskayo/marvin#21", calls["claims"][0][2]["run_id"])]
+    assert calls["dispatches"] == [], "a box build never runs as a dispatched command (on a Mac or on the box host)"
+
+
+def test_a_box_runner_that_cannot_start_gives_the_claim_back(monkeypatch):
+    calls, run = _box_env(monkeypatch, start_ok=False)
+    out = tp._dispatch_one(tp.REPO, {"number": 21, "title": "t"}, 1, run.step, run.summary, run.fail, False, {}, {}, 0, [])
+    assert out == "failed" and calls["releases"] == [(21, "mac-mini-2012")]
+
+
+def test_a_lost_claim_race_starts_nothing(monkeypatch):
+    calls, run = _box_env(monkeypatch, claim_ok=False)
+    out = tp._dispatch_one(tp.REPO, {"number": 21, "title": "t"}, 1, run.step, run.summary, run.fail, False, {}, {}, 0, [])
+    assert out == "failed" and calls["starts"] == []
+
+
+def test_a_ticket_the_box_wont_take_goes_to_the_macs_as_before(monkeypatch):
+    calls, run = _box_env(monkeypatch, routes=(False, "#21 stays on a Mac: it mentions 'Xcode'"))
+    out = tp._dispatch_one(tp.REPO, {"number": 21, "title": "t"}, 1, run.step, run.summary, run.fail, False, {}, {}, 0, [])
+    assert out == "started" and calls["starts"] == [] and len(calls["dispatches"]) == 1
+    assert calls["claims"][0][1] == "mac-mini"
+
+
+def test_a_crashing_box_router_never_stops_the_macs(monkeypatch):
+    import box_build
+    calls, run = _box_env(monkeypatch)
+    monkeypatch.setattr(box_build, "routes", lambda *a: (_ for _ in ()).throw(RuntimeError("boom")))
+    out = tp._dispatch_one(tp.REPO, {"number": 21, "title": "t"}, 1, run.step, run.summary, run.fail, False, {}, {}, 0, [])
+    assert out == "started" and calls["starts"] == [] and len(calls["dispatches"]) == 1
+
+
+def test_a_dry_run_claims_nothing_for_the_box(monkeypatch):
+    calls, run = _box_env(monkeypatch)
+    assert tp._dispatch_one(tp.REPO, {"number": 21, "title": "t"}, 1, run.step, run.summary, run.fail, True, {}, {}, 0, []) == "started"
+    assert calls["claims"] == [] and calls["starts"] == []
+
+
+def test_the_box_has_its_own_claim_label_never_the_m4_minis():
+    assert tp._label_for_device("mac-mini-2012") == "mac-mini-2012"
+    assert tp._label_for_device("mac-mini-1") == "mac-mini"

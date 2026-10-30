@@ -144,14 +144,14 @@ MAX_PARK_FINDINGS = 15
 
 
 def _park_stuck_ticket(issue_number: int, streak: int, repo: str = REPO, reason: str = "",
-                       findings: list[str] | tuple = (), headline: str | None = None) -> None:
+                       findings: list[str] | tuple = (), headline: str | None = None, label: str | None = None) -> None:
     """Stop re-dispatching a ticket that keeps failing, and hand it to a person WITH the cause.
 
     needs-info is added before ready-for-agent comes off, so the ticket is never stateless: the triage agent treats
     a ticket with no state label as new, and would put a well-written one straight back to ready-for-agent (another
     round of builds; this comment, a hand-off, ends the failure streak) or bury the cause under a template complaint (#133,
     2026-10-09). Triage only re-checks needs-info it set itself, so this one stays until a person acts."""
-    label = _label_for_device(machine_profile.registry_id())
+    label = label or _label_for_device(machine_profile.registry_id())
     subprocess.run(
         ["gh", "issue", "edit", str(issue_number), "--repo", repo, "--add-label", "needs-info"],
         capture_output=True, text=True, timeout=15, check=False,
@@ -188,7 +188,7 @@ def _park_stuck_ticket(issue_number: int, streak: int, repo: str = REPO, reason:
         print(f"[run_ticket] needs-you notification failed: {exc}", file=sys.stderr)
 
 
-def _release_claim(issue_number: int, repo: str = REPO, run_id: str | None = None) -> None:
+def _release_claim(issue_number: int, repo: str = REPO, run_id: str | None = None, label: str | None = None) -> None:
     """A ticket that didn't raise a PR -- rate-limited, a worktree-creation
     failure, or genuinely never reached a passing comparison -- leaves this
     machine free again, but ticket_pipeline.py's claim happens before
@@ -198,7 +198,7 @@ def _release_claim(issue_number: int, repo: str = REPO, run_id: str | None = Non
     being retried. Found live 2026-08-29: a redispatch cascade during a
     Claude usage-limit window left 28 tickets claimed with zero real work
     done, none of them ever eligible for retry again."""
-    label = _label_for_device(machine_profile.registry_id())
+    label = label or _label_for_device(machine_profile.registry_id())
     _release(issue_number, label, run_id=run_id) if repo == REPO else _release(issue_number, label, repo, run_id=run_id)
 
 
@@ -248,12 +248,17 @@ def _drop_build_output(worktree_path, profile: dict | None) -> None:
 
 
 def run(issue_number: int, repo: str = REPO) -> dict:
+    """Build the ticket here, then settle the outcome here: the whole run on a Mac."""
+    outcome, findings = build(issue_number, repo) if repo != REPO else build(issue_number)
+    return settle(issue_number, outcome, findings, repo=repo, run_id=os.environ.get("MARVIN_RUN_ID"))
+
+
+def build(issue_number: int, repo: str = REPO) -> tuple[dict, list[str]]:
+    """execute_ticket -> raise_mr, never raising: (outcome, the last must-fix findings). The outcome is
+    {raised, pr_url, reason} plus at most one kind flag (env_missing, timed_out, model_unavailable, too_vague) that
+    settle() reads. A box build (lib/box_build.py, marvin #951) runs only this half, inside its VM."""
     ticket_ref = f"{repo}#{issue_number}"
     other = repo != REPO
-    # marvin's path is called exactly as it always was; another project's calls carry its repo so its
-    # stage records, claim label, comments and breaker entries stay its own.
-    kw = {"repo": repo} if other else {}
-    run_id = os.environ.get("MARVIN_RUN_ID")
     profile = pp.load_profile(repo) if other else None
     subsystem = f"ticket-{issue_number}" if not other else f"{repo.split('/')[-1].lower()}-ticket-{issue_number}"
     measurer = None
@@ -322,16 +327,28 @@ def run(issue_number: int, repo: str = REPO) -> dict:
         outcome = {"raised": False, "pr_url": None, "reason": f"Unhandled exception: {exc}"}
 
     _drop_build_output(worktree_path, profile)
+    return outcome, findings
+
+
+def settle(issue_number: int, outcome: dict, findings: list[str] | tuple = (), repo: str = REPO,
+           run_id: str | None = None, claim_label: str | None = None) -> dict:
+    """Everything after the build, wherever the build ran: the comment, the claim (released, kept or parked), the
+    stage record, the breaker, the redispatch. `claim_label` is the claim's machine when it isn't this one (a box
+    build settles on the Mac that dispatched it)."""
+    other = repo != REPO
+    kw = {"repo": repo} if other else {}
+    lab = {"label": claim_label} if claim_label else {}
+    findings = list(findings or [])
 
     if not outcome["raised"]:
         if outcome.get("env_missing"):
-            _release_claim(issue_number, **kw, run_id=run_id)
+            _release_claim(issue_number, **kw, **lab, run_id=run_id)
             ts.record_stage(issue_number, "done", "failed", outcome["reason"][:300], **kw)
             _trigger_redispatch()
             return outcome
         if outcome.get("model_unavailable"):
             when, marker = _retry_line(_trailing_model_failures(issue_number, **kw) + 1)
-            _release_claim(issue_number, **kw, run_id=run_id)
+            _release_claim(issue_number, **kw, **lab, run_id=run_id)
             subprocess.run(
                 ["gh", "issue", "comment", str(issue_number), "--repo", repo, "--body",
                  f"{MODEL_MARKER}: {outcome['reason'][:300]}\n\nNothing is wrong with this ticket: the claim is released "
@@ -346,12 +363,12 @@ def run(issue_number: int, repo: str = REPO) -> dict:
             tries = sum(_trailing_streaks(issue_number, **kw)) + 1
             ts.record_stage(issue_number, "verifying", "failed", outcome["reason"][:300], **kw)
             if tries >= MAX_CONSECUTIVE_RETRIES:
-                _park_stuck_ticket(issue_number, tries, **kw, reason=outcome["reason"])
+                _park_stuck_ticket(issue_number, tries, **kw, **lab, reason=outcome["reason"])
                 ts.record_stage(issue_number, "done", "failed", f"parked after {tries} consecutive failed or timed-out runs", **kw)
                 _trigger_redispatch()
                 return outcome
             when, marker = _retry_line(tries)
-            _release_claim(issue_number, **kw, run_id=run_id)
+            _release_claim(issue_number, **kw, **lab, run_id=run_id)
             subprocess.run(
                 ["gh", "issue", "comment", str(issue_number), "--repo", repo, "--body",
                  f"{TIMEOUT_MARKER}: {outcome['reason']}\n\nIt goes back to the queue, not before {when}.\n{marker}"],
@@ -361,7 +378,7 @@ def run(issue_number: int, repo: str = REPO) -> dict:
             _trigger_redispatch()
             return outcome
         if outcome.get("too_vague"):
-            _park_stuck_ticket(issue_number, 1, **kw, reason=outcome["reason"],
+            _park_stuck_ticket(issue_number, 1, **kw, **lab, reason=outcome["reason"],
                                headline="**The planner says this ticket is too vague to build**, so it is handed to a person "
                                         "instead of being retried.")
             ts.record_stage(issue_number, "done", "failed", outcome["reason"][:300], **kw)
@@ -374,10 +391,10 @@ def run(issue_number: int, repo: str = REPO) -> dict:
         # different tickets means the system is broken, not the tickets.
         failure_breaker.record_failure(issue_number, outcome["reason"], **({"project": repo} if other else {}))
         if prior_streak + 1 >= MAX_CONSECUTIVE_FAILURES:
-            _park_stuck_ticket(issue_number, prior_streak + 1, **kw, reason=outcome["reason"], findings=findings)
+            _park_stuck_ticket(issue_number, prior_streak + 1, **kw, **lab, reason=outcome["reason"], findings=findings)
             ts.record_stage(issue_number, "done", "failed", f"parked after {prior_streak + 1} consecutive failures", **kw)
         else:
-            _release_claim(issue_number, **kw, run_id=run_id)
+            _release_claim(issue_number, **kw, **lab, run_id=run_id)
             ts.record_stage(issue_number, "done", "failed", outcome["reason"][:300], **kw)
     else:
         ts.record_stage(issue_number, "done", "passed", f"PR raised: {outcome['pr_url']}", **kw)
@@ -388,15 +405,34 @@ def run(issue_number: int, repo: str = REPO) -> dict:
     return outcome
 
 
+BUILD_OUTCOME_PREFIX = "MARVIN_BUILD_OUTCOME "
+
+
+def build_only_line(outcome: dict, findings: list[str]) -> str:
+    """The one line `--build-only` prints for box_build to read: the outcome's own keys, JSON-safe."""
+    keep = {k: outcome.get(k) for k in ("raised", "pr_url", "reason", "env_missing", "timed_out", "model_unavailable",
+                                       "too_vague") if k in outcome}
+    keep["reason"] = None if keep.get("reason") is None else str(keep["reason"])[:2000]
+    return BUILD_OUTCOME_PREFIX + json.dumps({**keep, "findings": [str(f)[:500] for f in findings][:50]})
+
+
 def main() -> None:
-    if len(sys.argv) != 2:
-        print("usage: run_ticket.py <issue_number | owner/repo#issue_number>", file=sys.stderr)
+    build_only = sys.argv[1:2] == ["--build-only"]
+    args = sys.argv[2:] if build_only else sys.argv[1:]
+    if len(args) != 1:
+        print("usage: run_ticket.py [--build-only] <issue_number | owner/repo#issue_number>", file=sys.stderr)
         sys.exit(1)
     try:
-        repo, number = parse_ticket_arg(sys.argv[1])
+        repo, number = parse_ticket_arg(args[0])
     except ValueError as e:
         print(e, file=sys.stderr)
         sys.exit(1)
+    if build_only:
+        # The build half only (a box VM): no claim, comment, breaker or stage bookkeeping, which the dispatching Mac
+        # does with settle(). The outcome is the last line; the exit code is 0 whenever that line was printed.
+        outcome, findings = build(number, repo) if repo != REPO else build(number)
+        print(build_only_line(outcome, findings), flush=True)
+        sys.exit(0)
     outcome = run(number, repo) if repo != REPO else run(number)
     print(outcome)
     sys.exit(0 if outcome["raised"] else 1)
