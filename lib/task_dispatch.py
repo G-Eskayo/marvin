@@ -203,7 +203,8 @@ def _build_wrapper_script(command: str, task_id: str, task_label: str, device_id
     return f"""#!/bin/bash
 mkdir -p {tasks_dir}
 mkdir -p "$HOME/.claude"
-printf '%s, "pid": %s}}' '{record_prefix}' "$BASHPID" > {tasks_dir}/{task_id}.json
+# $$, not $BASHPID: macOS's /bin/bash is 3.2, which has no BASHPID, and an empty pid made every record unreadable.
+printf '%s, "pid": %s}}' '{record_prefix}' "$$" > {tasks_dir}/{task_id}.json
 cat > {state} << 'DISPATCH_STATE_EOF'
 {busy_json}
 DISPATCH_STATE_EOF
