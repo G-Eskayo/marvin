@@ -214,3 +214,41 @@ def test_a_whole_suite_pytest_waits_for_the_slot_and_one_file_does_not(slot_dir)
     out, err = whole.communicate(timeout=60)
     assert "waiting for someone else's suite" in err
     assert whole.returncode in (0, 5), out + err   # 5 = nothing selected
+
+
+@pytest.mark.timeout(120)
+def test_a_real_merge_on_the_machine_never_reaches_the_tests_inside_a_parallel_run(slot_dir):
+    """2026-10-30: a merge marked on the machine while a parallel suite ran made 20 helper/pipeline tests see "a merge
+    is running". Every test process, xdist workers included, reads a slot folder of its own."""
+    root = LIB.parent
+    hold = subprocess.Popen([sys.executable, str(SCRIPT), "hold-merge"], env=_env(slot_dir),
+                            stdin=subprocess.PIPE, stdout=subprocess.PIPE, text=True)
+    assert hold.stdout.readline().strip() == "held"
+    try:
+        r = subprocess.run([sys.executable, "-m", "pytest", "-q", "-p", "no:cacheprovider", "-n", "2",
+                            "lib/tests/test_helper_tab.py", "-k", "goes_ahead or skipped_on_purpose"],
+                           # already in the slot (as the gate is, or a suite a merge arrived during): no wait
+                           cwd=root, env={**_env(slot_dir), ts.HELD_ENV: "a suite already running"},
+                           capture_output=True, text=True, timeout=100)
+    finally:
+        hold.stdin.close()
+        hold.wait(5)
+    assert r.returncode == 0, r.stdout[-2000:] + r.stderr[-1000:]
+
+
+def test_checks_running_at_the_same_moment_never_see_each_other_as_a_merge(slot_dir):
+    """Found 2026-10-30: two "is a merge running?" checks at once each saw the other's momentary lock as a merge, and
+    a helper was refused with no merge anywhere. Four processes check in a tight loop: never a merge, until one is."""
+    loop = ("import sys, test_slot as ts\n"
+            "hits = sum(ts.merge_pending() for _ in range(3000))\n"
+            "print(hits)\n")
+    env = {**_env(slot_dir), "PYTHONPATH": str(LIB)}
+    ps = [subprocess.Popen([sys.executable, "-c", loop], env=env, stdout=subprocess.PIPE, text=True) for _ in range(4)]
+    assert [int(p.communicate(timeout=60)[0]) for p in ps] == [0, 0, 0, 0]
+    hold = subprocess.Popen([sys.executable, str(SCRIPT), "hold-merge"], env=_env(slot_dir),
+                            stdin=subprocess.PIPE, stdout=subprocess.PIPE, text=True)
+    assert hold.stdout.readline().strip() == "held"
+    ps = [subprocess.Popen([sys.executable, "-c", loop], env=env, stdout=subprocess.PIPE, text=True) for _ in range(4)]
+    assert [int(p.communicate(timeout=60)[0]) for p in ps] == [3000] * 4
+    hold.stdin.close()
+    hold.wait(5)

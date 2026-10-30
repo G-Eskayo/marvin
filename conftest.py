@@ -40,6 +40,11 @@ os.environ["HOME"] = str(TEST_HOME)
 # marvin#845: the memory guard reads this Mac's live pressure before heavy work starts. Pinned to normal so no test
 # passes or fails with the machine's memory (the Mini runs the suite while it is busy); test_memory_guard unpins it.
 os.environ["MARVIN_MEMORY_PRESSURE_LEVEL"] = "normal"
+# marvin#940: the machine's test slot (lib/test_slot.py) is taken, at most, by this run's controller, from the folder it
+# was given; every test process (each xdist worker too, set here at import, not inherited) then sees a slot folder of
+# its own, so no test waits on, or reads, the machine's real merges and test runs.
+_REAL_SLOT_DIR = os.environ.get("MARVIN_TEST_SLOT_DIR") or None
+os.environ["MARVIN_TEST_SLOT_DIR"] = str(TEST_HOME / ".cache" / "marvin" / "test-slot")
 atexit.register(shutil.rmtree, TEST_HOME, True)  # removes the links, never what they point to
 WRITE_GUARD = real_home_guard.install_write_guard(real_home_guard.protected_roots(REAL_HOME),
                                                   resolve_under=(str(TEST_HOME / ".claude"),))
@@ -55,20 +60,16 @@ _TEST_SLOT = None
 def pytest_configure(config):
     global _TEST_SLOT
     import test_slot
-    if hasattr(config, "workerinput"):
-        return
-    if os.environ.get(test_slot.HELD_ENV):
-        os.environ[test_slot.DIR_ENV] = str(TEST_HOME / ".cache" / "marvin" / "test-slot")
+    if hasattr(config, "workerinput") or os.environ.get(test_slot.HELD_ENV):
         return
     n = getattr(config.option, "numprocesses", None)
     if test_slot.is_heavy(list(config.args), n not in (None, 0), cwd=config.invocation_params.dir):
         _TEST_SLOT = test_slot.slot("pytest " + " ".join(config.args)[:60],
+                                    d=Path(_REAL_SLOT_DIR) if _REAL_SLOT_DIR else test_slot.DEFAULT_DIR,
                                     say=lambda t: print(f"test-slot: {t}", file=sys.stderr, flush=True))
         _TEST_SLOT.__enter__()
     else:
         os.environ[test_slot.HELD_ENV] = "pytest (small run, not queued)"
-    # From here on the tests see a slot of their own: no test waits on, or reads, the machine's real merges and runs.
-    os.environ[test_slot.DIR_ENV] = str(TEST_HOME / ".cache" / "marvin" / "test-slot")
 
 
 def pytest_unconfigure(config):

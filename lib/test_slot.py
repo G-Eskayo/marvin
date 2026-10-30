@@ -67,23 +67,46 @@ def _open(d: Path, name: str):
     return open(d / name, "a")
 
 
+@contextmanager
+def _probe(d: Path):
+    """One check (or a waiter's instant of exclusive hold) at a time: a check never sees another's momentary lock."""
+    with _open(d, "probe.lock") as p:
+        fcntl.flock(p, fcntl.LOCK_EX)
+        yield
+
+
 def merge_pending(d: Path | None = None) -> bool:
-    """Is a merge waiting or running on this machine (anyone holding merges.lock)?"""
-    with _open(d or slot_dir(), "merges.lock") as fh:
+    """Is a merge waiting or running on this machine (a shared hold on merges.lock)?
+
+    Under the probe lock: the exclusive try is free, no merge; taken, a shared try tells shared holders (merges) from a
+    waiter's instant of exclusive hold. Without the probe lock two checks at the same moment each saw the other as a
+    merge, and a helper was refused with no merge anywhere (found 2026-10-30)."""
+    d = d or slot_dir()
+    with _probe(d), _open(d, "merges.lock") as fh:
         try:
             fcntl.flock(fh, fcntl.LOCK_EX | fcntl.LOCK_NB)
+            fcntl.flock(fh, fcntl.LOCK_UN)
+            return False
+        except BlockingIOError:
+            pass
         except OSError:
-            return True
+            return False   # can't be read: never holds work back
+        try:
+            fcntl.flock(fh, fcntl.LOCK_SH | fcntl.LOCK_NB)
+        except OSError:
+            return False   # a waiter holds it exclusively: no merge is marked right now
         fcntl.flock(fh, fcntl.LOCK_UN)
-        return False
+        return True
 
 
 def _wait_no_merge(d: Path) -> None:
-    """Block until no merge is marked. Taking and dropping the exclusive lock is the wait; a pending exclusive request
-    does not stop a new merge marking itself (checked on macOS: shared locks are still granted)."""
+    """Block until no merge is marked. Taking the exclusive lock is the wait (a pending exclusive request does not stop
+    a new merge marking itself: shared locks are still granted, checked on macOS); it is let go under the probe lock,
+    so a check never reads the instant in between."""
     with _open(d, "merges.lock") as fh:
         fcntl.flock(fh, fcntl.LOCK_EX)
-        fcntl.flock(fh, fcntl.LOCK_UN)
+        with _probe(d):
+            fcntl.flock(fh, fcntl.LOCK_UN)
 
 
 def holder(d: Path | None = None) -> dict | None:

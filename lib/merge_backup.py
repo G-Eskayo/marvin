@@ -25,7 +25,6 @@ from pathlib import Path
 HERE = Path(__file__).resolve().parent
 sys.path.insert(0, str(HERE))
 
-MARVIN_REPO = "G-Eskayo/marvin"
 POWER_SUPPLY = Path("/sys/class/power_supply")
 
 
@@ -41,7 +40,12 @@ class Facts:
     test_run: str | None
 
 
-def verdict(f: Facts, repo: str) -> dict:
+def marvin_repo() -> str:
+    import instance
+    return instance.engine_repo()
+
+
+def verdict(f: Facts, repo: str, engine: str | None = None) -> dict:
     why = []
     if f.on_power is not True:
         why.append("it is on battery (or its power can't be read)")
@@ -53,7 +57,7 @@ def verdict(f: Facts, repo: str) -> dict:
         why.append("it is merging something already")
     if f.test_run:
         why.append(f"it is running {f.test_run}")
-    if repo.lower() != MARVIN_REPO.lower() and f.platform != "darwin":
+    if repo.lower() != (engine or marvin_repo()).lower() and f.platform != "darwin":
         why.append("this project needs a Mac with Xcode")
     return {"ready": not why, "why": why, "machine": f.machine, "os": f.os}
 
@@ -127,10 +131,10 @@ def main(argv: list[str] | None = None) -> int:
     ap = argparse.ArgumentParser(prog="merge_backup", description=__doc__.split("\n\n")[0])
     sub = ap.add_subparsers(dest="cmd", required=True)
     r = sub.add_parser("ready")
-    r.add_argument("--repo", default=MARVIN_REPO)
+    r.add_argument("--repo", default=None)
     a = ap.parse_args(sys.argv[1:] if argv is None else argv)
     try:
-        print(json.dumps(verdict(gather(), a.repo)))
+        print(json.dumps(verdict(gather(), a.repo or marvin_repo())))
     except Exception as exc:  # noqa: BLE001 -- an answer, never a crash: not fit when it can't tell
         print(json.dumps({"ready": False, "why": [f"it couldn't check itself ({type(exc).__name__})"],
                           "machine": None, "os": None}))

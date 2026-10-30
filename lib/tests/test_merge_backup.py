@@ -14,8 +14,8 @@ sys.path.insert(0, str(LIB))
 
 import merge_backup as mb  # noqa: E402
 
-MARVIN = "G-Eskayo/marvin"
-SEAL = "G-Eskayo/clarity-captions"
+MARVIN = mb.marvin_repo()
+SEAL = MARVIN.split("/")[0] + "/clarity-captions"
 
 
 def facts(**kw):
