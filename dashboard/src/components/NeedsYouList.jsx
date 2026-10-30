@@ -19,7 +19,7 @@ export function NeedsYouRow({ row, boards, onOpenTicket }) {
   return (
     <button
       onClick={() => onOpenTicket?.(row.repo, row.number)}
-      className="flex flex-col gap-2 border-b border-neutral-800 px-4 py-3 text-left hover:bg-neutral-800/50 transition-colors"
+      className="flex w-full min-w-0 flex-col gap-2 border-b border-neutral-800 px-4 py-3 text-left [overflow-wrap:anywhere] hover:bg-neutral-800/50 transition-colors"
     >
       <div className="flex items-start justify-between gap-3">
         <span className={`rounded px-2 py-1 text-xs font-medium ${style.bg} ${style.text}`}>

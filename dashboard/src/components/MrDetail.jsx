@@ -160,8 +160,8 @@ export default function MrDetail({ pr, onBack, onApproved, onDenied, onOpenDocs,
         ← Back to {pr.readOnly ? 'merged history' : 'MR Review'}
       </button>
 
-      <div className="flex items-start justify-between gap-3">
-        <div>
+      <div className="flex flex-wrap items-start justify-between gap-3">
+        <div className="min-w-0 flex-1 basis-80">
           <h2 className="font-mono text-lg font-semibold text-white">
             #{pr.number} — {pr.title}
           </h2>

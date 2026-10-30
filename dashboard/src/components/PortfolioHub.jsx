@@ -1264,17 +1264,17 @@ export default function PortfolioHub() {
   const [tab, setTab] = useState('templates')
   return (
     <div className="flex h-full flex-col">
-      <nav className="flex items-center gap-1 border-b border-neutral-800 px-6 pt-3">
+      <nav className="flex flex-wrap items-center gap-1 border-b border-neutral-800 px-6 pt-3">
         {SUBTABS.map(([id, label]) => (
           <button
             key={id}
             onClick={() => setTab(id)}
-            className={`rounded-t-md px-4 py-2 text-sm ${tab === id ? 'border-b-2 border-blue-500 text-white' : 'text-neutral-400 hover:text-neutral-200'}`}
+            className={`whitespace-nowrap rounded-t-md px-4 py-2 text-sm ${tab === id ? 'border-b-2 border-blue-500 text-white' : 'text-neutral-400 hover:text-neutral-200'}`}
           >
             {label}
           </button>
         ))}
-        <span className="ml-auto pb-2 text-[11px] text-neutral-600">dev site only · nothing here touches production</span>
+        <span className="ml-auto whitespace-nowrap pb-2 text-[11px] text-neutral-600">dev site only · nothing here touches production</span>
         <OpenDevSiteButton />
       </nav>
       <div className="flex-1 overflow-auto p-6">

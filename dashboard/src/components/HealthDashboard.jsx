@@ -56,7 +56,7 @@ function CheckCard({ check, onClick }) {
       onClick={onClick}
       data-check-id={check.id}
       style={{ opacity }}
-      className={`flex flex-col gap-2 rounded-lg border ${colors.border} ${colors.bg} p-4 text-left transition-opacity hover:opacity-100`}
+      className={`flex min-w-0 flex-col gap-2 rounded-lg border ${colors.border} ${colors.bg} p-4 text-left transition-opacity hover:opacity-100`}
     >
       <div className="flex items-center gap-2">
         {check.severity === 'asleep' ? (
@@ -66,7 +66,7 @@ function CheckCard({ check, onClick }) {
         )}
         <h3 className="truncate text-sm font-medium text-white">{check.label}</h3>
       </div>
-      <p className={`line-clamp-2 text-xs ${colors.text}`}>{check.detail}</p>
+      <p className={`line-clamp-2 text-xs [overflow-wrap:anywhere] ${colors.text}`}>{check.detail}</p>
     </button>
   )
 }

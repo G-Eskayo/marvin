@@ -118,9 +118,9 @@ export default function App() {
   return (
     <div className="flex h-screen flex-col">
       <BootSequence onNavigate={({ tab, ...target }) => navigate(tab, target)} />
-      <header className="titlebar flex shrink-0 items-center gap-1 border-b border-neutral-800 px-6 pb-3 pt-12">
-        <h1 className="mr-6 text-sm font-semibold tracking-wide text-neutral-400">MARVIN METRICS</h1>
-        <nav className="flex gap-1">
+      <header className="titlebar flex shrink-0 flex-wrap items-center gap-x-1 gap-y-2 border-b border-neutral-800 px-6 pb-3 pt-12">
+        <h1 className="mr-6 whitespace-nowrap text-sm font-semibold tracking-wide text-neutral-400">MARVIN METRICS</h1>
+        <nav className="flex flex-wrap gap-1">
           {visibleTabs(support.role).map((tab) => {
             const dot = tab.id === 'mr-review' ? reviewStatus?.status : tab.id === 'health' ? healthOverall : null
             const dotColorMap = tab.id === 'health' ? HEALTH_DOT_COLOR : DOT_COLOR
@@ -130,7 +130,7 @@ export default function App() {
                 key={tab.id}
                 onClick={() => setActiveTab(tab.id)}
                 title={title}
-                className={`flex items-center gap-1.5 rounded-md px-3 py-1.5 text-sm transition-colors ${
+                className={`flex items-center gap-1.5 whitespace-nowrap rounded-md px-3 py-1.5 text-sm transition-colors ${
                   activeTab === tab.id
                     ? 'bg-neutral-800 text-white'
                     : 'text-neutral-400 hover:text-neutral-200'
@@ -145,7 +145,7 @@ export default function App() {
             )
           })}
         </nav>
-        <div className="ml-auto flex items-center gap-3">
+        <div className="ml-auto flex min-w-0 items-center gap-3">
           <MarvinButton />
           {support.role === 'helped' && <ItButton onOpen={(r) => navigate('support', { repo: r.repo, number: r.number })} />}
           <ActivityHover>

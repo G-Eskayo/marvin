@@ -174,24 +174,26 @@ export default function GithubView({ machines, which }) {
       <section className="mt-6">
         <h3 className="text-sm font-medium text-neutral-200">Top callers, last 24 hours</h3>
         <p className="mb-2 text-xs text-neutral-600">The program that ran gh, and what it asked for most. The top row is the first thing to optimize.</p>
-        <table className="w-full text-left text-xs">
-          <thead className="text-neutral-500">
-            <tr><th className="py-1 pr-3">Caller</th><th className="pr-3">Machine</th><th className="pr-3">Kind</th><th className="pr-3 text-right">Calls</th><th className="pr-3 text-right">Refused</th><th className="pr-3 text-right">Held</th><th>Mostly</th></tr>
-          </thead>
-          <tbody className="text-neutral-300">
-            {top.map((t) => (
-              <tr key={`${t.machine}|${t.caller}`} className="border-t border-neutral-800">
-                <td className="py-1 pr-3 font-mono">{t.caller}</td>
-                <td className="pr-3 text-neutral-400">{t.machine}</td>
-                <td className="pr-3"><span className="inline-block h-2 w-2 rounded-sm" style={{ background: GROUP_STYLE[t.group]?.[0] }} /> {GROUP_STYLE[t.group]?.[1] || t.group}</td>
-                <td className="pr-3 text-right">{t.calls.toLocaleString()}</td>
-                <td className={`pr-3 text-right ${t.refused ? 'text-red-400' : 'text-neutral-600'}`}>{t.refused}</td>
-                <td className={`pr-3 text-right ${t.deferred ? 'text-amber-300' : 'text-neutral-600'}`}>{t.deferred}</td>
-                <td className="text-neutral-400">{(t.commands || []).map((c) => `${c.cmd} ${c.calls}`).join(' · ')}</td>
-              </tr>
-            ))}
-          </tbody>
-        </table>
+        <div className="overflow-x-auto">
+          <table className="w-full text-left text-xs">
+            <thead className="text-neutral-500">
+              <tr><th className="py-1 pr-3">Caller</th><th className="pr-3">Machine</th><th className="pr-3">Kind</th><th className="pr-3 text-right">Calls</th><th className="pr-3 text-right">Refused</th><th className="pr-3 text-right">Held</th><th>Mostly</th></tr>
+            </thead>
+            <tbody className="text-neutral-300">
+              {top.map((t) => (
+                <tr key={`${t.machine}|${t.caller}`} className="border-t border-neutral-800">
+                  <td className="py-1 pr-3 font-mono">{t.caller}</td>
+                  <td className="pr-3 text-neutral-400">{t.machine}</td>
+                  <td className="pr-3"><span className="inline-block h-2 w-2 rounded-sm" style={{ background: GROUP_STYLE[t.group]?.[0] }} /> {GROUP_STYLE[t.group]?.[1] || t.group}</td>
+                  <td className="pr-3 text-right">{t.calls.toLocaleString()}</td>
+                  <td className={`pr-3 text-right ${t.refused ? 'text-red-400' : 'text-neutral-600'}`}>{t.refused}</td>
+                  <td className={`pr-3 text-right ${t.deferred ? 'text-amber-300' : 'text-neutral-600'}`}>{t.deferred}</td>
+                  <td className="text-neutral-400">{(t.commands || []).map((c) => `${c.cmd} ${c.calls}`).join(' · ')}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
       </section>
     </div>
   )

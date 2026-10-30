@@ -95,35 +95,39 @@ export default function UsageView({ machines, which }) {
       </div>
 
       <Table title="Where it went: projects" hint="Output tokens by the project the session worked in (a directory inside a project counts for the project).">
-        <table className="w-full text-sm">
-          <thead><tr className="text-left text-xs text-neutral-500"><th className="pb-1 font-normal">Project</th><th className="pb-1 text-right font-normal">Output</th><th className="pb-1 pl-4 font-normal">Share</th><th className="pb-1 text-right font-normal">Responses</th></tr></thead>
-          <tbody className="font-mono text-neutral-300">
-            {projects.slice(0, 15).map((p) => (
-              <tr key={p.project} className="border-t border-neutral-900">
-                <td className="max-w-[18rem] truncate py-1 pr-2" title={p.project}>{p.project}</td>
-                <td className="py-1 text-right">{fmt(p.output)}</td>
-                <td className="py-1 pl-4"><div className="h-2 rounded-sm bg-blue-500/70" style={{ width: `${Math.max(2, (p.output / maxProject) * 100)}%` }} /></td>
-                <td className="py-1 text-right text-neutral-500">{p.messages.toLocaleString()}</td>
-              </tr>
-            ))}
-          </tbody>
-        </table>
-      </Table>
-
-      <Table title="Where it went: pipeline tickets" hint="The most expensive tickets. A ticket far above the rest usually means retries; each retry is a new run.">
-        {tickets.length === 0 ? <p className="text-xs text-neutral-600">No pipeline runs in this window.</p> : (
+        <div className="overflow-x-auto">
           <table className="w-full text-sm">
-            <thead><tr className="text-left text-xs text-neutral-500"><th className="pb-1 font-normal">Ticket</th><th className="pb-1 text-right font-normal">Output</th><th className="pb-1 text-right font-normal">Responses</th></tr></thead>
+            <thead><tr className="text-left text-xs text-neutral-500"><th className="pb-1 font-normal">Project</th><th className="pb-1 text-right font-normal">Output</th><th className="pb-1 pl-4 font-normal">Share</th><th className="pb-1 text-right font-normal">Responses</th></tr></thead>
             <tbody className="font-mono text-neutral-300">
-              {tickets.slice(0, 15).map((t) => (
-                <tr key={`${t.project}#${t.ticket}`} className="border-t border-neutral-900">
-                  <td className="py-1 pr-2">{t.project} <span className="text-neutral-500">#{t.ticket}</span></td>
-                  <td className="py-1 text-right">{fmt(t.output)}</td>
-                  <td className="py-1 text-right text-neutral-500">{t.messages.toLocaleString()}</td>
+              {projects.slice(0, 15).map((p) => (
+                <tr key={p.project} className="border-t border-neutral-900">
+                  <td className="max-w-[18rem] truncate py-1 pr-2" title={p.project}>{p.project}</td>
+                  <td className="py-1 text-right">{fmt(p.output)}</td>
+                  <td className="py-1 pl-4"><div className="h-2 rounded-sm bg-blue-500/70" style={{ width: `${Math.max(2, (p.output / maxProject) * 100)}%` }} /></td>
+                  <td className="py-1 text-right text-neutral-500">{p.messages.toLocaleString()}</td>
                 </tr>
               ))}
             </tbody>
           </table>
+        </div>
+      </Table>
+
+      <Table title="Where it went: pipeline tickets" hint="The most expensive tickets. A ticket far above the rest usually means retries; each retry is a new run.">
+        {tickets.length === 0 ? <p className="text-xs text-neutral-600">No pipeline runs in this window.</p> : (
+          <div className="overflow-x-auto">
+            <table className="w-full text-sm">
+              <thead><tr className="text-left text-xs text-neutral-500"><th className="pb-1 font-normal">Ticket</th><th className="pb-1 text-right font-normal">Output</th><th className="pb-1 text-right font-normal">Responses</th></tr></thead>
+              <tbody className="font-mono text-neutral-300">
+                {tickets.slice(0, 15).map((t) => (
+                  <tr key={`${t.project}#${t.ticket}`} className="border-t border-neutral-900">
+                    <td className="py-1 pr-2">{t.project} <span className="text-neutral-500">#{t.ticket}</span></td>
+                    <td className="py-1 text-right">{fmt(t.output)}</td>
+                    <td className="py-1 text-right text-neutral-500">{t.messages.toLocaleString()}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
         )}
       </Table>
     </div>
