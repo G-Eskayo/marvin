@@ -110,7 +110,7 @@ def settings_hooks() -> dict:
     matcher stay in one group, in table order."""
     out: dict[str, list[dict]] = {}
     for hook in HOOKS:
-        cmd = f"{PY} {GATE_SCRIPT} gate {','.join(sorted(hook.kinds))} -- {shlex.join(hook.command)}"
+        cmd = _portable(f"{PY} {GATE_SCRIPT} gate {','.join(sorted(hook.kinds))} -- {shlex.join(hook.command)}")
         groups = out.setdefault(hook.event, [])
         group = next((g for g in groups if g.get("matcher") == hook.matcher), None)
         if group is None:
@@ -118,6 +118,21 @@ def settings_hooks() -> dict:
             groups.append(group)
         group["hooks"].append({"type": "command", "command": cmd, **({"timeout": hook.timeout} if hook.timeout else {})})
     return out
+
+
+def _portable(command: str) -> str:
+    """settings.json is synced to every machine and their homes differ (mac-mini-2012's is /home/marvin), so this
+    home is written as $HOME: Claude Code runs a hook through a shell, and the session-start chain's own /bin/sh
+    expands it inside its quotes. `install` on the Mini put absolute paths back on 2026-10-25."""
+    return command.replace(str(HOME) + "/", "$HOME/")
+
+
+def _portable_memory(memory_dir: Path) -> str:
+    """The memory folder as ~/..., which Claude Code and host_os.memory_dir both expand, when it is under this home."""
+    try:
+        return "~/" + str(Path(memory_dir).relative_to(HOME))
+    except ValueError:
+        return str(memory_dir)
 
 
 def _scripts_in(command: str) -> list[str]:
@@ -128,7 +143,7 @@ def _scripts_in(command: str) -> list[str]:
     except ValueError:  # an unbalanced quote: plain words, quotes dropped, still better than losing the script
         words = command.replace("'", " ").replace('"', " ").split()
     out: list[str] = []
-    for w in words:
+    for w in (w.replace("$HOME/", str(HOME) + "/") for w in words):
         found = _scripts_in(w) if any(c.isspace() for c in w) else [w] if w.endswith((".py", ".sh")) else []
         out += [s for s in found if s not in out]
     return out
@@ -174,7 +189,7 @@ def install(user_path: Path = USER_SETTINGS, local_path: Path = LOCAL_SETTINGS,
             memory_dir: Path = MAIN_MEMORY) -> None:
     user = _load(user_path)
     user["hooks"] = settings_hooks()
-    user["autoMemoryDirectory"] = str(memory_dir)
+    user["autoMemoryDirectory"] = _portable_memory(memory_dir)
     _save(user_path, user)
     local = _load(local_path)
     if "hooks" in local:
