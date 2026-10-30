@@ -719,6 +719,54 @@ def test_no_disk_reading_means_no_disk_check():
     assert "disk:space" not in dict((k, s) for k, s, _ in hc.evaluate_machine_state(_mstate(), NOW))
 
 
+# ── memory pressure (marvin#845): the Mini hung 2026-10-30 with five helpers and their builds at once. Each Mac's
+# card says the kernel's pressure level, what the memory guard holds back, and what it refused and resumed today.
+
+def _mg(**kw):
+    base = {"level": "normal", "swap_used": 0, "waiting": [], "refused_24h": [], "resumed_24h": 0}
+    base.update(kw)
+    return "memory_guard=" + json.dumps(base) + "\n"
+
+
+def test_parse_machine_state_reads_the_memory_guard_status():
+    st = hc.parse_machine_state(_mg(level="warn", waiting=["seal: #170"]))
+    assert st["memory_guard"]["level"] == "warn" and st["memory_guard"]["waiting"] == ["seal: #170"]
+
+
+def test_unreadable_memory_guard_status_is_no_card_not_a_crash():
+    assert hc.parse_machine_state("memory_guard={not json\n")["memory_guard"] is None
+    assert hc.parse_machine_state("")["memory_guard"] is None
+    assert "memory:pressure" not in dict((k, s) for k, s, _ in hc.evaluate_machine_state(_mstate(), NOW))
+
+
+@pytest.mark.parametrize("level,waiting,expected", [
+    ("normal", [], "green"), ("warn", [], "yellow"), ("critical", ["seal: #170"], "red"),
+    # Normal with work still queued: the notification should have started it, so it is worth a look.
+    ("normal", ["seal: #170"], "yellow")])
+def test_memory_pressure_severity(level, waiting, expected):
+    st = hc.parse_machine_state(_mg(level=level, waiting=waiting, swap_used=3 * 2**30))
+    res = dict((k, (s, d)) for k, s, d in hc.evaluate_machine_state(_mstate(memory_guard=st["memory_guard"]), NOW))
+    sev, detail = res["memory:pressure"]
+    assert sev == expected
+    assert f"pressure {level}" in detail.lower()
+    for w in waiting:
+        assert w in detail
+
+
+def test_memory_pressure_detail_says_what_waits_and_that_nothing_was_stopped():
+    st = hc.parse_machine_state(_mg(level="warn", swap_used=3 * 2**30, waiting=["seal: #170", "PR #851"],
+                                    refused_24h=["seal: #170", "PR #851"], resumed_24h=1))
+    detail = dict((k, d) for k, _, d in hc.evaluate_machine_state(_mstate(memory_guard=st["memory_guard"]), NOW))["memory:pressure"]
+    assert "3.0 GB of swap" in detail
+    assert "2 waiting: seal: #170, PR #851" in detail
+    assert "2 refused and 1 resumed in 24 h" in detail
+    assert "nothing was stopped" in detail.lower()
+
+
+def test_memory_pressure_card_is_labelled_on_every_mac():
+    assert "memory:pressure" in hc.MACHINE_STATE_LABELS
+
+
 # ── job exit codes: found 2026-10-06 the laptop tidy-agent failing nightly since 2026-07-13
 # (PermissionError, no Full Disk Access) with nothing watching -- health-check runs on the
 # mini and only scanned the mini's own logs. launchd's last exit code is read on every machine.
