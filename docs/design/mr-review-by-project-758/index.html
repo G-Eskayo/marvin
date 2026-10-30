@@ -1,0 +1,62 @@
+<!doctype html>
+<!-- MR Review by project, prototype (marvin#758). Build first: node docs/design/mr-review-by-project-758/build.mjs -->
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>MR Review by project · prototype</title>
+<style>
+  :root { --w: 100%; color-scheme: dark; }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: #0a0a0a; color: #e5e5e5; font: 14px/1.45 -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; }
+  #controls { display: flex; flex-wrap: wrap; gap: 6px 14px; align-items: center; padding: 8px 16px; background: #1c1917; border-bottom: 1px solid #44403c; color: #d6d3d1; font-size: 12px; }
+  #controls select { background: #292524; color: #e7e5e4; border: 1px solid #57534e; border-radius: 4px; font-size: 12px; }
+  #app { width: var(--w); max-width: 100%; }
+  .tabs { display: flex; gap: 18px; padding: 12px 24px; border-bottom: 1px solid #262626; color: #737373; }
+  .tabs .on { color: #fff; border-bottom: 2px solid #3b82f6; padding-bottom: 10px; margin-bottom: -13px; }
+  .toggle { display: flex; gap: 4px; padding: 20px 24px 0; }
+  .toggle.sub { padding-top: 10px; }
+  .toggle button { background: none; border: 0; border-radius: 6px; padding: 6px 12px; color: #a3a3a3; font-size: 14px; cursor: pointer; }
+  .toggle.sub button { font-size: 12px; padding: 4px 10px; }
+  .toggle button[aria-pressed="true"] { background: #262626; color: #fff; }
+  .body { display: flex; flex-direction: column; gap: 10px; padding: 16px 24px 24px; }
+  .lede { margin: 0; color: #737373; font-size: 13px; }
+  .group { border: 1px solid #262626; border-radius: 10px; background: #0f0f0f; }
+  .group.other { border-style: dashed; }
+  .group-head { display: flex; align-items: center; gap: 10px; padding: 10px 12px; flex-wrap: wrap; }
+  .group-head.solo { padding: 4px 0 0; }
+  .group-head.empty { opacity: .55; }
+  .chev { background: none; border: 0; color: #a3a3a3; font-size: 14px; width: 18px; cursor: pointer; padding: 0; }
+  .gname { font-weight: 600; color: #fff; cursor: pointer; }
+  .count { background: #262626; color: #d4d4d4; border-radius: 999px; padding: 0 8px; font-size: 12px; }
+  .needs { background: #172554; color: #93c5fd; border-radius: 999px; padding: 0 8px; font-size: 12px; }
+  .summary { color: #737373; font-size: 12px; }
+  .group-body { display: flex; flex-direction: column; gap: 8px; padding: 0 12px 12px; }
+  .tier { margin: 6px 0 0; color: #737373; font-size: 11px; text-transform: uppercase; letter-spacing: .06em; }
+  .card { border: 1px solid #262626; border-radius: 8px; background: #171717; padding: 12px 14px; }
+  .card.example { border-style: dashed; }
+  .card-top { display: flex; justify-content: space-between; gap: 12px; align-items: flex-start; }
+  .card-main { min-width: 0; }
+  .title { margin: 0; font: 600 13px/1.4 ui-monospace, SFMono-Regular, Menlo, monospace; color: #fff; }
+  .chip { font: 10px -apple-system, sans-serif; border-radius: 4px; padding: 1px 6px; margin-left: 4px; }
+  .chip.repo { background: #082f49; color: #7dd3fc; }
+  .chip.draft { background: #262626; color: #a3a3a3; }
+  .headline { margin: 4px 0 0; font-size: 12px; }
+  .tone-ready { color: #4ade80; } .tone-wait { color: #fbbf24; } .tone-blocked { color: #f87171; } .tone-working { color: #60a5fa; }
+  .why { margin: 4px 0 0; font-size: 12px; color: #fbbf24; }
+  .helper { margin: 4px 0 0; font-size: 11px; display: inline-block; border-radius: 4px; padding: 1px 6px; background: #1e1b4b; color: #c7d2fe; }
+  .helper-done { background: #052e16; color: #86efac; } .helper-failed { background: #450a0a; color: #fca5a5; }
+  .actions { display: flex; gap: 6px; flex-shrink: 0; }
+  .actions button { border: 0; border-radius: 6px; padding: 5px 10px; font-size: 12px; }
+  .approve { background: #15803d; color: #fff; } .approve:disabled { background: #262626; color: #737373; }
+  .deny { background: #262626; color: #d4d4d4; }
+  .back { align-self: flex-start; background: none; border: 0; color: #60a5fa; font-size: 13px; padding: 0; cursor: pointer; }
+  .debug { margin: 8px 0 0; color: #525252; font: 11px ui-monospace, monospace; }
+</style>
+</head>
+<body>
+<div id="controls"></div>
+<div id="app"></div>
+<script src="data.local.js"></script>
+<script src="bundle.local.js"></script>
+</body>
+</html>
