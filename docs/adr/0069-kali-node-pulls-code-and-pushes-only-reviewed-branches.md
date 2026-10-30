@@ -46,3 +46,28 @@ work, and containers share the kernel with untrusted tools).
 - Porting work is real: synced `settings.json` hard-codes `/Users/gileskayo`, Tailscale's path is hard-coded,
   and the CPU lacks AVX2, so prebuilt ML libraries such as ChromaDB may crash with `Illegal instruction`.
 - Roughly 2 disposable VMs at a time with Whonix running (16GB RAM).
+
+## Amendment (2026-10-30): test and bench work falls back to a Mac when the box stalls
+
+Decided by Gil on G-Eskayo/marvin-instance PR #6 (`adr-0069-fallback`), after the box's calibration (marvin #623);
+built in marvin #930.
+
+Point 6's "fail loudly, never fall back" now has one exception, for **`test` and `bench` work only**:
+
+- The work runs with a timeout of 3x its measured box time (#536's rule): 480 s for the full Python suite at `-n 8`
+  (measured 158 s), 120 s for dashboard vitest (measured 35 s). The caller passes it as the dispatch timeout.
+- On the box the run is wrapped in GNU `timeout`, so a stall is killed there (SIGTERM, then SIGKILL 15 s later) and
+  nothing keeps running on the box.
+- When the box times out, drops off mid-run (ssh exit 255) or isn't online and idle at dispatch, **the same command
+  reruns once on the less busy Mac**: 1-minute load per core plus the runs already on that Mac (plan section F); a
+  tie or an unreadable load goes to the Mini. A busy Mac is passed over for the other, but a fallback is never
+  dropped because both are busy.
+- A box run that finishes with failing tests is a result, not a stall: it stands, and nothing reruns.
+- Every fallback is a line in `~/.claude/logs/dispatch-fallback.jsonl` (from, to, why, the Mac's load score, outcome).
+- At most 2 fallback runs at once from one dispatcher. Over that cap the job fails loudly (`capped` in the log), so a
+  box that stalls on everything can't pile its work onto the Macs.
+- A caller can turn the fallback off (`--no-fallback`): an extra runner whose verdict comes from a Mac anyway.
+
+**`security` and `quarantine` work keeps "fail loudly, never fall back".** A Mac must never run untrusted code. So
+does every other tag. The allow-list is `FALLBACK_NEEDS` in `lib/task_dispatch.py`; adding a tag to it is an amendment
+to this ADR.
