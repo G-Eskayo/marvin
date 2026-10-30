@@ -4,10 +4,11 @@ import path from 'path'
 import { createServer } from 'http'
 import { mergePr, baselineFailsOnMain, mergesAhead, execWithGroupTimeout, runDiskFirstAid } from './merge.js'
 import { snapshotExec } from './pr_snapshot.js'
-import { createMergeTracker, createInflightStore, takeInterruptedMerges, recordMergeDuration, estimateMergeMs, machineLoad, approveResponder, wantsStream } from './merge_progress.js'
-import { resolveDeviceId } from '../electron/main/device_identity.js'
+import { createMergeTracker, createInflightStore, takeInterruptedMerges, recordMergeDuration, estimateMergeMs, machineLoad, approveResponder, wantsStream, createMergeLatch, alreadyMergingBody } from './merge_progress.js'
+import { resolveDeviceId, peerHosts } from '../electron/main/device_identity.js'
 import { sendFeedback, dropEntirely } from './deny.js'
 import { forwardRefreshPing } from './refresh_relay.js'
+import { announceMergeHost, relayMergeHostUp } from './merge_host_announce.js'
 import { loadGhToken } from './gh_auth.js'
 import { useGhGate } from '../electron/main/path.js'
 import { failureResponse } from './failure.js'
@@ -171,6 +172,16 @@ const server = createServer(async (req, res) => {
     return
   }
 
+  // marvin#762: another Mac's webhook just started, so it can merge again: tell the dashboard here, which retries the
+  // approvals it saved while no Mac could merge. Only ever triggers that retry; the body names the machine, nothing more.
+  if (req.method === 'POST' && req.url === '/merge-host-up') {
+    let body = null
+    try { body = await readJsonBody(req) } catch { /* the trigger is the request itself */ }
+    await relayMergeHostUp(body, { localRefreshUrl: DASHBOARD_REFRESH_URL, post: postJson })
+    res.writeHead(200, { 'Content-Type': 'application/json' }).end('{"ok":true}')
+    return
+  }
+
   if (req.method !== 'POST' || (req.url !== '/approve' && req.url !== '/deny')) {
     res.writeHead(404).end()
     return
@@ -195,47 +206,56 @@ const server = createServer(async (req, res) => {
     // too). Logged to dashboard-webhook.log, and recorded in flight so a restart reports it as interrupted.
     const prUrl = typeof payload?.pr_url === 'string' && payload.pr_url.startsWith('https://github.com/') ? payload.pr_url : null
     const reply = approveResponder(res, { streaming: !!prUrl && wantsStream(req.headers.accept) })
-    const tracker = prUrl ? createMergeTracker({
-      url: prUrl,
-      repo: repoOfPr(prUrl),
-      machineId,
-      inflight,
-      measure: () => machineLoad(),
-      estimate: (repo, gated) => estimateMergeMs(repo, gated),
-      record: recordMergeDuration,
-      emit: (event) => {
-        reply.event(event)
-        forwardRefreshPing(DASHBOARD_REFRESH_URL, (url) => postJson(url, { topics: ['merge'], source: 'merge', merge: { url: prUrl, event } }))
-      }
-    }) : null
-    tracker?.start(mergesAhead(prUrl))
+    // marvin#766: a PR this process is already merging is not started again (a retry after a dropped stream).
+    if (prUrl && !mergeLatch.take(prUrl)) {
+      reply.result(409, alreadyMergingBody(machineId))
+      return
+    }
     try {
-      // mergePr() returning normally covers both a real merge (merged:
-      // true) and G-Eskayo/marvin#91's merge-time gate routing the ticket
-      // to re-engagement instead (merged: false, reengaged: true) -- the
-      // latter is an expected outcome, not a server error, so it gets a
-      // 200 with the real reason attached rather than a bare 500.
-      // P5: the preflight's seven reads of this PR share one (pr_snapshot.js); merge.js and its checks are unchanged.
-      const result = await mergePr(payload.pr_url, snapshotExec(payload.pr_url, execWithGroupTimeout), undefined, undefined, undefined, undefined, undefined, undefined, {
-        baselineFails: (names) => baselineFailsOnMain(names),
-        progress: tracker ? tracker.progress : undefined,
-        loadNow: () => ({ ...machineLoad(), id: machineId }),
-        // A nearly full disk gets the cleanup sweep's rebuildable trims once before the gate refuses (2026-10-28).
-        diskFirstAid: () => runDiskFirstAid()
-      })
-      tracker?.finish(result)
-      if (result?.merged) appendMerge(payload.pr_url, payload.by === 'auto' ? 'auto' : 'you')
-      else if (result?.reengaged) console.error(approveErrorLine(payload.pr_url, { error: `${result.code || 'SENT_BACK'} at ${result.stage || 'gate'}: ${String(result.reason || 'sent back for rework').split('\n')[0].slice(0, 200)}` }))
-      reply.result(200, result)
-    } catch (err) {
-      // Structured: code, stage, retryable, action, remediation -- so the dashboard can say
-      // what broke and the pipeline can act on it (see failure.js).
-      const { status, body } = failureResponse(err)
-      tracker?.fail(body)
-      console.error(approveErrorLine(payload.pr_url, body))
-      await recordApproveError(payload.pr_url, body)
-      appendError({ source: 'webhook:approve', message: `Approve refused for ${payload.pr_url}`, raw: body.error })
-      reply.result(status, body)
+      const tracker = prUrl ? createMergeTracker({
+        url: prUrl,
+        repo: repoOfPr(prUrl),
+        machineId,
+        inflight,
+        measure: () => machineLoad(),
+        estimate: (repo, gated) => estimateMergeMs(repo, gated),
+        record: recordMergeDuration,
+        emit: (event) => {
+          reply.event(event)
+          forwardRefreshPing(DASHBOARD_REFRESH_URL, (url) => postJson(url, { topics: ['merge'], source: 'merge', merge: { url: prUrl, event } }))
+        }
+      }) : null
+      tracker?.start(mergesAhead(prUrl))
+      try {
+        // mergePr() returning normally covers both a real merge (merged:
+        // true) and G-Eskayo/marvin#91's merge-time gate routing the ticket
+        // to re-engagement instead (merged: false, reengaged: true) -- the
+        // latter is an expected outcome, not a server error, so it gets a
+        // 200 with the real reason attached rather than a bare 500.
+        // P5: the preflight's seven reads of this PR share one (pr_snapshot.js); merge.js and its checks are unchanged.
+        const result = await mergePr(payload.pr_url, snapshotExec(payload.pr_url, execWithGroupTimeout), undefined, undefined, undefined, undefined, undefined, undefined, {
+          baselineFails: (names) => baselineFailsOnMain(names),
+          progress: tracker ? tracker.progress : undefined,
+          loadNow: () => ({ ...machineLoad(), id: machineId }),
+          // A nearly full disk gets the cleanup sweep's rebuildable trims once before the gate refuses (2026-10-28).
+          diskFirstAid: () => runDiskFirstAid()
+        })
+        tracker?.finish(result)
+        if (result?.merged) appendMerge(payload.pr_url, payload.by === 'auto' ? 'auto' : 'you')
+        else if (result?.reengaged) console.error(approveErrorLine(payload.pr_url, { error: `${result.code || 'SENT_BACK'} at ${result.stage || 'gate'}: ${String(result.reason || 'sent back for rework').split('\n')[0].slice(0, 200)}` }))
+        reply.result(200, result)
+      } catch (err) {
+        // Structured: code, stage, retryable, action, remediation -- so the dashboard can say
+        // what broke and the pipeline can act on it (see failure.js).
+        const { status, body } = failureResponse(err)
+        tracker?.fail(body)
+        console.error(approveErrorLine(payload.pr_url, body))
+        await recordApproveError(payload.pr_url, body)
+        appendError({ source: 'webhook:approve', message: `Approve refused for ${payload.pr_url}`, raw: body.error })
+        reply.result(status, body)
+      }
+    } finally {
+      if (prUrl) mergeLatch.release(prUrl)
     }
     return
   }
@@ -269,6 +289,7 @@ const rebuildCheck = createRebuildCheckTrigger()
 // marvin#568: which Mac runs the merges (shown on the card), and the in-flight record a restart reads.
 const machineId = resolveDeviceId()
 const inflight = createInflightStore()
+const mergeLatch = createMergeLatch()
 const repoOfPr = (url) => (String(url).match(/github\.com\/([^/]+\/[^/]+)\/pull\//) || [])[1] || null
 
 server.listen(PORT, () => {
@@ -281,6 +302,15 @@ server.listen(PORT, () => {
   for (const { url, event } of takeInterruptedMerges()) {
     forwardRefreshPing(DASHBOARD_REFRESH_URL, (u) => postJson(u, { topics: ['merge'], source: 'merge', merge: { url, event } }))
   }
+
+  // marvin#762: this Mac can merge again. Saved approvals (on this Mac's dashboard, and on the other Mac's, which
+  // could not reach this one) are retried on this, not on a timer.
+  announceMergeHost({
+    machineId,
+    localRefreshUrl: DASHBOARD_REFRESH_URL,
+    peers: peerHosts(),
+    post: (url, body) => fetch(url, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body), signal: AbortSignal.timeout(5000) })
+  }).then(({ told, of }) => console.log(`[merge-host] announced this Mac can merge: ${told} of ${of} reached`))
 
   // Trigger source for GitHub-side changes to any board repo: tell an open dashboard on this
   // machine what changed the moment it does (best-effort, like /mr-ready).

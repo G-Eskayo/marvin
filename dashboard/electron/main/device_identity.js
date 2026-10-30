@@ -45,9 +45,16 @@ export function resolveDeviceId(readHardwareUuid = defaultReadHardwareUuid, netw
 // device, not a hardcoded id, so this still resolves if mac-mini-1 is ever
 // renamed or replaced.
 export function primaryHostTailscaleName(networkPath = NETWORK_PATH) {
+  const id = primaryDeviceId(networkPath)
+  return id ? loadRegistry(networkPath)[id].tailscale_hostname || null : null
+}
+
+// The primary's registry id ("mac-mini-1"), for naming it in words (marvin#762). Same pick as above: the first
+// "desktop"-kind device.
+export function primaryDeviceId(networkPath = NETWORK_PATH) {
   const registry = loadRegistry(networkPath)
-  for (const info of Object.values(registry)) {
-    if (info.kind === 'desktop') return info.tailscale_hostname || null
+  for (const [id, info] of Object.entries(registry)) {
+    if (info?.kind === 'desktop') return id
   }
   return null
 }

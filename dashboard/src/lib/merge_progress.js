@@ -144,6 +144,7 @@ export function busyLine(progress) {
 // head it no longer applies. Unknown heads keep it (never hide a failure), and a running merge is never hidden.
 export function opForHead(op, head) {
   if (!op || !op.state || op.state === 'idle') return { state: 'idle' }
-  if (op.state !== 'merging' && head && op.head && head !== op.head) return { state: 'idle' }
+  // marvin#762: a queued approval is still waiting whatever the head; it is not a verdict on an older commit.
+  if (op.state !== 'merging' && op.state !== 'queued' && head && op.head && head !== op.head) return { state: 'idle' }
   return op
 }

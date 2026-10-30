@@ -262,3 +262,46 @@ describe('a new merge started elsewhere after one finished here', () => {
     expect(ops.event(URL, { id: 'new', seq: 1, stage: 'queued', state: 'running', at: 3 }).state).toBe('merging')
   })
 })
+
+// marvin#762: the Mini down. The op carries the plain-words notice while the MacBook merges, and a queued state
+// (no machine could take it) that the card shows and a later retry can start from.
+describe('failover notice and queued approvals', () => {
+  it('notice() puts the plain words on a running merge, and pushing an event keeps them', () => {
+    const ops = createMergeOps()
+    ops.start(URL)
+    expect(ops.notice(URL, 'The Mac mini is offline, merging on this MacBook Pro instead.')).toMatchObject({ state: 'merging', notice: 'The Mac mini is offline, merging on this MacBook Pro instead.' })
+    ops.event(URL, { id: 'b', seq: 1, stage: 'queued', state: 'running', at: 1 })
+    expect(ops.get(URL).notice).toBe('The Mac mini is offline, merging on this MacBook Pro instead.')
+  })
+
+  it('notice() on a PR that is not merging changes nothing', () => {
+    const ops = createMergeOps()
+    expect(ops.notice(URL, 'x')).toBe(null)
+    expect(ops.get(URL)).toEqual({ state: 'idle' })
+  })
+
+  it('queue() ends the running op as queued with its reason; a retry may start it again', () => {
+    const ops = createMergeOps()
+    ops.start(URL, 1, 'abc')
+    expect(ops.queue(URL, 'Neither Mac can merge right now', 2)).toMatchObject({ state: 'queued', reason: 'Neither Mac can merge right now', head: 'abc', progress: null })
+    expect(ops.mergingUrls()).toEqual([])
+    expect(ops.start(URL, 3)).toBe(true)
+  })
+
+  it('a queued op is shown for any head: the approval is still waiting even if the PR moved on', () => {
+    const ops = createMergeOps()
+    ops.start(URL, 1, 'abc')
+    ops.queue(URL, 'why', 2)
+    expect(ops.get(URL, 3, 'def').state).toBe('queued')
+  })
+
+  it('cancelQueued() clears a queued op (Deny), and leaves a running merge alone', () => {
+    const ops = createMergeOps()
+    ops.start(URL); ops.queue(URL, 'why')
+    expect(ops.cancelQueued(URL)).toBe(true)
+    expect(ops.get(URL)).toEqual({ state: 'idle' })
+    ops.start(URL)
+    expect(ops.cancelQueued(URL)).toBe(false)
+    expect(ops.get(URL).state).toBe('merging')
+  })
+})
