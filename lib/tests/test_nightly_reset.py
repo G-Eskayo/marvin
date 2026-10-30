@@ -472,3 +472,50 @@ def test_script_takes_no_arguments_a_caller_could_steer():
 def test_starts_now_only_near_or_after_this_macs_slot(device, fired, acts):
     w = nr.night_window(device, fired, CFG)
     assert nr.starts_now(fired, w) is acts
+
+
+# ── after the restart: the watcher is told to expect it back (design #769 section 6) ────────────────────────────
+
+class _Done:
+    returncode, stdout, stderr = 0, "restarting", ""
+
+
+def test_a_real_restart_tells_the_watchers_first_then_runs_the_script(tmp_path):
+    script = tmp_path / "marvin-authrestart"
+    script.write_text("#!/bin/sh\n")
+    order = []
+    ok, _ = nr.restart(script=script, device="mac-mini-1", cfg=CFG,
+                       announce=lambda dev, cfg: order.append(("announce", dev)),
+                       runner=lambda cmd, **kw: order.append(("run", cmd[-1])) or _Done())
+    assert ok and order == [("announce", "mac-mini-1"), ("run", str(script))]
+
+
+def test_a_dry_run_restart_tells_nobody(tmp_path):
+    script = tmp_path / "marvin-authrestart"
+    script.write_text("#!/bin/sh\n")
+    told = []
+    nr.restart(script=script, dry_run=True, device="mac-mini-1", cfg=CFG, announce=lambda d, c: told.append(d),
+               runner=lambda cmd, **kw: _Done())
+    assert told == []
+
+
+def test_expect_back_command_runs_detached_on_the_watcher():
+    cmd = nr.expect_back_ssh("mac-mini-1", "gils-2012-mini")
+    assert cmd[:2] == ["ssh", "-o"] and "gils-2012-mini" in cmd
+    remote = cmd[-1]
+    assert "peer_care.py expect-back mac-mini-1" in remote and remote.startswith("nohup ") and remote.endswith("&")
+
+
+@pytest.mark.parametrize("plist", ["com.marvin.nightly-reset.plist"])
+def test_the_launchd_job_fires_at_every_configured_slot(plist):
+    import plistlib
+    p = plistlib.loads((LIB.parent / "config" / "launchd" / plist).read_bytes())
+    fires = sorted(f"{d['Hour']:02d}:{d['Minute']:02d}" for d in p["StartCalendarInterval"])
+    assert fires == sorted(CFG["reset"]["slots"].values())
+    assert p["ProgramArguments"][-1] == "run"
+
+
+def test_command_output_that_isnt_utf8_never_crashes_the_guard():
+    """Found on the Mini: `pmset -g assertions` printed a 0xd5 byte (a process name) and the decode raised."""
+    out = nr._out(["/bin/sh", "-c", r"printf 'PreventUserIdleDisplaySleep    1\n\325 name\n'"])
+    assert nr.parse_display_assertion(out) is True

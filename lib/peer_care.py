@@ -144,7 +144,7 @@ def tailscale_status() -> dict | None:
     if not ts:
         return None
     try:
-        out = subprocess.run([ts, "status", "--json"], capture_output=True, text=True, timeout=10).stdout
+        out = subprocess.run([ts, "status", "--json"], capture_output=True, text=True, errors="replace", timeout=10).stdout
         return json.loads(out)
     except (OSError, subprocess.SubprocessError, ValueError):
         return None
@@ -168,7 +168,7 @@ def parse_arp(out: str) -> bool:
 
 def _run(cmd: list[str], timeout: float = 15) -> subprocess.CompletedProcess | None:
     try:
-        return subprocess.run(cmd, capture_output=True, text=True, timeout=timeout)
+        return subprocess.run(cmd, capture_output=True, text=True, errors="replace", timeout=timeout)
     except (OSError, subprocess.SubprocessError):
         return None
 
@@ -544,7 +544,8 @@ def watch_ipn(me: str, cfg: dict) -> int:
         st = tailscale_status() or {}
         return {p: online_from_status(st, ts_host(p)) for p in peers}
 
-    proc = subprocess.Popen([ts, "debug", "watch-ipn", "--peer-changes"], stdout=subprocess.PIPE, text=True)
+    proc = subprocess.Popen([ts, "debug", "watch-ipn", "--peer-changes"], stdout=subprocess.PIPE, text=True,
+                            errors="replace")
     read_ipn(proc.stdout, peers, online=online, handle=lambda p, trig: handle(p, trig, cfg))
     return proc.wait()
 
