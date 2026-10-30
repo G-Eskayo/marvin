@@ -31,6 +31,7 @@ const PROFILE_SCRIPT = path.resolve(__dirname, '..', '..', 'lib', 'project_profi
 const GENERATED_SCRIPT = path.resolve(__dirname, '..', '..', 'lib', 'generated_paths.py')
 const PURPOSE_METRICS_SCRIPT = path.resolve(__dirname, '..', '..', 'lib', 'purpose_metrics.py')
 const NODE_MODULES_SEED_SCRIPT = path.resolve(__dirname, '..', '..', 'lib', 'node_modules_seed.py')
+const BOX_RUNNER_SCRIPT = path.resolve(__dirname, '..', '..', 'lib', 'box_runner.py')
 
 // #687: a gate copy gets node_modules as a copy-on-write clone of a cached install (lib/node_modules_seed.py), so the
 // `npm install` below finds everything in place instead of writing ~0.8 GB. Best effort: a miss or an error just means
@@ -169,6 +170,37 @@ export function countTestFiles(dir) {
 
 const noProgress = () => {}
 
+// mac-mini-2012 as an extra runner (marvin #933, Gil's `trial-work` decision): as the Mac's Python suite starts, the
+// same rebased commit is handed to the box, which runs it in parallel. Its result is recorded next to the Mac's
+// (lib/box_runner.py, ~/.claude/logs/box-runs.jsonl) and is never the verdict: nothing here is awaited past the
+// ~40 ms hand-off, no error here can reach the gate, and the gate's pass/fail is the Mac's alone.
+export const noBoxRunner = { submit: async () => null, verdict: () => {} }
+
+export function makeBoxRunner({ run = execFileAsync, spawnFn = spawn, script = BOX_RUNNER_SCRIPT, python = VENV_PYTHON } = {}) {
+  return {
+    async submit(cwd, progress = noProgress) {
+      try {
+        const { stdout } = await run(python, [script, 'submit', '--tree', cwd], { timeout: 15000 })
+        const sent = JSON.parse(String(stdout).trim() || 'null')
+        if (sent?.sha) progress('tests', 'running', { detail: `mac-mini-2012 runs it too (extra runner, not the verdict): ${sent.sha.slice(0, 8)}`, logDetail: true })
+        return sent?.sha ? sent : null
+      } catch {
+        return null
+      }
+    },
+    verdict(sent, outcome, output = '') {
+      if (!sent?.sha) return
+      try {
+        const child = spawnFn(python, [script, 'verdict', '--sha', sent.sha, '--outcome', outcome], { stdio: ['pipe', 'ignore', 'ignore'], detached: true })
+        child.on?.('error', () => {})
+        child.stdin?.on?.('error', () => {})
+        child.stdin?.end(String(output || '').slice(-20000))
+        child.unref?.()
+      } catch { /* recording the Mac's verdict never touches the gate */ }
+    }
+  }
+}
+
 // The Python suite runs in parallel (pytest-xdist, `-n auto`): 327 s serial vs 47 s on the M4's 10 cores, same 2,685
 // tests, measured 2026-10-21. A machine without the plugin runs it serially and says so in the log, never fails on it.
 // One `python -c` per gate run (~0.1 s); not cached, so installing the plugin takes effect on the next run.
@@ -182,7 +214,7 @@ export async function pytestParallelArgs(python = VENV_PYTHON, run = execFileAsy
   }
 }
 
-export async function _defaultRunTests(cwd, exec, progress = noProgress, parallelArgs = pytestParallelArgs, cache = nodeModulesCache) {
+export async function _defaultRunTests(cwd, exec, progress = noProgress, parallelArgs = pytestParallelArgs, cache = nodeModulesCache, box = noBoxRunner) {
   const dashboardDir = path.join(cwd, 'dashboard')
   // Each output chunk is a heartbeat for the gate's time limit; the parsers turn the runners' own lines into counts.
   const watch = (runner, label, totalFiles = 0) => {
@@ -206,9 +238,17 @@ export async function _defaultRunTests(cwd, exec, progress = noProgress, paralle
   progress('installing', 'done')
   const parallel = await parallelArgs()
   progress('tests', 'running', { detail: parallel.length ? 'Python' : 'Python (serial: pytest-xdist missing)', logDetail: !parallel.length })
+  // Started beside pytest, not before it: the hand-off adds nothing to the gate's time even if it is slow.
+  const sent = Promise.resolve().then(() => box.submit(cwd, progress)).catch(() => null)
   // MARVIN_MERGE_GATE: tests that read ANOTHER repo's data (the portfolio figures) stay out of a PR's gate; they run in the
   // main-branch health check instead (lib/main_health.py).
-  await exec(VENV_PYTHON, ['-m', 'pytest', '-q', ...parallel], { cwd, env: { ...process.env, MARVIN_MERGE_GATE: '1' }, onOutput: watch('pytest', 'Python') })
+  try {
+    await exec(VENV_PYTHON, ['-m', 'pytest', '-q', ...parallel], { cwd, env: { ...process.env, MARVIN_MERGE_GATE: '1' }, onOutput: watch('pytest', 'Python') })
+  } catch (err) {
+    box.verdict(await sent, 'failed', testOutputOf(err))
+    throw err
+  }
+  box.verdict(await sent, 'passed')
   progress('tests', 'running', { detail: 'Dashboard', logDetail: true })
   await exec('npx', ['vitest', 'run'], { cwd: dashboardDir, onOutput: watch('vitest', 'Dashboard', countTestFiles(path.join(dashboardDir, 'test'))) })
 }
@@ -348,6 +388,9 @@ export async function runDiskFirstAid(exec = execFileAsync) {
     return { ok: false, changed: false, detail: `first aid could not run: ${why.slice(0, 200)}` }
   }
 }
+
+// The marvin gate's tests, with mac-mini-2012 as an extra runner beside them (#933).
+const marvinRunTests = (cwd, exec, progress) => _defaultRunTests(cwd, exec, progress, undefined, undefined, makeBoxRunner())
 
 export async function rebaseAndRetest(headRef, exec = execFileAsync, repoPath = REPO_PATH, runTests = _defaultRunTests, base = 'main', resolveConflicts = null, sleep = null, progress = noProgress, freeBytes = freeDiskBytes, firstAid = null) {
   let free = await freeBytes(tmpdir()).catch(() => null) // unreadable: carry on, as before this check
@@ -746,7 +789,7 @@ async function mergePrUnqueued(
     const result = await withGateTimeout(
       Promise.resolve(ctx
         ? rebaseAndRetestFn(headRefName, run, ctx.clone, ctx.runTests, ctx.base, ctx.resolveConflicts, sleep ?? null, progress, undefined, diskFirstAid)
-        : rebaseAndRetestFn(headRefName, run, REPO_PATH, _defaultRunTests, 'main', generatedResolver(MARVIN_REPO, run), sleep ?? null, progress, undefined, diskFirstAid)),
+        : rebaseAndRetestFn(headRefName, run, REPO_PATH, marvinRunTests, 'main', generatedResolver(MARVIN_REPO, run), sleep ?? null, progress, undefined, diskFirstAid)),
       gateTimeoutMs,
       () => gateExtension({ baseMs: gateTimeoutMs, load: loadNow(), lastOutputAt, now: now() }),
       (reason) => progress('tests', 'running', { detail: reason, logDetail: true }),
