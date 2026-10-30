@@ -1790,13 +1790,26 @@ def run_all(checks=None, recent_errors=None) -> dict:
     }
 
 
+def _own_status_path() -> Path:
+    """Where this machine's own sweep goes. On a pull-only node (mac-mini-2012, ADR 0069) health-status.json is the
+    Mini's whole-network view, which marvin-observer-feed copies there every 2 minutes for the box's dashboard; the
+    box's own sweep (marvin#911) is written beside it as health-status.local.json so the two never overwrite each
+    other. If the registry can't be read, a non-Mac takes the local file."""
+    try:
+        pull_only = machine_profile.pull_only()
+    except Exception:  # noqa: BLE001
+        pull_only = sys.platform != "darwin"
+    return STATUS_PATH.with_name("health-status.local.json") if pull_only else STATUS_PATH
+
+
 def write_status(status: dict | None = None) -> dict:
     """Written whole or not at all (temp file + rename): a reader never sees half a file."""
     status = status if status is not None else run_all()
-    STATUS_PATH.parent.mkdir(parents=True, exist_ok=True)
-    tmp = STATUS_PATH.with_name(STATUS_PATH.name + ".tmp")
+    path = _own_status_path()
+    path.parent.mkdir(parents=True, exist_ok=True)
+    tmp = path.with_name(path.name + ".tmp")
     tmp.write_text(json.dumps(status, indent=2))
-    os.replace(tmp, STATUS_PATH)
+    os.replace(tmp, path)
     return status
 
 
