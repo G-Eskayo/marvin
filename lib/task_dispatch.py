@@ -35,7 +35,7 @@ DISPATCH_STATE_PATH = Path.home() / ".claude" / "dispatch-state.json"
 # (/home/marvin on mac-mini-2012), so anything sent over ssh names $HOME, never this machine's path (ADR 0069).
 SHELL_STATE_PATH = '"$HOME/.claude/dispatch-state.json"'
 SHELL_TASKS_DIR = '"$HOME/.claude/dispatch/tasks"'
-TAILSCALE_BIN = host_os.tailscale_bin()
+TAILSCALE_BIN = host_os.tailscale_bin_or_default()
 # The GUI app's CLI refuses to run without a TERM ("The Tailscale GUI failed to start"), which is exactly what launchd
 # provides. Found 2026-10-05: under launchd it printed that error, and the parse below read it as one online host
 # called "Tailscale", so no peer ever looked reachable.
@@ -53,21 +53,29 @@ class DispatchResult:
     waiting: bool = False   # refused under memory pressure and queued to run when it drops (marvin#845)
 
 
-def _tailscale_online_hosts() -> set[str]:
-    """Hostnames Tailscale currently reports as online (not 'offline')."""
+def tailscale_online_hosts_or_none() -> set[str] | None:
+    """Hostnames Tailscale currently reports as online (not 'offline'), or None when it can't be asked: the CLI is
+    missing, exits non-zero or hangs. A view must say "can't check", never "every peer is offline" (marvin#889)."""
     try:
         proc = subprocess.run([TAILSCALE_BIN, "status"], capture_output=True, text=True, timeout=10, env=TAILSCALE_ENV)
-        online = set()
-        for line in proc.stdout.splitlines():
-            parts = line.split()
-            if len(parts) < 2 or parts[0].count(".") != 3:   # a peer row starts with its IP; anything else is not one
-                continue
-            hostname = parts[1]
-            if "offline" not in line:
-                online.add(hostname)
-        return online
     except Exception:
-        return set()
+        return None
+    if proc.returncode != 0:
+        return None
+    online = set()
+    for line in proc.stdout.splitlines():
+        parts = line.split()
+        if len(parts) < 2 or parts[0].count(".") != 3:   # a peer row starts with its IP; anything else is not one
+            continue
+        hostname = parts[1]
+        if "offline" not in line:
+            online.add(hostname)
+    return online
+
+
+def _tailscale_online_hosts() -> set[str]:
+    """For dispatch: an unanswerable Tailscale means no remote machine to send work to (stay local)."""
+    return tailscale_online_hosts_or_none() or set()
 
 
 def _read_local_dispatch_state() -> dict:

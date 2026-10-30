@@ -44,14 +44,14 @@ from typing import Callable
 
 HERE = Path(__file__).resolve().parent
 sys.path.insert(0, str(HERE))
+import host_os  # noqa: E402
 
 CONFIG_PATH = HERE.parent / "config" / "peer_care.json"
 STATE_DIR = HERE.parent / "var" / "peer-care"            # gitignored; per machine, never synced
 UNLOCK_SCRIPT = Path("/usr/local/libexec/marvin-peer-unlock")
 UNLOCK_SETUP = "sudo ~/.agents/bin/marvin-peer-unlock-setup"
 SSH_OPTS = ["-o", "BatchMode=yes", "-o", "ConnectTimeout=5", "-o", "StrictHostKeyChecking=accept-new"]
-TAILSCALE_CANDIDATES = ["/opt/homebrew/bin/tailscale", "/Applications/Tailscale.app/Contents/MacOS/Tailscale",
-                        "/usr/local/bin/tailscale", "/usr/bin/tailscale"]
+TAILSCALE_CANDIDATES = host_os.TAILSCALE_CANDIDATES  # one list (marvin#889)
 WEBHOOK_LABEL = "com.marvin.dashboard-webhook"
 WEBHOOK_PORT = 7878
 
@@ -117,8 +117,7 @@ def classify(p: Probe) -> str:
     return "unknown"
 
 
-def tailscale_bin() -> str | None:
-    return next((t for t in TAILSCALE_CANDIDATES if os.access(t, os.X_OK)), None) or shutil.which("tailscale")
+tailscale_bin = host_os.tailscale_bin  # one lookup (ADR 0069, marvin#889)
 
 
 def online_from_status(status: dict, hostname: str) -> bool | None:
