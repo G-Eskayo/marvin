@@ -507,6 +507,13 @@ ever been closed unmerged. Gil approves almost everything; the wait is the cost.
 - **Worker**: anything that does work on a project while it runs: a chat helper, a pipeline builder for a ticket, an
   agent a session spawned, a scheduled job. Different from the **Autonomous Agents** branch of today's map, which is
   only the scheduled jobs.
+- **Worker lifecycle on the map**: a worker shows only while it runs. One that finishes cleanly leaves at once (its
+  history is in Activity). One that dies stays red until a retry passes or Gil dismisses it. Scheduled jobs follow
+  the same rule: visible while running, red if they failed, otherwise not shown. Nothing fades.
+- **The map as background**: the live map is the backdrop of MARVIN, not a page you open. The desktop wallpaper and
+  the dashboard show the same map, kept identical, and Vitals sits on top of it.
+- **Map colour**: each region and the Work half has its own clearly different hue, so a colour says what a part is
+  without a legend. Red (failure) and amber (missed purpose) are reserved. Brightness shows activity.
 - **Leaf node**: the outermost parts on the map (files, functions, sub-agents). They light when touched, the same as
   any other part.
 
