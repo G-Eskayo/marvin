@@ -1382,6 +1382,14 @@ def main() -> None:
         print("usage: code_sync.py {push|pull|mirror} [repo-path]", file=sys.stderr)
         sys.exit(1)
     repo = Path(sys.argv[2]).expanduser() if len(sys.argv) == 3 else DEFAULT_REPO
+    asked = sys.argv[1]
+    import machine_profile
+    if asked != "mirror" and machine_profile.pull_only():
+        # ADR 0069: a pull-only node never commits or pushes. Callers written for the Macs (the session-start hook's
+        # `pull`, a handoff's `push`) get a mirror and nothing, so a session at the box can't touch the synced tree.
+        if asked == "push":
+            return
+        sys.argv[1] = "mirror"
     action = {"push": push, "pull": pull, "mirror": mirror}[sys.argv[1]]
     # ADR 0071: the owner's private instance is its own repo nested at <engine>/instance/; it syncs with the engine,
     # so every existing caller (launchd job, handoff hook) covers it with no config. No instance (a fresh install,

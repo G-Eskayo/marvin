@@ -21,6 +21,8 @@ export function createApprovalRetry({ ledger, approve, viewPr, log = () => {} })
         log(`[approval-retry] ${trigger}: can't check ${entry.url} on GitHub (${err?.message || err}); left queued`)
         continue
       }
+      // marvin#940: one waiting for memory was merged by that machine's own queue when pressure dropped.
+      if (state === 'MERGED' && entry.outcome === 'waiting-memory') { ledger.conclude(entry.url, 'merged', { machine: entry.machine, reason: 'merged by itself when memory pressure dropped' }); continue }
       if (state === 'MERGED') { ledger.conclude(entry.url, 'merged-elsewhere', { reason: 'merged on GitHub while it waited' }); continue }
       if (state === 'CLOSED') { ledger.conclude(entry.url, 'closed', { reason: 'closed on GitHub while it waited' }); continue }
       tried++
@@ -32,7 +34,7 @@ export function createApprovalRetry({ ledger, approve, viewPr, log = () => {} })
         log(`[approval-retry] ${entry.url}: ${err?.message || err}`)
         continue
       }
-      if (result?.queued) break
+      if (result?.queued || result?.waitingMemory) break   // the rest would only wait the same way
     }
     return { tried }
   }

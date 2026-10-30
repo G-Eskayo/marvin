@@ -32,6 +32,7 @@ def isolated(tmp_path, monkeypatch):
     monkeypatch.setattr(mg, "STARTED_LOG", tmp_path / "logs" / "memory-guard-started.log")
     monkeypatch.delenv(mg.LEVEL_ENV, raising=False)
     monkeypatch.setenv("HELPER_TAB_QUIET", "1")
+    monkeypatch.setenv("MARVIN_TEST_SLOT_DIR", str(tmp_path / "slot"))   # merges marked here, never the machine's
     return tmp_path
 
 
@@ -308,3 +309,92 @@ def test_the_real_source_reports_a_change_to_the_queue_directory():
         assert src._q.get(timeout=5) == mg.QUEUE_CHANGED
     finally:
         src.close()
+
+
+# ── marvin#940: merges first. While a merge waits or runs, new helpers wait; nothing running is stopped ─────────────
+
+SLOT = LIB / "test_slot.py"
+
+
+@pytest.fixture
+def merge_running(tmp_path):
+    """A real merge marker (what the webhook holds for a merge's whole run), released on exit."""
+    p = subprocess.Popen([sys.executable, str(SLOT), "hold-merge"], stdin=subprocess.PIPE, stdout=subprocess.PIPE,
+                         text=True, env={**os.environ, "MARVIN_TEST_SLOT_DIR": str(tmp_path / "slot")})
+    assert p.stdout.readline().strip() == "held"
+    yield p
+    if p.poll() is None:
+        p.stdin.close()
+        p.wait(5)
+
+
+def _end(p):
+    p.stdin.close()
+    assert p.wait(5) == 0
+
+
+def test_a_helper_waits_while_a_merge_runs_even_at_normal_pressure(merge_running, never_kill, monkeypatch):
+    monkeypatch.setattr(mg, "machine_name", lambda: "Mac mini")
+    armed = []
+    r = mg.guard("Seal Speak: #60", ["true"], "/tmp", level_reader=_level("normal"), start_watcher=lambda: armed.append(1))
+    assert r["ok"] is False and r["queued"] is True and r["reason"] == "merge"
+    assert r["message"] == ("A merge is running on the Mac mini, so Seal Speak: #60 waits. Nothing was stopped. "
+                            "It starts by itself when the merge is done.")
+    assert [e["what"] for e in mg.queued()] == ["Seal Speak: #60"] and armed == [1]
+
+
+def test_a_helper_waits_while_a_merge_waits_for_memory(never_kill):
+    mg.guard("PR #238", ["true"], "/tmp", key="merge:https://github.com/o/r/pull/238", level_reader=_level("warn"),
+             start_watcher=_no_watcher)
+    r = mg.guard("helper", ["true"], "/tmp", level_reader=_level("normal"), start_watcher=_no_watcher)
+    assert r["ok"] is False and r["reason"] == "merge"
+
+
+def test_a_merge_is_never_held_back_for_another_merge(merge_running):
+    r = mg.guard("PR #2", ["true"], "/tmp", key="merge:https://github.com/o/r/pull/2", level_reader=_level("normal"),
+                 start_watcher=_no_watcher)
+    assert r["ok"] is True
+
+
+def test_a_merge_still_waits_for_memory():
+    r = mg.guard("PR #2", ["true"], "/tmp", key="merge:https://github.com/o/r/pull/2", level_reader=_level("warn"),
+                 start_watcher=_no_watcher)
+    assert r["ok"] is False and r["reason"] == "memory"
+
+
+def test_drain_starts_a_queued_merge_before_older_helpers():
+    mg.guard("helper", ["true"], "/tmp", level_reader=_level("warn"), start_watcher=_no_watcher)
+    mg.guard("PR #9", ["true"], "/tmp", key="merge:u9", level_reader=_level("warn"), start_watcher=_no_watcher)
+    started = mg.drain(level_reader=_level("normal"), start=lambda e: None)
+    assert started["what"] == "PR #9"
+    assert [e["what"] for e in mg.queued()] == ["helper"]
+
+
+def test_drain_starts_no_helper_while_a_merge_runs_and_the_merge_ending_lets_it(merge_running, never_kill):
+    mg.guard("helper", ["true"], "/tmp", level_reader=_level("warn"), start_watcher=_no_watcher)
+    assert mg.drain(level_reader=_level("normal"), start=lambda e: pytest.fail("a merge is running")) is None
+    _end(merge_running)
+    assert mg.drain(level_reader=_level("normal"), start=lambda e: None)["what"] == "helper"
+
+
+# ── marvin#940: the threshold, and forgetting a queued merge that started some other way ─────────────────────────
+
+def test_left_over_swap_alone_never_refuses(never_kill):
+    """16:46 on 2026-10-30 read warn with 2.6-3.0 GB of swap. Only the kernel's level counts; swap is for the words."""
+    r = mg.guard("PR #238", ["true"], "/tmp", key="merge:u", level_reader=_level("normal"),
+                 swap_reader=lambda: pytest.fail("swap is not read at normal"), start_watcher=_no_watcher)
+    assert r["ok"] is True
+
+
+def test_forget_removes_a_queued_merge_once():
+    mg.guard("PR #238", ["true"], "/tmp", key="merge:u238", level_reader=_level("warn"), start_watcher=_no_watcher)
+    mg.guard("helper", ["true"], "/tmp", level_reader=_level("warn"), start_watcher=_no_watcher)
+    assert mg.forget("merge:u238") is True
+    assert [e["what"] for e in mg.queued()] == ["helper"]
+    assert mg.forget("merge:u238") is False   # already gone (or started): nothing to forget
+
+
+def test_forget_on_the_command_line_prints_whether_it_was_there(tmp_path):
+    mg.guard("PR #1", ["true"], "/tmp", key="merge:u1", level_reader=_level("warn"), start_watcher=_no_watcher)
+    assert mg.main(["forget", "--key", "merge:u1"]) == 0
+    assert mg.queued() == []

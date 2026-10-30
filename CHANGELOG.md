@@ -1,5 +1,7 @@
 # Changelog
 
+- Portable scheduled jobs: launchd on the Macs, systemd timers on mac-mini-2012 (health-check, cleanup-sweep, usage-scan) ([#919](https://github.com/G-Eskayo/marvin/pull/919))
+
 - Linux box: 55 test failures from Mac-only paths, BSD stat, missing pytest-timeout, gh on PATH ([#918](https://github.com/G-Eskayo/marvin/pull/918))
 
 - Health never noticed mac-mini-2012's mirror failing for 4 days: read the box's sync state from the Mini ([#913](https://github.com/G-Eskayo/marvin/pull/913))
