@@ -313,6 +313,15 @@ def main(argv: list[str]) -> int:
         return 127
     if os.environ.get(INSIDE_ENV):
         return subprocess.call([real, *argv])
+    # Rule I2 (marvin#742): a question to the owner must be in the Decisions format. The rule is lib/decisions_check.py
+    # (fails open, like the images rule; a copy of this file with no lib/ beside it skips the rule).
+    sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "lib"))
+    try:
+        import decisions_check
+        if decisions_check.gate(argv, _say, lambda e: _log({"t": time.time(), "caller": _caller(), **e})):
+            return 1
+    except ImportError:
+        pass
     if len(argv) >= 2 and argv[0] == "pr" and argv[1] in ("create", "ready", "merge"):
         override = os.environ.get(UI_EVIDENCE_OK, "").strip()
         try:

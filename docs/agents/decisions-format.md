@@ -5,6 +5,12 @@ answer, and it can't be approved until the required ones are answered. Asking in
 "Open questions" heading, a checklist item ending in "?") is **too vague**: the dashboard shows *Too vague: needs
 options*, hides Approve, and the merge server refuses it (`DECISIONS_UNSTRUCTURED`).
 
+`bin/gh` holds the rule for every chat and agent (rule I2, ADR 0080, marvin#742): `pr create|edit|comment` and
+`issue create|edit|comment` are refused when the body has a heading that asks (`## Decisions`, `## Open questions`,
+`## Choose`, ...) but no `<!-- marvin:decisions -->` block (`DECISIONS_NOT_ASKABLE`), or a block that doesn't parse
+(`DECISIONS_UNPARSED`). A heading that only reports, like `## Decisions recorded`, is fine. If a person agrees a body
+isn't a question to the owner, `MARVIN_DECISIONS_OK="<reason>"` lets that one call through, and it is logged.
+
 Put every question the owner must answer in one **Decisions** section:
 
 ```markdown
@@ -62,5 +68,5 @@ on PR #N* (`ready-for-agent`, `owner-decisions`), flagged when the notes ask a q
 addressed or closes. It shows at the top of the dashboard's ranked attention list. Whoever acts replies on the PR with
 the marker. Code: `lib/owner_decisions.py`.
 
-Code: `dashboard/webhook-server/decisions.js` (parser, pure), `decisions_gate.js` (merge-server check),
+Code: `dashboard/webhook-server/decisions.js` (the one parser, pure; `decisions_cli.js` runs it for `lib/decisions_check.py`, the `bin/gh` rule), `decisions_gate.js` (merge-server check),
 `dashboard/electron/main/decisions_submit.js` (submit), `dashboard/src/components/Decisions.jsx` (the form).
