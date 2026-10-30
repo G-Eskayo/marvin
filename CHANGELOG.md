@@ -1,5 +1,7 @@
 # Changelog
 
+- Screenshot gate blocks every MARVIN UI PR: images in marvin-instance are looked up in marvin (UI_EVIDENCE_UNCHECKED) ([#774](https://github.com/G-Eskayo/marvin/pull/774))
+
 - Dashboard: opening an MR or doc jumps to the bottom of the page ([#759](https://github.com/G-Eskayo/marvin/pull/759))
 
 - helper-tab: start helpers in labelled, grouped WezTerm tabs (not Terminal) ([#754](https://github.com/G-Eskayo/marvin/pull/754))
