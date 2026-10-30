@@ -302,6 +302,45 @@ def ui_evidence_refusal(argv: list[str], ask, read_file=None, current_branch=Non
     return f"{code}: {message}"
 
 
+# ── marvin#954: a pull-only node holds no GitHub credential (ADR 0069) ─────────────────────────────────────────────
+
+def pull_only_node(env, platform: str, hostname: str, registry: dict) -> bool:
+    """lib/machine_profile.py pull_only(), stdlib-only: a registered device that doesn't accept untagged ("general") work
+    is pull-only; an unregistered machine is pull-only unless it is a Mac. Matched by Tailscale hostname here (the gate
+    can't read the root-only DMI UUID). MARVIN_PULL_ONLY=1/0 overrides."""
+    own = env.get("MARVIN_PULL_ONLY")
+    if own in ("0", "1"):
+        return own == "1"
+    if platform == "darwin":
+        return False
+    devices = registry.get("devices") if isinstance(registry, dict) else None
+    me = next((d for d in devices.values() if isinstance(d, dict) and d.get("tailscale_hostname") == hostname), None) \
+        if isinstance(devices, dict) else None
+    if me is None:
+        return True
+    accepts = me.get("accepts", ["general"])
+    return not isinstance(accepts, list) or "general" not in accepts
+
+
+def pull_only_refusal(argv, env, pull_only: bool, at_terminal: bool):
+    """Why this call must not reach gh, or None. Only without a token handed in for the run (vm_run's per-run push
+    credential) and never for a person at the box's own terminal. Worded so nothing maps it to "sign-in expired"."""
+    if not pull_only or at_terminal or env.get("GH_TOKEN") or env.get("GITHUB_TOKEN"):
+        return None
+    what = " ".join(a for a in argv[:2] if not a.startswith("-"))
+    return (f"this machine reads GitHub only through the Mini (ADR 0069); gh {what} was not sent. "
+            "Open PRs and boards come from the Mini's feed (marvin#954).")
+
+
+def _pull_only_here() -> bool:
+    import socket
+    try:
+        registry = json.loads((Path.home() / ".claude" / "marvin-network.json").read_text())
+    except (OSError, ValueError):
+        registry = {}
+    return pull_only_node(os.environ, sys.platform, socket.gethostname().split(".")[0], registry)
+
+
 def _current_branch() -> str:
     return subprocess.run(["git", "rev-parse", "--abbrev-ref", "HEAD"], capture_output=True, text=True).stdout.strip()
 
@@ -313,6 +352,11 @@ def main(argv: list[str]) -> int:
         return 127
     if os.environ.get(INSIDE_ENV):
         return subprocess.call([real, *argv])
+    refusal = pull_only_refusal(argv, os.environ, _pull_only_here(), sys.stdin.isatty() and sys.stderr.isatty())
+    if refusal:
+        _say(refusal)
+        _log({"t": time.time(), "caller": _caller(), "cmd": " ".join(a for a in argv[:2] if not a.startswith("-")), "rc": 1, "pull_only": True})
+        return 1
     # Rule I2 (marvin#742): a question to the owner must be in the Decisions format. The rule is lib/decisions_check.py
     # (fails open, like the images rule; a copy of this file with no lib/ beside it skips the rule).
     sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "lib"))

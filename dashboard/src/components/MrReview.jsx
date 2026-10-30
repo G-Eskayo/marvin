@@ -584,7 +584,7 @@ export function FetchBanner({ status, now = Date.now() }) {
   const b = status ? prFetchBanner(status, now) : null
   if (!b) return null
   return (
-    <div role="alert" data-tone={b.tone} className={`rounded-lg border px-4 py-3 text-sm ${b.tone === 'red' ? 'border-red-700 bg-red-950/50 text-red-200' : 'border-amber-700 bg-amber-950/40 text-amber-200'}`}>
+    <div role={b.tone === 'info' ? 'status' : 'alert'} data-tone={b.tone} className={`rounded-lg border px-4 py-3 text-sm ${b.tone === 'red' ? 'border-red-700 bg-red-950/50 text-red-200' : b.tone === 'info' ? 'border-slate-700 bg-slate-900/40 text-slate-300' : 'border-amber-700 bg-amber-950/40 text-amber-200'}`}>
       {b.text}
     </div>
   )
@@ -732,7 +732,8 @@ function OpenPrs({ nav, onOpenDocs, onOpenBoard, onOpenTicket, onCount }) {
   }
   if (prs.length === 0 && motion.shown.length === 0) {
     // #422: an empty list because GitHub couldn't be reached is not "nothing to review".
-    return fetchStatus?.errors?.length ? <div className="p-6"><FetchBanner status={fetchStatus} /></div> : <EmptyState />
+    // marvin#954: nor is an empty list on the box while the Mini isn't answering.
+    return fetchStatus?.errors?.length || (fetchStatus?.source && fetchStatus.source.state !== 'fresh') ? <div className="p-6"><FetchBanner status={fetchStatus} /></div> : <EmptyState />
   }
 
   return (

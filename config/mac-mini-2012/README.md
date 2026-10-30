@@ -19,7 +19,7 @@ and `CONTEXT.md` "Third node". Every file the box needs outside the repos is in 
 
 ## 3. Box software
 - `apt install btrfs-progs snapper grub-btrfs inotify-tools qemu-system-x86 libvirt-daemon-system virtinst virt-manager
-  libguestfs-tools cloud-image-utils nodejs npm jq`; GitHub CLI from cli.github.com's apt repo.
+  libguestfs-tools cloud-image-utils nodejs npm jq`; GitHub CLI from cli.github.com's apt repo (the host itself never signs in to GitHub: section 9).
 - Snapshots: snapper on the flat `@.snapshots` subvolume, timeline off, NUMBER_LIMIT=10; `grub-btrfs.path`.
 - VM disks on subvolume `@var@lib@libvirt@images` (nodatacow).
 - Claude Code native installer; sign in once with the subscription (`~/.claude/.credentials.json`).
@@ -72,8 +72,12 @@ entries `"accepts": ["general", "macos"]`.
   `IdentityFile ~/.ssh/marvin_observer`, `IdentitiesOnly yes`.
 - Health: `marvin-observer-feed.timer` copies the M4 Mini's `health-status.json` every 2 minutes (it covers all three
   machines) for the dashboard. The box's own health sweep (section 10) writes `health-status.local.json` beside it.
-- GitHub on the box: a fine-grained **read-only** token (Issues, Pull requests, Checks, Commit statuses, Metadata) in
-  `gh auth`. The bot's write token never lives on the box.
+- GitHub on the box (marvin#954): **no GitHub credential at all, and none is wanted.** The same timer copies the Mini's
+  `github-feed.json` (each registered repo's open PRs and board, written by the Mini's webhook server on GitHub's own
+  change pings). The dashboard reads the MR list and boards from it and says "Read from the Mini, N min ago" or "The
+  Mini isn't answering". Everything else that would need GitHub is refused in plain words by the gate (`bin/gh`), which
+  never runs gh on a pull-only node unless a run hands in its own token. Never `gh auth login` here: if the MR list is
+  stale, the fix is on the Mini (its webhook server, `~/.claude/logs/github-feed.json`), not on the box.
 
 ## 10. Scheduled jobs (marvin#911)
 - One definition per job in `config/jobs/<name>.json`; `lib/job_units.py` renders it as a launchd plist on the Macs

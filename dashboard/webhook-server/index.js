@@ -5,7 +5,7 @@ import { createServer } from 'http'
 import { mergePr, baselineFailsOnMain, mergesAhead, execWithGroupTimeout, runDiskFirstAid, memoryGuardCheck, kickMemoryGuard, sweepGateClones } from './merge.js'
 import { snapshotExec } from './pr_snapshot.js'
 import { createMergeTracker, createInflightStore, takeInterruptedMerges, recordMergeDuration, estimateMergeMs, machineLoad, approveResponder, wantsStream, createMergeLatch, alreadyMergingBody } from './merge_progress.js'
-import { resolveDeviceId, peerHosts } from '../electron/main/device_identity.js'
+import { resolveDeviceId, peerHosts, isPrimaryHost } from '../electron/main/device_identity.js'
 import { sendFeedback, dropEntirely } from './deny.js'
 import { forwardRefreshPing } from './refresh_relay.js'
 import { announceMergeHost, relayMergeHostUp } from './merge_host_announce.js'
@@ -19,7 +19,9 @@ import { appendError } from '../electron/main/error_log.js'
 import { readRebaseStatus } from './rebase_status.js'
 import { readLiveSessions } from './sessions.js'
 import { listHelpers } from './chat_helpers.js'
-import { startChangeWatch, createGithubProbe } from './gh_watch.js'
+import { startChangeWatch, createGithubProbe, startCheckWatch, createCheckProbe } from './gh_watch.js'
+import { createGithubFeedWriter } from './github_feed_writer.js'
+import { gateCooldownUntil } from '../electron/main/github_state.js'
 import { readRegistry } from '../electron/main/boards.js'
 import { execFile } from 'child_process'
 import { promisify } from 'util'
@@ -324,7 +326,29 @@ server.listen(PORT, () => {
   // helper's MARVIN takes each request that has just been escalated to it. Once now, so the cache exists at startup.
   const supportSync = createSupportSync()
   if (supportRepos().length) supportSync('startup')
+  // marvin#954: mac-mini-2012 holds no GitHub credential (ADR 0069); the primary writes what it sees for the box to
+  // copy over its read-only observer key (github_feed_writer.js). Driven by this watch, never by a timer of its own.
+  const feedOn = process.env.MARVIN_GITHUB_FEED ? process.env.MARVIN_GITHUB_FEED === '1' : isPrimaryHost()
+  const githubFeed = feedOn
+    ? createGithubFeedWriter({
+        repos: () => readRegistry().map((b) => b.repo),
+        gh: async (args) => (await promisify(execFile)('gh', args, { maxBuffer: 50 * 1024 * 1024 })).stdout,
+        host: machineId
+      })
+    : null
+  if (githubFeed) {
+    githubFeed.refreshAll().then(() => console.log('[github-feed] written for the box'))
+    // A PR's checks starting or finishing is not an issue update: watch the feed's own pending commits (ETag, free
+    // when unchanged), as the dashboard does for its list (marvin#555).
+    startCheckWatch({
+      getHeads: () => githubFeed.pendingHeads(),
+      probe: createCheckProbe(),
+      onChange: (repo) => githubFeed.refresh(repo, { prsOnly: true }),
+      skip: () => Date.now() < gateCooldownUntil()
+    })
+  }
   startChangeWatch({
+    onTick: (answered) => githubFeed?.alive(answered),
     getRepos: () => [...new Set([...readRegistry().map((b) => b.repo), ...supportRepos()])],
     probe: createGithubProbe(),
     ping: (repo) => {
@@ -334,6 +358,7 @@ server.listen(PORT, () => {
         return
       }
       console.log(`[gh-watch] change detected on ${repo} at ${new Date().toISOString()}`)
+      githubFeed?.refresh(repo)
       if (rebuildCheck(repo)) console.log(`[rebuild-check] started for ${repo}`) // #443: any merge path updates the app
       forwardRefreshPing(DASHBOARD_REFRESH_URL, (url) => postJson(url, { topics: ['activity', 'mr'], source: `github:${repo}` }))
       forwardRefreshPing(MOBILE_REFRESH_URL, postJson)

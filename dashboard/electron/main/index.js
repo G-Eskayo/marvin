@@ -101,7 +101,7 @@ const retryApprovals = (trigger) => { approvalRetry.run(trigger).catch((err) => 
 
 // A merge running here whose PR GitHub now calls merged was merged on GitHub by hand: end it as "Merged on GitHub"
 // (merge_ops.githubChanged). Asked only on a change trigger, once per merging op; nothing while no merge runs.
-const viewPrState = async (url) => JSON.parse((await execFileAsync('gh', ['pr', 'view', url, '--json', 'state'])).stdout)
+const viewPrState = async (url) => JSON.parse(await ghOut(['pr', 'view', url, '--json', 'state']))
 function checkMergedElsewhere(repo, only = null) {
   mergeOps.githubChanged(repo, viewPrState, Date.now(), only)
     .then((urls) => urls.forEach((u) => pushMergeOp(u, mergeOps.get(u))))
@@ -152,6 +152,7 @@ import { postTicketInput } from './ticket_input.js'
 import { createImageLoader, mediaFileFor } from './pr_images.js'
 import { resolveServiceDefaults, resolveDeviceId, peerHosts, primaryDeviceId } from './device_identity.js'
 import { createHelpersReader } from './chat_helpers.js'
+import { isPullOnlyNode, createFeedSource, feedOnlyGh, readNetworkRegistry } from './github_feed.js'
 
 // The pipeline's screenshot copy runs unattended beside the real dashboard: log, never show a modal (#384).
 if (isEvidenceCapture(process.env)) installCaptureGuard(process)
@@ -160,6 +161,15 @@ if (isEvidenceCapture(process.env)) installCaptureGuard(process)
 instrumentIpc(ipcMain)
 
 const execFileAsync = promisify(execFile)
+
+// marvin#954: a pull-only node (mac-mini-2012, ADR 0069) holds no GitHub credential. Its dashboard reads the open PRs
+// and boards from the Mini's feed (github_feed.js) and every other GitHub read or write here is refused in plain words,
+// so nothing on it can end in gh's login prompt. Decided once at startup: the registry changes rarely and a rebuild
+// relaunches the app.
+const pullOnly = isPullOnlyNode({ deviceId: resolveDeviceId(), registry: readNetworkRegistry() })
+const githubFeed = pullOnly ? createFeedSource() : null
+// Every `gh` this process runs, as its stdout.
+const ghOut = pullOnly ? feedOnlyGh : async (args, opts) => (await execFileAsync('gh', args, opts)).stdout
 
 adoptLoginShellPath()
 adoptSharedGhToken()
@@ -181,10 +191,7 @@ const MR_DENY_WEBHOOK_URL = process.env.MARVIN_MR_DENY_WEBHOOK_URL || `http://${
 // 0 = ephemeral (the evidence-capture copy); junk falls back to 7879.
 const DASHBOARD_REFRESH_PORT = parseRefreshPort(process.env.MARVIN_DASHBOARD_REFRESH_PORT)
 
-const ghListOpenPrs = (light) => async (repo) => {
-  const { stdout } = await execFileAsync('gh', prListArgs(repo, { light }))
-  return JSON.parse(stdout)
-}
+const ghListOpenPrs = (light) => async (repo) => JSON.parse(await ghOut(prListArgs(repo, { light })))
 
 // The dashboard's memory of GitHub (github_state.js, #318): every GitHub read below is answered from the last-known
 // state of its repo until the change watch says that repo changed, the person's own action needs fresh data, or a
@@ -214,6 +221,7 @@ function githubChanged(source) {
 // from memory unless that repo changed, so the status dot (every 2 min) and the MR list cost nothing while idle.
 // A full listing also answers a light one. `fresh` (a merge) re-reads every repo.
 async function fetchOpenPrs(light, fresh = false) {
+  if (githubFeed) return fetchOpenPrsFromMini(light)
   const perRepo = (repo) => {
     const full = () => githubState.get('prs', repo, () => ghListOpenPrs(false)(repo), { fresh })
     if (!light) return full()
@@ -244,12 +252,30 @@ async function fetchOpenPrs(light, fresh = false) {
   return prs
 }
 let prFetch = { errors: [], projects: 0, lastGoodAt: null }
+// The box (marvin#954): the same list, read from the Mini's feed copy. No GitHub call, nothing to cache or back off
+// from. A repo missing from the feed is listed as such; the Mini not answering is a status line, not this machine's
+// error, so it is logged once per change of wording instead of into the error log every 2 minutes.
+let lastFeedNote = null
+async function fetchOpenPrsFromMini(light) {
+  const repos = readRegistry().map((b) => b.repo)
+  const listed = await listOpenPrsAcrossRepos(repos, async (repo) => githubFeed.openPrs(repo, { light }), { listedAt: (repo) => githubFeed.readAt(repo) })
+  const source = githubFeed.status()
+  const note = [source.state, ...listed.errors.map((e) => e.message)].join(' | ')
+  if (note !== lastFeedNote) {
+    lastFeedNote = note
+    console.log(`[mr] ${source.text}${listed.errors.length ? ` Missing: ${listed.errors.map((e) => e.repo).join(', ')}` : ''}`)
+  }
+  const ok = !listed.errors.length && source.state === 'fresh'
+  prFetch = { errors: listed.errors, projects: repos.length, lastGoodAt: ok ? Date.now() : prFetch.lastGoodAt, source }
+  return listed.prs.map((p) => ({ ...p, checkedAt: p.listedAt || null }))
+}
 // Check watch (marvin#555, replacing #554's 90 s re-read): while a cached PR list shows checks running, ask GitHub about
 // each such commit's checks every 20 s with an ETag (a 304 is free). A real change re-reads just that repo's list and
 // tells an open MR Review to refresh. Reads only what is already in memory to decide what to watch. Started when the
 // app is ready.
 let checkWatch = null
 function startPrCheckWatch() {
+  if (pullOnly) return // the Mini watches the checks and its feed carries them (marvin#954)
   checkWatch = startCheckWatch({
     getHeads: () => githubState.peek('prs').flatMap(({ repo, value }) => pendingCheckHeads(repo, value)),
     probe: createCheckProbe(),
@@ -267,12 +293,12 @@ const listOpenPrs = ({ light = false, fresh = false } = {}) => fetchOpenPrs(ligh
 const reworkFromMemory = () => githubState.get('rework', null, () => { clearReworkCache(); return getReworkStatus() }, { safetyMs: 10 * 60_000, minIntervalMs: 5 * 60_000 })
 
 async function ghIssueView(issueNumber, repo = MARVIN_REPO) {
-  const { stdout } = await execFileAsync('gh', ['issue', 'view', String(issueNumber), '--repo', repo, '--json', 'number,title,body'])
-  return JSON.parse(stdout)
+  return JSON.parse(await ghOut(['issue', 'view', String(issueNumber), '--repo', repo, '--json', 'number,title,body']))
 }
 
 // Raw tickets + PRs per repo, shared by the board view and the relation index: from memory until that repo changes.
 function getBoardData(repo, gh) {
+  if (githubFeed) return Promise.resolve().then(() => githubFeed.board(repo))
   return githubState.get('board', repo, () => fetchBoardData(repo, gh))
 }
 
@@ -504,7 +530,7 @@ function registerActivityHandlers() {
 
   // Project boards: only repos in the registry are fetchable, so the renderer
   // can't make the main process shell out to gh for an arbitrary repo.
-  const ghJson = async (args) => (await execFileAsync('gh', args)).stdout
+  const ghJson = (args) => ghOut(args)
   const assertRegistered = (repo) => {
     if (!readRegistry().some((b) => b.repo === repo)) throw new Error(`No board registered for ${repo}`)
   }
@@ -600,7 +626,7 @@ function registerDocsHandlers() {
   // Relationships between tickets, PRs and docs, derived from their text (relations.js). Docs come from
   // local clones when there are any, else the GitHub index; the cache is dropped on the same triggers
   // that refresh the boards and docs.
-  const ghForRelations = async (args) => (await execFileAsync('gh', args, { maxBuffer: 50 * 1024 * 1024 })).stdout
+  const ghForRelations = (args) => ghOut(args, { maxBuffer: 50 * 1024 * 1024 })
   const relations = createRelationsService({
     getRepos: () => readRegistry().map((b) => b.repo),
     getBoardData: (repo) => getBoardData(repo, ghForRelations),
@@ -876,7 +902,7 @@ function registerMrReviewHandlers() {
   // the dashboard already caches (30s), so listing PRs costs no extra GitHub calls.
   const sentBackTickets = async (repos) => {
     const keys = new Set()
-    const gh = async (args) => (await execFileAsync('gh', args)).stdout
+    const gh = (args) => ghOut(args)
     for (const repo of repos) {
       try {
         const data = await getBoardData(repo, gh)
@@ -891,7 +917,7 @@ function registerMrReviewHandlers() {
   // probably a duplicate (#326).
   const closedTickets = async (repos) => {
     const keys = new Set()
-    const gh = async (args) => (await execFileAsync('gh', args)).stdout
+    const gh = (args) => ghOut(args)
     for (const repo of repos) {
       try {
         const data = await getBoardData(repo, gh)
@@ -912,7 +938,7 @@ function registerMrReviewHandlers() {
   // merge server's own record of merges and refused Approves ({fresh:true}).
   const mrHistory = createMrHistory({
     repos: () => readRegistry().map((b) => b.repo),
-    ghList: async (repo, since) => JSON.parse((await execFileAsync('gh', mergedPrArgs(repo, since))).stdout || '[]'),
+    ghList: async (repo, since) => JSON.parse((await ghOut(mergedPrArgs(repo, since))) || '[]'),
     webhookHistory: async () => {
       const res = await fetch(MR_WEBHOOK_URL.replace(/\/approve$/, '/merge-history'), { signal: AbortSignal.timeout(5000) })
       if (!res.ok) throw new Error(`merge server answered ${res.status}`)
@@ -928,7 +954,7 @@ function registerMrReviewHandlers() {
   ipcMain.handle('mr:historyDetail', async (_event, url) => {
     const repo = repoFromPrUrl(url)
     if (!repo) throw new Error('not a PR url')
-    const { stdout } = await execFileAsync('gh', ['pr', 'view', url, '--json', 'number,title,url,body,files,baseRefName,headRefName,mergeable,statusCheckRollup,state,mergedAt'])
+    const stdout = await ghOut(['pr', 'view', url, '--json', 'number,title,url,body,files,baseRefName,headRefName,mergeable,statusCheckRollup,state,mergedAt'])
     const raw = { ...JSON.parse(stdout), repo }
     const [pr] = await listPipelinePrs(async () => [raw], { canMerge: () => false, uiPathsFor: (r) => readUiPaths(r) })
     return { ...pr, readOnly: true, state: raw.state, mergedAt: raw.mergedAt || null }
@@ -948,7 +974,7 @@ function registerMrReviewHandlers() {
   // Safety net for stacked PRs whose parent merged without the post-merge move (stack_retarget.js). Reads the PR list
   // already in memory; asks GitHub only about an orphaned PR, at most every 5 minutes each.
   const stackRetarget = createStackRetarget({
-    gh: async (args) => (await execFileAsync('gh', args)).stdout,
+    gh: (args) => ghOut(args),
     onMoved: (moved) => {
       for (const m of moved) {
         console.error(`[stack-retarget] moved PR #${m.number} (${m.repo}) onto main: its parent #${m.parent} had merged`)
@@ -1176,8 +1202,8 @@ app.whenReady().then(() => {
     }
   })
   if (supportWatcher(instance.support().role) === 'app') {
-    execFileAsync('gh', ['auth', 'token'])
-      .then(({ stdout }) => String(stdout).trim())
+    ghOut(['auth', 'token'])
+      .then((stdout) => String(stdout).trim())
       .catch(() => '')
       .then((token) => startAppSupportWatch({ repos: () => instance.support().repos, token, startChangeWatch, createGithubProbe }))
   }

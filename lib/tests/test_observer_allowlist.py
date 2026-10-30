@@ -112,3 +112,60 @@ def test_every_dashboard_caller_sends_a_command_the_observer_key_allows(monkeypa
     for command in _callers(monkeypatch):
         r = run(command, home)
         assert "refused" not in r.stderr, f"observer key refuses {command!r}"
+
+
+# --- marvin#954: the box's GitHub view comes from the Mini's feed file, by name, and nothing near it ---
+
+def test_the_github_feed_is_readable_by_its_exact_name(home):
+    (home / ".claude" / "logs" / "github-feed.json").write_text('{"version": 1, "repos": {}}')
+    r = run("cat ~/.claude/logs/github-feed.json", home)
+    assert r.returncode == 0 and '"repos"' in r.stdout
+
+
+@pytest.mark.parametrize("command", [
+    "cat ~/.claude/logs/github-feed.json ~/.claude/.gh-token",
+    "cat ~/.claude/logs/github-feed.json; cat ~/.claude/.gh-token",
+    "cat ~/.claude/logs/../.gh-token",
+    "cat ~/.claude/.gh-token",
+    "cat ~/.claude/.oauth-token",
+    "cat ~/.claude/.anthropic-api-key",
+    "cat ~/.claude/logs/github-feed.json.tmp",
+    "cat ~/.claude/logs/*.json",
+])
+def test_nothing_beside_the_feed_is_readable(home, command):
+    (home / ".claude" / ".gh-token").write_text("SECRET-CANARY")
+    r = run(command, home)
+    assert r.returncode != 0 and "refused" in r.stderr and "SECRET-CANARY" not in r.stdout
+
+
+def test_the_box_copy_script_asks_only_for_listed_reads(home):
+    """marvin-observer-feed.sh's requests, as sent, are on the list (else the box silently loses a view)."""
+    import re
+    feed = (SCRIPT.parent / "marvin-observer-feed.sh").read_text()
+    names = re.findall(r"^copy ([\w.-]+\.json)", feed, re.M)
+    assert set(names) == {"health-status.json", "github-feed.json"}
+    for n in names:
+        (home / ".claude" / "logs" / n).write_text("{}")
+        assert "refused" not in run(f"cat ~/.claude/logs/{n}", home).stderr
+
+
+def test_the_box_copy_keeps_the_last_good_file_when_the_mini_sends_junk(tmp_path):
+    """Run the real copy script against a fake ssh: junk or a failed ssh never replaces a good copy."""
+    logs = tmp_path / ".claude" / "logs"
+    logs.mkdir(parents=True)
+    (logs / "github-feed.json").write_text('{"good": true}')
+    (logs / "health-status.json").write_text('{"good": true}')
+    fake = tmp_path / "bin"
+    fake.mkdir()
+    (fake / "ssh").write_text('#!/bin/sh\ncase "$*" in *github-feed*) echo \'{"repos": [trunc\' ;; *) echo \'{"new": 1}\' ;; esac\n')
+    (fake / "ssh").chmod(0o755)
+    venv = tmp_path / ".agents" / "venv" / "bin"
+    venv.mkdir(parents=True)
+    (venv / "python").symlink_to(os.path.realpath(__import__("sys").executable))
+    env = {"HOME": str(tmp_path), "PATH": f"{fake}:/usr/bin:/bin"}
+    r = subprocess.run(["/bin/bash", str(SCRIPT.parent / "marvin-observer-feed.sh")], env=env, capture_output=True, text=True, timeout=30)
+    assert r.returncode == 1 and "could not copy github-feed.json" in r.stderr
+    assert (logs / "github-feed.json").read_text() == '{"good": true}'
+    assert (logs / "health-status.json").read_text().strip() == '{"new": 1}'
+    assert oct((logs / "health-status.json").stat().st_mode & 0o777) == "0o600"
+    assert sorted(p.name for p in logs.iterdir()) == ["github-feed.json", "health-status.json"]
