@@ -32,7 +32,7 @@ const aid = async () => ({ ok: true, changed: true, detail: 'freed 300 MiB (aeri
 const ghExec = async () => ({ stdout: JSON.stringify({ baseRefName: 'main', statusCheckRollup: [] }), stderr: '' })
 let body
 try {
-  await mergePr('https://github.com/G-Eskayo/marvin/pull/600', ghExec, () => {}, () => {},
+  await mergePr('https://github.com/pat-example/marvin/pull/600', ghExec, () => {}, () => {},
     async () => ({ gate: true, headRefName: 'pipeline/x', body: '' }),
     (head, run, repo, tests, base, res, sl, progress) => rebaseAndRetest(head, run, repo, tests, base, res, sl, progress, free, aid),
     async () => {}, () => {},
@@ -43,7 +43,7 @@ try {
 console.log('refusal:', body.error)
 
 const pr = {
-  repo: 'G-Eskayo/marvin', number: 600, title: 'Pipeline: hand a stale scanner over to the next run', url: 'https://github.com/G-Eskayo/marvin/pull/600',
+  repo: 'pat-example/marvin', number: 600, title: 'Pipeline: hand a stale scanner over to the next run', url: 'https://github.com/pat-example/marvin/pull/600',
   body: 'Closes #501\n\nSmall change.', files: [{ path: 'lib/change_600.py' }], baseRefName: 'main', headRefName: 'pipeline/g-eskayo/marvin#501',
   headRefOid: '6'.repeat(40), mergeable: 'MERGEABLE',
   statusCheckRollup: [{ __typename: 'CheckRun', name: 'Dashboard unit tests', workflowName: 'CI', status: 'COMPLETED', conclusion: 'SUCCESS', startedAt: new Date(Date.now() - 600_000).toISOString(), completedAt: new Date(Date.now() - 480_000).toISOString() }]
