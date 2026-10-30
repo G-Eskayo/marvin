@@ -11,6 +11,7 @@ within the window, on a node that skill has a thread to. So each line carries:
 - ``ts``: wall-clock seconds.
 - ``tool``: the tool name (Skill, Bash, Edit, Read, Agent, ...).
 - ``session``: Claude Code's session id, when the payload has one. Pairs are only ever made inside one session.
+- ``agent``: the helper's agent id, when the call ran inside a helper (#854: the map's Work half lights that worker).
 - ``file``: the file a Read/Edit/Write/NotebookEdit touched, relative to the agents folder, only when it is inside
   that folder. A path anywhere else (a project repo, a temp worktree) is left out, so it never reaches the map.
 
@@ -18,6 +19,7 @@ Never blocks or errors the originating tool call: any failure exits silently, ma
 """
 import json
 import os
+import re
 import sys
 import time
 from pathlib import Path
@@ -29,6 +31,7 @@ ACTIVITY_PATH = Path.home() / ".agents" / "brain-map" / "activity.jsonl"
 AGENTS_DIR = Path.home() / ".agents"
 MAX_LINES = 500  # trim on write — this is a live-activity feed, not a log archive
 FILE_KEYS = ("file_path", "notebook_path")
+_AGENT_ID = re.compile(r"^[A-Za-z0-9_-]{1,64}$")  # the same shape chat_helpers.py accepts
 
 
 def _relative_file(tool_input: dict, agents_dir: Path):
@@ -61,6 +64,11 @@ def entry_for(payload: dict, agents_dir: Path, now: float):
     session = payload.get("session_id")
     if isinstance(session, str) and session:
         entry["session"] = session
+    agent = payload.get("agent_id")
+    if isinstance(agent, str):
+        agent = agent[len("agent-"):] if agent.startswith("agent-") else agent
+        if _AGENT_ID.match(agent):
+            entry["agent"] = agent
     rel = _relative_file(tool_input, agents_dir)
     if rel:
         entry["file"] = rel

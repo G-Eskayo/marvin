@@ -323,5 +323,75 @@
     "seal-icon-gen": "Makes picture ideas for the Seal app's icon, with an AI on the computer.",
     "data": "A folder of data for the network-traffic project.",
     "ex-exo": "A copy of exo, the tool that lets computers team up to run AI."
+  },
+  "body_regions": {
+    "_comment": "#854 mock-up (?layout=work): the Body half groups today's branches by the Vitals regions (marvin-instance docs/plans/health-metrics-redo-2026-10-21.md §12). Structure only: every node still comes from its live source. `place` puts a trunk, or any node by id, in a region; anything not placed goes to `default`, so a new branch is never dropped. The Projects trunk becomes the Work half and the Autonomous Agents jobs move there as workers (brain-map/scripts/work_view.py). Each colour is an existing CAT colour (`colorFrom`); a region with no colour of its own reuses the nearest one (open question on the PR).",
+    "regions": [
+      {
+        "name": "Pipeline",
+        "colorFrom": "project",
+        "brain": "Motor-like: lock, breaker, parallel dispatch"
+      },
+      {
+        "name": "GitHub",
+        "colorFrom": "research",
+        "brain": "Senses-like: budget, gate, sign-in per Mac"
+      },
+      {
+        "name": "Code & tests",
+        "colorFrom": "quality",
+        "brain": "Judgement-like: main green, dashboard and webhook builds, trigger coverage"
+      },
+      {
+        "name": "Skills & tools",
+        "colorFrom": "memory",
+        "brain": "Cortex-like: intent classifier, tool failure rate, hook errors"
+      },
+      {
+        "name": "Code sync",
+        "colorFrom": "cross-machine",
+        "brain": "Corpus-callosum-like: repo sync per Mac, peer heartbeats"
+      },
+      {
+        "name": "Producers",
+        "colorFrom": "agents",
+        "brain": "Autonomic-like: catalog, tagger, revisit agent, digests, beta ingest"
+      },
+      {
+        "name": "Energy",
+        "colorFrom": "other",
+        "brain": "Metabolism-like: usage scans, tokens"
+      },
+      {
+        "name": "Body",
+        "colorFrom": "infra",
+        "brain": "Brainstem-like: disk, headroom, jobs, placement, DesktopLive"
+      }
+    ],
+    "place": {
+      "Skills": "Skills & tools",
+      "Memory": "Skills & tools",
+      "Infrastructure": "Skills & tools",
+      "Cross-Machine Network": "Code sync",
+      "task-dispatch": "Producers",
+      "Dashboard": "Code & tests"
+    },
+    "default": "Body",
+    "replaced_by_work": [
+      "Projects",
+      "Autonomous Agents"
+    ],
+    "work_colors": {
+      "workers": {
+        "label": "Workers",
+        "brain": "Helpers, builders, spawned agents and the jobs serving a project",
+        "colorFrom": "continuity"
+      },
+      "unassigned": {
+        "label": "Unassigned",
+        "brain": "Workers whose project can't be determined",
+        "colorFrom": "other"
+      }
+    }
   }
 }

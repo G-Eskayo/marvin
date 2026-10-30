@@ -252,3 +252,41 @@ def test_the_hook_exits_0_when_the_logs_dir_cannot_be_written(tmp_path):
     (home / ".claude" / "logs").write_text("a file where the folder should be")
     p = _run_cli(home, json.dumps({"agent_id": "a1", "agent_type": "x"}), "start")
     assert p.returncode == 0 and p.stdout == ""
+
+
+# ── the map's Work half hears about it (#854) ───────────────────────────────
+
+def test_the_real_hook_tells_the_map_when_a_helper_starts_and_stops_not_on_every_event(tmp_path, monkeypatch):
+    e = env(tmp_path)
+    nudges = []
+    monkeypatch.setattr(ch, "_nudge_work", lambda: nudges.append(1))
+    monkeypatch.setattr(ch, "_jobs_dir", lambda: e["jobs"])
+    monkeypatch.setattr(ch, "_sessions_path", lambda: e["sessions"])
+    base = {"session_id": SESSION, "transcript_path": e["transcript"], "cwd": "/w"}
+    ch.handle("start", json.dumps({**base, "agent_id": "a1", "agent_type": "general-purpose"}), machine="m", now=T0)
+    assert len(nudges) == 1
+    ch.handle("launched", json.dumps({**base, "tool_response": {"agentId": "a1", "description": "x"}}), machine="m", now=T0)
+    assert len(nudges) == 1
+    ch.handle("stop", json.dumps({**base, "agent_id": "a1", "last_assistant_message": "done"}), machine="m", now=T0)
+    assert len(nudges) == 2
+
+
+def test_a_test_or_tool_passing_its_own_folder_never_tells_the_live_map(tmp_path, monkeypatch):
+    e = env(tmp_path)
+    nudges = []
+    monkeypatch.setattr(ch, "_nudge_work", lambda: nudges.append(1))
+    fire(e, "start", agent_id="a1", agent_type="general-purpose")
+    fire(e, "stop", agent_id="a1", last_assistant_message="done")
+    assert nudges == []
+
+
+def test_a_map_nudge_that_blows_up_never_breaks_the_hook(tmp_path, monkeypatch):
+    e = env(tmp_path)
+
+    def boom():
+        raise RuntimeError("no")
+    monkeypatch.setattr(ch, "_nudge_work", boom)
+    monkeypatch.setattr(ch, "_jobs_dir", lambda: e["jobs"])
+    monkeypatch.setattr(ch, "_sessions_path", lambda: e["sessions"])
+    ch.handle("start", json.dumps({"session_id": SESSION, "agent_id": "a1", "agent_type": "g"}), machine="m", now=T0)
+    assert doc(e, "a1")["runs"][-1]["status"] == "running"

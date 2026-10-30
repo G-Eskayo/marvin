@@ -343,7 +343,8 @@
     builds: { dash: [10, 3], title: "THE PIPELINE BUILDS THIS PROJECT" },
     "skill-project": { dash: [2, 2], title: "SKILL ↔ ITS PROJECT" },
     tracked: { dash: [4, 4], title: "TRACKED IN ACTIVITY TAB" },
-    documented: { dash: [8, 2], title: "DOCUMENTED (CONTEXT.md / README.md)" }
+    documented: { dash: [8, 2], title: "DOCUMENTED (CONTEXT.md / README.md)" },
+    touches: { dash: [3, 2], title: "A WORKER TOUCHED THIS PART (real traffic)" }
   };
   function synapseKind(s) { return SYNAPSE_KINDS[s.type] || SYNAPSE_KINDS.calls; }
   var SYNAPSE_COLOR = "255,176,59"; // reserved — never a categorical hue, MAGI-amber "electrical" signal
@@ -358,6 +359,34 @@
   /*__SYNAPSES_START__*/
   var synapses = [];
   /*__SYNAPSES_END__*/
+  // #854 mock-up: the Body and Work layout, generated alongside (null where it isn't, e.g. the public snapshot).
+  /*__WORK_START__*/
+  var workTree = null;
+  var workSynapses = [];
+  /*__WORK_END__*/
+
+  // ── Body and Work (#854, for review): ?layout=work, or the legend's layout row. Body is today's branches by Vitals
+  // region; Work is one node per project holding its workers (helpers, builders, spawned agents, jobs) and the files
+  // they touch. The default layout is untouched. Code layers come from today's tree by id (not embedded twice), and
+  // region/worker colours are existing palette colours (workTree.catColors names which). ──
+  var LAYOUT_WORK = /[?&]layout=work\b/.test(location.search) && !!workTree && !WALLPAPER;
+  if (LAYOUT_WORK) {
+    (function () {
+      var codeById = {};
+      (function walk(n) { if (n.code) codeById[n.id] = n.code; n.children.forEach(walk); })(tree);
+      (function walk(n) {
+        var src = n.codeFrom || n.id;
+        if (n.openable && codeById[src]) n.code = codeById[src];
+        n.children.forEach(walk);
+      })(workTree);
+      var colors = workTree.catColors || {};
+      Object.keys(colors).forEach(function (k) {
+        var c = colors[k];
+        if (!CAT[k] && CAT[c.colorFrom]) CAT[k] = { label: c.label, brain: c.brain, color: CAT[c.colorFrom].color };
+      });
+      tree = workTree; synapses = workSynapses;
+    })();
+  }
 
   // ── flatten + index ──────────────────────────────────────────────────
   var byId = {}, allNodes = [], branches = [], synapseDegree = {};
@@ -434,7 +463,15 @@
   }
 
   function layoutBranch(node, pos, dir, depth) {
-    if (node.pos) pos = { x: node.pos[0], y: node.pos[1], z: node.pos[2] };
+    if (node.pos) {
+      var placed = { x: node.pos[0], y: node.pos[1], z: node.pos[2] };
+      // Body and Work (#854): a node added live (a worker, a file it touched) grows out along the branch it hangs
+      // from as generated, not along the sphere formula's direction, which the halves layout doesn't use.
+      if (LAYOUT_WORK && node.parent && node.parent.pos) {
+        dir = vNorm({ x: placed.x - node.parent.pos[0], y: placed.y - node.parent.pos[1], z: placed.z - node.parent.pos[2] });
+      }
+      pos = placed;
+    }
     node.x = pos.x; node.y = pos.y; node.z = pos.z; node.depth = depth;
     allNodes.push(node);
     var kids = visibleChildren(node);
@@ -610,7 +647,9 @@
   function ingestEvent(ev) {
     if (typeof ev === "string") ev = { skill: ev }; // the older hosts pass only the skill id
     if (!ev || typeof ev !== "object") return false;
+    var byWorker = LAYOUT_WORK ? workerEvent(ev) : false;
     var node = resolveEventNode(ev);
+    if (!node && byWorker) return true;
     if (!node) return false;
     var now = clockNow();
     lightNode(node, now);
@@ -658,6 +697,99 @@
     return !!(failedIds[s.a] || failedIds[s.b]);
   }
 
+
+  // ── Work half, live (#854). work.json (scripts/work_view.py, rewritten when a helper or builder starts or stops)
+  // is re-read on the activity poll. A worker appears under its project (or Unassigned, never dropped), lights when it
+  // starts, is red while its state is failed, and leaves FADE after it ended. Jobs are catalogued and stay; only
+  // their state changes. A helper's own tool calls (activity lines with `agent`) light it; a file it touches becomes a
+  // leaf under it, and the link from it to the body part that owns the file lights from that traffic only. ──
+  var WORK_FADE_S = 600, FILES_PER_WORKER = 40;
+  var TRANSIENT = { helper: true, agent: true, builder: true };
+  function workHalf() { return byId["half:work"] || null; }
+  function projectNodeFor(pid) {
+    var half = workHalf();
+    if (!half) return null;
+    for (var i = 0; i < half.children.length; i++) {
+      var c = half.children[i];
+      if (pid != null && c.projectId === pid) return c;
+    }
+    return byId.Unassigned || null;
+  }
+  function workerNodes() {
+    var out = [];
+    var half = workHalf();
+    if (half) (function walk(n) { if (n.worker) out.push(n); n.children.forEach(walk); })(half);
+    return out;
+  }
+  function applyWork(doc, nowS) {
+    if (!LAYOUT_WORK || !doc || !Array.isArray(doc.workers) || !workHalf()) return false;
+    var now = clockNow();
+    nowS = typeof nowS === "number" ? nowS : Date.now() / 1000;
+    var fade = typeof doc.fade_s === "number" && doc.fade_s >= 0 ? doc.fade_s : WORK_FADE_S;
+    var seen = {}, added = [], lit = [], removed = false;
+    doc.workers.forEach(function (w) {
+      if (!w || typeof w !== "object" || typeof w.id !== "string" || !w.id || seen[w.id]) return;
+      if (typeof w.ended === "number" && nowS - w.ended > fade) return; // its time on the map is up
+      seen[w.id] = true;
+      var node = byId[w.id];
+      var state = typeof w.state === "string" ? w.state : "running";
+      if (node && !node.worker) return; // an id that is already some other part: never overwrite it
+      if (!node) {
+        var parent = projectNodeFor(w.project);
+        if (!parent) return;
+        node = { id: w.id, name: String(w.name || w.id).slice(0, 80), cat: "workers", desc: String(w.desc || ""),
+                 children: [], expandable: false, expanded: true,
+                 worker: { kind: String(w.kind || ""), state: state, agent: typeof w.agent === "string" ? w.agent : undefined } };
+        parent.children.push(node);
+        added.push(node);
+      } else {
+        if (state === "running" && node.worker.state !== "running") lit.push(node);
+        node.worker.state = state;
+        if (typeof w.desc === "string") node.desc = w.desc;
+      }
+      if (state === "failed") failedIds[w.id] = true; else delete failedIds[w.id];
+    });
+    workerNodes().forEach(function (n) {
+      if (seen[n.id] || !TRANSIENT[n.worker.kind] || !n.parent) return;
+      n.parent.children = n.parent.children.filter(function (c) { return c !== n; });
+      delete failedIds[n.id];
+      removed = true;
+    });
+    if (added.length || removed) { indexAll(); relayout(true); }
+    added.concat(lit).forEach(function (n) { lightNode(n, now); });
+    return added.length > 0 || removed;
+  }
+  window.applyWork = applyWork;
+  // An activity line from inside a helper: light the worker; a file it touched is a leaf under it, and the link to
+  // the body part that owns the file carries the traffic. True when the line named a worker on the map.
+  function workerEvent(ev) {
+    if (typeof ev.agent !== "string" || !ev.agent) return false;
+    var worker = byId["helper:" + ev.agent];
+    if (!worker || !worker.worker) return false;
+    var now = clockNow();
+    lightNode(worker, now);
+    var f = normFile(ev.file);
+    if (!f) return true;
+    var leafId = "file:" + ev.agent + ":" + f, leaf = byId[leafId];
+    if (!leaf) {
+      leaf = { id: leafId, name: f.split("/").pop(), cat: "workers", desc: f, children: [], expandable: false, expanded: true, fileLeaf: true };
+      worker.children.push(leaf);
+      if (worker.children.length > FILES_PER_WORKER) worker.children.shift(); // the oldest file leaf goes first
+      indexAll(); relayout(true);
+    }
+    lightNode(leaf, now);
+    var owner = ownerOfFile(f);
+    if (owner) {
+      var k = pairKey(worker.id, owner.id);
+      if (!(synByPair[k] || []).some(function (s) { return s.type === "touches"; })) {
+        var s = { a: worker.id, b: owner.id, type: "touches", label: "touched " + f };
+        synapses.push(s); (synByPair[k] = synByPair[k] || []).push(s);
+        synapseDegree[s.a] = (synapseDegree[s.a] || 0) + 1; synapseDegree[s.b] = (synapseDegree[s.b] || 0) + 1;
+      }
+      traffic(worker, owner, now);
+    }
+    return true;
+  }
 
   // Shared by the demo channel AND live device-liveness below — one node
   // add/remove path instead of two near-duplicates.
@@ -947,6 +1079,13 @@
       .then(function (r) { return r.ok ? r.text() : ""; })
       .then(function (text) { ingestLines(text); })
       .catch(function () { /* file may not exist yet: fine, just no activity so far */ });
+    // #854: the Work half's workers ride the same tick (no second timer)
+    if (LAYOUT_WORK) {
+      fetch("./work.json?_=" + Date.now())
+        .then(function (r) { return r.ok ? r.json() : null; })
+        .then(function (doc) { if (doc) applyWork(doc); })
+        .catch(function () { /* not written yet: the generated workers stand */ });
+    }
   }
   // In wallpaper mode DesktopLive pushes activity via evaluateJavaScript
   // instead (see triggerActivity above) — polling here too would risk a
@@ -1004,6 +1143,25 @@
       row.addEventListener("click", function () { activeCats[k] = !activeCats[k]; renderLegend(); });
       legendEl.appendChild(row);
     });
+    // #854: the layout switch, only where the Body and Work layout was generated (not the public snapshot).
+    if (workTree) {
+      var lay = document.createElement("div");
+      lay.className = "row";
+      lay.id = "layout-toggle";
+      var layLabel = document.createElement("div");
+      layLabel.className = "label";
+      layLabel.textContent = "layout";
+      var layState = document.createElement("div");
+      layState.className = "count mono";
+      layState.textContent = LAYOUT_WORK ? "body & work" : "today";
+      lay.appendChild(layLabel); lay.appendChild(layState);
+      lay.addEventListener("click", function () {
+        var q = location.search.replace(/^\?/, "").split("&").filter(function (x) { return x && !/^layout=/.test(x); });
+        if (!LAYOUT_WORK) q.push("layout=work");
+        location.search = q.length ? "?" + q.join("&") : "";
+      });
+      legendEl.appendChild(lay);
+    }
     // Auto-rotate (#843): a toggle, off unless turned on.
     var rot = document.createElement("div");
     rot.className = "row" + (autoRotate ? "" : " off");
@@ -1733,6 +1891,15 @@
     legendNote: function () { var el = document.getElementById("pulse-scale"); return el && el.classList.contains("show") ? el.textContent : ""; },
     tray: function () { return { count: trayItems.length, visible: trayEl.classList.contains("show"), text: trayToggle.textContent }; },
     ingestLines: ingestLines,
+    // #854
+    layout: function () { return LAYOUT_WORK ? "work" : "today"; },
+    applyWork: applyWork,
+    rootChildren: function () { return tree.children.map(function (c) { return { id: c.id, name: c.name || c.id }; }); },
+    childrenOf: function (id) { return byId[id] ? byId[id].children.map(function (c) { return { id: c.id, name: c.name || c.id, cat: c.cat }; }) : null; },
+    workProjects: function () { var h = workHalf(); return h ? h.children.map(function (c) { return { id: c.id, projectId: c.projectId }; }) : []; },
+    workers: function () { return workerNodes().map(function (n) { return { id: n.id, parent: n.parent && n.parent.id, kind: n.worker.kind, state: n.worker.state }; }); },
+    has: function (id) { return !!byId[id]; },
+    legendRows: function () { return Array.prototype.map.call(legendEl.querySelectorAll(".row"), function (r) { return r.textContent; }); },
     // a node whose code has a source file holding at least two code nodes (a file and its functions)
     codeOwnerWithFile: function () {
       for (var id in byId) {
