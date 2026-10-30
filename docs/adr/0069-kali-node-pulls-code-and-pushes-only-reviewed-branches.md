@@ -71,3 +71,30 @@ Point 6's "fail loudly, never fall back" now has one exception, for **`test` and
 **`security` and `quarantine` work keeps "fail loudly, never fall back".** A Mac must never run untrusted code. So
 does every other tag. The allow-list is `FALLBACK_NEEDS` in `lib/task_dispatch.py`; adding a tag to it is an amendment
 to this ADR.
+
+## Amendment 2 (2026-10-30): ticket builds on the box, one at a time, each in a fresh VM
+
+Approved by Gil on 2026-10-30; built in marvin #949 (#950 image, #951 dispatch, #952 trust). Points 2, 3, 5 and 6 made
+concrete for ticket builds:
+
+- **The image.** `marvin-build` is a frozen golden image made from `marvin-test` by
+  `config/mac-mini-2012/build-builder-image.sh`, as the box's user (no sudo), so it lives in `runs/golden/`, not root's
+  `golden/`. It holds the tools and the venv and no credential; the provisioning refuses to freeze one that does.
+- **Who builds.** The Mac that runs the scheduler claims the ticket as `claimed:mac-mini-2012` and runs
+  `lib/box_build.py`. It hands the box the bot's token and a Claude login (the plan's token; the API key only for a
+  build beyond the box's plan slots, the `builder_auth.sh` rule) on ssh's stdin. The box clones a VM, the VM runs
+  run_ticket's build half and pushes the branch and PR as the bot, and the VM is destroyed whatever happens. The Mac
+  settles the outcome with run_ticket's settle half, as for any run. The box host never builds a ticket itself, and a box
+  build never falls back to it.
+- **What goes there.** A ticket goes to the box only when its project opted in (`"linux_ok": true` in its profile), the
+  ticket is labelled `linux-ok`, nothing in its labels, title or body names a macOS thing (Swift, Xcode, launchd, the
+  dashboard, ...), and the box's registry entry accepts the `box-build` tag. Otherwise it goes to the Macs as before.
+- **One at a time.** `config/dispatch.json` `box_builds.slots` (0 or 1, enforced by `dispatch_concurrency`), and a lock
+  on the box so two dispatchers can't both get in. The box refuses a build when the VM's memory plus `reserve_mb`
+  isn't available or VM disk space is under `guards.min_disk_gb`; box test and trial work keep queuing as before.
+- **Failure.** A refusal (busy, memory, disk, no image, token rejected) gives the claim back with no strike. A hang, a
+  crash or the box dropping off is the box's failure, not the ticket's: no strike, a retry with backoff, and it feeds
+  the failure breaker. Both rest the box lane for a while (`box-lane.json`) so a broken box can't fail every ticket.
+  `vm_run.py sweep` removes any VM or disk a killed run left.
+- **Trust.** Box PRs are labelled `from-box` (information only) and are authored by the bot, whose own trust ramp
+  (ADR 0064, `trust_ramp.record_author`) keeps them waiting for Gil until 5 clean approvals.

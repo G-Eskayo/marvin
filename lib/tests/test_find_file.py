@@ -7,6 +7,8 @@ import subprocess
 import sys
 from pathlib import Path
 
+import pytest
+
 ORGANIZE = Path.home() / ".claude" / "organize"
 sys.path.insert(0, str(ORGANIZE))
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
@@ -15,7 +17,9 @@ import tool_requirements  # noqa: E402
 # The code under test lives outside this repo, in the owner's ~/.claude (#826: a machine without it is infra).
 tool_requirements.require_path(ORGANIZE / "find_file.py", "find_file.py lives in ~/.claude/organize, not in this repo")
 
-import find_file as ff  # noqa: E402
+# The tool lives in the private ~/.claude, not in this repo. A machine without it (a box build VM gets no ~/.claude,
+# ADR 0069 amendment 2) skips these tests instead of failing the whole suite's collection (found live, marvin #951).
+ff = pytest.importorskip("find_file", reason="~/.claude/organize/find_file.py isn't on this machine")
 
 HOME = Path.home()
 

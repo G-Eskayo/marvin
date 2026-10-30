@@ -107,6 +107,8 @@ def _scan_lock(path: Path | None = None, timeout_s: float | None = None):
 
 
 def _label_for_device(device_id: str) -> str:
+    if device_id == "mac-mini-2012":
+        return "mac-mini-2012"   # box builds (lib/box_build.py): never mistaken for the M4 Mini's claim
     return "mac-mini" if device_id.startswith("mac-mini") else "macbook-pro"
 
 
@@ -1019,6 +1021,12 @@ def _dispatch_one(repo, ticket, ready_total, step, summary, fail, dry_run, setti
         return "backoff"
     step("Scanning tickets", f"{ready_total} ready; next is {where}#{issue_number} {ticket['title']}")
 
+    box_ok, box_why = _box_route(repo, ticket, settings)
+    if box_ok:
+        return _dispatch_to_box(repo, ticket, step, summary, fail, dry_run)
+    if box_why and box_why.startswith(f"#{issue_number} "):
+        print(f"{LOG_PREFIX} {where}#{issue_number}: not a box build: {box_why}", file=sys.stderr)
+
     profile = pp.load_profile(repo) if other else None
     step("Choosing a machine")
     mine = len(refusals)
@@ -1071,6 +1079,41 @@ def _dispatch_one(repo, ticket, ready_total, step, summary, fail, dry_run, setti
     _release(issue_number, claim_label, repo, run_id) if other else _release(issue_number, claim_label, REPO, run_id)
     fail(f"dispatch of {where}#{issue_number} to {device_id} failed: {result.error}")
     return "failed"
+
+
+def _box_route(repo: str, ticket: dict, settings: dict) -> tuple[bool, str | None]:
+    """Should this ticket be built in a VM on mac-mini-2012 (lib/box_build.py, marvin #951)? Any error means no."""
+    try:
+        import box_build
+        return box_build.routes(repo, ticket, settings or {})
+    except Exception as exc:  # noqa: BLE001 -- the box lane is extra: it must never stop the Macs' dispatch
+        return False, f"box routing failed: {exc}"
+
+
+def _dispatch_to_box(repo, ticket, step, summary, fail, dry_run) -> str:
+    """Claim the ticket as claimed:mac-mini-2012 and start the Mac-side box runner, which settles it when it ends."""
+    import box_build
+    issue_number = ticket["number"]
+    other = repo != REPO
+    where = f"{repo.split('/')[-1]} " if other else ""
+    step("Choosing a machine", f"{box_build.BOX} (a disposable VM)")
+    if dry_run:
+        print(f"{LOG_PREFIX} [dry-run] would claim {where}#{issue_number} ({ticket['title']}) and build it in a VM on "
+              f"{box_build.BOX} as claimed:{box_build.CLAIM_LABEL}", file=sys.stderr)
+        return "started"
+    run_id = uuid.uuid4().hex[:12]
+    step("Claiming ticket", f"{where}#{issue_number} {ticket['title']}")
+    if not _claim(issue_number, box_build.CLAIM_LABEL, title=ticket["title"], run_id=run_id, repo=repo):
+        fail(f"could not claim {where}#{issue_number}")
+        return "failed"
+    step("Dispatching", f"to {box_build.BOX} (VM)")
+    if not box_build.start(f"{repo}#{issue_number}", run_id):
+        _release(issue_number, box_build.CLAIM_LABEL, repo, run_id)
+        fail(f"box build of {where}#{issue_number} could not start")
+        return "failed"
+    print(f"{LOG_PREFIX} dispatched {where}#{issue_number} to a VM on {box_build.BOX}", file=sys.stderr)
+    summary(f"dispatched {where}#{issue_number} {ticket['title']} to a VM on {box_build.BOX}")
+    return "started"
 
 
 if __name__ == "__main__":
