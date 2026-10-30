@@ -88,6 +88,31 @@ jobs:
         working-directory: dashboard
       - run: .github/run-check.sh dashboard
 
+  main-red:
+    # After every merge to main (the full suite: no MARVIN_BASE on a push), open the fix-forward ticket if a check
+    # failed, or close it once main is green again (lib/main_red.py, #826). PRs never run this.
+    name: Main health ticket
+    if: always() && github.event_name == 'push'
+    needs: [rules, python-tests, dashboard-tests]
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      issues: write
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - run: python -m pip install PyYAML==6.0.3
+      - name: Report main's state
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RESULTS: ${{ toJSON(needs) }}
+        run: >-
+          python lib/main_red.py report --sha "$GITHUB_SHA"
+          --run "$GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID" --results "$RESULTS"
+
   secret-scan:
     # ADR 0071: the server-side gate. Scans only the commits this PR or push adds, with gitleaks and with the same
     # bin/pre-push-guard every clone runs locally (shared patterns; personal ones never leave their owner's machine).
