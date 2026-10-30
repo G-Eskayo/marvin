@@ -162,3 +162,6 @@ export function assertActsHere(pullOnly) {
   if (pullOnly) throw Object.assign(new Error(PULL_ONLY_ACTION), { code: 'PULL_ONLY' })
 }
 export const canMergeHere = (pullOnly, allowed) => !pullOnly && !!allowed
+// What a card shows in place of Approve on the box, instead of "this project's profile hasn't opted in".
+export const PULL_ONLY_CARD = 'Approve and Deny happen on a Mac: this machine shows what the Mini sees.'
+export const withReadOnlyReason = (prs, pullOnly) => (pullOnly && Array.isArray(prs) ? prs.map((p) => ({ ...p, readOnlyReason: PULL_ONLY_CARD })) : prs)

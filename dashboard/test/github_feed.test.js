@@ -201,3 +201,18 @@ describe('the box never acts on the PRs it shows (marvin#954)', () => {
     expect((src.match(/canMerge: \(repo\) => canMergeHere\(pullOnly,/g) || []).length).toBe(2)
   })
 })
+
+describe('box cards say why there is no Approve', () => {
+  it('every PR on a pull-only node carries the reason; a Mac list is untouched', async () => {
+    const { withReadOnlyReason, PULL_ONLY_CARD } = await import('../electron/main/github_feed.js')
+    const prs = [{ number: 1 }, { number: 2 }]
+    expect(withReadOnlyReason(prs, true).every((p) => p.readOnlyReason === PULL_ONLY_CARD)).toBe(true)
+    expect(withReadOnlyReason(prs, false)).toBe(prs)
+    expect(withReadOnlyReason(null, true)).toBeNull()
+  })
+  it('the stack safety net (which edits PRs) never runs on the box', async () => {
+    const { readFileSync } = await import('fs')
+    const src = readFileSync(new URL('../electron/main/index.js', import.meta.url), 'utf-8')
+    expect(src).toMatch(/if \(!fixturePrs && !pullOnly\) listOpenPrs\(\)\.then\(\(prs\) => stackRetarget\.check\(prs\)\)/)
+  })
+})
