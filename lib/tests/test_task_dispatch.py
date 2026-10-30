@@ -1,3 +1,5 @@
+import pytest
+
 import task_dispatch as td
 
 
@@ -53,3 +55,45 @@ def test_the_wrapper_really_marks_busy_and_idle_under_the_running_home(tmp_path)
                          capture_output=True, text=True).stdout
     assert '"busy": true' in out
     assert '"busy": false' in (tmp_path / ".claude" / "dispatch-state.json").read_text()
+
+
+# ── memory guard (marvin#845) ────────────────────────────────────────────────────────────────────────────────
+
+def _local(monkeypatch):
+    monkeypatch.setattr(td, "select_machine", lambda target=None, need=None: ("mac-mini-1", {"is_self": True}))
+    monkeypatch.setattr(td, "_run_local", lambda *a, **k: pytest.fail("nothing may start under memory pressure"))
+
+
+def test_local_work_under_memory_pressure_is_refused_with_the_plain_message(monkeypatch):
+    import memory_guard
+    _local(monkeypatch)
+    seen = []
+    monkeypatch.setattr(memory_guard, "guard", lambda what, argv, cwd, **k: seen.append(argv) or
+                        {"ok": False, "queued": bool(argv), "message": f"The Mac mini's memory is under pressure, so {what} waits."})
+    r = td.dispatch("make build", task_label="ticket #845: guard")
+    assert r.ok is False and r.waiting is False and "so ticket #845: guard waits" in r.error
+    assert seen == [None], "a caller that didn't hand over a command to re-run gets a refusal, nothing queued"
+
+
+def test_async_work_hands_over_its_rerun_and_is_reported_waiting(monkeypatch):
+    import memory_guard
+    _local(monkeypatch)
+    seen = []
+    monkeypatch.setattr(memory_guard, "guard", lambda what, argv, cwd, **k: seen.append(argv) or
+                        {"ok": False, "queued": True, "message": "waits"})
+    r = td.dispatch("make build", mode="async", queue_argv=["python", "task_dispatch.py", "make build", "--async"])
+    assert r.ok is False and r.waiting is True and seen == [["python", "task_dispatch.py", "make build", "--async"]]
+
+
+def test_work_sent_to_another_mac_is_not_checked_against_this_macs_memory(monkeypatch):
+    import memory_guard
+    monkeypatch.setattr(td, "select_machine", lambda target=None, need=None: ("macbook-pro-1", {"is_self": False, "tailscale_hostname": "mbp"}))
+    monkeypatch.setattr(memory_guard, "guard", lambda *a, **k: pytest.fail("not this Mac's memory"))
+    monkeypatch.setattr(td, "_run_remote", lambda *a, **k: td.DispatchResult(ok=True, device_id="macbook-pro-1"))
+    assert td.dispatch("true").ok is True
+
+
+def test_a_finished_task_starts_the_next_one_queued_for_memory():
+    script = td._build_wrapper_script("echo hi", "task123", "my task", "mac-mini-1")
+    trap = script[script.index("trap "):script.index("' EXIT")]
+    assert '"$HOME/.agents/lib/memory_guard.py" kick' in trap

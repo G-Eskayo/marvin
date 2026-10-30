@@ -1007,7 +1007,7 @@ def _scan(run, dry_run: bool) -> str | None:
 
 
 def _dispatch_one(repo, ticket, ready_total, step, summary, fail, dry_run, settings, taken, local_base, refusals) -> str:
-    """Claim one ticket and dispatch it. Returns "started", "backoff", "no-machine" or "failed"."""
+    """Claim one ticket and dispatch it. Returns "started", "backoff", "no-machine", "memory" or "failed"."""
     other = repo != REPO
     issue_number = ticket["number"]
     where = f"{repo.split('/')[-1]} " if other else ""
@@ -1028,6 +1028,17 @@ def _dispatch_one(repo, ticket, ready_total, step, summary, fail, dry_run, setti
         summary(f"{where}#{issue_number} {ticket['title']} is ready but no suitable machine is available")
         return "no-machine"
     device_id, _info = selected
+    if _info.get("is_self"):
+        # marvin#845: before the claim, so a ticket that waits for memory stays unclaimed and ready. The queued item is
+        # this scan, run again when macOS reports pressure back at normal; nothing running is stopped.
+        import memory_guard
+        held = memory_guard.guard(f"{where}#{issue_number}", None if dry_run else [sys.executable, str(Path(__file__).resolve())],
+                                  str(Path(__file__).resolve().parents[1]), key="ticket-pipeline")
+        if not held["ok"]:
+            print(f"{LOG_PREFIX} {held['message']}", file=sys.stderr)
+            step("Choosing a machine", held["message"])
+            summary(held["message"])
+            return "memory"
     claim_label = _label_for_device(device_id)
     step("Choosing a machine", device_id)
 

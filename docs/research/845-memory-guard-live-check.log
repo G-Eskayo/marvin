@@ -1,0 +1,48 @@
+# marvin#845 memory guard: live checks on the Mac mini, 2026-10-29 (MDT)
+# Load: memory_pressure -l warn (allocates only until the warn note, then held; stopped by the script, max 120 s).
+
+23:35:32 === live check start; level=1 (Pages free:                                    31537.)
+23:35:32 1. normal pressure: check
+23:35:32    rc=0
+23:35:32 2. starting bounded load (memory_pressure -l warn)
+23:35:55    level=2 after 23s (swap: total = 3072.00M  used = 1783.56M  free = 1288.44M  (encrypted))
+23:35:55 3. warn: check with a queued command
+The Mac mini's memory is under pressure, so #845 live B waits. Nothing was stopped to make room. Pressure: warn, 1.7 GB of swap in use. It starts by itself when pressure drops.
+{"ok": false, "level": "warn", "queued": true, "message": "The Mac mini's memory is under pressure, so #845 live B waits. Nothing was stopped to make room. Pressure: warn, 1.7 GB of swap in use. It starts by itself when pressure drops."}
+23:35:55    rc=3
+23:35:57    queue: 1 item(s); watcher: 7180 
+23:35:57 4. stopping the load (our own child, pid 6936)
+23:36:57    level=1; queued command started at: NOT STARTED
+23:36:58    queue now: 1 item(s); watcher: 7180 
+23:36:58 5. of 11 claude/node/helper processes running before, ended during the check: 0
+23:36:58    guard log:
+{"ts": "2026-10-30T05:35:55.232756+00:00", "event": "refused", "what": "#845 live B", "level": "warn", "swap_used": 1870198210, "queued": true, "new": true}
+{"ts": "2026-10-30T05:35:55.259812+00:00", "event": "watching", "waiting": 1}
+23:36:58 === end
+23:45:22 === live check 2 (helper-tab end to end); level=1; queue=0
+23:45:22 1. normal: helper-tab 'mg845 A'
+23:45:22    rc=0
+23:45:22 2. bounded load
+23:45:49    level=2 after 27s
+23:45:49 3. warn: helper-tab 'mg845 B'
+helper-tab: The Mac mini's memory is under pressure, so test-845: mg845 B waits. Nothing was stopped to make room. Pressure: warn, 1.7 GB of swap in use. It starts by itself when pressure drops.
+23:45:49    rc=3
+23:45:51    queue=1; watcher: 21967 
+23:45:51 4. stop the load (own child 21507)
+23:45:51    level=1; B started yet: no
+23:45:51 5. a helper finishing is the trigger: helper-tab 'mg845 C' (true)
+23:45:51    rc=0
+23:45:52    B started at: 23:45:52
+23:45:55    queue=0; watcher: 
+23:45:55 6. of 6 claude/node/helper/WezTerm processes running before, ended: 0
+23:45:55    guard log:
+{"ts": "2026-10-30T05:35:55.232756+00:00", "event": "refused", "what": "#845 live B", "level": "warn", "swap_used": 1870198210, "queued": true, "new": true}
+{"ts": "2026-10-30T05:35:55.259812+00:00", "event": "watching", "waiting": 1}
+{"ts": "2026-10-30T05:43:24.793444+00:00", "event": "started", "what": "#845 live B", "level": "normal", "waited_since": "2026-10-30T05:35:55.231416+00:00"}
+{"ts": "2026-10-30T05:45:49.258420+00:00", "event": "refused", "what": "test-845: mg845 B", "level": "warn", "swap_used": 1870198210, "queued": true, "new": true}
+{"ts": "2026-10-30T05:45:49.286559+00:00", "event": "watching", "waiting": 1}
+{"ts": "2026-10-30T05:45:51.718382+00:00", "event": "started", "what": "test-845: mg845 B", "level": "normal", "waited_since": "2026-10-30T05:45:49.257072+00:00"}
+23:45:55 === end
+
+# Probes: a DISPATCH_SOURCE_TYPE_MEMORYPRESSURE listener (Python ctypes; Swift DispatchSource; Swift under launchd)
+# received no event during three warn episodes (3 s, 15 s and 40 s held). Swift probe: /tmp/mg845/mp.swift, reproduced in PR.
