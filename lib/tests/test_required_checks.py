@@ -213,10 +213,15 @@ def test_a_check_the_pr_does_not_affect_passes_the_gate_whatever_its_parser(tmp_
     assert r["ok"] and r["kind"] == "passed", r
 
 
-def test_ci_runs_the_python_suite_in_parallel_as_the_gate_does():
-    # Serial on GitHub's 3-core macOS runner the full suite passed its 40-minute limit at 86% (2026-10-30).
+def test_ci_runs_the_python_suite_in_parallel_without_leaking_it_into_nested_pytest_runs():
+    # Serial on GitHub's 3-core macOS runner the full suite passed its 40-minute limit at 86% (2026-10-30). Parallel
+    # comes from lib/affected_tests.py's own command line: PYTEST_ADDOPTS also reached the pytest runs tests start
+    # themselves (test_auto_merge_regression) and changed their exit codes.
     job = _jobs(ROOT)["python-tests"]
-    assert "-n auto" in job["env"]["PYTEST_ADDOPTS"] and job["timeout-minutes"] >= 60
+    assert "PYTEST_ADDOPTS" not in job.get("env", {}) and job["timeout-minutes"] >= 60
+    import affected_tests
+    argv, env = affected_tests.plan(ROOT, None, parallel=["-n", "auto"])
+    assert argv[-2:] == ["-n", "auto"] and "PYTEST_ADDOPTS" not in {k for k in env if env[k] != os.environ.get(k)}
 
 
 def test_ci_sets_the_runner_up_as_a_clean_marvin_machine_before_the_python_checks():
