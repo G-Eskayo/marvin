@@ -93,10 +93,10 @@ describe('the gate reports each stage in order', () => {
     mkdirSync(path.join(cwd, 'dashboard', 'test'), { recursive: true })
     for (const f of ['a.test.js', 'b.test.jsx']) writeFileSync(path.join(cwd, 'dashboard', 'test', f), '')
     await _defaultRunTests(cwd, exec, progress, async () => ['-n', 'auto'])
-    expect(exec.mock.calls.map(([c, a]) => a[0] === 'install' ? 'npm install' : a.join(' '))).toEqual(['npm install', '.github/run-check.sh rules', '.github/run-check.sh python', '.github/run-check.sh dashboard'])
+    expect(exec.mock.calls.filter(([, a]) => !a.includes('--affected')).map(([c, a]) => a[0] === 'install' ? 'npm install' : a.join(' '))).toEqual(['npm install', '.github/run-check.sh rules', '.github/run-check.sh python', '.github/run-check.sh dashboard'])
     const counts = events.filter(([s, st]) => s === 'tests' && st === 'running').map((e) => e[2])
     expect(counts).toEqual(['Rules', 'Python', 'Python', 'Python', 'Dashboard', 'Dashboard', 'Dashboard'])
-    expect(exec.mock.calls.every(([, , o]) => typeof o.onOutput === 'function')).toBe(true)
+    expect(exec.mock.calls.filter(([, a]) => !a.includes('--affected')).every(([, , o]) => typeof o.onOutput === 'function')).toBe(true)
   })
 })
 
@@ -494,7 +494,7 @@ describe('the gate runs the Python suite in parallel when it can', () => {
       await _defaultRunTests(path.join(home, 'scratch'), exec, (s, st, e) => events.push([s, st, e?.detail]), async () => args)
       // #826: pytest's parallel args reach it through PYTEST_ADDOPTS, since the runner, not the gate, starts pytest.
       expect(calls.find(([a]) => a.includes('python'))[1].PYTEST_ADDOPTS || '').toBe(args.join(' '))
-      expect(calls.find(([a]) => a.includes('dashboard'))[1].PYTEST_ADDOPTS).toBeUndefined()
+      expect(calls.find(([a]) => a.includes('dashboard') && !a.includes('--affected'))[1].PYTEST_ADDOPTS).toBeUndefined()
       expect(events.some(([s, st, d]) => s === 'tests' && st === 'running' && d === detail)).toBe(true)
     }
   })

@@ -8,6 +8,8 @@
    on the Mini made about 1,000 real gh calls an hour while PRs were being approved, on the one allowance both Macs and
    the dashboard share (found 2026-10-08). A `gh` that refuses everything comes first on PATH for every test; tests
    that need gh behaviour mock it.
+3. Only the selected tests are collected when $MARVIN_SELECTED_TESTS names a file (marvin#826, lib/affected_tests.py):
+   a PR runs what its change can affect, and files it can't are never imported.
 """
 import atexit
 import os
@@ -40,6 +42,22 @@ os.environ["HOME"] = str(TEST_HOME)
 atexit.register(shutil.rmtree, TEST_HOME, True)  # removes the links, never what they point to
 WRITE_GUARD = real_home_guard.install_write_guard(real_home_guard.protected_roots(REAL_HOME),
                                                   resolve_under=(str(TEST_HOME / ".claude"),))
+
+
+_ROOT = Path(__file__).resolve().parent
+_selected: set[str] | None = None
+
+
+def pytest_ignore_collect(collection_path, config):
+    """Only the files lib/affected_tests.py selected for this change, when it selected (marvin#826)."""
+    global _selected
+    listing = os.environ.get("MARVIN_SELECTED_TESTS")
+    name = collection_path.name
+    if not listing or collection_path.suffix != ".py" or not (name.startswith("test_") or name.endswith("_test.py")):
+        return None
+    if _selected is None:
+        _selected = {str((_ROOT / p).resolve()) for p in Path(listing).read_text().split()}
+    return None if str(collection_path.resolve()) in _selected else True
 
 
 @pytest.hookimpl(hookwrapper=True)

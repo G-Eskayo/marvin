@@ -1,5 +1,5 @@
 {
-  "_readme": "This repo's required checks (marvin#826). GitHub CI runs each one as a job with this exact name, the merge gate runs the same ones through .github/run-check.sh, and branch protection on main requires these names. Format and rules: lib/required_checks.py. Check CI matches: venv/bin/python lib/required_checks.py drift",
+  "_readme": "This repo's required checks (marvin#826). GitHub CI runs each one as a job with this exact name, the merge gate runs the same ones through .github/run-check.sh, and branch protection on main requires these names. Format and rules: lib/required_checks.py. A check with \"paths\" runs only when the change touches one (globs, * crosses /); with $MARVIN_BASE unset (main after a merge) every check runs. Check CI matches: venv/bin/python lib/required_checks.py drift",
   "checks": [
     {
       "id": "rules",
@@ -22,9 +22,7 @@
       "cwd": ".",
       "command": [
         "python",
-        "-m",
-        "pytest",
-        "-q"
+        "lib/affected_tests.py"
       ],
       "parser": "pytest",
       "requires": [
@@ -47,7 +45,10 @@
         "node",
         "npm"
       ],
-      "timeout_s": 1200
+      "timeout_s": 1200,
+      "paths": [
+        "dashboard/*"
+      ]
     },
     {
       "id": "secret-scan",

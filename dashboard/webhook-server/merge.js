@@ -199,8 +199,16 @@ export function gateChecks(cwd) {
 // What the progress line calls a check: the runners' own words where the stage UI already used them.
 const CHECK_DETAIL = { pytest: 'Python', vitest: 'Dashboard' }
 
-export async function _defaultRunTests(cwd, exec, progress = noProgress, parallelArgs = pytestParallelArgs, cache = nodeModulesCache) {
+// base: the branch the PR is tested against. Each check then runs only what the PR's change can affect (marvin#826:
+// run-check.sh skips a check none of whose paths changed; lib/affected_tests.py picks the Python tests). No base runs
+// everything.
+export async function _defaultRunTests(cwd, exec, progress = noProgress, parallelArgs = pytestParallelArgs, cache = nodeModulesCache, base = null) {
   const checks = gateChecks(cwd)
+  // `python` in a check is the venv's interpreter: its bin goes first on PATH.
+  const PATH = [path.dirname(VENV_PYTHON), process.env.PATH].filter(Boolean).join(path.delimiter)
+  const baseEnv = { ...process.env, PATH, MARVIN_MERGE_GATE: '1' }
+  if (base) baseEnv.MARVIN_BASE = `origin/${base}`
+  else delete baseEnv.MARVIN_BASE
   // Each output chunk is a heartbeat for the gate's time limit; the parsers turn the runners' own lines into counts.
   const watch = (runner, label, totalFiles = 0) => {
     const parse = createCountParser(runner, { totalFiles, onCount: (count) => progress('tests', 'running', { detail: label, count }) })
@@ -209,6 +217,10 @@ export async function _defaultRunTests(cwd, exec, progress = noProgress, paralle
   // Installs first (marvin#568), so the stages read in order: Installing, then Tests.
   progress('installing', 'running')
   for (const c of checks.filter((c) => c.install === 'npm')) {
+    // Nothing to install for a check this PR doesn't affect (a Python-only PR skips the dashboard's npm install).
+    // Anything but a plain "false" installs: an unclear answer must not leave a check without its packages.
+    const answer = await exec('bash', ['.github/run-check.sh', c.id, '--affected'], { cwd, env: baseEnv }).catch(() => ({ stdout: '' }))
+    if (String(answer?.stdout || '').trim() === 'false') continue
     // Found live 2026-10-01 (PR #119's merge attempt): a `git worktree add` scratch checkout has no node_modules at
     // all, and `npx vitest run` hard-fails with a dependency-resolution wall that has nothing to do with the PR.
     // A scratch worktree is its own filesystem location, so nothing is symlinked in; (#687) a copy-on-write clone of
@@ -219,13 +231,11 @@ export async function _defaultRunTests(cwd, exec, progress = noProgress, paralle
     await cache.store(dir)
   }
   progress('installing', 'done')
-  // `python` in a check is the venv's interpreter: its bin goes first on PATH.
-  const PATH = [path.dirname(VENV_PYTHON), process.env.PATH].filter(Boolean).join(path.delimiter)
   for (const c of checks) {
     let label = CHECK_DETAIL[c.parser] || c.name
     // MARVIN_MERGE_GATE: tests that read ANOTHER repo's data (the portfolio figures) stay out of a PR's gate; they
     // run in the main-branch health check instead (lib/main_health.py).
-    const env = { ...process.env, PATH, MARVIN_MERGE_GATE: '1' }
+    const env = { ...baseEnv }
     if (c.parser === 'pytest') {
       const parallel = await parallelArgs()
       if (parallel.length) env.PYTEST_ADDOPTS = [process.env.PYTEST_ADDOPTS, ...parallel].filter(Boolean).join(' ')
@@ -350,7 +360,7 @@ export async function rebaseAndRetest(headRef, exec = execFileAsync, repoPath = 
 
     progress('rebasing', 'done')
     try {
-      await runTests(scratchDir, exec, progress)
+      await runTests(scratchDir, exec, progress, undefined, undefined, base)
     } catch (err) {
       return { ok: false, reason: `Tests failed after rebasing onto main:\n\n${testOutputOf(err)}` }
     }
@@ -422,7 +432,8 @@ export async function defaultGateContext(repo, exec = execFileAsync) {
     // The same measuring code the pipeline uses, so "passes the gate" means what "passes verification" means.
     runTests: async (cwd, run, progress = noProgress) => {
       progress('tests', 'running', { detail: name })
-      await run(VENV_PYTHON, [PROFILE_SCRIPT, 'verify', repo, cwd], { onOutput: () => progress('tests', 'output') })
+      // MARVIN_BASE: the project's checks run only what the PR affects, as its CI does (marvin#826).
+      await run(VENV_PYTHON, [PROFILE_SCRIPT, 'verify', repo, cwd], { env: { ...process.env, MARVIN_BASE: `origin/${info.base_branch}` }, onOutput: () => progress('tests', 'output') })
     },
     resolveConflicts: generatedResolver(repo, exec),
     // The project's own UI paths, added to ui_evidence.js's defaults (marvin #374).
