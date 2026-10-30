@@ -3,8 +3,8 @@
 
 When the gate retests a marvin PR, it also hands the box the exact rebased commit; the box runs the Python suite
 (`-n 8`) on it and the result is recorded next to the Mac's verdict for the same commit. The gate never waits for the
-box, and nothing the box says changes whether a PR merges (Gil's `trial-work` decision on G-Eskayo/marvin-instance
-PR #6: "an extra runner, never the gate's verdict").
+box, and nothing the box says changes whether a PR merges (the owner's `trial-work` decision on the instance's
+calibration PR #6, marvin #623: "an extra runner, never the gate's verdict").
 
     submit --tree DIR --label L   (the gate, ~20 ms) pin HEAD with a ref, start `run` detached, return at once
     run ID --repo R --sha S       (detached) bundle the commits the box lacks, run the suite there, record the outcome
