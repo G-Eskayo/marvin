@@ -377,6 +377,50 @@ def catalog_path() -> Path:
     return CATALOG_DIR / f"projects.{machine_profile.registry_id() or 'unknown'}.json"
 
 
+# ── one place for project names (marvin#848) ────────────────────────────────
+# A project's name is set once, in overrides.json's `name`. display_name gives it for any spelling (id, repo, catalog
+# name, alias, the name itself), so helper tabs, boards and MR Review all say the same thing. The dashboard's twin is
+# dashboard/src/lib/project_names.js nameOf; both read the same overrides.json.
+
+_UNSET = object()
+
+
+def _norm(text) -> str:
+    return re.sub(r"[^a-z0-9]+", " ", str(text or "").lower()).strip()
+
+
+def _newest_catalog() -> dict | None:
+    try:
+        own = read_catalog(catalog_path())
+    except Exception:  # noqa: BLE001 - a broken machine profile must not stop a name lookup
+        own = None
+    if own:
+        return own
+    found = sorted(CATALOG_DIR.glob("projects.*.json"), key=lambda p: p.stat().st_mtime, reverse=True)
+    return read_catalog(found[0]) if found else None
+
+
+def display_name(term: str, projects=_UNSET, overrides=_UNSET) -> str:
+    """The project's one name for any spelling of it; an unknown term comes back unchanged."""
+    if projects is _UNSET:
+        projects = (_newest_catalog() or {}).get("projects")
+    if overrides is _UNSET:
+        overrides = load_overrides()
+    want = _norm(term)
+    if not want:
+        return term
+    o = overrides if isinstance(overrides, dict) else {}
+    for p in projects or []:
+        own = o.get(p.get("id")) if isinstance(o.get(p.get("id")), dict) else {}
+        name = own.get("name").strip() if isinstance(own.get("name"), str) and own.get("name").strip() else p.get("name")
+        repo = p.get("repo") or ""
+        spellings = [name, p.get("name"), p.get("id"), repo, repo.split("/")[-1], *(p.get("aliases") or []),
+                     *(own.get("aliases") or [])]
+        if want in {_norm(s) for s in spellings if s}:
+            return name
+    return term
+
+
 def refresh(path: Path, github, local, manifest, memory, overrides, boards, now=None, docs_probe=None, report=None) -> dict:
     """Rebuild and write the catalog. Any discovery failure keeps the last good file.
     `report(step, detail)` is told each phase as it starts, so the dashboard can show progress."""

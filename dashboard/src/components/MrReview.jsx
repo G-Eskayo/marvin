@@ -14,8 +14,16 @@ import { opForHead } from '../lib/merge_progress.js'
 import { displayTitle } from '../lib/pr_title.js'
 import { useMergeMotion, MotionSlot, MotionChip, AwayNote } from './MergeMotion.jsx'
 import { BLUE } from '../lib/merge_motion.js'
+import { groupPrs, allView, projectOfPr, openLede, helperNames, helperFor, isCollapsed, toggleCollapsed, placeValue } from '../lib/mr_groups.js'
+import { readSaved, writeSaved } from '../lib/saved_state.js'
+import { GroupingToggle, ProjectGroup, HelperChip } from './MrGroups.jsx'
 
 const MR_LIST_REFRESH_MS = 120000
+// By project's collapse choices (marvin#848): kept in saved state; before you choose, groups with nothing for you start
+// collapsed (the owner's "collapse" answer on #767).
+const COLLAPSED_KEY = 'mr-groups-collapsed'
+const COLLAPSE_RULE = { rule: 'quiet' }
+const projectIdOfCard = (pr, projects) => projectOfPr(pr, projects).id
 
 function EmptyState() {
   return (
@@ -462,7 +470,7 @@ function ParitySummary({ parity }) {
   )
 }
 
-function PrCard({ pr, parity, onOpenTicket, onApproved, onDenied, onSelect, waiting = false }) {
+function PrCard({ pr, parity, onOpenTicket, onApproved, onDenied, onSelect, waiting = false, helper = null }) {
   const [prEvents, setPrEvents] = useState([])
 
   useEffect(() => {
@@ -489,7 +497,9 @@ function PrCard({ pr, parity, onOpenTicket, onApproved, onDenied, onSelect, wait
           <p className="font-mono text-sm font-semibold text-white">
             #{pr.number} — {displayTitle(pr.title, parity?.ticket?.title)}{' '}
             {pr.repo !== 'G-Eskayo/marvin' && <span className="rounded bg-sky-950 px-1.5 py-0.5 font-sans text-[10px] font-normal text-sky-300">{pr.repo.split('/')[1]}</span>}
+            {pr.isDraft && <span className="ml-1 rounded bg-neutral-800 px-1.5 py-0.5 font-sans text-[10px] font-normal text-neutral-400">draft</span>}
           </p>
+          <HelperChip helper={helper} />
           {pr.hasSchema ? (
             <>
               {pr.evidence.subsystem && (
@@ -609,12 +619,20 @@ function OpenPrs({ nav, onOpenDocs, onOpenBoard, onOpenTicket, onCount }) {
   const [parity, setParity] = useState(null)
   // Auto-merge's shadow report (ADR 0064, #341): a banner once it's ready, until Gil switches it on.
   const [amReport, setAmReport] = useState(null)
+  // By project (marvin#848, the owner's answers on #767): opens on By project every time; "All" is the same cards in
+  // the new order. Switching is not a history step. Collapse choices are remembered across restarts.
+  const [grouping, setGrouping] = useState('project')
+  const [projects, setProjects] = useState(null)
+  const [helperTabs, setHelperTabs] = useState([])
+  const [collapsedSaved, setCollapsedSaved] = useState(() => readSaved(window.localStorage, COLLAPSED_KEY)?.value || {})
 
   // GitHub disagreed with an action already shown (local-first): the view now has GitHub's version; say so plainly.
   const [notice, setNotice] = useState(null)
   useEffect(() => window.api.mr.onCorrected?.((c) => setNotice({ ...c, at: Date.now() })), [])
 
   function reload() {
+    window.api.mr.projects?.().then(setProjects).catch(() => setProjects(null))
+    window.api.mr.helperTabs?.().then((t) => setHelperTabs(Array.isArray(t) ? t : [])).catch(() => setHelperTabs([]))
     window.api.mr.parity().then(setParity).catch(() => setParity(null))
     window.api.mr.autoMergeReport?.().then(setAmReport).catch(() => setAmReport(null))
     window.api.mr
@@ -688,8 +706,10 @@ function OpenPrs({ nav, onOpenDocs, onOpenBoard, onOpenTicket, onCount }) {
       .catch(() => {})
   }
 
-  // An open PR opens at its top; Back lands exactly where you clicked in the list (#755).
+  // An open PR opens at its top; Back lands exactly where you clicked in the list (#755). By project and All each keep
+  // their own place.
   useScrollPlace('mr-open-pr', selected ? `pr:${selected.key}` : null)
+  useScrollPlace('mr-groups', selected ? null : placeValue({ grouping }))
 
   // The merge motion (#838): a merge GitHub confirms sweeps its card out, a new MR sweeps in where it belongs. Inside an
   // MR the list is off screen: the one you were inside plays when you go back, the rest are counted.
@@ -735,11 +755,35 @@ function OpenPrs({ nav, onOpenDocs, onOpenBoard, onOpenTicket, onCount }) {
     return fetchStatus?.errors?.length ? <div className="p-6"><FetchBanner status={fetchStatus} /></div> : <EmptyState />
   }
 
+  // Without the catalog (it failed to load) the cards aren't grouped: every PR under Other would say the wrong thing.
+  const byProject = grouping === 'project' && Array.isArray(projects)
+  const groups = byProject ? groupPrs(motion.shown, projects, { empty: 'show', isLive: (p) => p.status === 'active' }) : null
+  const projectById = new Map((projects || []).map((p) => [p.id, p]))
+  const toggle = (group) => {
+    const next = toggleCollapsed(collapsedSaved, group, COLLAPSE_RULE)
+    setCollapsedSaved(next)
+    writeSaved(window.localStorage, COLLAPSED_KEY, next)
+  }
+  const card = (pr, project) => (
+    <MotionSlot key={pr.key} slotRef={motion.slotRef(pr.url)} waiting={motion.entering.has(pr.url)}>
+      <PrCard
+        pr={pr}
+        parity={parity?.prs.find((r) => r.key === pr.key)}
+        onOpenTicket={onOpenTicket}
+        onApproved={reloadAndReturnToList}
+        onDenied={reloadAndReturnToList}
+        onSelect={setSelected}
+        waiting={motion.isBlue(pr.url)}
+        helper={helperFor(pr, helperNames(project), helperTabs)}
+      />
+    </MotionSlot>
+  )
+
   return (
     <div className="flex flex-col gap-4 p-6">
+      <GroupingToggle grouping={grouping} setGrouping={setGrouping} />
       <p className="text-sm text-neutral-500">
-        {prs.length} pipeline-raised PR{prs.length === 1 ? '' : 's'} awaiting review. Click a title for the full
-        detail view.
+        {groups ? openLede(groups) : `${prs.length} pipeline-raised PR${prs.length === 1 ? '' : 's'} awaiting review. Click a title for the full detail view.`}
       </p>
       {amReport?.ready && amReport.mode !== 'on' && (
         <div className={`rounded-lg border px-4 py-3 text-sm ${amReport.disagreements?.length ? 'border-amber-700 bg-amber-950/40 text-amber-200' : 'border-emerald-700 bg-emerald-950/40 text-emerald-200'}`}>
@@ -752,20 +796,13 @@ function OpenPrs({ nav, onOpenDocs, onOpenBoard, onOpenTicket, onCount }) {
       <ParitySummary parity={parity} />
       <MotionChip chip={motion.chip} onDone={motion.nextChip} />
       {/* The motion holds your place itself (scrollPlan), so the browser's own scroll anchoring is off here. */}
-      <div style={{ overflowAnchor: 'none' }}>
-        {motion.shown.map((pr) => (
-          <MotionSlot key={pr.key} slotRef={motion.slotRef(pr.url)} waiting={motion.entering.has(pr.url)}>
-            <PrCard
-              pr={pr}
-              parity={parity?.prs.find((r) => r.key === pr.key)}
-              onOpenTicket={onOpenTicket}
-              onApproved={reloadAndReturnToList}
-              onDenied={reloadAndReturnToList}
-              onSelect={setSelected}
-              waiting={motion.isBlue(pr.url)}
-            />
-          </MotionSlot>
-        ))}
+      <div style={{ overflowAnchor: 'none' }} className={groups ? 'flex flex-col gap-3' : undefined}>
+        {groups
+          ? groups.map((g) => (
+            <ProjectGroup key={g.id} group={g} collapsed={isCollapsed(g, collapsedSaved, COLLAPSE_RULE)} onToggle={toggle}
+              renderPr={(pr) => card(pr, projectById.get(g.id))} />
+          ))
+          : allView(motion.shown, { sort: true }).map((pr) => card(pr, projectById.get(projectIdOfCard(pr, projects))))}
       </div>
     </div>
   )

@@ -11,7 +11,20 @@
 // click it is stale as soon as the state changes, so it is never shown as an error.
 const MIRRORED_REFUSALS = /^(SENT_BACK|CI_PENDING|CI_FAILED|WRONG_BASE|NO_UI_EVIDENCE|IMAGES_UNPINNED|IMAGES_STALE|DECISIONS_PENDING|DECISIONS_UNSTRUCTURED)\b/
 
-export function describePrState(pr, { status = 'idle', errorMessage = null, progress = false } = {}) {
+// The owner's answer on #767 (marvin#848): a draft offers no Approve until it's marked ready for review. A merge
+// already under way (merging, saved, merged) is shown as it is.
+const DRAFT_KEEPS = new Set(['merging', 'queued', 'merged'])
+
+export function describePrState(pr, opts = {}) {
+  const view = describeState(pr, opts)
+  if (!pr.isDraft || DRAFT_KEEPS.has(view.kind)) return view
+  if (view.kind === 'ready') {
+    return { ...view, kind: 'draft', tone: 'wait', headline: 'Draft', detail: 'Approve shows once it is marked ready for review on GitHub.', approve: 'hidden', note: null }
+  }
+  return view.approve === 'hidden' ? view : { ...view, approve: 'hidden' }
+}
+
+function describeState(pr, { status = 'idle', errorMessage = null, progress = false } = {}) {
   const ci = pr.checks || { state: 'none', failing: [], pending: [] }
   const waiting = pr.waitingOn || []
   const base = (kind, tone, headline, detail, approve, deny, extra = {}) => ({ kind, tone, headline, detail, approve, deny, actions: [], note: null, rework: null, checkProgress: false, ...extra })

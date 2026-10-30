@@ -197,3 +197,27 @@ export function helperFor(pr, projectNames, tabs) {
   const t = mine.find((x) => x.state === 'running') || mine[mine.length - 1]
   return { state: t.state, label: `${MARKS[t.state] || '●'} ${t.group} · ${t.title}` }
 }
+
+// The real tab (marvin#848) ─────────────────────────────────────────────────────────────────────────────────────────
+
+// The line above the groups: "11 open PRs in 4 projects · 5 need you". Empty projects shown collapsed don't count.
+export function openLede(groups) {
+  const withPrs = groups.filter((g) => g.count)
+  const n = withPrs.reduce((s, g) => s + g.count, 0)
+  const mine = withPrs.reduce((s, g) => s + g.needsYou, 0)
+  return `${plural(n, 'open PR')} in ${plural(withPrs.length, 'project')} · ${mine ? `${mine} need${mine === 1 ? 's' : ''} you` : 'nothing needs you'}`
+}
+
+// Every name a helper tab may use for a project: its one name (helper-tab now titles by it), and the spellings older
+// tabs were started under.
+export function helperNames(project) {
+  if (!project) return []
+  return [...new Set([project.name, project.id, project.catalogName, ...(project.aliases || [])].filter(Boolean))]
+}
+
+// A sorted group cut into its tiers, in TIERS order, empty tiers left out.
+export function tierGroups(prs, { statusOf = () => 'idle' } = {}) {
+  const by = new Map(TIERS.map((t) => [t.id, []]))
+  for (const pr of prs) by.get(tierOf(pr, { status: statusOf(pr) })).push(pr)
+  return TIERS.filter((t) => by.get(t.id).length).map((t) => ({ ...t, prs: by.get(t.id) }))
+}

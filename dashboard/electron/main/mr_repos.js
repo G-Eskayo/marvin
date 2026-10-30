@@ -47,9 +47,10 @@ export function repoFromPrUrl(url) {
 
 // What `gh pr list` is asked for. GraphQL cost grows with every nested field, and `files` is the expensive
 // one, so the status dot (polled every minute; it only counts PRs) gets the light form -- the full form
-// (bodies for the evidence schema, files and branch names for merge order) is for the list itself.
+// (bodies for the evidence schema, files and branch names for merge order, labels and draft for grouping by project,
+// marvin#848) is for the list itself.
 export function prListArgs(repo, { light = false } = {}) {
-  const fields = light ? 'number,title,url' : 'number,title,url,body,files,baseRefName,headRefName,headRefOid,mergeable,statusCheckRollup'
+  const fields = light ? 'number,title,url' : 'number,title,url,body,files,baseRefName,headRefName,headRefOid,mergeable,statusCheckRollup,labels,isDraft'
   return ['pr', 'list', '--repo', repo, '--state', 'open', '--limit', '200', '--json', fields]
 }
 

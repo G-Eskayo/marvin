@@ -214,6 +214,18 @@ def install_wezterm(config: Path = WEZTERM_CONFIG, lua: Path = LUA) -> str:
     return "installed"
 
 
+def group_name(group: str) -> str:
+    """A project's group is its one name from the catalog (marvin#848): `--group clarity-captions` and `--group Seal
+    Speak` make the same tab. Anything that isn't a project (Disk, Research) stays as given; so does every group when
+    the catalog can't be read, because a helper must never fail over a name."""
+    try:
+        sys.path.insert(0, str(HERE.parent))
+        import project_catalog
+        return project_catalog.display_name(group) or group
+    except Exception:  # noqa: BLE001
+        return group
+
+
 def main(argv: list[str] | None = None) -> int:
     argv = sys.argv[1:] if argv is None else argv
     if argv[:1] == ["--install-wezterm"]:
@@ -233,6 +245,7 @@ def main(argv: list[str] | None = None) -> int:
     try:
         if internal:
             return run_helper(a.group, a.title, command, a.on_exit)
+        a.group = group_name(a.group)
         return launch(a.group, a.title, command, str(Path(a.cwd).expanduser().resolve()), a.on_exit)
     except ValueError as e:
         ap.error(str(e))
