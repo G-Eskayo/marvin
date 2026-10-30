@@ -211,3 +211,9 @@ def test_a_check_the_pr_does_not_affect_passes_the_gate_whatever_its_parser(tmp_
     r = pp.verify_dir(pp._validate({"repo": "o/p", "verify": []}, "t"), tmp_path,
                       runner=lambda cmd, cwd, env, timeout: (0, out), have=lambda c, e: True)
     assert r["ok"] and r["kind"] == "passed", r
+
+
+def test_ci_runs_the_python_suite_in_parallel_as_the_gate_does():
+    # Serial on GitHub's 3-core macOS runner the full suite passed its 40-minute limit at 86% (2026-10-30).
+    job = _jobs(ROOT)["python-tests"]
+    assert "-n auto" in job["env"]["PYTEST_ADDOPTS"] and job["timeout-minutes"] >= 60
