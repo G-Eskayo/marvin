@@ -1574,3 +1574,37 @@ def test_disk_activity_without_a_previous_check_still_reports_the_triggers():
 
 def test_no_disk_reading_means_no_activity_card():
     assert "disk:activity" not in dict((k, s) for k, s, _ in hc.evaluate_machine_state(_mstate(), NOW))
+
+
+# ── pull-only nodes: their own mirror row, not the Mac repo probe (marvin#910) ─────────────────────────────────────
+
+def test_repo_sync_probe_leaves_pull_only_nodes_to_the_mirror_row(monkeypatch):
+    # The fetch-based probe re-ran mac-mini-2012's broken fetch and hung into "unverifiable" for 4 days.
+    monkeypatch.setattr(hc, "SYNCED_REPOS", {"~/.claude": ".claude"})
+    monkeypatch.setattr(hc.machine_profile, "registry_id", lambda: "mac-mini-1")
+    monkeypatch.setattr(hc.machine_profile, "remote_devices", lambda: {
+        "macbook-pro-1": {"kind": "laptop", "tailscale_hostname": "lap"},
+        "mac-mini-2012": {"os": "linux", "kind": "desktop", "tailscale_hostname": "mac-mini-2012"}})
+    monkeypatch.setattr(hc, "_now", lambda: NOW)
+    calls = []
+    clean = "head=abc\nstashes=0\nconflicts=0\nfetch_ok=1\nbehind=0\nbehind_oldest_ts=\nahead=0\nahead_oldest_ts=\n"
+
+    def runner(target, rel):
+        calls.append(target)
+        return clean
+
+    results = hc.check_repo_sync_everywhere({"machine:macbook-pro-1": "green", "machine:mac-mini-2012": "green"},
+                                            runner=runner)
+    assert not any(r["id"].endswith("@mac-mini-2012") for r in results)
+    assert "mac-mini-2012" not in calls and "lap" in calls
+
+
+def test_the_sweep_runs_the_mirror_row_with_the_reachability_it_measured(monkeypatch):
+    import mirror_health
+    seen = {}
+    monkeypatch.setattr(mirror_health, "check_mirror_sync_everywhere", lambda reach: seen.setdefault("reach", reach) and [])
+    specs = {s[0]: s for s in hc.default_checks({"machine:mac-mini-2012": "green"})}
+    assert "mirror:sync" in specs
+    assert specs["mirror:sync"][3] == hc.CROSS_MACHINE_BUDGET_S
+    specs["mirror:sync"][2]()
+    assert seen["reach"] == {"machine:mac-mini-2012": "green"}

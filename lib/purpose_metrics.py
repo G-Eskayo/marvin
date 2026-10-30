@@ -221,6 +221,28 @@ def _sync_stuck_episodes(log: Path | None = None, state: Path | None = None, lab
     return float(count)
 
 
+def _mirror_failures(days: float = PROBE_WINDOW_DAYS, path: Path | None = None, now: datetime | None = None) -> float:
+    """#910 (2026-10-30): `sync:mirror` failures in this machine's errors.jsonl over the window. Only a pull-only node
+    runs the mirror (mac-mini-2012, measured over ssh like any machine), so a Mac reads 0 and the sum is the box's.
+    Before the fix the box failed 391 times in 4 days and Health never said so. O(log size)."""
+    import error_log
+    import mirror_health
+    now = now or datetime.now(timezone.utc)
+    try:
+        lines = Path(path or error_log.PATH).read_text(encoding="utf-8", errors="replace").splitlines()
+    except OSError:
+        return 0.0
+    entries = []
+    for line in lines:
+        try:
+            e = json.loads(line)
+        except ValueError:
+            continue
+        if isinstance(e, dict):
+            entries.append(e)
+    return float(mirror_health.recent_failures(entries, now.timestamp(), window_s=days * 86400))
+
+
 # name -> (symptom counter, the most it may read while the fix holds, what it counts). Summed across Macs like any
 # measure; the logs are per Mac (~/.claude/logs doesn't sync), so nothing is counted twice.
 # Each counter takes `days` (default the 7-day window): a watched incident is re-measured over the time since its last
@@ -232,6 +254,9 @@ PROBES: dict[str, tuple[Callable[..., float], float, str]] = {
                                  "tickets planned 3+ times inside 24 h over 7 days, all Macs (#606)"),
     "code-sync-stuck": (lambda days=PROBE_WINDOW_DAYS: _sync_stuck_episodes(days=days), 0.0,
                         "code-sync episodes stuck 30+ min over 7 days, per Mac, summed (#702, #706)"),
+    # Six is one hour of failed runs in a week: a blip passes, an outage Health let run for an hour doesn't.
+    "box-mirror-failures": (lambda days=PROBE_WINDOW_DAYS: _mirror_failures(days=days), 6.0,
+                            "mirror failures on pull-only nodes (sync:mirror in errors.jsonl) over 7 days (#910)"),
 }
 MEASURES.update({name: fn for name, (fn, _limit, _what) in PROBES.items()})
 

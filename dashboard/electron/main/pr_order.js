@@ -5,12 +5,13 @@
 // is not waited on: waiting for it would hold every newer PR hostage to the rebuild queue (clarity-captions #62/#63/#64,
 // 2026-10-06), and its rebuild lands on whatever main has by then. The same goes for an older PR stuck on its own
 // blocker (`blocked`: no images, a vague ask, open decisions, failing checks): one PR missing screenshots held #378,
-// #371 and #389 hostage on 2026-10-09 while it could never be approved itself.
+// #371 and #389 hostage on 2026-10-09 while it could never be approved itself. A draft is skipped too: GitHub won't
+// merge it, so a parked or in-progress draft held a ready PR hostage (clarity #227 and #238 held #239, 2026-10-30).
 export function waitingOn(prs, pr) {
   if (!Array.isArray(pr.files)) return []
   const mine = new Set(pr.files.map((f) => f.path))
   return prs
-    .filter((o) => o.repo === pr.repo && o.number < pr.number && Array.isArray(o.files) && o.mergeable !== 'CONFLICTING' && !o.sentBack && !o.blocked)
+    .filter((o) => o.repo === pr.repo && o.number < pr.number && Array.isArray(o.files) && o.mergeable !== 'CONFLICTING' && !o.isDraft && !o.sentBack && !o.blocked)
     .map((o) => ({ number: o.number, title: o.title, url: o.url, shared: o.files.map((f) => f.path).filter((p) => mine.has(p)).sort() }))
     .filter((o) => o.shared.length)
     .sort((a, b) => a.number - b.number)

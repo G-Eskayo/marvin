@@ -971,15 +971,17 @@ def _run_repo_state(target: str | None, rel_path: str, fetch: bool = True) -> st
 
 
 def check_repo_sync_everywhere(reachability: dict[str, str], runner=_run_repo_state) -> list[dict]:
-    """Sync health of every synced repo on this machine AND every registered
-    remote device. `reachability` maps machine:<id> -> severity from the
-    reachability check: an asleep device is reported asleep (neutral), any
-    other unreachable device is yellow ('cannot verify'), never skipped."""
+    """Sync health of every synced repo on this machine AND every remote Mac.
+    `reachability` maps machine:<id> -> severity from the reachability check:
+    an asleep device is reported asleep (neutral), any other unreachable device
+    is yellow ('cannot verify'), never skipped. Pull-only nodes (mac-mini-2012)
+    get lib/mirror_health.py's row instead: this probe re-runs the remote's own
+    fetch, which on the box is the very path that broke (marvin#910)."""
     results = []
     me = machine_profile.registry_id()
     devices = [(me, None, "local")] + [
         (dev, info.get("tailscale_hostname"), reachability.get(f"machine:{dev}", "yellow"))
-        for dev, info in machine_profile.remote_devices().items()
+        for dev, info in machine_profile.remote_macs().items()
     ]
     for display_name, rel in SYNCED_REPOS.items():
         for dev, host, reach in devices:
@@ -1716,6 +1718,11 @@ def check_merge_service() -> dict:
     return merge_service_result(merge_machines(), waiting_approvals())
 
 
+def _mirror_health():
+    import mirror_health  # lib/mirror_health.py: the pull-only node's mirror, read from this Mac (marvin#910)
+    return mirror_health
+
+
 def default_checks(reach: dict[str, str] | None = None, reach_results: list[dict] | None = None) -> list[tuple]:
     """Every check the sweep runs, in the order the Health tab shows them. `reach` maps machine:<id> -> severity from
     the reachability check, which runs first; `reach_results` are its rows, listed where they always appeared."""
@@ -1747,6 +1754,8 @@ def default_checks(reach: dict[str, str] | None = None, reach_results: list[dict
         ("cron", "Cron job logs", _cron_job_logs, CHECK_BUDGET_S),
         ("machine", "Machine reachability", lambda: list(reach_results or []), CHECK_BUDGET_S),
         ("repo:sync", "Repo sync", lambda: check_repo_sync_everywhere(reach), CROSS_MACHINE_BUDGET_S),
+        ("mirror:sync", "Mirror sync on pull-only nodes", lambda: _mirror_health().check_mirror_sync_everywhere(reach),
+         CROSS_MACHINE_BUDGET_S),
         ("machine-state", "Machine state", lambda: check_machine_state_everywhere(reach), CROSS_MACHINE_BUDGET_S),
     ]
 

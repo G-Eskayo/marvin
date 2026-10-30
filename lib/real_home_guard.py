@@ -50,7 +50,15 @@ def read_through(real: Path) -> tuple[str, ...]:
     them as before: the settings (which name the memory folder), the memory itself, the lexicon, the skill manifest,
     the organize scripts that live there, and the captured portfolio inventory the portfolio parity tests compare
     against (main-health only). Writes through these links are still refused (WriteGuard resolves them)."""
-    return ("settings.json", "manifest.json", "lexicon.md", "organize", "portfolio/inventory", f"projects/{str(real).replace('/', '-')}/memory")
+    import host_os  # pure: memory_dir(real) reads only real's settings, no HOME-derived constant
+    # The memory folder the code will read: the one settings.json names, re-rooted under this home. On a Mac that is
+    # projects/-Users-<you>/memory; on the Linux box (home /home/marvin) the synced setting still names the Macs'
+    # folder, so linking projects/-home-marvin/memory left MEMORY.md missing in the test home (marvin#623).
+    try:
+        memory = str(host_os.memory_dir(real).relative_to(real / ".claude"))
+    except ValueError:
+        memory = f"projects/{str(real).replace('/', '-')}/memory"
+    return ("settings.json", "manifest.json", "lexicon.md", "organize", "portfolio/inventory", memory)
 
 
 def make_test_home(real: Path, parent: str | None = None, links: tuple[str, ...] | None = None) -> Path:
