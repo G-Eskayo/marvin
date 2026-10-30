@@ -352,3 +352,51 @@ def test_unlock_script_sends_the_password_only_through_askpass(tmp_path):
     assert "owner@192.0.2.41" in argv and "PubkeyAuthentication=no" in argv
     assert pw not in argv and pw not in (rec / "env").read_text()
     assert (rec / "got").read_text() == pw
+
+
+def test_came_back_is_a_down_to_up_edge_only():
+    assert pc.came_back({"a": False}, {"a": True}) == ["a"]
+    assert pc.came_back({"a": True}, {"a": True}) == []
+    assert pc.came_back({}, {"a": True}) == []                      # first sight, up: nothing to close
+    assert pc.came_back({"a": False}, {"a": None}) == []
+
+
+def test_ipn_reader_handles_down_edges_and_up_edges_with_an_open_incident(tmp_path):
+    """Fed bus lines and tailnet states in order: the reader handles the peer when it goes down, and again when it
+    comes back (that probe closes the incident). Unrelated bus lines and a steady state do nothing."""
+    states = iter([{"mac-mini-1": True}, {"mac-mini-1": False}, {"mac-mini-1": False}, {"mac-mini-1": True}])
+    handled = []
+    lines = [json.dumps({"PeerChanges": []}), json.dumps({"State": 6}), json.dumps({"PeerChanges": []}),
+             json.dumps({"PeerChanges": []}), json.dumps({"PeerChanges": []})]
+    inc_dir = tmp_path / "pc"
+    pc._save_incident(inc_dir, "mac-mini-1", {"attempts": 1})
+    pc.read_ipn(lines, ["mac-mini-1"], online=lambda: next(states),
+                handle=lambda p, trig: handled.append((p, trig)), state_dir=inc_dir)
+    assert handled == [("mac-mini-1", "tailscale-offline"), ("mac-mini-1", "tailscale-back")]
+
+
+def test_up_edge_without_an_incident_does_nothing(tmp_path):
+    states = iter([{"mac-mini-1": False}, {"mac-mini-1": True}])
+    handled = []
+    pc.read_ipn([json.dumps({"PeerChanges": []})] * 2, ["mac-mini-1"], online=lambda: next(states),
+                handle=lambda p, trig: handled.append(trig), state_dir=tmp_path / "pc")
+    assert handled == ["tailscale-offline"]          # the down edge only; no incident was opened by the fake handle
+
+
+def test_expect_back_waits_once_to_the_deadline_then_checks_once(tmp_path):
+    """No re-check loop: one sleep to the deadline, then one handle(); if the peer's own "I'm back" already closed it
+    (a healthy probe recorded after the restart began), it doesn't probe again."""
+    sleeps, handled = [], []
+    r = pc.expect_back("mac-mini-1", CFG, minutes=10, sleep=sleeps.append,
+                       handle=lambda p, trig: handled.append(trig) or {"action": "none"},
+                       state_dir=tmp_path, now=lambda: T0)
+    assert sleeps == [600] and handled == ["expected-back"] and r == {"action": "none"}
+
+
+def test_expect_back_skips_the_probe_when_im_back_already_arrived(tmp_path):
+    later = T0 + timedelta(minutes=3)
+    (tmp_path / "mac-mini-1.last.json").write_text(json.dumps({"state": "healthy", "at": later.isoformat()}))
+    handled = []
+    r = pc.expect_back("mac-mini-1", CFG, minutes=10, sleep=lambda s: None,
+                       handle=lambda p, trig: handled.append(trig), state_dir=tmp_path, now=lambda: T0)
+    assert handled == [] and r["action"] == "back"

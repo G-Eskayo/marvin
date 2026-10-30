@@ -512,23 +512,40 @@ def went_offline(before: dict, now_: dict) -> list[str]:
     return [p for p, up in now_.items() if up is False and before.get(p) is not False]
 
 
+def came_back(before: dict, now_: dict) -> list[str]:
+    return [p for p, up in now_.items() if up is True and before.get(p) is False]
+
+
+def read_ipn(lines, peers: list[str], *, online: Callable, handle: Callable, state_dir: Path = STATE_DIR) -> None:
+    """The reader's loop over bus lines. A peer going offline is handled; a peer coming back with an incident open
+    is handled again, and that healthy probe closes the incident (the "I'm back" seen from here)."""
+    seen: dict = {}
+    for line in lines:
+        if not peer_changed(line):
+            continue
+        cur = online()
+        for p in went_offline(seen, cur):
+            handle(p, "tailscale-offline")
+        for p in came_back(seen, cur):
+            if load_incident(state_dir, p):
+                handle(p, "tailscale-back")
+        seen.update({k: v for k, v in cur.items() if v is not None})
+
+
 def watch_ipn(me: str, cfg: dict) -> int:
-    """Block on tailscaled's IPN bus; on each peer change re-read the watched peers and handle any that went down."""
+    """Block on tailscaled's IPN bus; each peer change re-reads the watched peers (no clock)."""
     ts = tailscale_bin()
     if not ts:
         print("no tailscale CLI", file=sys.stderr)
         return 1
     peers = cfg["watch"].get(me, [])
-    seen: dict = {}
-    proc = subprocess.Popen([ts, "debug", "watch-ipn", "--peer-changes"], stdout=subprocess.PIPE, text=True)
-    for line in proc.stdout:
-        if not peer_changed(line):
-            continue
+
+    def online() -> dict:
         st = tailscale_status() or {}
-        cur = {p: online_from_status(st, ts_host(p)) for p in peers}
-        for p in went_offline(seen, cur):
-            handle(p, "tailscale-offline", cfg)
-        seen.update({k: v for k, v in cur.items() if v is not None})
+        return {p: online_from_status(st, ts_host(p)) for p in peers}
+
+    proc = subprocess.Popen([ts, "debug", "watch-ipn", "--peer-changes"], stdout=subprocess.PIPE, text=True)
+    read_ipn(proc.stdout, peers, online=online, handle=lambda p, trig: handle(p, trig, cfg))
     return proc.wait()
 
 
@@ -538,14 +555,21 @@ def im_back(me: str, cfg: dict) -> None:
         _ssh(ts_host(w), f"~/.agents/venv/bin/python ~/.agents/lib/peer_care.py check {me} --trigger back", 60)
 
 
-def expect_back(peer: str, cfg: dict, minutes: float | None = None) -> dict:
-    """After a planned restart: one bounded wait, then one check. A healthy probe is the "I'm back" seen from here."""
-    deadline = time.monotonic() + 60 * (minutes or cfg.get("back_within_minutes", 10))
-    while time.monotonic() < deadline:
-        time.sleep(min(60, max(0, deadline - time.monotonic())))
-        if peer_online(peer):
-            break
-    return handle(peer, "expected-back", cfg)
+def expect_back(peer: str, cfg: dict, minutes: float | None = None, *, sleep: Callable = time.sleep,
+                handle: Callable | None = None, state_dir: Path = STATE_DIR, now: Callable = _now) -> dict:
+    """After a planned restart: one bounded wait, then one check (design #769 section 6, no re-check loop). The peer's
+    own "I'm back" (or the IPN up edge) probes it in the meantime; if that already saw it healthy, nothing more."""
+    handle = handle or (lambda p, trig: globals()["handle"](p, trig, cfg, state_dir=state_dir))
+    started = now()
+    sleep(60 * (minutes or cfg.get("back_within_minutes", 10)))
+    try:
+        last = json.loads((state_dir / f"{peer}.last.json").read_text())
+        seen = datetime.fromisoformat(last["at"])
+    except (OSError, ValueError, KeyError, TypeError):
+        last, seen = None, None
+    if last and last.get("state") == "healthy" and seen and seen >= started:
+        return {"peer": peer, "action": "back", "state": "healthy", "fix": None}
+    return handle(peer, "expected-back")
 
 
 def status(cfg: dict, state_dir: Path = STATE_DIR) -> dict:

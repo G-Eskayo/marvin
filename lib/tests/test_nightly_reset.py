@@ -458,3 +458,17 @@ def test_script_takes_no_arguments_a_caller_could_steer():
     r = subprocess.run([str(LIB.parent / "bin" / "marvin-authrestart"), "--user", "x"], capture_output=True,
                        text=True, timeout=30)
     assert r.returncode == 64
+
+
+# ── the launchd entry: one plist fires at both slots, each Mac acts only at its own ─────────────────────────────
+
+@pytest.mark.parametrize("device,fired,acts", [
+    ("mac-mini-1", at(31, 0, 30), True),
+    ("mac-mini-1", at(31, 2, 30), True),        # its own night already decided: run() reads "done" and stops
+    ("macbook-pro-1", at(31, 0, 30), False),    # two hours early: don't sit blocked till 02:30
+    ("macbook-pro-1", at(31, 2, 30), True),
+    ("macbook-pro-1", at(31, 2, 25), True),     # launchd a little early still counts
+])
+def test_starts_now_only_near_or_after_this_macs_slot(device, fired, acts):
+    w = nr.night_window(device, fired, CFG)
+    assert nr.starts_now(fired, w) is acts
