@@ -50,8 +50,9 @@ WORKER_MB_ENV = "MARVIN_TEST_WORKER_MB"
 # copy before the suite starts, and every run on the machine must find the same lock.
 DEFAULT_DIR = Path(pwd.getpwuid(os.getuid()).pw_dir) / ".cache" / "marvin" / "test-slot"
 GB = 2**30
-# One pytest-xdist worker on lib/tests peaks near 400 MB, a vitest worker about the same (estimate; override with
-# MARVIN_TEST_WORKER_MB). The reserve is what a run leaves free for everything else on the machine.
+# Per worker: measured 130-180 MB resident for a pytest-xdist worker mid-suite on the Mac mini (2026-10-30), plus the
+# git, node and python processes tests start; 512 MB leaves room for those (override with MARVIN_TEST_WORKER_MB). The
+# reserve is what a run leaves free for everything else on the machine.
 PER_WORKER = 512 * 2**20
 RESERVE = GB
 UNKNOWN_WORKERS = 2
