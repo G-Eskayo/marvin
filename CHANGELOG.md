@@ -1,5 +1,7 @@
 # Changelog
 
+- Plan first, credit for overflow: builds bill the API credit only when a Mac's normal slots are busy (extra slots on the Mini) ([#850](https://github.com/G-Eskayo/marvin/pull/850))
+
 - MR Review: blue sweep slide-out when an MR merges, and an Open | Merged split view ([#761](https://github.com/G-Eskayo/marvin/pull/761))
 
 - bin/gh refuses Decisions the dashboard can't read (rule I2) ([#744](https://github.com/G-Eskayo/marvin/pull/744))
