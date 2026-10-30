@@ -33,7 +33,7 @@ export function ProjectGroup({ group, collapsed, onToggle, renderPr, statusOf })
     <section data-group={group.id} data-empty={empty ? '1' : undefined} className={`rounded-lg border border-neutral-800 ${empty ? 'opacity-60' : ''}`}>
       <button type="button" aria-expanded={!collapsed} onClick={() => onToggle(group)}
         className="flex w-full flex-wrap items-center gap-x-3 gap-y-1 px-4 py-3 text-left">
-        <span aria-hidden="true" className="w-3 text-xs text-neutral-500">{collapsed ? '▸' : '▾'}</span>
+        <span aria-hidden="true" className="w-4 text-lg leading-none text-neutral-400">{collapsed ? '▸' : '▾'}</span>
         <span className={`text-base font-semibold ${empty ? 'text-neutral-300' : 'text-white'}`}>{group.name}</span>
         <span className="rounded-full bg-neutral-800 px-2 text-xs text-neutral-300">{group.count}</span>
         {group.needsYou > 0 && <span className="rounded-full bg-blue-950 px-2 text-xs text-blue-300">{group.needsYou} need{group.needsYou === 1 ? 's' : ''} you</span>}

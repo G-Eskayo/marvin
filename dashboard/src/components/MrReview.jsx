@@ -17,6 +17,7 @@ import { BLUE } from '../lib/merge_motion.js'
 import { groupPrs, allView, projectOfPr, openLede, helperNames, helperFor, isCollapsed, toggleCollapsed, placeValue } from '../lib/mr_groups.js'
 import { readSaved, writeSaved } from '../lib/saved_state.js'
 import { GroupingToggle, ProjectGroup, HelperChip } from './MrGroups.jsx'
+import { nameOf } from '../lib/project_names.js'
 
 const MR_LIST_REFRESH_MS = 120000
 // By project's collapse choices (marvin#848): kept in saved state; before you choose, groups with nothing for you start
@@ -301,7 +302,7 @@ export function ApproveDenyActions({ pr, onApproved, onDenied, inDetail = false 
         <a href={pr.url} target="_blank" rel="noreferrer" onClick={(e) => e.stopPropagation()} className="rounded-md border border-neutral-700 px-4 py-1.5 text-sm text-neutral-300 hover:bg-neutral-800">
           Review on GitHub ↗
         </a>
-        <p className="max-w-[16rem] text-xs text-neutral-600">Merging {pr.repo.split('/')[1]} from here isn't set up: its project profile hasn't opted in (merge_from_dashboard).</p>
+        <p className="max-w-[16rem] text-xs text-neutral-600">Merging {pr.projectName || pr.repo.split('/')[1]} from here isn't set up: its project profile hasn't opted in (merge_from_dashboard).</p>
       </div>
     )
   }
@@ -496,7 +497,7 @@ function PrCard({ pr, parity, onOpenTicket, onApproved, onDenied, onSelect, wait
         <div className="min-w-0 flex-1 basis-80">
           <p className="font-mono text-sm font-semibold text-white">
             #{pr.number} — {displayTitle(pr.title, parity?.ticket?.title)}{' '}
-            {pr.repo !== 'G-Eskayo/marvin' && <span className="rounded bg-sky-950 px-1.5 py-0.5 font-sans text-[10px] font-normal text-sky-300">{pr.repo.split('/')[1]}</span>}
+            {pr.repo !== 'G-Eskayo/marvin' && <span className="rounded bg-sky-950 px-1.5 py-0.5 font-sans text-[10px] font-normal text-sky-300">{pr.projectName || pr.repo.split('/')[1]}</span>}
             {pr.isDraft && <span className="ml-1 rounded bg-neutral-800 px-1.5 py-0.5 font-sans text-[10px] font-normal text-neutral-400">draft</span>}
           </p>
           <HelperChip helper={helper} />
@@ -764,10 +765,11 @@ function OpenPrs({ nav, onOpenDocs, onOpenBoard, onOpenTicket, onCount }) {
     setCollapsedSaved(next)
     writeSaved(window.localStorage, COLLAPSED_KEY, next)
   }
+  // Each card says its project's one name (marvin#848), not the repo's.
   const card = (pr, project) => (
     <MotionSlot key={pr.key} slotRef={motion.slotRef(pr.url)} waiting={motion.entering.has(pr.url)}>
       <PrCard
-        pr={pr}
+        pr={projects ? { ...pr, projectName: nameOf(pr.repo, projects) } : pr}
         parity={parity?.prs.find((r) => r.key === pr.key)}
         onOpenTicket={onOpenTicket}
         onApproved={reloadAndReturnToList}
