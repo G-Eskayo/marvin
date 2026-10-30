@@ -1864,6 +1864,9 @@ MARVIN-as-OS north star).
   `test` and `bench`. A job may name the tag it **needs**, and untagged work counts as `general`, so every job that
   exists today keeps running only on the Macs. If no device that accepts the tag is online, the job fails loudly
   and never falls back to a Mac, so untrusted code can't land on a Mac because the Kali box was down.
+  **Exception (ADR 0069 amendment, 2026-10-30, #930):** `test` and `bench` work that times out on the box, loses
+  the link mid-run, or finds no box available reruns once on the less busy Mac (a **fallback**, logged, at most 2 at
+  once). `security` and `quarantine` never fall back.
 - **Linux device identity** (settled from code 2026-10-16): same registry fields as the Macs, read from the
   firmware tables instead of macOS's `ioreg`, plus `os: linux`.
 - **Pull-only node** (decided 2026-10-16, ADR 0069): mac-mini-2012 receives code sync and never sends it. Its
