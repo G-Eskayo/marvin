@@ -215,11 +215,14 @@ cat > {state} << 'DISPATCH_STATE_EOF'
 {busy_json}
 DISPATCH_STATE_EOF
 (cd "$HOME/.agents" && "$HOME/.agents/venv/bin/python" -m lib.dispatch_concurrency refresh-summary)
+# Job hooks (#931): on mac-mini-2012 the live display stops while jobs run. A hook never changes the job's outcome.
+"$HOME/.agents/venv/bin/python" "$HOME/.agents/lib/job_hooks.py" start >/dev/null 2>&1 || true
 trap 'rm -f "$0" {tasks_dir}/{task_id}.json; cat > {state} << 'DISPATCH_IDLE_EOF'
 {idle_json}
 DISPATCH_IDLE_EOF
 (cd "$HOME/.agents" && "$HOME/.agents/venv/bin/python" -m lib.dispatch_concurrency refresh-summary)
-"$HOME/.agents/venv/bin/python" "$HOME/.agents/lib/memory_guard.py" kick >/dev/null 2>&1' EXIT
+"$HOME/.agents/venv/bin/python" "$HOME/.agents/lib/memory_guard.py" kick >/dev/null 2>&1
+"$HOME/.agents/venv/bin/python" "$HOME/.agents/lib/job_hooks.py" stop >/dev/null 2>&1' EXIT
 export PATH="$HOME/.local/bin:/opt/homebrew/bin:/usr/local/bin:$PATH"
 if [ -f "$HOME/.claude/.oauth-token" ]; then
   export CLAUDE_CODE_OAUTH_TOKEN="$(cat "$HOME/.claude/.oauth-token")"

@@ -62,6 +62,9 @@ entries `"accepts": ["general", "macos"]`.
 - The wallpaper is the Linux twin of `brain-map/DesktopLive` (same page, same hooks and timers). It must NOT use
   Electron's `type: 'desktop'`: on X11 that makes an unmanaged window drawn over everything. It sets
   `_NET_WM_WINDOW_TYPE_DESKTOP` with `xprop` before the window maps, so Xfwm keeps it behind every window.
+- **Off while jobs run** (#931): `lib/job_hooks.py`, called by every dispatched job's wrapper at start and from its EXIT
+  trap, stops the wallpaper at the first job and starts it again (same X session variables) after the last. A
+  wallpaper that wasn't running when the job began stays off. Events: `~/.claude/logs/box-display.jsonl`.
 
 ## 9. Mac data on the box (observer key)
 - The box reads from the Macs only through `marvin-observer.sh`, a forced command that matches the request against a
