@@ -147,10 +147,8 @@ def run_once_ollama(task: dict, profile: str, ollama_model: str,
 
     system_content = ""
     if profile == "marvin":
-        if context_mode == "rag":
-            system_content = query_memory(task["prompt"], n_results=3)
-        else:
-            system_content = _load_marvin_context()
+        system_content = (query_memory(task["prompt"], n_results=3) if context_mode == "rag"
+                          else _load_marvin_context())
 
     messages: list[dict] = []
     if system_content:
@@ -170,18 +168,16 @@ def run_once_ollama(task: dict, profile: str, ollama_model: str,
         method="POST",
     )
 
+    base = {"profile": profile, "model": ollama_model, "runner": "ollama",
+            "cost_usd": 0.0, "num_turns": 1, "tool_calls": 0}
     t0 = time.time()
     try:
         with urllib.request.urlopen(req, timeout=task.get("timeout", 300)) as resp:
             data = json.loads(resp.read())
     except Exception as exc:
-        return {
-            "profile": profile, "model": ollama_model, "runner": "ollama",
-            "result_text": "", "spawn_error": str(exc),
-            "wall_s": round(time.time() - t0, 1),
-            "cost_usd": 0.0, "total_tokens": 0, "num_turns": 1, "tool_calls": 0,
-            "correctness": {"score": 0.0},
-        }
+        return {**base, "result_text": "", "spawn_error": str(exc),
+                "wall_s": round(time.time() - t0, 1), "total_tokens": 0,
+                "correctness": {"score": 0.0}}
     wall = time.time() - t0
 
     result_text = (data.get("message") or {}).get("content", "")
@@ -189,15 +185,10 @@ def run_once_ollama(task: dict, profile: str, ollama_model: str,
     gen_tokens = data.get("eval_count", 0)
 
     return {
-        "profile":       profile,
-        "model":         ollama_model,
-        "runner":        "ollama",
+        **base,
         "result_text":   result_text,
         "wall_s":        round(wall, 1),
-        "cost_usd":      0.0,
         "total_tokens":  prompt_tokens + gen_tokens,
-        "num_turns":     1,
-        "tool_calls":    0,
         "correctness":    score_correctness(task, result_text, None),
         "context_mode":   context_mode if profile == "marvin" else "none",
         "_prompt_tokens": prompt_tokens,
