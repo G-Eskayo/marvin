@@ -17,7 +17,7 @@
   "box_builds": {
     "slots": 1,
     "memory_mb": 6144,
-    "vcpus": 4,
+    "vcpus": 6,
     "timeout_s": 5400,
     "reserve_mb": 3072
   }

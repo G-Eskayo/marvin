@@ -501,18 +501,22 @@ def start(ref: str, run_id: str) -> bool:
 
 # ── the box side ────────────────────────────────────────────────────────────────────────────────────────────────
 
+# The suite runs with one xdist worker per VM vCPU: serially, MARVIN's whole suite outlasts run_ticket's 1200 s test
+# limit on the 2012 box (found live on #870's first full run: 63 % at 1200 s). The gate already runs it with -n.
 # Test files that need the private ~/.claude, which a build VM never gets: ignored in both the baseline and the verify, so
 # the comparison stays fair. test_find_file skips itself once this PR's change to it is on main; then drop it here.
 VM_PYTEST_IGNORE = ("lib/tests/test_find_file.py",)
 
 
-def vm_command(ref: str, sha: str, run_id: str) -> str:
+def vm_command(ref: str, sha: str, run_id: str, workers: int = 4) -> str:
     """What runs inside the VM. Checked values only; the secrets are already exported by vm_run (from stdin)."""
+    if not isinstance(workers, int) or isinstance(workers, bool) or not 1 <= workers <= 8:
+        raise ValueError("bad worker count")
     if not _REF.match(ref) or not _SHA.match(sha) or not _RUN_ID.match(run_id):
         raise ValueError("bad ticket, engine commit or run id")
     return "; ".join([
         'export PATH="$HOME/.local/bin:/usr/local/bin:$PATH" DISABLE_AUTOUPDATER=1 MARVIN_BOX_BUILD=1 '
-        f"MARVIN_RUN_ID={run_id} PYTEST_ADDOPTS={shlex.quote(' '.join('--ignore=' + f for f in VM_PYTEST_IGNORE))}",
+        f"MARVIN_RUN_ID={run_id} PYTEST_ADDOPTS={shlex.quote(' '.join(['-n', str(workers), *('--ignore=' + f for f in VM_PYTEST_IGNORE)]))}",
         # git asks gh for the bot token (GH_TOKEN); repo and global config stay untouched
         "export GIT_CONFIG_COUNT=2 GIT_CONFIG_KEY_0=credential.helper GIT_CONFIG_VALUE_0= "
         "GIT_CONFIG_KEY_1=credential.helper GIT_CONFIG_VALUE_1='!gh auth git-credential'",
@@ -611,7 +615,7 @@ def box_vm(ref: str, sha: str, run_id: str, login: str, *, timeout: float, memor
     if login not in LOGINS:
         return {"refused": "no-secret", "why": f"unknown login {login!r}"}
     try:
-        command = vm_command(ref, sha, run_id)
+        command = vm_command(ref, sha, run_id, workers=vcpus)
     except ValueError as exc:
         return {"refused": "engine-sha", "why": str(exc)}
     if not gh_token or not key:

@@ -502,4 +502,8 @@ def test_a_stopped_mac_runner_settles_as_the_boxs_failure_and_removes_its_record
 
 def test_the_vm_ignores_only_the_tests_that_need_the_private_claude_folder():
     cmd = bb.vm_command("G-Eskayo/marvin#7", SHA, "abc123def456")
-    assert "PYTEST_ADDOPTS=--ignore=lib/tests/test_find_file.py;" in cmd
+    assert "PYTEST_ADDOPTS='-n 4 --ignore=lib/tests/test_find_file.py';" in cmd
+    assert "PYTEST_ADDOPTS='-n 6 " in bb.vm_command("G-Eskayo/marvin#7", SHA, "abc123def456", workers=6)
+    for bad in (0, 9, True, "4; id"):
+        with pytest.raises(ValueError):
+            bb.vm_command("G-Eskayo/marvin#7", SHA, "abc123def456", workers=bad)
