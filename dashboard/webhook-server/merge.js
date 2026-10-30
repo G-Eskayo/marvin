@@ -1,7 +1,7 @@
 import { execFile, spawn } from 'child_process'
 import { promisify } from 'util'
 import { mkdtemp, rm, statfs, readdir, lstat } from 'fs/promises'
-import { readdirSync } from 'fs'
+import { readdirSync, readFileSync } from 'fs'
 import { tmpdir } from 'os'
 import path from 'path'
 import { classifyFailure, summarizeGateFailure, withRetry, MergeFailure, refusal } from './failure.js'
@@ -182,35 +182,63 @@ export async function pytestParallelArgs(python = VENV_PYTHON, run = execFileAsy
   }
 }
 
+// The checks the gate runs: the repo's own required list (.github/required-checks.json, lib/required_checks.py,
+// marvin#826), the one GitHub CI runs too, minus the CI-only ones. Read from the checkout under test, else the engine's
+// own copy (a test's fake checkout). A list that exists but is broken throws: the gate must never run nothing.
+export function gateChecks(cwd) {
+  for (const dir of [cwd, REPO_PATH]) {
+    let text
+    try { text = readFileSync(path.join(dir, '.github', 'required-checks.json'), 'utf8') } catch { continue }
+    let checks
+    try { checks = JSON.parse(text).checks } catch (e) { throw new Error(`.github/required-checks.json is not valid JSON: ${e.message}`) }
+    if (!Array.isArray(checks) || !checks.length) throw new Error('.github/required-checks.json lists no checks')
+    return checks.filter((c) => (c.where || 'both') === 'both').map((c) => ({ cwd: '.', parser: 'exit-code', ...c }))
+  }
+  throw new Error('no .github/required-checks.json: the gate does not know which checks to run')
+}
+
+// What the progress line calls a check: the runners' own words where the stage UI already used them.
+const CHECK_DETAIL = { pytest: 'Python', vitest: 'Dashboard' }
+
 export async function _defaultRunTests(cwd, exec, progress = noProgress, parallelArgs = pytestParallelArgs, cache = nodeModulesCache) {
-  const dashboardDir = path.join(cwd, 'dashboard')
+  const checks = gateChecks(cwd)
   // Each output chunk is a heartbeat for the gate's time limit; the parsers turn the runners' own lines into counts.
   const watch = (runner, label, totalFiles = 0) => {
     const parse = createCountParser(runner, { totalFiles, onCount: (count) => progress('tests', 'running', { detail: label, count }) })
     return (chunk) => { progress('tests', 'output'); parse(chunk) }
   }
-  // npm install first (marvin#568), so the stages read in order: Installing, then Tests (Python, then Dashboard).
+  // Installs first (marvin#568), so the stages read in order: Installing, then Tests.
   progress('installing', 'running')
-  // Found live 2026-10-01 (PR #119's merge attempt): a `git worktree add`
-  // scratch checkout has no dashboard/node_modules at all -- `npx vitest
-  // run` hard-fails with a dependency-resolution error wall that has
-  // nothing to do with the PR's own code, and the webhook relayed that
-  // wall verbatim as the re-engagement reason. npm install is slower than
-  // reusing the real checkout's node_modules, but a scratch worktree is a
-  // separate filesystem location so nothing can be shared/symlinked in
-  // safely without risking the exact collision this isolation exists to
-  // avoid. (#687: a copy-on-write clone is that safe way: the copy shares the cache's blocks but is its own files.)
-  await cache.seed(dashboardDir)
-  await exec('npm', ['install'], { cwd: dashboardDir, onOutput: () => progress('installing', 'output') })
-  await cache.store(dashboardDir)
+  for (const c of checks.filter((c) => c.install === 'npm')) {
+    // Found live 2026-10-01 (PR #119's merge attempt): a `git worktree add` scratch checkout has no node_modules at
+    // all, and `npx vitest run` hard-fails with a dependency-resolution wall that has nothing to do with the PR.
+    // A scratch worktree is its own filesystem location, so nothing is symlinked in; (#687) a copy-on-write clone of
+    // the cache is the safe way to start warm: the copy shares the cache's blocks but is its own files.
+    const dir = path.join(cwd, c.cwd)
+    await cache.seed(dir)
+    await exec('npm', ['install'], { cwd: dir, onOutput: () => progress('installing', 'output') })
+    await cache.store(dir)
+  }
   progress('installing', 'done')
-  const parallel = await parallelArgs()
-  progress('tests', 'running', { detail: parallel.length ? 'Python' : 'Python (serial: pytest-xdist missing)', logDetail: !parallel.length })
-  // MARVIN_MERGE_GATE: tests that read ANOTHER repo's data (the portfolio figures) stay out of a PR's gate; they run in the
-  // main-branch health check instead (lib/main_health.py).
-  await exec(VENV_PYTHON, ['-m', 'pytest', '-q', ...parallel], { cwd, env: { ...process.env, MARVIN_MERGE_GATE: '1' }, onOutput: watch('pytest', 'Python') })
-  progress('tests', 'running', { detail: 'Dashboard', logDetail: true })
-  await exec('npx', ['vitest', 'run'], { cwd: dashboardDir, onOutput: watch('vitest', 'Dashboard', countTestFiles(path.join(dashboardDir, 'test'))) })
+  // `python` in a check is the venv's interpreter: its bin goes first on PATH.
+  const PATH = [path.dirname(VENV_PYTHON), process.env.PATH].filter(Boolean).join(path.delimiter)
+  for (const c of checks) {
+    let label = CHECK_DETAIL[c.parser] || c.name
+    // MARVIN_MERGE_GATE: tests that read ANOTHER repo's data (the portfolio figures) stay out of a PR's gate; they
+    // run in the main-branch health check instead (lib/main_health.py).
+    const env = { ...process.env, PATH, MARVIN_MERGE_GATE: '1' }
+    if (c.parser === 'pytest') {
+      const parallel = await parallelArgs()
+      if (parallel.length) env.PYTEST_ADDOPTS = [process.env.PYTEST_ADDOPTS, ...parallel].filter(Boolean).join(' ')
+      else label = `${label} (serial: pytest-xdist missing)`
+      progress('tests', 'running', { detail: label, logDetail: !parallel.length })
+    } else {
+      progress('tests', 'running', { detail: label, logDetail: true })
+    }
+    const total = c.parser === 'vitest' ? countTestFiles(path.join(cwd, c.cwd, 'test')) : 0
+    const runner = c.parser === 'pytest' || c.parser === 'vitest' ? c.parser : null
+    await exec('bash', ['.github/run-check.sh', c.id], { cwd, env, onOutput: runner ? watch(runner, CHECK_DETAIL[c.parser], total) : () => progress('tests', 'output') })
+  }
 }
 
 // Rebases headRef onto origin/main inside a throwaway scratch worktree --
