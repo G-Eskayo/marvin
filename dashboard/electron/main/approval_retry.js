@@ -1,4 +1,5 @@
 // marvin#762: an approval no machine could take is retried when a merge machine comes back, without another click.
+// So is an interrupted one (owner decision on #766), on the Mac it was interrupted on only.
 // Triggered, never polled (CONTEXT "Triggers over polling"): a webhook starting announces itself (webhook-server
 // POST /merge-host-up, relayed to this dashboard as the 'merge-host' topic), this Mac waking or being unlocked,
 // and the dashboard starting. Each trigger runs one pass over the waiting approvals.
@@ -25,7 +26,9 @@ export function createApprovalRetry({ ledger, approve, viewPr, log = () => {} })
       tried++
       log(`[approval-retry] ${trigger}: retrying the approval of ${entry.url} (clicked ${new Date(entry.clickedAt).toISOString()})`)
       let result
-      try { result = await approve(entry.url, entry) } catch (err) {
+      // An interrupted one goes back to the Mac it was interrupted on, and only there (approve_flow.js).
+      const opts = { number: entry.number, head: entry.head, retry: true, ...(entry.outcome === 'interrupted' ? { machine: entry.machine } : {}) }
+      try { result = await approve(entry.url, opts) } catch (err) {
         log(`[approval-retry] ${entry.url}: ${err?.message || err}`)
         continue
       }

@@ -87,7 +87,7 @@ const approveFlow = createApproveFlow({
 })
 const approvalRetry = createApprovalRetry({
   ledger: approvalLedger,
-  approve: (url, entry) => approveFlow(url, { number: entry.number, head: entry.head, retry: true }),
+  approve: (url, opts) => approveFlow(url, opts),
   // A fixed PR list (MARVIN_MR_FIXTURE, evidence captures) is its own GitHub: its PRs are open unless it says otherwise.
   viewPr: (url) => process.env.MARVIN_MR_FIXTURE ? fixturePrState(url) : viewPrState(url),
   log: (line) => console.log(line)

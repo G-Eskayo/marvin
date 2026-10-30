@@ -1574,11 +1574,21 @@ def merge_service_reachable(host: str, port: int = MERGE_PORT, timeout: float = 
         return False
 
 
+INTERRUPTED_RETRIES = 3  # approval_ledger.js INTERRUPTED_RETRIES
+
+
+def _is_waiting(a: dict) -> bool:
+    """approval_ledger.js isWaiting: queued, or interrupted on a known Mac and sent fewer than 3 times (#766)."""
+    if a.get("outcome") == "queued":
+        return True
+    return a.get("outcome") == "interrupted" and bool(a.get("machine")) and (a.get("attempts") or 0) < INTERRUPTED_RETRIES
+
+
 def waiting_approvals(path: Path | None = None) -> int:
-    """Approvals no machine could take, saved for a retry (dashboard/electron/main/approval_ledger.js)."""
+    """Approvals saved for a retry (dashboard/electron/main/approval_ledger.js): none could take them, or interrupted."""
     try:
         items = json.loads(Path(path or APPROVALS_PATH).read_text()).get("approvals") or []
-        return sum(1 for a in items if isinstance(a, dict) and a.get("outcome") == "queued")
+        return sum(1 for a in items if isinstance(a, dict) and _is_waiting(a))
     except (OSError, ValueError, AttributeError):
         return 0
 

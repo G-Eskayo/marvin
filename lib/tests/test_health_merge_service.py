@@ -114,3 +114,15 @@ def test_machines_follow_the_dashboard_order(monkeypatch):
 
 def test_registered_in_the_sweep():
     assert "merge:service" in [c[0] for c in hc.default_checks()]
+
+
+def test_waiting_count_includes_interrupted_ones_the_dashboard_will_retry(tmp_path):
+    # Same rule as approval_ledger.js isWaiting (owner decision on #766): interrupted on a known Mac, sent fewer than 3 times.
+    f = tmp_path / "approvals.json"
+    f.write_text(json.dumps({"approvals": [
+        {"url": "a", "outcome": "interrupted", "machine": "mac-mini-1", "attempts": 1},
+        {"url": "b", "outcome": "interrupted", "machine": "mac-mini-1", "attempts": 3},
+        {"url": "c", "outcome": "interrupted", "machine": None, "attempts": 1},
+        {"url": "d", "outcome": "queued"},
+    ]}))
+    assert hc.waiting_approvals(f) == 2

@@ -6,15 +6,17 @@ import path from 'path'
 // reason, attempts, updatedAt }. On 2026-10-29 seven clicks failed and nothing recorded which PRs they were for.
 //
 // outcome: sending (written, not yet answered) | merged | reengaged | refused | interrupted | queued (no machine could
-// take it) | merged-elsewhere | closed. Only `queued` waits for a retry: every other outcome is a machine's answer.
-// (`interrupted` is not retried by itself: the webhook went away mid-merge and may have done part of it; the card
-// already offers Approve again.)
+// take it) | merged-elsewhere | closed. Waiting for a retry: `queued`, and `interrupted` (the webhook went away
+// mid-merge; owner decision on #766) when the Mac it was on is known and it has been sent fewer than 3 times. Every
+// other outcome is a machine's answer. An interrupted one is only ever retried on that same Mac (approve_flow.js).
 //
 // Per machine, in ~/.claude/logs (not synced): a click is retried from the dashboard where it was made, so two Macs
 // never both retry it. The Health check (lib/health_checks.py, merge:service) reads the same file for its count.
 // One small JSON file, rewritten whole through a temp file and a rename, so a crash mid-write leaves the old one.
 export const APPROVALS_PATH = path.join(homedir(), '.claude', 'logs', 'approvals.json')
-const WAITING = new Set(['queued'])
+// A PR whose merge keeps killing its webhook is not re-run on every wake and unlock: 3 sends, then Approve by hand.
+export const INTERRUPTED_RETRIES = 3
+const isWaiting = (a) => a.outcome === 'queued' || (a.outcome === 'interrupted' && !!a.machine && (a.attempts || 0) < INTERRUPTED_RETRIES)
 
 export function createApprovalLedger(file = APPROVALS_PATH, { now = Date.now, cap = 200 } = {}) {
   const read = () => {
@@ -27,8 +29,8 @@ export function createApprovalLedger(file = APPROVALS_PATH, { now = Date.now, ca
   }
   // Bounded: the newest `cap` answered entries are kept; a waiting one is never dropped. O(n log n) per write, n <= cap.
   const write = (list) => {
-    const waiting = list.filter((a) => WAITING.has(a.outcome))
-    const done = list.filter((a) => !WAITING.has(a.outcome)).sort((a, b) => b.updatedAt - a.updatedAt).slice(0, cap)
+    const waiting = list.filter(isWaiting)
+    const done = list.filter((a) => !isWaiting(a)).sort((a, b) => b.updatedAt - a.updatedAt).slice(0, cap)
     const out = [...waiting, ...done].sort((a, b) => a.clickedAt - b.clickedAt)
     mkdirSync(path.dirname(file), { recursive: true })
     const tmp = `${file}.${process.pid}.tmp`
@@ -50,15 +52,19 @@ export function createApprovalLedger(file = APPROVALS_PATH, { now = Date.now, ca
       const t = now()
       return update(url, (prev) => ({
         url, number: number ?? prev?.number ?? null, head: head ?? prev?.head ?? null,
-        clickedAt: prev && WAITING.has(prev.outcome) ? prev.clickedAt : t,
-        outcome: 'sending', machine: null, reason: null, attempts: (prev && WAITING.has(prev.outcome) ? prev.attempts || 1 : 0) + 1, updatedAt: t
+        clickedAt: prev && isWaiting(prev) ? prev.clickedAt : t,
+        outcome: 'sending', machine: null, reason: null, attempts: (prev && isWaiting(prev) ? prev.attempts || 1 : 0) + 1, updatedAt: t
       }))
     },
-    conclude(url, outcome, { machine = null, reason = null } = {}) {
-      return update(url, (prev) => prev && { ...prev, outcome, machine, reason: reason == null ? null : String(reason).slice(0, 500), updatedAt: now() })
+    // unsent: this try never reached a machine that took it (unreachable, or already merging it), so it is not counted.
+    conclude(url, outcome, { machine = null, reason = null, unsent = false } = {}) {
+      return update(url, (prev) => prev && {
+        ...prev, outcome, machine, reason: reason == null ? null : String(reason).slice(0, 500),
+        attempts: unsent ? Math.max(0, (prev.attempts || 1) - 1) : prev.attempts, updatedAt: now()
+      })
     },
     drop(url) { update(url, () => null) },
     get: (url) => read().find((a) => a.url === url) || null,
-    waiting: () => read().filter((a) => WAITING.has(a.outcome)).sort((a, b) => a.clickedAt - b.clickedAt)
+    waiting: () => read().filter(isWaiting).sort((a, b) => a.clickedAt - b.clickedAt)
   }
 }

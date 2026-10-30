@@ -5,7 +5,8 @@ import { mkdtempSync, rmSync, readFileSync, writeFileSync } from 'fs'
 import { tmpdir } from 'os'
 import path from 'path'
 import { approveMrStream } from '../electron/main/approve_stream.js'
-import { approveResponder } from '../webhook-server/merge_progress.js'
+import { approveResponder, createMergeLatch, alreadyMergingBody } from '../webhook-server/merge_progress.js'
+import { describeApproveFailure } from '../electron/main/mr_review.js'
 import { createMergeOps } from '../electron/main/merge_ops.js'
 import { mergeMachines, approveOnAnyMachine, failoverNotice, noMachineReason } from '../electron/main/merge_failover.js'
 import { createApprovalLedger } from '../electron/main/approval_ledger.js'
@@ -384,5 +385,160 @@ describe('createApproveFlow: one approval from click to outcome', () => {
     expect(calls).toEqual([PR])
     expect(ledger.get(PR)).toMatchObject({ outcome: 'merged', machine: 'macbook-pro-1', attempts: 2 })
     expect(ops.get(PR).state).toBe('merged')
+  })
+})
+
+// marvin#766 owner decision (retry-interrupted, 2026-10-29): an interrupted merge (the webhook went away mid-merge) is
+// retried by itself on the next trigger too, after the same is-it-still-open check. It goes back only to the Mac it
+// was interrupted on: that Mac may have slept mid-merge and still be running it, so another Mac must never start it.
+describe('interrupted merges are retried by themselves (owner decision on #766), never merged twice', () => {
+  let dir, ledger, ops
+  beforeEach(() => { dir = mkdtempSync(path.join(tmpdir(), 'interrupted-')); ledger = createApprovalLedger(path.join(dir, 'approvals.json')); ops = createMergeOps() })
+  afterEach(() => rmSync(dir, { recursive: true, force: true }))
+  const flowOn = (get) => createApproveFlow({ mergeOps: ops, ledger, machines: get, send: (u, url, o) => approveMrStream(u, url, { ...o, connectTimeoutMs: 300 }) })
+  // A webhook that takes the request, says it started, then goes away (restarted, crashed, slept).
+  const dropping = (calls) => (req, res, raw) => {
+    calls.push(JSON.parse(raw).pr_url)
+    approveResponder(res, { streaming: true }).event({ id: 'x', seq: 1, stage: 'tests', state: 'running', at: 1 })
+    setTimeout(() => res.socket.destroy(), 10)
+  }
+  const retryWith = (approve, viewPr = async () => ({ state: 'OPEN' })) => createApprovalRetry({ ledger, viewPr, approve: (url, opts) => approve(url, opts) })
+
+  it('the ledger: interrupted with a known Mac is waiting, keeps its click time, and stops after 3 sends', () => {
+    let t = 0
+    const a = createApprovalLedger(path.join(dir, 'l.json'), { now: () => ++t })
+    a.record(PR); a.conclude(PR, 'interrupted', { machine: 'mac-mini-1', reason: 'gone' })
+    expect(a.waiting().map((x) => [x.url, x.clickedAt, x.attempts])).toEqual([[PR, 1, 1]])
+    a.record(PR); a.conclude(PR, 'interrupted', { machine: 'mac-mini-1' })
+    expect(a.get(PR)).toMatchObject({ clickedAt: 1, attempts: 2 })
+    expect(a.waiting()).toHaveLength(1)
+    a.record(PR); a.conclude(PR, 'interrupted', { machine: 'mac-mini-1' })
+    expect(a.get(PR).attempts).toBe(3)
+    expect(a.waiting()).toEqual([]) // a PR that keeps killing its webhook is not re-run on every unlock
+  })
+
+  it('the ledger: interrupted on an unknown Mac is not waiting (there is no Mac it would be safe to send it to)', () => {
+    const a = createApprovalLedger(path.join(dir, 'l.json'))
+    a.record(PR); a.conclude(PR, 'interrupted', { machine: null })
+    expect(a.waiting()).toEqual([])
+  })
+
+  it('the ledger: an attempt that was never sent (unsent) does not count towards the 3', () => {
+    const a = createApprovalLedger(path.join(dir, 'l.json'))
+    a.record(PR); a.conclude(PR, 'interrupted', { machine: 'mac-mini-1' })
+    for (let i = 0; i < 5; i++) { a.record(PR); a.conclude(PR, 'interrupted', { machine: 'mac-mini-1', unsent: true }) }
+    expect(a.get(PR).attempts).toBe(1)
+    expect(a.waiting()).toHaveLength(1)
+  })
+
+  it('end to end: interrupted on the Mini; its webhook comes back, the trigger checks it is still open, and it merges there with no click', async () => {
+    const dropped = []
+    let machines = [MINI(await serve(dropping(dropped))), BOOK(await closedPortUrl())]
+    const approve = flowOn(() => machines)
+    const first = await approve(PR, { number: 900, head: 'abc' })
+    expect(first.interrupted).toBe(true)
+    expect(ledger.get(PR)).toMatchObject({ outcome: 'interrupted', machine: 'mac-mini-1', attempts: 1 })
+    const merged = [], asked = []
+    machines = [MINI(await serve(merging(merged))), machines[1]]
+    await retryWith(approve, async (u) => { asked.push(u); return { state: 'OPEN' } }).run('merge-host-up')
+    expect(asked).toEqual([PR])
+    expect(merged).toEqual([PR])
+    expect(ledger.get(PR)).toMatchObject({ outcome: 'merged', machine: 'mac-mini-1', attempts: 2, number: 900, head: 'abc' })
+    expect(ops.get(PR).state).toBe('merged')
+  })
+
+  it('interrupted on the Mini, then merged or closed on GitHub meanwhile: concluded, nothing is sent', async () => {
+    const calls = []
+    const approve = flowOn(() => [MINI(urlMini), BOOK(urlBook)])
+    const urlMini = await serve(dropping(calls))
+    const urlBook = await serve(merging(calls))
+    expect((await approve(PR)).interrupted).toBe(true)
+    expect((await approve(PR2)).interrupted).toBe(true)
+    calls.length = 0
+    const states = { [PR]: 'MERGED', [PR2]: 'CLOSED' }
+    await retryWith(approve, async (u) => ({ state: states[u] })).run('resume')
+    expect(calls).toEqual([])
+    expect(ledger.get(PR).outcome).toBe('merged-elsewhere')
+    expect(ledger.get(PR2).outcome).toBe('closed')
+    expect(ledger.waiting()).toEqual([])
+  })
+
+  it('interrupted on the Mini, the Mini now unreachable (asleep mid-merge?): never failed over to this Mac; it stays waiting, the try not counted', async () => {
+    const miniCalls = [], bookCalls = []
+    let machines = [MINI(await serve(dropping(miniCalls))), BOOK(await serve(merging(bookCalls)))]
+    const approve = flowOn(() => machines)
+    expect((await approve(PR)).interrupted).toBe(true)
+    machines = [MINI(await closedPortUrl()), machines[1]]
+    const r = await retryWith(approve).run('unlock')
+    expect(r.tried).toBe(1)
+    expect(bookCalls).toEqual([])
+    expect(ledger.get(PR)).toMatchObject({ outcome: 'interrupted', machine: 'mac-mini-1', attempts: 1 })
+    expect(ledger.waiting()).toHaveLength(1)
+    expect(ops.get(PR).state).toBe('interrupted') // the card goes back to what it said, not "queued" or "Merging…"
+  })
+
+  it('the interrupted Mac is no longer in the list of merge machines: nothing is sent anywhere, it stays waiting', async () => {
+    const calls = []
+    let machines = [MINI(await serve(dropping(calls)))]
+    const approve = flowOn(() => machines)
+    await approve(PR)
+    calls.length = 0
+    machines = [BOOK(await serve(merging(calls)))]
+    await retryWith(approve).run('startup')
+    expect(calls).toEqual([])
+    expect(ledger.get(PR)).toMatchObject({ outcome: 'interrupted', attempts: 1 })
+  })
+
+  it('the stream dropped but the Mini is still merging it (a network blip): the retry is refused ALREADY_MERGING, the gate runs once, it stays waiting', async () => {
+    const latch = createMergeLatch()
+    const gateRuns = []
+    let finish
+    const mini = await serve((req, res, raw) => {
+      const url = JSON.parse(raw).pr_url
+      const reply = approveResponder(res, { streaming: true })
+      if (!latch.take(url)) { reply.result(409, alreadyMergingBody('mac-mini-1')); return }
+      gateRuns.push(url)
+      reply.event({ id: 'm', seq: 1, stage: 'tests', state: 'running', at: 1 })
+      setTimeout(() => res.socket.destroy(), 10) // the dashboard loses the stream; the merge goes on
+      finish = () => latch.release(url)
+    })
+    const approve = flowOn(() => [MINI(mini)])
+    expect((await approve(PR)).interrupted).toBe(true)
+    await retryWith(approve).run('resume')
+    expect(gateRuns).toEqual([PR])
+    expect(ledger.get(PR)).toMatchObject({ outcome: 'interrupted', attempts: 1 })
+    expect(ops.get(PR).state).toBe('interrupted')
+    // Once that merge lands, the next trigger's still-open check concludes it; nothing is sent again.
+    finish()
+    await retryWith(approve, async () => ({ state: 'MERGED' })).run('unlock')
+    expect(gateRuns).toEqual([PR])
+    expect(ledger.get(PR).outcome).toBe('merged-elsewhere')
+  })
+
+  it('a queued approval still fails over freely; only interrupted ones are held to their Mac', async () => {
+    const bookCalls = []
+    let machines = [MINI(await closedPortUrl()), BOOK(await closedPortUrl())]
+    const approve = flowOn(() => machines)
+    expect((await approve(PR)).queued).toBe(true)
+    machines = [machines[0], BOOK(await serve(merging(bookCalls)))]
+    await retryWith(approve).run('merge-host-up')
+    expect(bookCalls).toEqual([PR])
+  })
+})
+
+describe('createMergeLatch: one merge of a PR at a time on a webhook', () => {
+  it('a second take of the same PR is refused until the first is released; other PRs are not held up', () => {
+    const l = createMergeLatch()
+    expect(l.take(PR)).toBe(true)
+    expect(l.take(PR)).toBe(false)
+    expect(l.take(PR2)).toBe(true)
+    l.release(PR)
+    expect(l.take(PR)).toBe(true)
+  })
+
+  it('the refusal names the Mac in plain words and reads cleanly on the card', () => {
+    const body = alreadyMergingBody('mac-mini-1')
+    expect(body).toMatchObject({ merged: false, code: 'ALREADY_MERGING' })
+    expect(describeApproveFailure(409, body)).toBe('ALREADY_MERGING at queued: This PR is already being merged on the Mac mini. Its result shows when that merge finishes.')
   })
 })

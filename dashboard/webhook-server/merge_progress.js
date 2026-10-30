@@ -319,3 +319,24 @@ export function approveResponder(res, { streaming }) {
     }
   }
 }
+
+// marvin#766: one merge of a PR at a time on this webhook. A dashboard that lost the stream (a network blip, this Mac
+// slept) may send the same PR again while this process is still merging it; that second request is refused
+// (alreadyMergingBody, 409) instead of queuing a second gate run. In memory on purpose: a new process has no merge
+// running, and the in-flight file is what reports the old one as interrupted. O(1) per take and release.
+export function createMergeLatch() {
+  const held = new Set()
+  return {
+    take(url) {
+      if (held.has(url)) return false
+      held.add(url)
+      return true
+    },
+    release(url) { held.delete(url) }
+  }
+}
+
+export function alreadyMergingBody(machineId) {
+  const where = machineId ? `the ${machineLabel(machineId)}` : 'this Mac'
+  return { merged: false, code: 'ALREADY_MERGING', stage: 'queued', action: 'wait', message: `This PR is already being merged on ${where}. Its result shows when that merge finishes` }
+}

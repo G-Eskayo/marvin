@@ -371,7 +371,9 @@ export async function listPipelinePrs(listOpenPrs, { canMerge = canMergeFromDash
 export function describeApproveFailure(status, body) {
   if (!body || !body.code) return `Webhook call failed: ${status}`
   const next =
-    body.action === 'escalate'
+    body.action === 'wait'
+      ? ''
+      : body.action === 'escalate'
       ? ' -- needs you'
       : body.action === 'retry'
         ? ` -- already retried ${body.attempts ?? '?'} times; try again shortly`
