@@ -3,6 +3,8 @@ name: CI
 # Runs exactly the required checks in .github/required-checks.json (marvin#826): one job per check, named as the list
 # names it, each running `.github/run-check.sh <id>`, the same runner MARVIN's merge gate uses. Branch protection on
 # main requires these names. lib/tests/test_required_checks.py fails if this file and the list drift apart.
+# On a PR, MARVIN_BASE makes each check run only what the change affects (lib/affected_tests.py, run-check.sh's
+# "paths"); on main, after every merge, it is empty and the full suite runs.
 on:
   pull_request:
   push:
@@ -45,6 +47,7 @@ jobs:
     timeout-minutes: 40
     env:
       MARVIN_MERGE_GATE: "1" # leave out the tests that read another repo's data, as the gate does
+      MARVIN_BASE: ${{ github.event.pull_request.base.sha }} # a PR runs the tests it affects; main runs them all
     steps:
       - uses: actions/checkout@v4
         with:
@@ -65,14 +68,23 @@ jobs:
     name: Dashboard unit tests
     runs-on: ubuntu-latest
     timeout-minutes: 15
+    env:
+      MARVIN_BASE: ${{ github.event.pull_request.base.sha }}
     steps:
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Does this change touch the dashboard?
+        id: affected
+        run: echo "run=$(.github/run-check.sh dashboard --affected)" >> "$GITHUB_OUTPUT"
       - uses: actions/setup-node@v4
+        if: steps.affected.outputs.run == 'true'
         with:
           node-version: 20
           cache: npm
           cache-dependency-path: dashboard/package-lock.json
       - run: npm ci --ignore-scripts --no-audit --no-fund
+        if: steps.affected.outputs.run == 'true'
         working-directory: dashboard
       - run: .github/run-check.sh dashboard
 

@@ -678,12 +678,37 @@ describe('_defaultRunTests', () => {
       const cache = { seed: vi.fn(async () => {}), store: vi.fn(async () => {}) }
       await _defaultRunTests(root, exec, undefined, async () => [], cache)
       expect(calls.map(([c, a, cwd]) => `${c} ${a} @${path.relative(root, cwd) || '.'}`)).toEqual([
-        'npm install @web', 'bash .github/run-check.sh rules @.', 'bash .github/run-check.sh unit @.'
+        'bash .github/run-check.sh unit --affected @.', 'npm install @web', 'bash .github/run-check.sh rules @.', 'bash .github/run-check.sh unit @.'
       ])
       // `python` in a check means the venv's interpreter, and every check runs with the gate's marker.
       const env = calls.find(([c]) => c === "bash")[3]
       expect(env.PATH.split(path.delimiter)[0]).toMatch(/venv[/\\]bin$/)
       expect(env.MARVIN_MERGE_GATE).toBe('1')
+    } finally {
+      rmSync(root, { recursive: true, force: true })
+    }
+  })
+
+  it('#826: with a base, every check is told it, and a check the PR does not affect skips its install', async () => {
+    const root = mkdtempSync(path.join(tmpdir(), 'rc-'))
+    try {
+      mkdirSync(path.join(root, '.github'))
+      writeFileSync(path.join(root, '.github', 'required-checks.json'), JSON.stringify({ checks: [
+        { id: 'unit', name: 'Unit', cwd: 'web', install: 'npm', paths: ['web/*'], command: ['npx', 'vitest', 'run'], parser: 'vitest' }
+      ] }))
+      for (const [answer, installs] of [['false\n', false], ['true\n', true], ['', true]]) {
+        const calls = []
+        const exec = vi.fn(async (cmd, args, opts) => {
+          calls.push([cmd, args.join(' '), opts?.env?.MARVIN_BASE])
+          return { stdout: args.includes('--affected') ? answer : '', stderr: '' }
+        })
+        await _defaultRunTests(root, exec, undefined, async () => [], { seed: async () => {}, store: async () => {} }, 'main')
+        expect(calls.some(([c]) => c === 'npm')).toBe(installs)
+        expect(calls.filter(([c]) => c === 'bash').every(([, , b]) => b === 'origin/main')).toBe(true)
+      }
+      const calls = []
+      await _defaultRunTests(root, vi.fn(async (c, a, o) => { calls.push(o?.env?.MARVIN_BASE); return { stdout: '' } }), undefined, async () => [], { seed: async () => {}, store: async () => {} })
+      expect(calls.every((b) => b === undefined)).toBe(true) // no base: everything runs, as on main
     } finally {
       rmSync(root, { recursive: true, force: true })
     }
@@ -702,7 +727,7 @@ describe('_defaultRunTests', () => {
 
   it('#687: seeds node_modules from the cache before npm install and stores the result after, in the dashboard dir', async () => {
     const order = []
-    const exec = vi.fn(async (cmd, args) => { order.push(cmd === 'npm' ? 'install' : cmd); return { stdout: '', stderr: '' } })
+    const exec = vi.fn(async (cmd, args) => { if (!args.includes('--affected')) order.push(cmd === 'npm' ? 'install' : cmd); return { stdout: '', stderr: '' } })
     const cache = { seed: vi.fn(async (d) => order.push(`seed ${d}`)), store: vi.fn(async (d) => order.push(`store ${d}`)) }
     await _defaultRunTests('/repo', exec, undefined, async () => [], cache)
     expect(order.slice(0, 3)).toEqual(['seed /repo/dashboard', 'install', 'store /repo/dashboard'])
