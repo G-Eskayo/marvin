@@ -47,7 +47,7 @@ def test_needs_a_file():
 
 def _pytest(tmp_path: Path, env_extra: dict | None = None) -> subprocess.CompletedProcess:
     (tmp_path / "test_suite.py").write_text(SUITE)
-    env = {k: v for k, v in os.environ.items() if k != "MARVIN_REQUIRE_TOOLS"}
+    env = {k: v for k, v in os.environ.items() if k not in ("MARVIN_REQUIRE_TOOLS", "PYTEST_ADDOPTS")}
     env.update({"PYTHONPATH": str(ROOT / "lib"), **(env_extra or {})})
     return subprocess.run([sys.executable, "-m", "pytest", "-p", "tool_requirements", "-p", "no:cacheprovider",
                            "-rs", "-q", str(tmp_path / "test_suite.py")], cwd=tmp_path, capture_output=True, text=True,
@@ -72,6 +72,16 @@ def test_under_ci_a_missing_tool_fails_so_the_required_list_cannot_quietly_shrin
     r = _pytest(tmp_path, {"MARVIN_REQUIRE_TOOLS": "1"})
     assert r.returncode == 1
     assert "1 passed, 1 skipped, 2 errors" in r.stdout and "INFRA" in r.stdout  # setup failures: red either way
+
+
+def test_the_summary_survives_parallel_workers(tmp_path):
+    # Under xdist the workers count, but the controller prints the summary: it must count from the skip reports.
+    (tmp_path / "test_suite.py").write_text(SUITE)
+    env = {k: v for k, v in os.environ.items() if k not in ("MARVIN_REQUIRE_TOOLS", "PYTEST_ADDOPTS")}
+    r = subprocess.run([sys.executable, "-m", "pytest", "-p", "tool_requirements", "-p", "no:cacheprovider", "-q",
+                        "-n", "2", str(tmp_path / "test_suite.py")], cwd=tmp_path, capture_output=True, text=True,
+                       env={**env, "PYTHONPATH": str(ROOT / "lib")}, timeout=120)
+    assert "INFRA: this machine is missing no-such-tool-826 (2 tests did not run)" in r.stdout, r.stdout
 
 
 def test_missing_reports_only_what_is_not_on_path():

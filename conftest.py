@@ -92,3 +92,14 @@ def _no_real_github(tmp_path_factory, monkeypatch):
     fake.write_text("#!/bin/sh\necho 'gh is disabled in tests' >&2\nexit 1\n")
     fake.chmod(0o755)
     monkeypatch.setenv("PATH", f"{bin_dir}{os.pathsep}{os.environ.get('PATH', '')}")
+
+
+@pytest.fixture(autouse=True)
+def _no_real_claude(tmp_path_factory, monkeypatch):
+    """No test starts Claude Code (#826): code that only looks the binary up finds this one, on a runner without
+    Claude Code too, and anything that runs it gets a refusal instead of spending tokens. Its own name, so the
+    folders' conftests that redefine _no_real_github don't drop it."""
+    no_claude = tmp_path_factory.mktemp("no-claude")
+    (no_claude / "claude").write_text("#!/bin/sh\necho 'claude is disabled in tests' >&2\nexit 1\n")
+    (no_claude / "claude").chmod(0o755)
+    monkeypatch.setenv("PATH", f"{no_claude}{os.pathsep}{os.environ.get('PATH', '')}")
