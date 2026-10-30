@@ -31,7 +31,7 @@ import { createMergeOps } from './merge_ops.js'
 import { createApprovalLedger } from './approval_ledger.js'
 import { createApprovalRetry } from './approval_retry.js'
 import { createApproveFlow } from './approve_flow.js'
-import { mergeMachines } from './merge_failover.js'
+import { mergeMachines, askReady, askForget } from './merge_failover.js'
 import { readPrefs } from './prefs.js'
 import { guardApprove } from './approve_guard.js'
 import { recordRefusal } from '../../webhook-server/refusal_log.js'
@@ -63,6 +63,9 @@ const approveFlow = createApproveFlow({
   }),
   // marvin#568: the webhook streams each stage as it happens; each one is folded into the op and pushed.
   send: (url, target, opts) => approveMrStream(url, target, opts),
+  // marvin#940: the Mini short of memory, a later merge Mac that says it is fit takes it once the Mini dropped its copy.
+  ready: (machine, repo) => askReady(machine, repo),
+  forget: (machine, prUrl) => askForget(machine, prUrl),
   push: (url, op) => pushMergeOp(url, op),
   // The Approve & Merge click is the decision. The native popup is opt-in (prefs.json: confirmMerge) -- the
   // duplicate-start guard, the merge gate's retest and the base/order checks are what protect a stray click.

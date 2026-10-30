@@ -2,7 +2,8 @@
 """Daily cleanup sweep for the MR pipeline (G-Eskayo/marvin#9), same shape
 as cron_health.py -- silent failure is the recurring real problem in this
 codebase, so every run writes what it did to OUTPUT_PATH. Scheduled daily on
-both machines by config/launchd/com.marvin.cleanup-sweep.plist.
+every machine from config/jobs/cleanup-sweep.json (launchd on the Macs, a systemd
+timer on mac-mini-2012; lib/job_units.py, marvin#911).
 
 Two independent sweeps:
 
@@ -54,6 +55,8 @@ from typing import Callable
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import gh_env  # noqa: E402
+import host_os  # noqa: E402
+import machine_profile  # noqa: E402
 import ticket_claim  # noqa: E402
 from sandbox_orchestration import WORKTREES_ROOT  # noqa: E402
 
@@ -110,9 +113,13 @@ def worktree_roots() -> list[Path]:
 
 def _cwds_in_use() -> set[str]:
     """Working directories of every running process (one lsof call), so a worktree a session is inside is left
-    alone. lsof missing or failing returns an empty set; the 48 h idle rule still guards live work."""
+    alone. lsof missing or failing returns an empty set; the 48 h idle rule still guards live work. lsof is found
+    through host_os: /usr/sbin on a Mac, /usr/bin on mac-mini-2012 (marvin#911)."""
+    lsof = host_os.lsof_bin()
+    if lsof is None:
+        return set()
     try:
-        out = subprocess.run(["/usr/sbin/lsof", "-n", "-d", "cwd", "-Fn"], capture_output=True, text=True,
+        out = subprocess.run([lsof, "-n", "-d", "cwd", "-Fn"], capture_output=True, text=True,
                              timeout=60).stdout
     except (OSError, subprocess.SubprocessError):
         return set()
@@ -275,8 +282,11 @@ def pytest_temp_roots() -> list[Path]:
 def _open_paths() -> set[str] | None:
     """Every path a running process has open, its working folder included (one lsof call). None when that can't be
     read: the caller then removes nothing, since it can't tell what is in use."""
+    lsof = host_os.lsof_bin()
+    if lsof is None:
+        return None
     try:
-        r = subprocess.run(["/usr/sbin/lsof", "-n", "-w", "-Fn"], capture_output=True, text=True, timeout=120)
+        r = subprocess.run([lsof, "-n", "-w", "-Fn"], capture_output=True, text=True, timeout=120)
     except (OSError, subprocess.SubprocessError):
         return None
     if not r.stdout.strip():   # lsof exits 1 on a few unreadable processes but still lists the rest
@@ -470,7 +480,10 @@ def sweep_worktrees(
     is_claimed: Callable[[str, int], bool] | None = None,
     remove_worktree: Callable[[dict], bool] | None = None,
     backup: Callable[[dict], str | None] | None = None,
+    can_push: bool = True,
 ) -> dict:
+    """can_push=False (a pull-only node, ADR 0069): a worktree that would be backed up is kept instead, since the
+    backup is a push."""
     list_worktrees = list_worktrees or _default_list_worktrees
     pr_state = pr_state or _default_pr_state
     is_claimed = is_claimed or _default_is_claimed
@@ -490,7 +503,9 @@ def sweep_worktrees(
             review.append({**wt, "reason": f"could not check GitHub: {str(exc)[:120]}"})
             continue
         action, reason = decide_worktree(wt, state, claimed)
-        if action == "backup":
+        if action == "backup" and not can_push:
+            review.append({**wt, "reason": f"{reason}; not backed up: this is a pull-only node (ADR 0069), kept"})
+        elif action == "backup":
             ref = backup(wt)
             if not ref:
                 review.append({**wt, "reason": f"{reason}; backup failed, kept"})
@@ -618,9 +633,11 @@ def _default_compress_transcripts() -> dict | None:
 
 
 def _write_log(stale: list[dict], worktrees: dict, simulators: dict | None = None,
-               compressed: dict | None = None, aerials_freed: int = 0, pytest_temps: dict | None = None) -> None:
+               compressed: dict | None = None, aerials_freed: int = 0, pytest_temps: dict | None = None,
+               notes: list[str] | None = None) -> None:
     timestamp = datetime.now(timezone.utc).isoformat()
-    lines = [
+    lines = [f"- {n}" for n in notes or []]
+    lines += [
         f"- Released stale claim: issue #{e['issue_number']} held by `{e['machine_id']}`, "
         f"{e['age_hours']:.1f}h since last update"
         for e in stale
@@ -672,6 +689,19 @@ def _default_outcome_check() -> None:
         print(f"[cleanup-sweep] ticket promotion failed: {exc}", file=sys.stderr)
 
 
+PULL_ONLY_NOTE = ("Pull-only node (ADR 0069): skipped releasing stale claims, backup pushes and ticket promotion; "
+                  "this machine never writes to GitHub or the synced ~/.claude")
+
+
+def _is_pull_only() -> bool:
+    """This machine's kind, from the registry (machine_profile.pull_only). If it can't be read, assume pull-only:
+    skipping a day's GitHub writes is cheap, a push from the untrusted box is not."""
+    try:
+        return bool(machine_profile.pull_only())
+    except Exception:  # noqa: BLE001
+        return True
+
+
 def run_daily_sweep(
     list_claimed_open_issues: Callable[[], list[dict]] | None = None,
     list_worktrees: Callable[[], list[dict]] | None = None,
@@ -681,12 +711,23 @@ def run_daily_sweep(
     remove_worktree: Callable[[dict], bool] | None = None,
     threshold_hours: float = STALE_THRESHOLD_HOURS,
     now: datetime | None = None,
+    backup: Callable[[dict], str | None] | None = None,
+    pull_only: bool | None = None,
 ) -> dict:
     """Cron entry point. Runs sweeps (claims, worktrees, disk ledger, disk trim),
     logs what was removed/released/kept for review (same visibility standard as
-    cron_health.py), returns a summary."""
-    stale = sweep_stale_claims(threshold_hours, list_claimed_open_issues, release, now)
-    worktrees = sweep_worktrees(list_worktrees, pr_state, is_claimed, remove_worktree)
+    cron_health.py), returns a summary. On a pull-only node (mac-mini-2012, ADR 0069; marvin#911) every step that
+    writes GitHub or the synced ~/.claude is skipped and the log says so; the local, lossless ones still run.
+    A GitHub failure (no token on this machine) skips the claim step with a log line instead of stopping the sweep."""
+    pull_only = _is_pull_only() if pull_only is None else pull_only
+    notes: list[str] = [PULL_ONLY_NOTE] if pull_only else []
+    stale: list[dict] = []
+    if not pull_only:
+        try:
+            stale = sweep_stale_claims(threshold_hours, list_claimed_open_issues, release, now)
+        except gh_env.GhError as exc:
+            notes.append(f"Stale claims not checked: {str(exc)[:200]}")
+    worktrees = sweep_worktrees(list_worktrees, pr_state, is_claimed, remove_worktree, backup, can_push=not pull_only)
     try:
         simulators = sweep_simulators()
     except Exception as exc:  # noqa: BLE001 -- e.g. no Xcode on this machine; never stops the sweep
@@ -705,7 +746,8 @@ def run_daily_sweep(
     except Exception:
         pass
 
-    _default_outcome_check()
+    if not pull_only:
+        _default_outcome_check()   # rewrites ~/.claude/suggestions.md (ticket promotion): never on the box
 
     compressed = _default_compress_transcripts()
 
@@ -719,7 +761,7 @@ def run_daily_sweep(
     except Exception as exc:  # noqa: BLE001 -- never stops the sweep
         pytest_temps = {"removed": [], "freed_bytes": 0, "detail": f"pytest temp trim failed: {type(exc).__name__}"}
 
-    _write_log(stale, worktrees, simulators, compressed, aerials_freed, pytest_temps)
+    _write_log(stale, worktrees, simulators, compressed, aerials_freed, pytest_temps, notes)
     return {"stale_claims_released": len(stale), "worktrees_removed": len(worktrees["removed"]),
             "worktrees_for_review": len(worktrees["review"]), "simulators_removed": len(simulators["removed"])}
 

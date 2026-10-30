@@ -215,11 +215,14 @@ def test_the_suite_runs_niced_so_it_never_starves_the_merge_gate(monkeypatch):
 
 # ---- parallel suite (pytest-xdist) ----
 
-def test_parallel_args_with_the_real_venv_is_n_auto():
+def test_parallel_args_with_the_real_venv_sizes_workers_to_free_memory():
+    """marvin#940: as many workers as fit in free memory (test_slot.workers), never one per core regardless."""
     import pytest
     if mh.subprocess.run([str(mh.VENV_PY), "-c", "import xdist"], capture_output=True).returncode != 0:
         pytest.skip("this machine's venv has no pytest-xdist")
-    assert mh.parallel_args() == ["-n", "auto"]
+    assert mh.parallel_args(workers=lambda: 3) == ["-n", "3"]
+    n, count = mh.parallel_args()
+    assert n == "-n" and int(count) >= 1
 
 
 def test_a_python_without_xdist_runs_serially_and_says_why(tmp_path, capsys):
@@ -238,7 +241,7 @@ def test_a_missing_or_broken_python_runs_serially_never_crashes(tmp_path):
     assert mh.parallel_args(d) == []
 
 
-def test_the_suite_gets_n_auto_when_the_plugin_is_there_and_not_when_it_is_missing(monkeypatch):
+def test_the_suite_gets_n_workers_when_the_plugin_is_there_and_not_when_it_is_missing(monkeypatch):
     for probe_rc, expect in ((0, True), (1, False)):
         seen = []
 
@@ -249,4 +252,55 @@ def test_the_suite_gets_n_auto_when_the_plugin_is_there_and_not_when_it_is_missi
         monkeypatch.setattr(mh.subprocess, "run", lambda cmd, **k: seen.append(cmd) or R(cmd))
         mh._run_suite()
         suite = [c for c in seen if "pytest" in c][0]
-        assert (suite[-2:] == ["-n", "auto"]) is expect, (probe_rc, suite)
+        assert (suite[-2] == "-n" and suite[-1].isdigit()) is expect, (probe_rc, suite)
+
+
+# ---- marvin#940: after a burst of merges, one more run on the latest main (not one per merge) ----
+
+def test_a_burst_of_merges_during_a_run_coalesces_into_one_more_run_on_the_latest_main(tmp_path):
+    state = tmp_path / "m.json"
+    heads = iter(["a", "c"])
+    current = {"sha": None}
+    ran = []
+
+    def head():
+        current["sha"] = next(heads)
+        return current["sha"]
+
+    def suite():
+        ran.append(current["sha"])
+        if len(ran) == 1:   # two more merges land while the first run is going: both find it busy
+            for _ in range(2):
+                assert mh.refresh(state_path=state, head=lambda: "never read", run_suite=suite, now=NOW)["busy"]
+        return True, [], "ok"
+
+    res = mh.refresh(state_path=state, head=head, run_suite=suite, now=NOW, changed=lambda a, b: None)
+    assert ran == ["a", "c"]
+    assert res["sha"] == "c" and json.loads(state.read_text())["sha"] == "c"
+
+
+def test_no_merge_during_a_run_means_no_second_run(tmp_path):
+    state = tmp_path / "m.json"
+    ran = []
+    mh.refresh(state_path=state, head=lambda: "a", run_suite=lambda: ran.append(1) or (True, [], "ok"), now=NOW)
+    assert ran == [1]
+
+
+def test_the_suite_runs_in_the_machines_test_slot(monkeypatch):
+    import test_slot
+    entered = []
+
+    class R:
+        returncode, stdout, stderr = 0, "5 passed in 1s\n", ""
+
+    class Slot:
+        def __init__(self, what, **k):
+            entered.append(what)
+        def __enter__(self):
+            return True
+        def __exit__(self, *a):
+            entered.append("left")
+    monkeypatch.setattr(test_slot, "slot", Slot)
+    monkeypatch.setattr(mh.subprocess, "run", lambda cmd, **k: R())
+    mh._run_suite()
+    assert entered == ["main-health (after-merge full suite)", "left"]

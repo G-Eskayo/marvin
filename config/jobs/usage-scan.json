@@ -1,0 +1,7 @@
+{
+  "name": "usage-scan",
+  "description": "Hourly scan of this machine's Claude session transcripts for Vitals and Activity (lib/usage_report.py scan)",
+  "command": ["~/.agents/venv/bin/python", "~/.agents/lib/usage_report.py", "scan"],
+  "schedule": {"every_s": 3600, "at_load": true},
+  "log": "usage-scan"
+}

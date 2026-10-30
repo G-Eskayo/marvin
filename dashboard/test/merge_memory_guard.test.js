@@ -75,7 +75,7 @@ describe('memoryGuardCheck', () => {
     const cmd = args.slice(args.indexOf('--') + 1)
     expect(cmd[0]).toBe('/usr/bin/curl')
     expect(cmd.at(-1)).toBe('http://127.0.0.1:7878/approve')
-    expect(JSON.parse(cmd[cmd.indexOf('--data') + 1])).toEqual({ pr_url: PR, by: 'you' })
+    expect(JSON.parse(cmd[cmd.indexOf('--data') + 1])).toEqual({ pr_url: PR, by: 'memory-queue' })
   })
 
   it('exit 3 is a refusal with the message memory_guard printed', async () => {

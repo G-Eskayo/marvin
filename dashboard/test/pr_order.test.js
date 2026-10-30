@@ -15,6 +15,17 @@ describe('waitingOn: an older PR that cannot merge does not hold up the newer on
     const newer = pr(63, ['a.swift'])
     expect(waitingOn([older, newer], newer)).toEqual([])
   })
+  it('skips an older draft: GitHub won\'t merge a draft, so it can only hold the newer one hostage (clarity #227, #238 held #239, 2026-10-30)', () => {
+    const parked = { ...pr(227, ['Apps/Spike/Sources/SettingsPage.swift']), isDraft: true, mergeable: 'MERGEABLE' }
+    const ready = pr(239, ['Apps/Spike/Sources/SettingsPage.swift'])
+    expect(waitingOn([parked, ready], ready)).toEqual([])
+    expect(() => assertInOrder([parked, ready], ready.url)).not.toThrow()
+  })
+  it('waits again once the older PR is marked ready for review', () => {
+    const older = { ...pr(238, ['a.swift']), isDraft: false, mergeable: 'MERGEABLE' }
+    const newer = pr(239, ['a.swift'])
+    expect(waitingOn([older, newer], newer).map((x) => x.number)).toEqual([238])
+  })
   it('still waits on an older PR that is mergeable', () => {
     const older = { ...pr(62, ['a.swift']), mergeable: 'MERGEABLE' }
     const newer = pr(63, ['a.swift'])

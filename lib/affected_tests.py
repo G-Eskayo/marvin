@@ -123,15 +123,18 @@ def select(repo: Path, changed: list[str]) -> list[str] | None:
     return sorted(picked)
 
 
-def parallel_args(have_xdist: bool | None = None) -> list[str]:
+def parallel_args(have_xdist: bool | None = None, env: dict | None = None) -> list[str]:
     """`-n auto` where pytest-xdist is installed, on this command line only: PYTEST_ADDOPTS would also reach the
-    pytest runs that tests start themselves (test_auto_merge_regression) and change their exit codes."""
+    pytest runs that tests start themselves (test_auto_merge_regression) and change their exit codes. The merge gate
+    sizes the workers to free memory (marvin#940) and says how many in MARVIN_TEST_WORKERS; that count wins."""
     if have_xdist is None:
         import importlib.util
         have_xdist = importlib.util.find_spec("xdist") is not None
     if not have_xdist:
         print("affected tests: pytest-xdist is not installed, running serially (slower)", flush=True)
-    return ["-n", "auto"] if have_xdist else []
+        return []
+    workers = (os.environ if env is None else env).get("MARVIN_TEST_WORKERS", "")
+    return ["-n", workers] if workers.isdigit() and int(workers) > 0 else ["-n", "auto"]
 
 
 def plan(repo: Path, base: str | None, parallel: list[str] | None = None) -> tuple[list[str], dict]:
