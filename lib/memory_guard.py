@@ -17,7 +17,12 @@ Queued work starts again on events, never on a timer:
                     more queued item if pressure is normal (pressure that stays normal sends no further notification).
   a new start       a check at normal with work still queued starts the watcher, whose first look starts one item.
 One item per trigger, so each start sees the pressure the previous one caused. A level that can't be read never blocks
-(same as the disk pre-flight). MARVIN_MEMORY_PRESSURE_LEVEL overrides the reading (the test suite pins it to normal).
+(same as the disk pre-flight).
+
+Merges first (marvin#940): a merge is work keyed `merge:<PR url>`. While one waits here or runs (the webhook marks a
+running merge on lib/test_slot.py's merges.lock), any other new work is refused and queued the same way, even at normal
+pressure: the memory is kept for the merge. The drain starts a queued merge before older queued work, and starts no
+other work while a merge runs; the merge ending is the trigger (the webhook's `kick`). MARVIN_MEMORY_PRESSURE_LEVEL overrides the reading (the test suite pins it to normal).
 
     memory_guard.py check --what "#845" [--key K] [--cwd DIR] [-- command args...]   # 0 = go, 3 = refused (+ queued)
     memory_guard.py watch      # the notification wait (started by check; one at a time)
@@ -199,19 +204,47 @@ def _tell(title: str, message: str) -> None:
         pass
 
 
+def is_merge(key: str | None) -> bool:
+    return bool(key) and key.startswith("merge:")
+
+
+def merge_pending() -> bool:
+    """A merge waiting here for memory, or running (marked by the webhook). Unknown counts as no: never blocks."""
+    if any(is_merge(e.get("key")) for e in queued()):
+        return True
+    try:
+        import test_slot
+        return test_slot.merge_pending()
+    except Exception:  # noqa: BLE001 -- a lock that can't be read never holds work back
+        return False
+
+
+def _merge_message(what: str) -> str:
+    return (f"A merge is running on the {machine_name()}, so {what} waits. Nothing was stopped. "
+            "It starts by itself when the merge is done.")
+
+
 def guard(what: str, argv: list[str] | None, cwd: str | None, key: str | None = None,
           level_reader: Callable[[], str | None] = read_level, swap_reader: Callable[[], int | None] = read_swap_used,
           start_watcher: Callable[[], None] | None = None, tell: Callable[[str, str], None] | None = None) -> dict:
     """Check before heavy work. Normal: go. Warn or critical: refuse, queue `argv` (when given) to run in `cwd` once
     pressure drops, arm the notification wait, tell the owner once per queued item. Returns check()'s dict plus
-    "queued"."""
+    "queued" and "reason" (memory or merge). Work that is not a merge also waits while a merge waits or runs."""
     start_watcher = start_watcher or globals()["start_watcher"]
     tell = tell or _tell
     level = level_reader()
+    if level not in HIGH and argv and not is_merge(key) and merge_pending():
+        added = _enqueue(what, argv, cwd, key)
+        start_watcher()
+        message = _merge_message(what)
+        record("refused", what=what, level=level, reason="merge", queued=True, new=added)
+        if added:
+            tell(f"{what} waits: a merge is running", message)
+        return {"ok": False, "level": level, "swap_used": None, "message": message, "queued": True, "reason": "merge"}
     if level not in HIGH:
         if queued():
             start_watcher()   # after a restart nothing is waiting on the notification: re-arm it (it exits if one is)
-        return {**check(what, level=level), "queued": False}
+        return {**check(what, level=level), "queued": False, "reason": None}
     r = check(what, level=level, swap=swap_reader())
     added = _enqueue(what, argv, cwd, key) if argv else False
     if argv:
@@ -222,7 +255,7 @@ def guard(what: str, argv: list[str] | None, cwd: str | None, key: str | None = 
     record("refused", what=what, level=level, swap_used=r["swap_used"], queued=bool(argv), new=added)
     if added or not argv:
         tell(f"{what} waits: memory under pressure", r["message"])
-    return {**r, "queued": bool(argv)}
+    return {**r, "queued": bool(argv), "reason": "memory"}
 
 
 # ── starting queued work ────────────────────────────────────────────────────────────────────────────────────────
@@ -237,7 +270,8 @@ def _start(entry: dict) -> None:
 
 
 def drain(level_reader: Callable[[], str | None] = read_level, start: Callable[[dict], None] | None = None) -> dict | None:
-    """Start the oldest queued item if pressure is normal (or unreadable). One item per call. Returns it, or None."""
+    """Start one queued item if pressure is normal (or unreadable): the oldest merge, else the oldest item while no
+    merge runs. One item per call. Returns it, or None."""
     start = start or _start
     with _queue_lock():
         items = _entries()
@@ -246,7 +280,13 @@ def drain(level_reader: Callable[[], str | None] = read_level, start: Callable[[
         level = level_reader()
         if level in HIGH:
             return None
-        path, entry = items[0]
+        merges = [(p, e) for p, e in items if is_merge(e.get("key"))]
+        if merges:
+            path, entry = merges[0]
+        elif merge_pending():
+            return None
+        else:
+            path, entry = items[0]
         path.unlink(missing_ok=True)
     try:
         start(entry)

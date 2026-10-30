@@ -956,6 +956,21 @@ export function kickMemoryGuard(spawnFn = spawn) {
   try { spawnFn(VENV_PYTHON, [MEMORY_GUARD_SCRIPT, 'kick'], { detached: true, stdio: 'ignore' }).unref() } catch { /* never breaks a merge */ }
 }
 
+// marvin#940 (merges first): a merge is marked on this machine (lib/test_slot.py merges.lock) from the Approve to its
+// end, so new helpers wait while it runs (memory_guard.py) and other test runs let it go first. The mark is let go
+// before the kick, so the drain the kick starts already sees the merge over. A mark that can't be taken never stops
+// the merge; the merge's own error comes through unchanged.
+export async function withMergeMark(merge, { hold = holdTestSlot, kick = kickMemoryGuard } = {}) {
+  let mark = null
+  try { mark = await hold(['hold-merge']) } catch { /* unmarked: the merge goes ahead */ }
+  try {
+    return await merge()
+  } finally {
+    try { await mark?.release() } catch { /* the holder ends with this process anyway */ }
+    kick()
+  }
+}
+
 export function triggerDiskCleanup(spawnFn = spawn) {
   spawnFn(VENV_PYTHON, [DISK_TRIGGERS_SCRIPT, 'after-merge'], { detached: true, stdio: 'ignore' }).unref()
 }

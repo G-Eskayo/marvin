@@ -47,12 +47,15 @@ export function vitestIsHeavy(argv = process.argv) {
 // marvin#940, from vitest.config.js in the main process before any worker starts. A whole run waits for this machine's
 // slot (behind a merge or another run) and holds it until vitest exits. Either way MARVIN_TEST_SLOT is set, so workers,
 // the tests and anything they start pass straight through instead of queueing on the real slot.
-export async function takeSlotForVitest(argv = process.argv, { hold = holdTestSlot, python } = {}) {
-  if (process.env.MARVIN_TEST_SLOT) return
+export async function takeSlotForVitest(argv = process.argv, { hold = holdTestSlot, python, testDir } = {}) {
+  // From here on the tests see a slot of their own: none waits on, or reads, this machine's real merges and runs.
+  const isolate = () => { process.env.MARVIN_TEST_SLOT_DIR = testDir || path.join(process.env.HOME || '/tmp', '.cache', 'marvin', 'test-slot') }
+  if (process.env.MARVIN_TEST_SLOT) { isolate(); return }
   if (vitestIsHeavy(argv)) {
     await hold(['hold', '--what', 'vitest (dashboard)'], { unref: true, ...(python ? { python } : {}) })
     process.env.MARVIN_TEST_SLOT = 'vitest (dashboard)'
   } else {
     process.env.MARVIN_TEST_SLOT = 'vitest (small run, not queued)'
   }
+  isolate()
 }

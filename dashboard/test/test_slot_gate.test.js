@@ -2,7 +2,7 @@ import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
 import { mkdtempSync, rmSync, readFileSync, existsSync } from 'fs'
 import { tmpdir } from 'os'
 import path from 'path'
-import { _defaultRunTests, pytestParallelArgs, holdTestSlot } from '../webhook-server/merge.js'
+import { _defaultRunTests, pytestParallelArgs, holdTestSlot, withMergeMark } from '../webhook-server/merge.js'
 import { vitestIsHeavy, takeSlotForVitest } from '../webhook-server/test_slot.js'
 
 // marvin#940: the merge gate's tests go through this machine's one test slot (lib/test_slot.py), first in line, and
@@ -113,4 +113,31 @@ describe('a whole vitest run takes the slot (vitest.config.js), one file never w
     expect(small).not.toHaveBeenCalled()
     expect(process.env.MARVIN_TEST_SLOT).toBe('vitest (small run, not queued)')
   })
+})
+
+describe('withMergeMark: a merge is marked from the Approve to its end, then the queue is kicked (marvin#940 part 2)', () => {
+  it('holds the mark while the merge runs, lets go before the kick, and returns the merge result', async () => {
+    const order = []
+    const hold = vi.fn(async (args) => { order.push(args.join(' ')); return { held: true, release: async () => { order.push('release') } } })
+    const r = await withMergeMark(async () => { order.push('merge'); return { merged: true } }, { hold, kick: () => order.push('kick') })
+    expect(r).toEqual({ merged: true })
+    expect(order).toEqual(['hold-merge', 'merge', 'release', 'kick'])
+  })
+
+  it('a failing merge is still unmarked and kicked, and its error comes through', async () => {
+    const order = []
+    const hold = async () => ({ held: true, release: async () => { order.push('release') } })
+    await expect(withMergeMark(async () => { throw new Error('gate failed') }, { hold, kick: () => order.push('kick') })).rejects.toThrow('gate failed')
+    expect(order).toEqual(['release', 'kick'])
+  })
+
+  it('a real marker: helpers see the merge while it runs and not after', async () => {
+    const { execFileSync } = await import('child_process')
+    const pending = () => JSON.parse(execFileSync('python3', [path.join(import.meta.dirname, '..', '..', 'lib', 'test_slot.py'), 'status'], { env: { ...process.env } }).toString()).merge_pending
+    const hold = (args) => holdTestSlot(args, { python: 'python3' })
+    let during
+    await withMergeMark(async () => { during = pending() }, { hold, kick: () => {} })
+    expect(during).toBe(true)
+    expect(pending()).toBe(false)
+  }, 15_000)
 })

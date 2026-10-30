@@ -2,7 +2,7 @@ import { readFileSync } from 'fs'
 import os from 'os'
 import path from 'path'
 import { createServer } from 'http'
-import { mergePr, baselineFailsOnMain, mergesAhead, execWithGroupTimeout, runDiskFirstAid, memoryGuardCheck, kickMemoryGuard, sweepGateClones } from './merge.js'
+import { mergePr, baselineFailsOnMain, mergesAhead, execWithGroupTimeout, runDiskFirstAid, memoryGuardCheck, withMergeMark, sweepGateClones } from './merge.js'
 import { snapshotExec } from './pr_snapshot.js'
 import { createMergeTracker, createInflightStore, takeInterruptedMerges, recordMergeDuration, estimateMergeMs, machineLoad, approveResponder, wantsStream, createMergeLatch, alreadyMergingBody } from './merge_progress.js'
 import { resolveDeviceId, peerHosts } from '../electron/main/device_identity.js'
@@ -233,7 +233,9 @@ const server = createServer(async (req, res) => {
         // latter is an expected outcome, not a server error, so it gets a
         // 200 with the real reason attached rather than a bare 500.
         // P5: the preflight's seven reads of this PR share one (pr_snapshot.js); merge.js and its checks are unchanged.
-        const result = await mergePr(payload.pr_url, snapshotExec(payload.pr_url, execWithGroupTimeout), undefined, undefined, undefined, undefined, undefined, undefined, {
+        // marvin#940: marked as a merge from here to its end, so new helpers wait and other test runs let it go first;
+        // its end kicks the memory guard's queue (a merge ending may let the next queued item start).
+        const result = await withMergeMark(() => mergePr(payload.pr_url, snapshotExec(payload.pr_url, execWithGroupTimeout), undefined, undefined, undefined, undefined, undefined, undefined, {
           baselineFails: (names) => baselineFailsOnMain(names),
           progress: tracker ? tracker.progress : undefined,
           loadNow: () => ({ ...machineLoad(), id: machineId }),
@@ -241,7 +243,7 @@ const server = createServer(async (req, res) => {
           diskFirstAid: () => runDiskFirstAid(),
           // marvin#845: no rebase + retest while memory pressure is at warn or critical; this Approve is queued instead.
           memoryCheck: (url) => memoryGuardCheck(url, PORT)
-        })
+        }))
         tracker?.finish(result)
         if (result?.merged) appendMerge(payload.pr_url, payload.by === 'auto' ? 'auto' : 'you')
         else if (result?.reengaged) console.error(approveErrorLine(payload.pr_url, { error: `${result.code || 'SENT_BACK'} at ${result.stage || 'gate'}: ${String(result.reason || 'sent back for rework').split('\n')[0].slice(0, 200)}` }))
@@ -258,7 +260,6 @@ const server = createServer(async (req, res) => {
       }
     } finally {
       if (prUrl) mergeLatch.release(prUrl)
-      kickMemoryGuard()   // marvin#845: a merge ending may let the next item queued for memory start
     }
     return
   }
