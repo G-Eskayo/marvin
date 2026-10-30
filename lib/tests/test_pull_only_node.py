@@ -212,3 +212,32 @@ def test_if_the_node_kind_cannot_be_read_the_health_sweep_still_writes(monkeypat
     hc.write_status({"overall": "red", "checks": []})
     written = list(tmp_path.glob("health-status*.json"))
     assert len(written) == 1
+
+
+# The session-start hook runs `code_sync.py pull` (2026-10-30: a session at the box committed to its ~/.claude and
+# appended the synced sync-log.md). On a pull-only node, pull means mirror and push does nothing.
+
+@pytest.mark.parametrize("asked, ran", [("pull", ["mirror"]), ("push", []), ("mirror", ["mirror"])])
+def test_code_sync_on_a_pull_only_node_only_ever_mirrors(asked, ran, monkeypatch, tmp_path):
+    import code_sync
+    calls = []
+    for name in ("push", "pull", "mirror"):
+        monkeypatch.setattr(code_sync, name, lambda repo, name=name: calls.append(name))
+    monkeypatch.setattr(code_sync, "peer_care_after_sync", lambda *a, **k: None)
+    monkeypatch.setattr(mp, "pull_only", lambda: True)
+    monkeypatch.setattr("sys.argv", ["code_sync.py", asked, str(tmp_path)])
+    code_sync.main()
+    assert calls == ran
+
+
+def test_code_sync_on_a_full_node_is_unchanged(monkeypatch, tmp_path):
+    import code_sync
+    calls = []
+    for name in ("push", "pull", "mirror"):
+        monkeypatch.setattr(code_sync, name, lambda repo, name=name: calls.append(name))
+    monkeypatch.setattr(code_sync, "peer_care_after_sync", lambda *a, **k: None)
+    monkeypatch.setattr(mp, "pull_only", lambda: False)
+    for asked in ("pull", "push"):
+        monkeypatch.setattr("sys.argv", ["code_sync.py", asked, str(tmp_path)])
+        code_sync.main()
+    assert calls == ["pull", "push"]
