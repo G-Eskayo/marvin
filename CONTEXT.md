@@ -371,6 +371,11 @@ then) — a real, current fragility, not a hypothetical one.
   metrics-comparison (see Verification/trust mechanism above) = measurement, the MR = the write-up,
   Gil's approve/deny = peer review. Not just a metaphor — it's the actual justification for why the
   sandbox and the metrics-comparison step both exist as hard requirements, not nice-to-haves.
+- **Answers are the approval** (decided with Gil, 2026-10-30): a PR that asks for Decisions has one button, named by
+  the answers. All answers match what's built: **Merge with these answers** (saves them and merges in one press). Any
+  answer changes something, or a note is typed: **Send back with answers** (MARVIN rebuilds; the PR returns as a
+  normal review). A mock-up or plan PR, with nothing to merge: **Send answers**, laid out like a ballot. The option
+  that was built is pre-selected on screen but never ticked in the PR until Gil presses the button.
 
 ## Auto-merge (designed 2026-10-09, #332, ADR 0064)
 
@@ -559,6 +564,10 @@ ever been closed unmerged. Gil approves almost everything; the wait is the cost.
   never hidden.
 - **Not enough data yet**: the state of a measure that has no baseline or history (a new install has no paid baseline
   and doesn't know its plan's limits). Never shown as 0% or as healthy.
+- **Menu bar meter**: a small MARVIN item in the macOS menu bar, there from login whether or not the dashboard is
+  open. In the bar: this Mac's CPU and GPU as two tiny live bars and a dot in the Vitals verdict colour. Clicked:
+  every Mac's CPU, GPU, memory and thermal, its top processes, any Mac asleep or gone quiet, and a way into Vitals.
+  It reads the same numbers as Vitals, so the two never disagree.
 - **Dead and stuck** (of a worker): **dead** means its process ended without finishing; it is red at once. **Stuck**
   means alive but with no **progress** (its log or transcript grew, a commit landed, it moved stage) for longer than
   its limit: a builder or chat helper 15 min (amber) and 45 min (red), a spawned agent 10 and 30, a scheduled job 3x
@@ -572,6 +581,13 @@ ever been closed unmerged. Gil approves almost everything; the wait is the cost.
 - **Recurring issue**: a failure that keeps coming back. Vitals counts every occurrence so recurring ones can be traced
   to their root and fixed. The third dismissal of the same failure becomes a decision: fix the root, mute it, or
   retire the check.
+- **Shared truth**: one owner per kind of thing, not "the Mini wins". GitHub owns PRs, tickets, claims and its call
+  allowance (each Mac only holds a copy; the newer read wins). The Mac mini owns merges and the shared sync repo.
+  Each Mac owns its own load, tokens, sessions and failures. Whether a Mac is alive is owned by the others. Each Mac
+  pushes its own activity to the others as it happens, so every map shows the same work with no hub.
+- **Mac state**: **awake**; **asleep** or **off** (it said so before it went: calm, with "last seen", never an
+  error); **gone quiet** (it dropped off without a word). A laptop that is asleep or off is never shown as dead or
+  failing. Only an always-on machine (the Mac mini) turns red, and only after a grace period.
 - **Machine health**: each computer's own load (CPU, GPU, memory, thermal) shown in Vitals per Mac. It belongs to
   MARVIN's health because the point is for the computers to work together as one; work should go to whichever Mac
   has room, and to the GPU where it can.
