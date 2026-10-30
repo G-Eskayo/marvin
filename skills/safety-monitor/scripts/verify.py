@@ -33,7 +33,7 @@ def _load_rubric(loop_name: str) -> str:
     return rubric_path.read_text()
 
 
-def verify(artifact_text: str, loop_name: str, source_context: str = "") -> float:
+def verify(artifact_text: str, loop_name: str, source_context: str = "", fail_value: float | None = 0.0) -> float | None:
     """Return a risk score in [0, 1] for `artifact_text` under `loop_name`'s rubric.
 
     `source_context`, when given, is the actual data the generator was fed
@@ -46,7 +46,8 @@ def verify(artifact_text: str, loop_name: str, source_context: str = "") -> floa
     specifics with no way to actually check either.
 
     Fails open (returns 0.0, i.e. "pass") on any error — per NFR3, this must
-    never block the loop that called it.
+    never block the loop that called it. A caller that must fail closed instead (box memory, ADR 0082: untrusted
+    input that may pass on its own) passes fail_value=None and treats None as "not scored".
     """
     try:
         rubric = _load_rubric(loop_name)
@@ -77,18 +78,18 @@ def verify(artifact_text: str, loop_name: str, source_context: str = "") -> floa
         if result.exit_code != 0 or not result.text.strip():
             print(f"[safety-monitor] verify() failed open for '{loop_name}': "
                   f"rc={result.exit_code} stderr={result.stderr[:200]!r}", file=sys.stderr)
-            return 0.0
+            return fail_value
         match = re.search(r"(\d*\.?\d+)", result.text.strip())
         if not match:
             print(f"[safety-monitor] verify() couldn't parse a score for "
                   f"'{loop_name}' from output {result.text[:100]!r} — failing open",
                   file=sys.stderr)
-            return 0.0
+            return fail_value
         return max(0.0, min(1.0, float(match.group(1))))
     except Exception as exc:
         print(f"[safety-monitor] verify() failed open for '{loop_name}': {exc}",
               file=sys.stderr)
-        return 0.0
+        return fail_value
 
 
 _QUARANTINE_HEADING_RE = re.compile(r"^## \d{4}-\d{2}-\d{2} — (.+) \[SAFETY, score [\d.]+, tau [\d.]+\]$")

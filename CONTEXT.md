@@ -1477,6 +1477,22 @@ Mac has no push channel. Gil applies the hooks on each Mac with `marvin_hooks.py
   entry hash. Tau is per loop from 20 labels, else the global tau (all loops, from 20), else 0.3, never below 0.3,
   and the whole map is recomputed on every label (#599). Other Macs cache the primary's map (`GET /safety/taus`).
 
+## Box memory review (proposed 2026-10-30, ADR 0082, marvin#912)
+
+- **Box item**: one change a Claude session on mac-mini-2012 made to memory or handoffs: a new memory, an edit, a
+  delete, a handoff (new or edited), a handoff delete, or one MEMORY.md index line added or removed. Untrusted data,
+  identified by a hash of its kind, name, starting hash and content (`lib/box_memory_export.py` makes them on the box).
+- **Box outbox**: `~/.claude/box-outbox/` on the box, outside the synced tree. Items are captured there before the
+  mirror resets an edit away, and pruned once the mirror brings the same content back (or after 30 days).
+- **Pull**: the primary Mac runs the export on the box over ssh and reads stdout; the box never pushes (ADR 0069).
+- **Trust layer**: kind × risk (`memory-new.high` = a new feedback/user memory). Its own streak of clean approvals in
+  `~/.claude/box-memory/trust-ramp.json` (the ADR 0064 ramp code, separate file). Open after N; some layers never open.
+  **Clean approval** = Gil's Fine on an item that was not flagged. Flag, Block, Fix it or revert reset it.
+- **Held item**: shown as a `box_memory` card in Health ▸ Safety reviews (Fine applies, Block drops, Fix it drops with
+  a note). **Auto-passed item**: applied without a card because its layer is open; still in the audit log.
+- **Collision**: the Mac's file no longer matches what the box started from. Always held.
+- **Revert**: `box_memory_review.py revert <audit id>` restores what an apply replaced, if untouched since.
+
 ## Merge order and the sent-back loop (2026-10-05)
 
 - **Order:** a PR waits on every OLDER open PR in its repo that shares a changed file (`dashboard/electron/main/pr_order.js`). Derived from the PRs' file lists each time; the MR list shows it, Approve & Merge is disabled with the reason, and `mr:approve` re-checks it in the main process so a stale screen cannot skip it. Deny stays available.
