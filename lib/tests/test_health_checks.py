@@ -1299,3 +1299,38 @@ def test_the_machine_script_reads_a_real_process_uptime_with_this_machines_ps():
         assert 1 <= int(out.stdout.strip()) <= 20
     finally:
         child.kill()
+
+
+# ── brief builder tests ───────────────────────────────────────────────────────────
+
+def test_brief_builder_red_when_brief_missing(tmp_path, monkeypatch):
+    """check_brief_builder is red when today's brief doesn't exist."""
+    import morning_brief as mb
+    monkeypatch.setattr(mb, "BRIEFS", tmp_path)
+    r = hc.check_brief_builder()
+    assert r["severity"] == "red" and "not found" in r["detail"]
+
+
+def test_brief_builder_green_when_brief_exists_with_sidecar(tmp_path, monkeypatch):
+    """check_brief_builder is green when brief exists with .built-by sidecar."""
+    import morning_brief as mb
+    monkeypatch.setattr(mb, "BRIEFS", tmp_path)
+
+    today = datetime.now(timezone.utc).astimezone().strftime("%Y-%m-%d")
+    (tmp_path / f"{today}.md").write_text("# Brief")
+    (tmp_path / f"{today}.built-by").write_text("mac-mini-1")
+
+    r = hc.check_brief_builder()
+    assert r["severity"] == "green" and "mac-mini-1" in r["detail"]
+
+
+def test_brief_builder_yellow_when_brief_exists_without_sidecar(tmp_path, monkeypatch):
+    """check_brief_builder is yellow when brief exists but no .built-by sidecar."""
+    import morning_brief as mb
+    monkeypatch.setattr(mb, "BRIEFS", tmp_path)
+
+    today = datetime.now(timezone.utc).astimezone().strftime("%Y-%m-%d")
+    (tmp_path / f"{today}.md").write_text("# Brief")
+
+    r = hc.check_brief_builder()
+    assert r["severity"] == "yellow" and "unknown" in r["detail"]

@@ -6,13 +6,19 @@ from pathlib import Path
 # Ensure the scripts dir is importable regardless of cwd
 _SCRIPTS = Path(__file__).parent
 sys.path.insert(0, str(_SCRIPTS))
+sys.path.insert(0, str(Path.home() / ".agents" / "lib"))
 
 import source_monitor
 import correlate
 import research_digest
+import brief_fallback  # noqa: E402
 
 
 def main() -> int:
+    # Gate: primary (Mini) always runs; fallback (MacBook) only at 10:00, not during primary window
+    if not brief_fallback.should_run(usual_hour=9, usual_minute=0, fallback_hour=10, fallback_minute=0):
+        print("[colony] not scheduled to run now (fallback window only)", file=sys.stderr)
+        return 0
     print("[colony] === source monitor ===", file=sys.stderr)
     source_monitor.main()
 

@@ -123,3 +123,87 @@ def test_open_prs_marks_waiting_from_one_graphql_read(monkeypatch):
     monkeypatch.setattr(od, "fetch", lambda repos, run=None: None)
     brief = mb.gather(NOW, {"open_prs": mb._open_prs})
     assert brief["open_prs"] is None and "open PRs" in brief["missing"][0]
+
+
+def test_write_is_idempotent(tmp_path, monkeypatch):
+    """write() returns early if today's file already exists, doesn't rebuild."""
+    monkeypatch.setattr(mb, "BRIEFS", tmp_path)
+    original_content = "# Already written"
+    (tmp_path / "2026-10-09.md").write_text(original_content)
+
+    path = mb.write(NOW, _sources())
+
+    # Should have returned the path without rebuilding
+    assert path.read_text() == original_content
+    assert (tmp_path / "2026-10-09.md").exists()
+
+
+def test_write_creates_built_by_sidecar(tmp_path, monkeypatch):
+    """write() writes a .built-by sidecar with the machine label."""
+    monkeypatch.setattr(mb, "BRIEFS", tmp_path)
+    monkeypatch.setattr(mb.machine_profile, "machine_label", lambda: "test-machine")
+
+    path = mb.write(NOW, _sources())
+
+    built_by_path = tmp_path / "2026-10-09.built-by"
+    assert built_by_path.exists()
+    assert built_by_path.read_text() == "test-machine"
+
+
+def test_builder_of_returns_machine_label(tmp_path, monkeypatch):
+    """builder_of() returns the machine label from the .built-by sidecar."""
+    monkeypatch.setattr(mb, "BRIEFS", tmp_path)
+    (tmp_path / "2026-10-09.built-by").write_text("mac-mini-1")
+
+    label = mb.builder_of(NOW)
+
+    assert label == "mac-mini-1"
+
+
+def test_builder_of_returns_none_when_no_sidecar(tmp_path, monkeypatch):
+    """builder_of() returns None when no .built-by sidecar exists."""
+    monkeypatch.setattr(mb, "BRIEFS", tmp_path)
+
+    label = mb.builder_of(NOW)
+
+    assert label is None
+
+
+def test_build_gates_fallback_not_running_yet(tmp_path, monkeypatch):
+    """build() returns early when fallback time hasn't arrived yet."""
+    monkeypatch.setattr(mb, "BRIEFS", tmp_path)
+    import brief_fallback
+    monkeypatch.setattr(brief_fallback, "should_run", lambda **kw: False)
+
+    path = mb.build(NOW, _sources())
+
+    # Should have returned a path without building
+    assert not path.exists()
+
+
+def test_build_toctou_recheck(tmp_path, monkeypatch):
+    """build() rechecks produced() to avoid double-building (TOCTOU)."""
+    monkeypatch.setattr(mb, "BRIEFS", tmp_path)
+    import brief_fallback
+    monkeypatch.setattr(brief_fallback, "should_run", lambda **kw: True)
+    monkeypatch.setattr(brief_fallback, "produced", lambda p: True)
+
+    path = mb.build(NOW, _sources())
+
+    # Should have returned without building since another machine has it
+    assert not path.exists()
+
+
+def test_build_creates_brief_when_all_clear(tmp_path, monkeypatch):
+    """build() creates the brief when should_run and produced both allow it."""
+    monkeypatch.setattr(mb, "BRIEFS", tmp_path)
+    monkeypatch.setattr(mb.machine_profile, "machine_label", lambda: "mac-mini-1")
+    import brief_fallback
+    monkeypatch.setattr(brief_fallback, "should_run", lambda **kw: True)
+    monkeypatch.setattr(brief_fallback, "produced", lambda p: False)
+
+    path = mb.build(NOW, _sources())
+
+    # Should have created the brief
+    assert path.exists()
+    assert path.read_text().startswith("# Morning brief")

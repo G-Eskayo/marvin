@@ -25,6 +25,9 @@ from typing import Callable
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
+import brief_fallback  # noqa: E402
+import machine_profile  # noqa: E402
+
 CLAUDE = Path.home() / ".claude"
 BRIEFS = CLAUDE / "briefs"
 HEALTH_STATUS = CLAUDE / "logs" / "health-status.json"
@@ -281,7 +284,12 @@ def write(now: datetime | None = None, sources: dict[str, Callable] | None = Non
     now = now or datetime.now(timezone.utc)
     BRIEFS.mkdir(parents=True, exist_ok=True)
     path = BRIEFS / f"{_day(now)}.md"
+    # Idempotent: return early if today's file already exists
+    if path.exists():
+        return path
     path.write_text(render(gather(now, sources), now))
+    # Write .built-by sidecar to track which machine built the brief
+    (BRIEFS / f"{_day(now)}.built-by").write_text(machine_profile.machine_label())
     return path
 
 
@@ -307,9 +315,41 @@ def read_dates() -> list[datetime]:
     return _dates(".read")
 
 
+def builder_of(day: datetime) -> str | None:
+    """Return the machine label that built this day's brief, or None if not known."""
+    day_str = day.astimezone().strftime("%Y-%m-%d")
+    built_by_path = BRIEFS / f"{day_str}.built-by"
+    if built_by_path.exists():
+        return built_by_path.read_text().strip()
+    return None
+
+
+def build(now: datetime | None = None, sources: dict[str, Callable] | None = None) -> Path:
+    """Build today's morning brief, with fallback gate and TOCTOU checks.
+
+    Primary (Mini) always runs at 09:15. Fallback (MacBook) only runs at 10:15.
+    Uses brief_fallback.should_run() to gate, and produced() for TOCTOU idempotency.
+    """
+    now = now or datetime.now(timezone.utc)
+
+    # Gate: primary (Mini) always runs; fallback (MacBook) only at 10:15
+    if not brief_fallback.should_run(usual_hour=9, usual_minute=15, fallback_hour=10, fallback_minute=15):
+        # Fallback isn't running yet, or has passed its deadline
+        return BRIEFS / f"{_day(now)}.md"
+
+    # TOCTOU recheck: another machine may have built it between gate check and here
+    BRIEFS.mkdir(parents=True, exist_ok=True)
+    path = BRIEFS / f"{_day(now)}.md"
+    if brief_fallback.produced(path):
+        return path
+
+    # Build it
+    return write(now, sources)
+
+
 if __name__ == "__main__":
     if sys.argv[1:] == ["build"]:
-        print(write())
+        print(build())
     elif sys.argv[1:] == ["show"]:
         print(show_today() or "No brief for today yet.")
     else:

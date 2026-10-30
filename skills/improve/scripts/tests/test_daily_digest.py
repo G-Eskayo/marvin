@@ -284,6 +284,63 @@ def test_reviewer_health_log_invalid_timestamp_skipped(tmp_path, monkeypatch):
     assert "1 succeeded" in result
 
 
+def test_main_gate_prevents_fallback_run_early(tmp_path, monkeypatch):
+    """main() returns early during fallback window if should_run() says no."""
+    digest_dir = tmp_path
+    monkeypatch.setattr(dd, "DIGEST_DIR", digest_dir)
+
+    # Mock should_run to return False (fallback window not open yet)
+    import brief_fallback
+    monkeypatch.setattr(brief_fallback, "should_run", lambda **kw: False)
+
+    # Patch functions with raise-on-call sentinels
+    def raise_roadmap():
+        raise AssertionError("roadmap_summary should not be called when should_run returns False")
+    monkeypatch.setattr(dd, "roadmap_summary", raise_roadmap)
+
+    import io
+    old_stdout = sys.stdout
+    sys.stdout = io.StringIO()
+    try:
+        dd.main()
+        output = sys.stdout.getvalue()
+    finally:
+        sys.stdout = old_stdout
+
+    assert "not scheduled to run now" in output
+
+
+def test_main_toctou_recheck_prevents_duplicate_work(tmp_path, monkeypatch):
+    """main() returns early if another machine produced the digest (TOCTOU recheck)."""
+    out_file = tmp_path / "2026-10-22.md"
+    digest_dir = tmp_path
+    monkeypatch.setattr(dd, "OUT_FILE", out_file)
+    monkeypatch.setattr(dd, "DIGEST_DIR", digest_dir)
+
+    # Mock should_run to return True (we should run)
+    import brief_fallback
+    monkeypatch.setattr(brief_fallback, "should_run", lambda **kw: True)
+
+    # Mock produced to return True (another machine has the file)
+    monkeypatch.setattr(brief_fallback, "produced", lambda p: True)
+
+    # Patch functions with raise-on-call sentinels
+    def raise_roadmap():
+        raise AssertionError("roadmap_summary should not be called when produced() is True")
+    monkeypatch.setattr(dd, "roadmap_summary", raise_roadmap)
+
+    import io
+    old_stdout = sys.stdout
+    sys.stdout = io.StringIO()
+    try:
+        dd.main()
+        output = sys.stdout.getvalue()
+    finally:
+        sys.stdout = old_stdout
+
+    assert "Another machine produced the digest" in output
+
+
 def test_main_short_circuits_when_out_file_exists(tmp_path, monkeypatch):
     """main() returns early if today's digest already exists."""
     out_file = tmp_path / "2026-10-22.md"
@@ -294,6 +351,13 @@ def test_main_short_circuits_when_out_file_exists(tmp_path, monkeypatch):
     digest_dir = tmp_path
     monkeypatch.setattr(dd, "OUT_FILE", out_file)
     monkeypatch.setattr(dd, "DIGEST_DIR", digest_dir)
+
+    # Mock should_run to return True (we should run)
+    import brief_fallback
+    monkeypatch.setattr(brief_fallback, "should_run", lambda **kw: True)
+
+    # Mock produced to return False (no other machine has it)
+    monkeypatch.setattr(brief_fallback, "produced", lambda p: False)
 
     # Patch functions with raise-on-call sentinels: if any of these are called,
     # it means the short-circuit didn't work

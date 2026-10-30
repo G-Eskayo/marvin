@@ -23,6 +23,7 @@ HANDOFFS_DIR = CLAUDE_DIR / "handoffs"
 sys.path.insert(0, str(Path.home() / ".agents" / "lib"))
 from notify import notify  # noqa: E402
 import marvin_launcher  # noqa: E402
+import brief_fallback  # noqa: E402
 
 RESULTS_MD   = Path.home() / ".agents" / "bench" / "RESULTS.md"
 QA_SCRIPTS   = Path.home() / ".agents" / "skills" / "qa-agent" / "scripts"
@@ -270,10 +271,20 @@ def call_claude(prompt: str) -> str:
 # ── main ───────────────────────────────────────────────────────────────────────
 
 def main() -> None:
+    # Gate: primary (Mini) always runs; fallback (MacBook) only at 09:30, not during primary window
+    if not brief_fallback.should_run(usual_hour=8, usual_minute=30, fallback_hour=9, fallback_minute=30):
+        print(f"[daily-digest] not scheduled to run now (fallback window only)", flush=True)
+        return
+
     DIGEST_DIR.mkdir(parents=True, exist_ok=True)
 
     if OUT_FILE.exists():
         print(f"[daily-digest] Today's digest already exists: {OUT_FILE}", flush=True)
+        return
+
+    # TOCTOU recheck: another machine may have produced it between gate check and here
+    if brief_fallback.produced(OUT_FILE):
+        print(f"[daily-digest] Another machine produced the digest: {OUT_FILE}", flush=True)
         return
 
     print("[daily-digest] Assembling context...", flush=True)
