@@ -18,6 +18,7 @@ import { checkOpenPrs } from './post_merge_rebase.js'
 import { applyVersionBump } from './changelog.js'
 import { createCountParser, gateExtension, machineLoad } from './merge_progress.js'
 import { machineLabel } from '../src/lib/merge_progress.js'
+import { holdTestSlot, TEST_SLOT_SCRIPT } from './test_slot.js'
 
 const execFileAsync = promisify(execFile)
 const __dirname = path.dirname(fileURLToPath(import.meta.url))
@@ -169,20 +170,28 @@ export function countTestFiles(dir) {
 
 const noProgress = () => {}
 
-// The Python suite runs in parallel (pytest-xdist, `-n auto`): 327 s serial vs 47 s on the M4's 10 cores, same 2,685
-// tests, measured 2026-10-21. A machine without the plugin runs it serially and says so in the log, never fails on it.
-// One `python -c` per gate run (~0.1 s); not cached, so installing the plugin takes effect on the next run.
-export async function pytestParallelArgs(python = VENV_PYTHON, run = execFileAsync, log = console.warn) {
+// The Python suite runs in parallel (pytest-xdist): 327 s serial vs 47 s on the M4's 10 cores, same 2,685 tests,
+// measured 2026-10-21. A machine without the plugin runs it serially and says so in the log, never fails on it.
+// marvin#940: as many workers as fit in free memory now (lib/test_slot.py workers), not one per core: on 2026-10-30 the
+// gate's `-n auto` workers were part of what filled the Mini's memory. An unreadable count is `-n auto`, as before.
+// Two `python` calls per gate run (~0.2 s); not cached, so installing the plugin takes effect on the next run.
+export async function pytestParallelArgs(python = VENV_PYTHON, run = execFileAsync, log = console.warn, slotScript = TEST_SLOT_SCRIPT) {
   try {
     await run(python, ['-c', 'import xdist'])
-    return ['-n', 'auto']
   } catch {
     try { log(`[merge-gate] pytest-xdist is not installed in ${python}: running the Python suite serially (slower). Fix: ${python} -m pip install pytest-xdist`) } catch { /* logging never breaks the gate */ }
     return []
   }
+  try {
+    const n = parseInt(String((await run(python, [slotScript, 'workers']))?.stdout || '').trim(), 10)
+    if (n > 0) return ['-n', String(n)]
+  } catch { /* unreadable: the old default */ }
+  return ['-n', 'auto']
 }
 
-export async function _defaultRunTests(cwd, exec, progress = noProgress, parallelArgs = pytestParallelArgs, cache = nodeModulesCache) {
+export { holdTestSlot }
+
+export async function _defaultRunTests(cwd, exec, progress = noProgress, parallelArgs = pytestParallelArgs, cache = nodeModulesCache, holdSlot = holdTestSlot) {
   const dashboardDir = path.join(cwd, 'dashboard')
   // Each output chunk is a heartbeat for the gate's time limit; the parsers turn the runners' own lines into counts.
   const watch = (runner, label, totalFiles = 0) => {
@@ -205,12 +214,21 @@ export async function _defaultRunTests(cwd, exec, progress = noProgress, paralle
   await cache.store(dashboardDir)
   progress('installing', 'done')
   const parallel = await parallelArgs()
-  progress('tests', 'running', { detail: parallel.length ? 'Python' : 'Python (serial: pytest-xdist missing)', logDetail: !parallel.length })
-  // MARVIN_MERGE_GATE: tests that read ANOTHER repo's data (the portfolio figures) stay out of a PR's gate; they run in the
-  // main-branch health check instead (lib/main_health.py).
-  await exec(VENV_PYTHON, ['-m', 'pytest', '-q', ...parallel], { cwd, env: { ...process.env, MARVIN_MERGE_GATE: '1' }, onOutput: watch('pytest', 'Python') })
-  progress('tests', 'running', { detail: 'Dashboard', logDetail: true })
-  await exec('npx', ['vitest', 'run'], { cwd: dashboardDir, onOutput: watch('vitest', 'Dashboard', countTestFiles(path.join(dashboardDir, 'test'))) })
+  // marvin#940: one test run at a time on this machine, a merge first in line; the runs below see MARVIN_TEST_SLOT,
+  // so their own check (conftest.py, vitest.config.js) passes straight through instead of waiting for us.
+  const slot = await holdSlot(['hold', '--merge', '--what', 'merge gate'])
+  const slotEnv = { ...process.env, MARVIN_TEST_SLOT: 'merge gate' }
+  const workers = /^\d+$/.test(parallel[1] || '') ? [`--minWorkers=1`, `--maxWorkers=${parallel[1]}`] : []
+  try {
+    progress('tests', 'running', { detail: parallel.length ? 'Python' : 'Python (serial: pytest-xdist missing)', logDetail: !parallel.length })
+    // MARVIN_MERGE_GATE: tests that read ANOTHER repo's data (the portfolio figures) stay out of a PR's gate; they run in the
+    // main-branch health check instead (lib/main_health.py).
+    await exec(VENV_PYTHON, ['-m', 'pytest', '-q', ...parallel], { cwd, env: { ...slotEnv, MARVIN_MERGE_GATE: '1' }, onOutput: watch('pytest', 'Python') })
+    progress('tests', 'running', { detail: 'Dashboard', logDetail: true })
+    await exec('npx', ['vitest', 'run', ...workers], { cwd: dashboardDir, env: slotEnv, onOutput: watch('vitest', 'Dashboard', countTestFiles(path.join(dashboardDir, 'test'))) })
+  } finally {
+    await slot.release()
+  }
 }
 
 // Rebases headRef onto origin/main inside a throwaway scratch worktree --
