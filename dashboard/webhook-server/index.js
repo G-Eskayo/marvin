@@ -2,7 +2,7 @@ import { readFileSync } from 'fs'
 import os from 'os'
 import path from 'path'
 import { createServer } from 'http'
-import { mergePr, baselineFailsOnMain, mergesAhead, execWithGroupTimeout, runDiskFirstAid, memoryGuardCheck, withMergeMark, forgetQueuedMerge, sweepGateClones } from './merge.js'
+import { mergePr, baselineFailsOnMain, mergesAhead, execWithGroupTimeout, runDiskFirstAid, memoryGuardCheck, withMergeMark, forgetQueuedMerge, readMergeReady, sweepGateClones } from './merge.js'
 import { snapshotExec } from './pr_snapshot.js'
 import { createMergeTracker, createInflightStore, takeInterruptedMerges, recordMergeDuration, estimateMergeMs, machineLoad, approveResponder, wantsStream, createMergeLatch, alreadyMergingBody } from './merge_progress.js'
 import { resolveDeviceId, peerHosts } from '../electron/main/device_identity.js'
@@ -179,6 +179,21 @@ const server = createServer(async (req, res) => {
     try { body = await readJsonBody(req) } catch { /* the trigger is the request itself */ }
     await relayMergeHostUp(body, { localRefreshUrl: DASHBOARD_REFRESH_URL, post: postJson })
     res.writeHead(200, { 'Content-Type': 'application/json' }).end('{"ok":true}')
+    return
+  }
+
+  // marvin#940 part 4: a dashboard asks whether this Mac is fit to merge in the Mini's place (awake, on power, at home,
+  // idle), and tells the Mini to drop its queued copy before another Mac merges it. Read-only and one queue file.
+  if (req.method === 'GET' && req.url.split('?')[0] === '/merge-ready') {
+    const repo = new URL(req.url, 'http://localhost').searchParams.get('repo') || ''
+    res.writeHead(200, { 'Content-Type': 'application/json' }).end(JSON.stringify(await readMergeReady(repo)))
+    return
+  }
+  if (req.method === 'POST' && req.url === '/merge-forget') {
+    let body = null
+    try { body = await readJsonBody(req) } catch { /* answered below */ }
+    const prUrl = typeof body?.pr_url === 'string' && body.pr_url.startsWith('https://github.com/') ? body.pr_url : null
+    res.writeHead(prUrl ? 200 : 400, { 'Content-Type': 'application/json' }).end(JSON.stringify({ forgotten: prUrl ? await forgetQueuedMerge(prUrl) : false }))
     return
   }
 

@@ -203,6 +203,8 @@ const REWORK_TONE = {
 export function statusFromOp(m) {
   if (!m || !m.state || m.state === 'idle') return { status: 'idle', errorMessage: null, progress: null }
   if (m.state === 'merging') return { status: 'approving', errorMessage: m.notice || null, progress: m.progress || null }
+  // marvin#940: merged on a backup Mac: which one, and the OS flag when its tests ran on another OS.
+  if (m.state === 'merged' && m.mergedOn && !m.elsewhere) return { status: 'merged', errorMessage: m.note || null, progress: m.progress || null, machine: m.mergedOn }
   if (m.state === 'merged') return { status: 'merged', errorMessage: m.elsewhere ? m.reason || 'Merged on GitHub' : null, progress: m.progress || null }
   return { status: m.state, errorMessage: m.reason || null, progress: m.progress || null, machine: m.machine || null }
 }

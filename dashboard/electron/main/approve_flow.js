@@ -1,4 +1,4 @@
-import { approveOnAnyMachine } from './merge_failover.js'
+import { approveOnAnyMachine, backupForMemory } from './merge_failover.js'
 
 // One Approve, from the click (or a retry of a saved click) to its outcome (marvin#762). The IPC handler and the
 // retry both run this, so a retried approval is exactly a click: the same in-flight op (mergeOps.start refuses a PR
@@ -17,9 +17,12 @@ import { approveOnAnyMachine } from './merge_failover.js'
 // it runs there by itself when pressure drops. That is waiting-memory, not a failure: saved in the ledger with the
 // machine, the card says "Approved: waiting for memory on the Mac mini". A retry of it that finds that machine already
 // merging it (ALREADY_MERGING: its queued copy just started) stays waiting, the try not counted.
+// Part 4: before it waits, a later machine that says it is fit (awake, on power, at home, idle) may take it, once the
+// first has dropped its queued copy (merge_failover.js backupForMemory). The ledger and the card say which Mac merged,
+// and flag a test run on another OS (#826 item 5). ready(machine, repo) and forget(machine, prUrl) ask the webhooks.
 //
 // send(prUrl, url, { onEvent }) is approveMrStream's shape; push(url, op) forwards an op change to the card.
-export function createApproveFlow({ mergeOps, ledger, machines, send, push = () => {}, confirm = async () => true, after = () => {} }) {
+export function createApproveFlow({ mergeOps, ledger, machines, send, push = () => {}, confirm = async () => true, after = () => {}, ready = null, forget = null }) {
   return async function approve(url, { number = null, head = null, retry = false, machine: pinned } = {}) {
     const pin = pinned !== undefined
     const targets = pin ? machines().filter((m) => m.id === pinned) : machines()
@@ -38,21 +41,25 @@ export function createApproveFlow({ mergeOps, ledger, machines, send, push = () 
       return { merged: false, cancelled: true }
     }
     ledger.record(url, { number, head })
-    try {
-      const { result, machine } = await approveOnAnyMachine(url, targets, {
-        send: (prUrl, target) => send(prUrl, target, { onEvent: (event) => push(url, mergeOps.event(url, event)) }),
-        onSwitch: (notice) => push(url, mergeOps.notice(url, notice))
-      })
+    const onEvent = (event) => push(url, mergeOps.event(url, event))
+    const onSwitch = (notice) => push(url, mergeOps.notice(url, notice))
+
+    // A machine answered: merged or sent back (or its webhook went away mid-merge).
+    const answered = ({ result, machine, note = null }) => {
       if (result?.interrupted) {
         ledger.conclude(url, 'interrupted', { machine: machine.id, reason: result.reason })
         push(url, mergeOps.interrupt(url))
         return { ...result, cancelled: false }
       }
-      ledger.conclude(url, result?.merged ? 'merged' : 'reengaged', { machine: machine.id, reason: result?.reason })
-      push(url, mergeOps.finish(url, result))
+      const elsewhere = machine !== targets[0]
+      const out = elsewhere ? { ...result, machine: machine.id, mergedOn: machine.here ? `this ${machine.label.replace(/^this /, '')}` : `the ${machine.label}`, ...(note ? { machineNote: note } : {}) } : result
+      ledger.conclude(url, result?.merged ? 'merged' : 'reengaged', { machine: machine.id, reason: note ?? result?.reason })
+      push(url, mergeOps.finish(url, out))
       try { after(url, result) } catch { /* list bookkeeping never turns a merge into an error */ }
-      return { ...result, cancelled: false }
-    } catch (err) {
+      return { ...out, cancelled: false }
+    }
+    // A machine refused, or none could be reached.
+    const refused = (err) => {
       const queuedForMemory = err?.payload?.code === 'MEMORY_PRESSURE' && err.payload.action === 'retry'
       const stillQueuedThere = retry && before?.outcome === 'waiting-memory' && err?.payload?.code === 'ALREADY_MERGING'
       if (queuedForMemory || stillQueuedThere) {
@@ -72,5 +79,22 @@ export function createApproveFlow({ mergeOps, ledger, machines, send, push = () 
       push(url, mergeOps.fail(url, err?.message))
       throw err
     }
+
+    let outcome
+    try {
+      outcome = await approveOnAnyMachine(url, targets, { send: (prUrl, target) => send(prUrl, target, { onEvent }), onSwitch })
+    } catch (err) {
+      const busy = err?.machine
+      const later = busy && !pin && ready && forget ? targets.slice(targets.indexOf(busy) + 1) : []
+      if (err?.payload?.code === 'MEMORY_PRESSURE' && err.payload.action === 'retry' && later.length) {
+        try {
+          outcome = await backupForMemory(url, busy, later, { ready, forget, send: (prUrl, m) => send(prUrl, m.url, { onEvent }), onSwitch })
+        } catch (err2) {
+          return refused(err2)
+        }
+      }
+      if (!outcome) return refused(err)
+    }
+    return answered(outcome)
   }
 }

@@ -61,7 +61,9 @@ export function createMergeOps({ maxMergingMs = 45 * 60_000 } = {}) {
       if (mergedHere(url)) return ops.get(url)
       const o = ops.get(url)
       const base = { head: o?.head ?? null, progress: o?.progress, at: now }
-      ops.set(url, result?.reengaged ? { state: 'reengaged', reason: result.reason, ...base } : { state: 'merged', ...base })
+      // marvin#940: merged on a backup Mac says which (mergedOn), and flags tests run on another OS (note).
+      const where = result?.mergedOn ? { mergedOn: result.mergedOn, ...(result.machineNote ? { note: result.machineNote } : {}) } : {}
+      ops.set(url, result?.reengaged ? { state: 'reengaged', reason: result.reason, ...base, ...where } : { state: 'merged', ...base, ...where })
       return ops.get(url)
     },
     fail(url, reason, now = Date.now()) {

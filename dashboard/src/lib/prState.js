@@ -41,6 +41,8 @@ export function describePrState(pr, { status = 'idle', errorMessage = null, prog
   }
 
   if (status === 'merged') {
+    // marvin#940: merged on a backup Mac (the Mini was short of memory): say which, and flag another OS.
+    if (machine) return base('merged', 'ready', 'Merged', `Merged on ${machine}.${errorMessage ? ` ${errorMessage}` : ''}`, 'hidden', 'hidden')
     return errorMessage
       ? base('merged', 'ready', 'Merged on GitHub', 'It was merged on GitHub by hand while the dashboard was merging it, so the dashboard stopped following its merge.', 'hidden', 'hidden')
       : base('merged', 'ready', 'Merged', null, 'hidden', 'hidden')

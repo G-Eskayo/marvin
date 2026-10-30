@@ -25,6 +25,7 @@ const __dirname = path.dirname(fileURLToPath(import.meta.url))
 const REPO_PATH = path.resolve(__dirname, '..', '..')
 const REBUILD_SCRIPT = path.resolve(__dirname, '..', 'scripts', 'rebuild_and_install.sh')
 const TICKET_PIPELINE_SCRIPT = path.resolve(__dirname, '..', '..', 'lib', 'ticket_pipeline.py')
+const MERGE_BACKUP_SCRIPT = path.resolve(__dirname, '..', '..', 'lib', 'merge_backup.py')
 const DISK_TRIGGERS_SCRIPT = path.resolve(__dirname, '..', '..', 'lib', 'disk_triggers.py')
 const MEMORY_GUARD_SCRIPT = path.resolve(__dirname, '..', '..', 'lib', 'memory_guard.py')
 const VENV_PYTHON = path.resolve(__dirname, '..', '..', 'venv', 'bin', 'python')
@@ -960,6 +961,17 @@ export async function forgetQueuedMerge(prUrl, exec = execFileAsync) {
     return JSON.parse(String(stdout || '').trim().split('\n').pop()).forgotten === true
   } catch {
     return false
+  }
+}
+
+// marvin#940 part 4: is this machine fit to merge in the Mini's place (GET /merge-ready)? lib/merge_backup.py answers
+// { ready, why, machine, os }; a check that fails is "not fit", so a dashboard never sends a merge on a guess.
+export async function readMergeReady(repo, exec = execFileAsync) {
+  try {
+    const { stdout } = await exec(VENV_PYTHON, [MERGE_BACKUP_SCRIPT, 'ready', '--repo', String(repo || '')], { timeout: 30_000 })
+    return JSON.parse(String(stdout || '').trim().split('\n').pop())
+  } catch (e) {
+    return { ready: false, why: [`it couldn't check itself (${String(e?.message || e).slice(0, 100)})`], machine: null, os: null }
   }
 }
 
