@@ -1,0 +1,17 @@
+# What CI installs to run the Python suite (marvin#826), pinned to the Macs' venv. The heavy, optional libraries
+# (torch, sentence-transformers, mlx, playwright, weasyprint) are left out: tests that need them skip.
+beautifulsoup4==4.15.0
+chromadb==1.5.9
+markdown-it-py==4.2.0
+networkx==3.6.1
+numpy==2.4.6
+pdfminer.six==20260107
+pillow==12.2.0
+pytest==9.1.1
+pytest-timeout==2.4.0
+pytest-xdist==3.8.0
+python-docx==1.2.0
+PyYAML==6.0.3
+rank-bm25==0.2.2
+requests==2.34.2
+scipy==1.17.1

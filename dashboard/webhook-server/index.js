@@ -2,7 +2,7 @@ import { readFileSync } from 'fs'
 import os from 'os'
 import path from 'path'
 import { createServer } from 'http'
-import { mergePr, baselineFailsOnMain, mergesAhead, execWithGroupTimeout, runDiskFirstAid, memoryGuardCheck, kickMemoryGuard, sweepGateClones } from './merge.js'
+import { mergePr, baselineFailsOnMain, mergesAhead, execWithGroupTimeout, runDiskFirstAid, memoryGuardCheck, withMergeMark, forgetQueuedMerge, readMergeReady, sweepGateClones } from './merge.js'
 import { snapshotExec } from './pr_snapshot.js'
 import { createMergeTracker, createInflightStore, takeInterruptedMerges, recordMergeDuration, estimateMergeMs, machineLoad, approveResponder, wantsStream, createMergeLatch, alreadyMergingBody } from './merge_progress.js'
 import { resolveDeviceId, peerHosts, isPrimaryHost } from '../electron/main/device_identity.js'
@@ -184,6 +184,21 @@ const server = createServer(async (req, res) => {
     return
   }
 
+  // marvin#940 part 4: a dashboard asks whether this Mac is fit to merge in the Mini's place (awake, on power, at home,
+  // idle), and tells the Mini to drop its queued copy before another Mac merges it. Read-only and one queue file.
+  if (req.method === 'GET' && req.url.split('?')[0] === '/merge-ready') {
+    const repo = new URL(req.url, 'http://localhost').searchParams.get('repo') || ''
+    res.writeHead(200, { 'Content-Type': 'application/json' }).end(JSON.stringify(await readMergeReady(repo)))
+    return
+  }
+  if (req.method === 'POST' && req.url === '/merge-forget') {
+    let body = null
+    try { body = await readJsonBody(req) } catch { /* answered below */ }
+    const prUrl = typeof body?.pr_url === 'string' && body.pr_url.startsWith('https://github.com/') ? body.pr_url : null
+    res.writeHead(prUrl ? 200 : 400, { 'Content-Type': 'application/json' }).end(JSON.stringify({ forgotten: prUrl ? await forgetQueuedMerge(prUrl) : false }))
+    return
+  }
+
   if (req.method !== 'POST' || (req.url !== '/approve' && req.url !== '/deny')) {
     res.writeHead(404).end()
     return
@@ -228,6 +243,8 @@ const server = createServer(async (req, res) => {
         }
       }) : null
       tracker?.start(mergesAhead(prUrl))
+      // marvin#940: this merge starting drops the same PR's copy queued for memory, so the queue never runs it twice.
+      if (prUrl && payload.by !== 'memory-queue') await forgetQueuedMerge(prUrl)
       try {
         // mergePr() returning normally covers both a real merge (merged:
         // true) and G-Eskayo/marvin#91's merge-time gate routing the ticket
@@ -235,7 +252,9 @@ const server = createServer(async (req, res) => {
         // latter is an expected outcome, not a server error, so it gets a
         // 200 with the real reason attached rather than a bare 500.
         // P5: the preflight's seven reads of this PR share one (pr_snapshot.js); merge.js and its checks are unchanged.
-        const result = await mergePr(payload.pr_url, snapshotExec(payload.pr_url, execWithGroupTimeout), undefined, undefined, undefined, undefined, undefined, undefined, {
+        // marvin#940: marked as a merge from here to its end, so new helpers wait and other test runs let it go first;
+        // its end kicks the memory guard's queue (a merge ending may let the next queued item start).
+        const result = await withMergeMark(() => mergePr(payload.pr_url, snapshotExec(payload.pr_url, execWithGroupTimeout), undefined, undefined, undefined, undefined, undefined, undefined, {
           baselineFails: (names) => baselineFailsOnMain(names),
           progress: tracker ? tracker.progress : undefined,
           loadNow: () => ({ ...machineLoad(), id: machineId }),
@@ -243,7 +262,7 @@ const server = createServer(async (req, res) => {
           diskFirstAid: () => runDiskFirstAid(),
           // marvin#845: no rebase + retest while memory pressure is at warn or critical; this Approve is queued instead.
           memoryCheck: (url) => memoryGuardCheck(url, PORT)
-        })
+        }))
         tracker?.finish(result)
         if (result?.merged) appendMerge(payload.pr_url, payload.by === 'auto' ? 'auto' : 'you')
         else if (result?.reengaged) console.error(approveErrorLine(payload.pr_url, { error: `${result.code || 'SENT_BACK'} at ${result.stage || 'gate'}: ${String(result.reason || 'sent back for rework').split('\n')[0].slice(0, 200)}` }))
@@ -260,7 +279,9 @@ const server = createServer(async (req, res) => {
       }
     } finally {
       if (prUrl) mergeLatch.release(prUrl)
-      kickMemoryGuard()   // marvin#845: a merge ending may let the next item queued for memory start
+      // marvin#940: an approval that waited for memory has run by itself. The dashboards (here and on the other Macs)
+      // show it waiting; this is their trigger to look again (approval_retry.js concludes it from GitHub's state).
+      if (payload?.by === 'memory-queue') announceThisMac('memory-queue run finished')
     }
     return
   }
@@ -289,6 +310,17 @@ const server = createServer(async (req, res) => {
   }
 })
 
+// marvin#762/#940: tell this Mac's dashboard and the other Macs' that this one can merge (or just merged a waiting
+// approval): each runs one pass over the approvals it saved. A trigger, never a timer.
+function announceThisMac(why) {
+  return announceMergeHost({
+    machineId,
+    localRefreshUrl: DASHBOARD_REFRESH_URL,
+    peers: peerHosts(),
+    post: (url, body) => fetch(url, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body), signal: AbortSignal.timeout(5000) })
+  }).then(({ told, of }) => console.log(`[merge-host] ${why}: told ${told} of ${of}`)).catch(() => { /* best effort */ })
+}
+
 const rebuildCheck = createRebuildCheckTrigger()
 
 // marvin#568: which Mac runs the merges (shown on the card), and the in-flight record a restart reads.
@@ -313,12 +345,7 @@ server.listen(PORT, () => {
 
   // marvin#762: this Mac can merge again. Saved approvals (on this Mac's dashboard, and on the other Mac's, which
   // could not reach this one) are retried on this, not on a timer.
-  announceMergeHost({
-    machineId,
-    localRefreshUrl: DASHBOARD_REFRESH_URL,
-    peers: peerHosts(),
-    post: (url, body) => fetch(url, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body), signal: AbortSignal.timeout(5000) })
-  }).then(({ told, of }) => console.log(`[merge-host] announced this Mac can merge: ${told} of ${of} reached`))
+  announceThisMac('webhook started')
 
   // Trigger source for GitHub-side changes to any board repo: tell an open dashboard on this
   // machine what changed the moment it does (best-effort, like /mr-ready).

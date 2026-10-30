@@ -1312,6 +1312,20 @@ def _mirror_log(repo: Path, line: str) -> None:
         f.write(f"{datetime.now(timezone.utc).isoformat()} [{repo}] {line}\n")
 
 
+def _capture_box_memory(repo: Path) -> None:
+    """ADR 0082: before the reset below throws away a box session's memory and handoff edits, save them as box items
+    in the box outbox, for the primary Mac to pull and review. Only for the ~/.claude mirror; never stops the mirror."""
+    try:
+        if Path(repo).expanduser().resolve() != (Path.home() / ".claude").resolve():
+            return
+        import box_memory_export
+        n = box_memory_export.capture(Path(repo))
+        if n:
+            _mirror_log(repo, f"saved {n} memory/handoff change(s) to the box outbox for review")
+    except Exception as e:
+        _mirror_log(repo, f"box memory capture failed: {str(e)[:200]}")
+
+
 def mirror(repo: Path) -> None:
     """Code sync for a pull-only node (mac-mini-2012, ADR 0069): make `repo` identical to origin/main.
 
@@ -1330,6 +1344,8 @@ def mirror(repo: Path) -> None:
     if head == target and not dirty:
         return
 
+    if dirty:
+        _capture_box_memory(repo)
     stamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
     backup = MIRROR_BACKUP_DIR / Path(repo).name / stamp
     saved = []

@@ -218,3 +218,45 @@ def test_chat_helpers_are_recorded_for_people_only_and_capped_short():
     assert stop["timeout"] == 5 and "chat_helpers.py hook stop" in stop["command"]
     # a hook without a timeout keeps Claude Code's default: no key written
     assert "timeout" not in mh.settings_hooks()["UserPromptSubmit"][0]["hooks"][0]
+
+
+# Portable paths (2026-10-30): settings.json is synced to every machine, mac-mini-2012's home is /home/marvin, and
+# `install` on the Mini (2026-10-25) put /Users/gileskayo back into 20 hook commands, so every hook failed on Linux.
+
+def test_installed_hook_commands_name_no_home_folder_and_expand_to_this_machines(tmp_path, monkeypatch):
+    import os
+    mh.install(tmp_path / "settings.json", tmp_path / "settings.local.json", tmp_path / "memory")
+    hooks = json.loads((tmp_path / "settings.json").read_text())["hooks"]
+    commands = [h["command"] for groups in hooks.values() for g in groups for h in g["hooks"]]
+    assert commands and not [c for c in commands if str(mh.HOME) in c]
+    assert all(c.startswith("$HOME/.agents/venv/bin/python $HOME/.agents/lib/marvin_hooks.py gate") for c in commands)
+    monkeypatch.setenv("HOME", "/home/marvin")
+    assert all("/home/marvin/.agents/" in os.path.expandvars(c) for c in commands)
+
+
+def test_the_session_start_chain_expands_inside_its_quoted_shell(tmp_path):
+    """The chain is one single-quoted word: the outer shell leaves $HOME alone and the inner /bin/sh expands it."""
+    mh.install(tmp_path / "settings.json", tmp_path / "settings.local.json", tmp_path / "memory")
+    cmd = json.loads((tmp_path / "settings.json").read_text())["hooks"]["SessionStart"][0]["hooks"][0]["command"]
+    inner = cmd.split(" -- /bin/sh -c ", 1)[1]
+    out = subprocess.run(["/bin/sh", "-c", f"set -- {inner}; echo \"$1\""], env={"HOME": "/home/x", "PATH": "/bin:/usr/bin"},
+                         capture_output=True, text=True).stdout
+    assert "$HOME/.agents/lib/code_sync.py" in out   # still literal after the outer shell...
+    expanded = subprocess.run(["/bin/sh", "-c", "echo " + out.strip().replace("; ", " ")], env={"HOME": "/home/x", "PATH": "/bin:/usr/bin"},
+                              capture_output=True, text=True).stdout
+    assert "/home/x/.agents/lib/session_start_report.py" in expanded   # ...and the inner shell expands it
+
+
+def test_a_memory_folder_under_home_is_written_with_a_tilde():
+    assert mh._portable_memory(mh.HOME / ".claude" / "projects" / "-Users-gileskayo" / "memory") == \
+        "~/.claude/projects/-Users-gileskayo/memory"
+    assert mh._portable_memory(Path("/elsewhere/memory")) == "/elsewhere/memory"
+
+
+def test_wired_scripts_gives_real_paths_for_home_relative_hooks(tmp_path):
+    """auto_fix's never-touch list and the map compare real paths: a $HOME command must not hide its script."""
+    user = tmp_path / "settings.json"
+    mh.install(user, tmp_path / "settings.local.json", tmp_path / "memory")
+    paths = [r["path"] for r in mh.wired_scripts([user])]
+    assert str(mh.GATE_SCRIPT) in paths
+    assert not [p for p in paths if "$HOME" in p]

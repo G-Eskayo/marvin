@@ -31,7 +31,7 @@ import { createMergeOps } from './merge_ops.js'
 import { createApprovalLedger } from './approval_ledger.js'
 import { createApprovalRetry } from './approval_retry.js'
 import { createApproveFlow } from './approve_flow.js'
-import { mergeMachines } from './merge_failover.js'
+import { mergeMachines, askReady, askForget } from './merge_failover.js'
 import { readPrefs } from './prefs.js'
 import { guardApprove } from './approve_guard.js'
 import { recordRefusal } from '../../webhook-server/refusal_log.js'
@@ -63,6 +63,9 @@ const approveFlow = createApproveFlow({
   }),
   // marvin#568: the webhook streams each stage as it happens; each one is folded into the op and pushed.
   send: (url, target, opts) => approveMrStream(url, target, opts),
+  // marvin#940: the Mini short of memory, a later merge Mac that says it is fit takes it once the Mini dropped its copy.
+  ready: (machine, repo) => askReady(machine, repo),
+  forget: (machine, prUrl) => askForget(machine, prUrl),
   push: (url, op) => pushMergeOp(url, op),
   // The Approve & Merge click is the decision. The native popup is opt-in (prefs.json: confirmMerge) -- the
   // duplicate-start guard, the merge gate's retest and the base/order checks are what protect a stray click.
@@ -150,6 +153,9 @@ import { isEvidenceCapture, installCaptureGuard } from './capture_mode.js'
 import { adoptLoginShellPath, adoptSharedGhToken, useGhGate } from './path.js'
 import { postTicketInput } from './ticket_input.js'
 import { createImageLoader, mediaFileFor } from './pr_images.js'
+import { createMockupSource, MOCKUP_SCHEME } from './mockups.js'
+import { createMockupWindows } from './mockup_window.js'
+import { resolveLocalClone } from './docs_local.js'
 import { resolveServiceDefaults, resolveDeviceId, peerHosts, primaryDeviceId } from './device_identity.js'
 import { createHelpersReader } from './chat_helpers.js'
 import { isPullOnlyNode, createFeedSource, feedOnlyGh, readNetworkRegistry, assertActsHere as assertPullOnlyActs, canMergeHere, withReadOnlyReason } from './github_feed.js'
@@ -954,7 +960,7 @@ function registerMrReviewHandlers() {
   ipcMain.handle('mr:historyDetail', async (_event, url) => {
     const repo = repoFromPrUrl(url)
     if (!repo) throw new Error('not a PR url')
-    const stdout = await ghOut(['pr', 'view', url, '--json', 'number,title,url,body,files,baseRefName,headRefName,mergeable,statusCheckRollup,state,mergedAt'])
+    const stdout = await ghOut(['pr', 'view', url, '--json', 'number,title,url,body,files,baseRefName,headRefName,headRefOid,mergeable,statusCheckRollup,state,mergedAt'])
     const raw = { ...JSON.parse(stdout), repo }
     const [pr] = await listPipelinePrs(async () => [raw], { canMerge: () => false, uiPathsFor: (r) => readUiPaths(r) })
     return { ...pr, readOnly: true, state: raw.state, mergedAt: raw.mergedAt || null }
@@ -1060,6 +1066,14 @@ function registerMrReviewHandlers() {
   // capped and cached, and handed to the renderer as data: URLs, which its CSP allows. The token never reaches the page.
   const prImages = createImageLoader({ cacheDir: prMediaDir() })
   ipcMain.handle('mr:image', (_event, url, kind) => prImages.load(String(url || ''), kind || null))
+  // A PR's clickable mock-up, opened in its own sandboxed MARVIN window and read at the PR's head commit (marvin#938):
+  // from the local clone when it has (or can fetch) the commit, else GitHub signed in. Never the browser.
+  const mockupWindows = createMockupWindows({
+    BrowserWindow,
+    session,
+    source: createMockupSource({ exec: execFileAsync, resolveClone: (name) => resolveLocalClone(name) })
+  })
+  ipcMain.handle('mr:openMockup', (_event, args) => mockupWindows.open(args || {}))
 
   ipcMain.handle('mr:ticketContext', (_event, ticketRef, repo = MARVIN_REPO) => {
     if (repo !== MARVIN_REPO && !readRegistry().some((b) => b.repo === repo)) throw new Error(`No board registered for ${repo}`)
@@ -1161,7 +1175,11 @@ function registerMrReviewHandlers() {
 // PR recordings (screen recordings in PR descriptions) are cached by the main process and streamed to the PR detail's
 // <video> players from here, with byte ranges so they can seek. Only ids of files already in the cache are served.
 const prMediaDir = () => join(app.getPath('userData'), 'pr-image-cache')
-protocol.registerSchemesAsPrivileged([{ scheme: 'prmedia', privileges: { standard: true, secure: true, stream: true, supportFetchAPI: true } }])
+protocol.registerSchemesAsPrivileged([
+  { scheme: 'prmedia', privileges: { standard: true, secure: true, stream: true, supportFetchAPI: true } },
+  // PR mock-ups (mockup_window.js): standard so the page's relative files resolve; handled only on the mock-up partition.
+  { scheme: MOCKUP_SCHEME, privileges: { standard: true, secure: true, stream: true, supportFetchAPI: true } }
+])
 
 app.whenReady().then(() => {
   protocol.handle('prmedia', (request) => {

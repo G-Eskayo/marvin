@@ -203,19 +203,22 @@ const REWORK_TONE = {
 export function statusFromOp(m) {
   if (!m || !m.state || m.state === 'idle') return { status: 'idle', errorMessage: null, progress: null }
   if (m.state === 'merging') return { status: 'approving', errorMessage: m.notice || null, progress: m.progress || null }
+  // marvin#940: merged on a backup Mac: which one, and the OS flag when its tests ran on another OS.
+  if (m.state === 'merged' && m.mergedOn && !m.elsewhere) return { status: 'merged', errorMessage: m.note || null, progress: m.progress || null, machine: m.mergedOn }
   if (m.state === 'merged') return { status: 'merged', errorMessage: m.elsewhere ? m.reason || 'Merged on GitHub' : null, progress: m.progress || null }
-  return { status: m.state, errorMessage: m.reason || null, progress: m.progress || null }
+  return { status: m.state, errorMessage: m.reason || null, progress: m.progress || null, machine: m.machine || null }
 }
-const MERGE_STATUSES = new Set(['approving', 'error', 'reengaged', 'interrupted', 'merged', 'queued'])
+const MERGE_STATUSES = new Set(['approving', 'error', 'reengaged', 'interrupted', 'merged', 'queued', 'waiting-memory'])
 
 export function ApproveDenyActions({ pr, onApproved, onDenied, inDetail = false }) {
-  const [status, setStatus] = useState('idle') // idle | approving | error | reengaged | interrupted | merged | queued
+  const [status, setStatus] = useState('idle') // idle | approving | error | reengaged | interrupted | merged | queued | waiting-memory
   const [errorMessage, setErrorMessage] = useState(null)
   const [showDenyModal, setShowDenyModal] = useState(false)
   const [clearing, setClearing] = useState(null) // null | 'confirm' | 'working' | 'done' | { failed }
   const [optionsAsk, setOptionsAsk] = useState(null) // null | 'working' | 'done' | { failed }
   const [progress, setProgress] = useState(null) // the merge's stages (marvin#568)
   const [mergedAt, setMergedAt] = useState(null) // when GitHub confirmed it (the merged line inside an MR, #838)
+  const [machine, setMachine] = useState(null) // the Mac an approval waits on for memory (marvin#940)
 
   // The merge runs in the main process, so this button can be unmounted (you navigate away) and remounted mid-merge.
   // One read when the card mounts (or the PR's head changes) picks up a merge already running; after that every
@@ -234,6 +237,7 @@ export function ApproveDenyActions({ pr, onApproved, onDenied, inDetail = false 
       } else {
         setStatus(v.status)
         setErrorMessage(v.errorMessage)
+        setMachine(v.machine || null)
       }
     }
     const off = window.api.mr.onMergeEvent?.((url, op) => {
@@ -260,6 +264,13 @@ export function ApproveDenyActions({ pr, onApproved, onDenied, inDetail = false 
       if (result.queued) {
         setStatus('queued')
         setErrorMessage(result.reason)
+        return
+      }
+      // The merge Mac refused it for memory and queued it (marvin#940): it merges there by itself, no second click.
+      if (result.waitingMemory) {
+        setStatus('waiting-memory')
+        setErrorMessage(result.reason)
+        setMachine(result.machineLabel || null)
         return
       }
       // The webhook went away mid-merge (marvin#568): say so now; Approve again is safe.
@@ -298,7 +309,7 @@ export function ApproveDenyActions({ pr, onApproved, onDenied, inDetail = false 
     )
   }
 
-  const view = describePrState(pr, { status, errorMessage, progress: !!progress })
+  const view = describePrState(pr, { status, errorMessage, progress: !!progress, machine })
   const TONE = { ready: 'text-emerald-400', wait: 'text-amber-400', blocked: 'text-red-400', working: 'text-blue-400' }
 
   // "Too vague: needs options" (2026-10-09): one click asks the author to restate the questions as a Decisions section.
