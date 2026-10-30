@@ -1,5 +1,7 @@
 # Changelog
 
+- Linux box: 55 test failures from Mac-only paths, BSD stat, missing pytest-timeout, gh on PATH ([#918](https://github.com/G-Eskayo/marvin/pull/918))
+
 - Health never noticed mac-mini-2012's mirror failing for 4 days: read the box's sync state from the Mini ([#913](https://github.com/G-Eskayo/marvin/pull/913))
 
 - The Mac mini can't see the other Macs: Tailscale lookup is app-only, and a probe that can't run reads as 'everyone offline' ([#890](https://github.com/G-Eskayo/marvin/pull/890))
