@@ -18,6 +18,10 @@
   this repo yet, so there's nothing else to add an issue to beyond the issue itself.
 - `triage` reads open issues via `gh issue list` and applies labels from
   `docs/agents/triage-labels.md` — it does not invent label names not defined there.
+- **Every ticket starts with `## Task and purpose`** (Gil, 2026-10-30): Task, Purpose and North star, one line each
+  (`skills/to-issues/SKILL.md` template). That includes the quick ones an agent files for itself in the middle of a
+  session, which skip the rest of the template. It steers the build, so keep it to the three lines. A `bug` still
+  needs its outcome check (`docs/agents/triage-labels.md`).
 - Never force-push, close, or delete issues without explicit user confirmation — these skills
   only create/comment/label by default.
 
