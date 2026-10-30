@@ -49,7 +49,7 @@ export function repoFromPrUrl(url) {
 // one, so the status dot (polled every minute; it only counts PRs) gets the light form -- the full form
 // (bodies for the evidence schema, files and branch names for merge order) is for the list itself.
 export function prListArgs(repo, { light = false } = {}) {
-  const fields = light ? 'number,title,url' : 'number,title,url,body,files,baseRefName,headRefName,headRefOid,mergeable,statusCheckRollup'
+  const fields = light ? 'number,title,url' : 'number,title,url,isDraft,body,files,baseRefName,headRefName,headRefOid,mergeable,statusCheckRollup'
   return ['pr', 'list', '--repo', repo, '--state', 'open', '--limit', '200', '--json', fields]
 }
 
