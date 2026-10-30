@@ -9,6 +9,8 @@ the command's own exit, never by a watcher: the title flips to ✓ or ✗, the r
 (job_events), a macOS notification fires, and --on-exit runs (with HELPER_RC set) so whoever is waiting is told.
 Over SSH (the Mini) `open -a WezTerm` starts the GUI in the login session, so the helper gets the keychain login
 that a plain SSH process lacks. No LLM and no GitHub calls: plain Python, wezterm cli and the local logs.
+Before a tab opens: the disk pre-flight (#765), then the memory guard (#845): at warn or critical memory pressure the
+helper is refused and this same launch is queued until macOS reports pressure back at normal; nothing is stopped.
 """
 from __future__ import annotations
 import argparse
@@ -98,6 +100,11 @@ def run_helper(group: str, title: str, command: list[str], on_exit: str | None =
         download_cache.enforce_cap()
     except Exception:  # noqa: BLE001 -- tidying must never change the helper's result
         pass
+    try:
+        import memory_guard
+        memory_guard.kick()   # marvin#845: a helper ending is a trigger to start the next one queued for memory
+    except Exception:  # noqa: BLE001
+        pass
     state = "done" if rc == 0 else "failed"
     pane = os.environ.get("WEZTERM_PANE")
     if pane:
@@ -140,10 +147,32 @@ def disk_ok(group: str, title: str) -> bool:
     return False
 
 
+MEMORY_REFUSED_RC = 3
+HELPER_TAB_BIN = HERE.parents[1] / "bin" / "helper-tab"
+
+
+def memory_ok(group: str, title: str, command: list[str], cwd: str, on_exit: str | None) -> bool:
+    """marvin#845: at warn or critical memory pressure the helper is refused, and this same launch (its --on-exit
+    included, so a lane carries on) is queued to run when macOS reports pressure back at normal. Nothing running is
+    stopped to make room."""
+    sys.path.insert(0, str(HERE.parent))
+    import memory_guard
+    argv = [str(HELPER_TAB_BIN), "--group", group, "--title", title, "--cwd", cwd]
+    if on_exit:
+        argv += ["--on-exit", on_exit]
+    r = memory_guard.guard(f"{group}: {title}", argv + ["--", *command], cwd)
+    if r["ok"]:
+        return True
+    print(f"helper-tab: {r['message']}", file=sys.stderr)
+    return False
+
+
 def launch(group: str, title: str, command: list[str], cwd: str, on_exit: str | None = None) -> int:
     running = tab_title(group, title, "running")  # validates before anything opens
     if not disk_ok(group, title):
         return DISK_REFUSED_RC
+    if not memory_ok(group, title, command, cwd, on_exit):
+        return MEMORY_REFUSED_RC
     argv = ["zsh", "-lc", wrapper_script(command, group, title, on_exit)]
     panes = _list_panes()
     window = pick_window(panes or [])
