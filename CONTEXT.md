@@ -534,6 +534,35 @@ ever been closed unmerged. Gil approves almost everything; the wait is the cost.
   you" column, worst first, with the live map. Whether the column sits over the map or below it is still open.
 - **Leaf node**: the outermost parts on the map (files, functions, sub-agents). They light when touched, the same as
   any other part.
+- **Listening sign**: the map's mark that it is still hearing from the parts that report to it. When a producer
+  stops reporting, its part goes grey ("not hearing from it"), so a quiet system and a deaf one never look the same.
+- **Peer watch**: the Macs check on each other, over the link they already share (Tailscale), on triggers, never on
+  a timer: each sends a word when something changes and when it goes to sleep, and a Mac that goes quiet without
+  saying so is flagged by the other. It is how Vitals stays independent of the Mac it runs on.
+- **Stale verdict**: the verdict line carries its age, and turns amber once it is older than the sweep should allow.
+  A verdict is never trusted past its age.
+- **Common cause**: failures that share one root (main is red, so every build fails) fold into one row in "what
+  needs you" ("main is red · 15 builds blocked"), with the blocked parts under it. The map still marks each one.
+- **Unstable**: a check that keeps flipping between passing and failing. It shows amber as unstable instead of
+  blinking, so the map's motion stays truthful.
+- **Stage view**: the map and Vitals as shown to someone else (a demo, a screen share). Names of tickets, files and
+  private projects are hidden; only shapes, colours and activity show.
+- **Fix work** (and the budget lines): an auto fix is not new work. It passes the hard line, because a fix is often
+  what frees room for work (clearing a cache, freeing memory).
+- **Reversible** (of an auto fix): every auto fix leaves a record of what it changed and an undo. A fix that can't
+  be undone fully is not auto; it is one tap.
+- **Throttle badge**: the badge an interactive session shows while it is throttled, with its step, so a slowdown
+  never looks like a bug.
+- **Hand work**: work Gil does outside the pipeline (a push, closing a ticket). Vitals counts it and clears the
+  reds it resolves, the same as pipeline work.
+- **Watcher cost**: what the map and Vitals themselves use (CPU, GPU, memory). Shown in Energy like any other part,
+  never hidden.
+- **Not enough data yet**: the state of a measure that has no baseline or history (a new install has no paid baseline
+  and doesn't know its plan's limits). Never shown as 0% or as healthy.
+- **Machine health**: each computer's own load (CPU, GPU, memory, thermal) shown in Vitals per Mac. It belongs to
+  MARVIN's health because the point is for the computers to work together as one; work should go to whichever Mac
+  has room, and to the GPU where it can.
+
 
 ## Health monitoring (in design, 2026-10-01)
 
