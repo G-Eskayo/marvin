@@ -74,6 +74,15 @@ def night_window(device: str, now: datetime, cfg: dict) -> tuple[datetime, datet
     return slot, limit
 
 
+EARLY_S = 10 * 60               # launchd may fire a little before the minute
+
+
+def starts_now(now: datetime, window: tuple[datetime, datetime]) -> bool:
+    """One launchd job fires at every Mac's slot; a Mac acts only from (just before) its own slot. Earlier, it exits
+    instead of sitting blocked for hours; its own slot fires it again."""
+    return now >= window[0] - timedelta(seconds=EARLY_S)
+
+
 def slot_conflicts(cfg: dict) -> list[str]:
     """Two Macs whose slots are equal: they could both be down at once. Slots are checked as start times; each
     Mac's guard also waits while its watcher is down, which covers a postponed reset running into the next slot."""
@@ -425,6 +434,9 @@ def main(argv: list[str] | None = None) -> int:
         v = decide(now(), window, gather_facts(device, cfg), load_state(device, night), cfg)
         print(json.dumps({"device": device, "slot": window[0].isoformat(), "limit": window[1].isoformat(),
                           "action": v.action, "reason": v.reason, "until": v.until.isoformat() if v.until else None}))
+        return 0
+    if not starts_now(now(), window):
+        print(f"{device} resets at {window[0]:%H:%M}; nothing to do now")
         return 0
     with job_events.job_run("nightly-reset", "Nightly reset") as run:
         outcome = run_night(
