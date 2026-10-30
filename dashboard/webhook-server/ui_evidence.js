@@ -78,6 +78,20 @@ export const unpinnedImages = (body) => imageUrls(body).filter((u) => !FULL_SHA.
 
 export const imageShas = (body) => [...new Set(imageUrls(body).map((u) => u.match(FULL_SHA)?.[1]).filter(Boolean))]
 
+// Where each pinned image lives: owner/repo and the commit, from raw.githubusercontent.com/<o>/<r>/<sha>/... or
+// github.com/<o>/<r>/blob/<sha>/.... MARVIN's images live in its private instance repo (ADR 0071), not the PR's repo,
+// so their commit can't be compared inside the PR's repo (marvin #773).
+export function imagePins(body) {
+  const seen = new Map()
+  for (const u of imageUrls(body)) {
+    const m = /^https:\/\/(?:raw\.githubusercontent\.com\/([^/]+)\/([^/]+)\/|github\.com\/([^/]+)\/([^/]+)\/(?:blob|raw)\/)([0-9a-f]{40})\//.exec(u)
+    if (!m) continue
+    const repo = `${m[1] || m[3]}/${m[2] || m[4]}`
+    seen.set(`${repo}@${m[5]}`, { repo, sha: m[5] })
+  }
+  return [...seen.values()]
+}
+
 const listed = (items) => items.slice(0, 3).join(', ') + (items.length > 3 ? ` and ${items.length - 3} more` : '')
 
 // Refuses a UI-touching PR whose body has no image. Fails CLOSED when GitHub can't be asked: a refused Approve costs
@@ -112,16 +126,47 @@ export async function assertUiEvidence(prUrl, exec, extraPatterns = []) {
   }
   // Pinned, but is any look-changing file newer than the images? One compare per distinct commit (usually one).
   const [owner, repo, , number] = new URL(prUrl).pathname.split('/').filter(Boolean)
-  for (const sha of imageShas(body).filter((s) => s !== head).slice(0, 5)) {
+  const prRepo = `${owner}/${repo}`
+  const unchecked = (sha, where, error) => {
+    const reason = String(error?.stderr || error?.message || error).split('\n')[0].slice(0, 200)
+    return new MergeFailure(refusal('UI_EVIDENCE_UNCHECKED', 'request',
+      `couldn't check whether the images (taken at ${sha.slice(0, 7)} in ${where}) are current (${reason})`,
+      'Approve again in a moment. If it keeps failing, retake the screenshots at the PR\'s latest commit and pin them to it.'))
+  }
+  let prCommits = null // fetched once, only when an image lives in another repo
+  for (const { repo: imgRepo, sha } of imagePins(body).filter((p) => p.sha !== head).slice(0, 5)) {
     let since
-    try {
-      const { stdout } = await exec('gh', ['api', `repos/${owner}/${repo}/compare/${sha}...${head}`])
-      since = (JSON.parse(stdout).files || []).map((f) => f.filename)
-    } catch (error) {
-      const reason = String(error?.stderr || error?.message || error).split('\n')[0].slice(0, 200)
-      throw new MergeFailure(refusal('UI_EVIDENCE_UNCHECKED', 'request',
-        `couldn't check whether the images (taken at ${sha.slice(0, 7)}) are current (${reason})`,
-        'Retake the screenshots at the PR\'s latest commit and pin them to it, then approve again.'))
+    if (imgRepo === prRepo) {
+      try {
+        const { stdout } = await exec('gh', ['api', `repos/${prRepo}/compare/${sha}...${head}`])
+        since = (JSON.parse(stdout).files || []).map((f) => f.filename)
+      } catch (error) { throw unchecked(sha, prRepo, error) }
+    } else {
+      // Another repo's commit: compare by time. The images are as new as their commit; the PR's last commit at or
+      // before that moment is what they show, and only UI files changed after it can make them stale.
+      let taken
+      try {
+        const { stdout } = await exec('gh', ['api', `repos/${imgRepo}/commits/${sha}`])
+        taken = Date.parse(JSON.parse(stdout)?.commit?.committer?.date)
+        if (!Number.isFinite(taken)) throw new Error('no commit date')
+      } catch (error) { throw unchecked(sha, imgRepo, error) }
+      try {
+        if (!prCommits) {
+          const { stdout } = await exec('gh', ['api', '--paginate', `repos/${prRepo}/pulls/${number}/commits?per_page=100`])
+          prCommits = JSON.parse(stdout).map((c) => ({ sha: c.sha, at: Date.parse(c?.commit?.committer?.date) }))
+        }
+      } catch (error) { throw unchecked(sha, prRepo, error) }
+      const before = prCommits.filter((c) => Number.isFinite(c.at) && c.at <= taken)
+      const shown = before.length ? before[before.length - 1].sha : null
+      if (shown === head) continue
+      if (!shown) {
+        since = files // older than the whole PR: every file it changes is newer than the images
+      } else {
+        try {
+          const { stdout } = await exec('gh', ['api', `repos/${prRepo}/compare/${shown}...${head}`])
+          since = (JSON.parse(stdout).files || []).map((f) => f.filename)
+        } catch (error) { throw unchecked(sha, prRepo, error) }
+      }
     }
     const newer = uiFiles(since, extraPatterns)
     if (newer.length) {
