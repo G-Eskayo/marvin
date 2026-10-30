@@ -82,8 +82,8 @@ export function useMergeMotion(items, { keyOf = (x) => x.url, numberOf = (x) => 
   const motions = useRef(initialMotions())
   const chipsRef = useRef(initialChips())
   const current = useRef(null)
-  const scrollFix = useRef(0)
   const scroller = useRef(null)
+  const heights = useRef(new WeakMap()) // each slot's last height, for holding your place (below)
   const prevItems = useRef(null)
   const shownRef = useRef(shown)
   shownRef.current = shown
@@ -122,7 +122,12 @@ export function useMergeMotion(items, { keyOf = (x) => x.url, numberOf = (x) => 
     const where = scrollPlan({ ...placeIn(slot, box), height: full, gap: 0, change: m.kind === 'leave' ? 'leave' : 'enter' })
     const item = byKey(m.key)
     if (!where.play) {
-      scrollFix.current += where.scrollDelta
+      // Change the DOM and the scroll together, in this one step: done in two (the scroll first) the browser clamps the
+      // scroll near the bottom of the list, and your place moves.
+      const target = box.scrollTop + where.scrollDelta // read before the change: after it the browser may clamp
+      slot.style.height = m.kind === 'leave' ? '0px' : ''
+      heights.current.set(slot, m.kind === 'leave' ? 0 : full)
+      box.scrollTop = target
       if (where.where === 'above' && item) showChip({ kind: m.kind === 'leave' ? 'merged' : 'came-in', key: m.key, number: numberOf(item) })
       done()
       return
@@ -169,7 +174,7 @@ export function useMergeMotion(items, { keyOf = (x) => x.url, numberOf = (x) => 
     const next = items.filter((x) => !gone.current.has(keyOf(x)))
     const prev = prevItems.current
     prevItems.current = items
-    if (prev === null || !animateChanges) { setShown(mergeShown(shownRef.current, next, keep.current)); return }
+    if (prev === null || !animateChanges) { setShown(mergeShown(shownRef.current, next, keep.current, keyOf)); return }
     const was = new Set(shownRef.current.map(keyOf))
     const now = new Set(next.map(keyOf))
     for (const x of shownRef.current) {
@@ -180,21 +185,17 @@ export function useMergeMotion(items, { keyOf = (x) => x.url, numberOf = (x) => 
       if (slot && visibleRef.current) {
         const box = scroller.current || (scroller.current = scrollParent(slot))
         const where = scrollPlan({ ...placeIn(slot, box), height: slot.offsetHeight, gap: 0 })
-        scrollFix.current += where.scrollDelta
+        const target = box.scrollTop + where.scrollDelta
+        slot.style.height = '0px' // it goes now; the next render removes it
+        heights.current.set(slot, 0)
+        box.scrollTop = target
       }
     }
     const added = next.filter((x) => !was.has(keyOf(x)))
     if (added.length && visibleRef.current) setEntering((s) => new Set([...s, ...added.map(keyOf)]))
-    setShown(mergeShown(shownRef.current, next, keep.current))
+    setShown(mergeShown(shownRef.current, next, keep.current, keyOf))
     if (visibleRef.current) for (const x of added) enqueue({ kind: 'enter', key: keyOf(x) })
   }, [items])
-
-  // Instant changes above you: shift the page by exactly what changed, after the DOM has it.
-  useLayoutEffect(() => {
-    if (!scrollFix.current || !scroller.current) return
-    scroller.current.scrollTop += scrollFix.current
-    scrollFix.current = 0
-  })
 
   // On screen or not (inside an MR, the window hidden). Coming back: the MR you were inside plays, the rest are counted.
   useEffect(() => {
@@ -225,7 +226,30 @@ export function useMergeMotion(items, { keyOf = (x) => x.url, numberOf = (x) => 
   }, [watch, visible, focus])
   useEffect(() => { if (!visible && !watch) finishAll() }, [visible])
 
-  const slotRef = useCallback((k) => (el) => { if (el) slots.current.set(k, el); else slots.current.delete(k) }, [])
+  // Any other card above you that changes height (its merge progress appears, its checks finish) would move what you
+  // are looking at; the browser's own scroll anchoring is off for this list (the motion moves the page itself), so the
+  // page shifts by exactly that change. A ResizeObserver: told when a size changes, nothing polled.
+  const observer = useRef(null)
+  useEffect(() => {
+    if (typeof ResizeObserver === 'undefined') return undefined
+    observer.current = new ResizeObserver((entries) => {
+      for (const e of entries) {
+        const el = e.target, h = el.offsetHeight, before = heights.current.get(el)
+        heights.current.set(el, h)
+        if (before == null || before === h || current.current?.slot === el || !visibleRef.current) continue
+        const box = scroller.current || (scroller.current = scrollParent(el))
+        const { top, scrollTop } = placeIn(el, box)
+        if (top + before <= scrollTop) box.scrollTop += h - before
+      }
+    })
+    for (const el of slots.current.values()) observer.current.observe(el)
+    return () => { observer.current.disconnect(); observer.current = null }
+  }, [])
+  const slotRef = useCallback((k) => (el) => {
+    const old = slots.current.get(k)
+    if (old && old !== el) observer.current?.unobserve(old)
+    if (el) { slots.current.set(k, el); if (el !== old) observer.current?.observe(el) } else slots.current.delete(k)
+  }, [])
   const isBlue = (k) => mergeWatch.isWaiting(k) || keep.current.has(k) || motions.current.queue.some((m) => m.kind === 'leave' && m.key === k) || (motions.current.playing?.kind === 'leave' && motions.current.playing.key === k)
   return { shown: shown.filter((x) => !gone.current.has(keyOf(x))), entering, slotRef, chip, nextChip, note, isBlue }
 }

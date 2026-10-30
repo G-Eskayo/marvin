@@ -221,14 +221,14 @@ export const interrupt = (plan) => ({ seekTo: plan.total, navigateIn: 0 })
 // The list on screen: GitHub's list (`next`), plus the cards in `keep` that GitHub has dropped but are still sweeping
 // out, each where it was (after the card that was before it). The kept card is its last shown version. O(n·k) time
 // for k kept cards, O(n) space.
-export function mergeShown(prev, next, keep) {
+export function mergeShown(prev, next, keep, keyOf = (x) => x.key) {
   const out = next.slice()
-  const inNext = new Set(next.map((x) => x.key))
+  const inNext = new Set(next.map(keyOf))
   prev.forEach((item, i) => {
-    if (inNext.has(item.key) || !keep.has(item.key)) return
+    if (inNext.has(keyOf(item)) || !keep.has(keyOf(item))) return
     let j = i - 1
-    while (j >= 0 && !out.some((x) => x.key === prev[j].key)) j--
-    const at = j < 0 ? 0 : out.findIndex((x) => x.key === prev[j].key) + 1
+    while (j >= 0 && !out.some((x) => keyOf(x) === keyOf(prev[j]))) j--
+    const at = j < 0 ? 0 : out.findIndex((x) => keyOf(x) === keyOf(prev[j])) + 1
     out.splice(at, 0, item)
   })
   return out

@@ -1,8 +1,10 @@
 # MR Review merge motion: mock-up (marvin#757)
 
-**Status: mock-up for approval, round 2. The real dashboard is unchanged.** Round 2 follows the owner's answers on PR
-#761. Once the motion is approved it gets built into `MrReview.jsx` / `MrHistory.jsx` with Motion (motion.dev,
-vendored, for spring easing), and `merge_motion.js` moves to `dashboard/src/lib/`.
+**Status: approved (round 2, PR #761) and built (marvin#838).** This folder is the round-2 mock-up as approved, kept
+so it still opens from Finder. Its `merge_motion.js` is frozen at round 2. The live choreography, with the owner's
+round-2 answers applied (0.8x faster, everything left to right, the check mark, the chips), is
+`dashboard/src/lib/merge_motion.js`, tested in `dashboard/test/merge_motion.test.js`, played by
+`dashboard/src/components/MergeMotion.jsx`. Motion is vendored for the app at `dashboard/src/vendor/`.
 
 ## Run it
 

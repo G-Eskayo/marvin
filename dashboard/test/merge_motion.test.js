@@ -492,6 +492,11 @@ describe('mergeShown: the list on screen while some cards are still leaving', ()
     expect(M.mergeShown(k('a', 'b'), k('a', 'b'), new Set(['a'])).map((x) => x.key)).toEqual(['a', 'b'])
   })
 
+  it('keys by whatever the list keys by (the Open list keys cards by url)', () => {
+    const u = (...urls) => urls.map((url) => ({ url, key: `k-${url}` }))
+    expect(M.mergeShown(u('a', 'b', 'c'), u('a', 'c'), new Set(['b']), (x) => x.url).map((x) => x.url)).toEqual(['a', 'b', 'c'])
+  })
+
   it('the kept card is the one shown before (its last look), the rest are the new versions', () => {
     const before = [{ key: 'a', v: 1 }, { key: 'b', v: 1 }]
     const out = M.mergeShown(before, [{ key: 'b', v: 2 }], new Set(['a']))
