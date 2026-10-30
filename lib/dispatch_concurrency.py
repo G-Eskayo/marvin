@@ -166,6 +166,64 @@ def credit_ready_local(home: Path | None = None, now: datetime | None = None) ->
     return True
 
 
+PLAN_RETRY_S = 3600   # after the plan's usage limit, builds use the credit this long, then the plan is tried again
+
+
+def _plan_state_path(home: Path | None) -> Path:
+    return (home or Path.home()) / ".claude" / "dispatch" / "plan-state.json"
+
+
+def mark_plan_limited(home: Path | None = None, now: datetime | None = None) -> None:
+    """A run on this Mac just hit the plan's usage limit (Gil, 2026-10-30: plan first, the credit only once it runs out)."""
+    path = _plan_state_path(home)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    at = (now or datetime.now(timezone.utc)).strftime("%Y-%m-%dT%H:%M:%SZ")
+    path.write_text(json.dumps({"limited_at": at}) + "\n")
+
+
+def plan_limited(home: Path | None = None, now: datetime | None = None) -> bool:
+    """This Mac hit the plan's usage limit in the last PLAN_RETRY_S. Anything unreadable, or dated in the future, reads
+    as False: the wrong way to fail here spends the credit while the plan has room."""
+    try:
+        at = datetime.strptime(json.loads(_plan_state_path(home).read_text())["limited_at"],
+                               "%Y-%m-%dT%H:%M:%SZ").replace(tzinfo=timezone.utc)
+    except (OSError, ValueError, KeyError, TypeError, AttributeError):
+        return False
+    age = ((now or datetime.now(timezone.utc)) - at).total_seconds()
+    return 0 <= age < PLAN_RETRY_S
+
+
+def credit_env(home: Path | None = None, base: dict | None = None, now: datetime | None = None) -> dict | None:
+    """`base` switched to the monthly API credit (the key in, the plan's token out), or None when the credit isn't
+    ready. The key is read at the moment of use and never written anywhere."""
+    if not credit_ready_local(home, now):
+        return None
+    try:
+        key = ((home or Path.home()) / ".claude" / ".anthropic-api-key").read_text().strip()
+    except OSError:
+        return None
+    env = {k: v for k, v in (base if base is not None else os.environ).items() if k != "CLAUDE_CODE_OAUTH_TOKEN"}
+    env["ANTHROPIC_API_KEY"] = key
+    return env
+
+
+def record_credit_check(ok: bool, why: str, home: Path | None = None, now: datetime | None = None) -> None:
+    """The same credit-state.json lib/builder_auth.sh writes, so a spent credit closes the extra slots."""
+    path = (home or Path.home()) / ".claude" / "dispatch" / "credit-state.json"
+    path.parent.mkdir(parents=True, exist_ok=True)
+    at = (now or datetime.now(timezone.utc)).strftime("%Y-%m-%dT%H:%M:%SZ")
+    path.write_text(json.dumps({"ok": ok, "why": why, "at": at}) + "\n")
+
+
+def log_billing(task: str, mode: str, why: str, home: Path | None = None) -> None:
+    """One line in the log builder_auth.sh writes, ~/.claude/logs/builder-billing.jsonl."""
+    log = (home or Path.home()) / ".claude" / "logs" / "builder-billing.jsonl"
+    log.parent.mkdir(parents=True, exist_ok=True)
+    at = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+    with log.open("a") as f:
+        f.write(json.dumps({"at": at, "task": task, "mode": mode, "why": why}) + "\n")
+
+
 def credit_ready_remote(host: str, run=None) -> bool | None:
     """credit_ready_local on another machine over ssh; None when it can't be asked."""
     run = run or subprocess.run
@@ -312,6 +370,9 @@ def _cli(argv: list[str]) -> int:
         return 0
     if argv[:1] == ["credit-ready"]:
         print("true" if credit_ready_local() else "false")
+        return 0
+    if argv[:1] == ["plan-limited"]:
+        print("true" if plan_limited() else "false")
         return 0
     if argv[:1] == ["others-running"] and len(argv) == 3 and argv[1] == "--exclude":
         print(others_running(argv[2]))

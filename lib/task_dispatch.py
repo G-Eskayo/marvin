@@ -9,7 +9,8 @@ read those before extending this. Short version: v1 is single-target
 dispatch only (fan-out+merge and exo-scheduled dispatch are deliberately
 deferred), unit of work is an arbitrary shell command, machine selection
 uses an explicit dispatch-state file (not raw OS load), and failures are
-reported loud with no automatic retry-elsewhere.
+reported loud with no automatic retry-elsewhere -- except the one exception ADR 0069's amendment allows (marvin #930):
+`test` and `bench` work that stalls on the box, or can't reach it, reruns once on the less busy Mac.
 
 Run standalone: ~/.agents/venv/bin/python task_dispatch.py "command" [--target ID] [--async] [--timeout N]
 """
@@ -24,7 +25,6 @@ from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
 
-import dispatch_concurrency
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from machine_profile import registry_id, remote_devices, _load_registry  # noqa: E402
@@ -51,6 +51,23 @@ class DispatchResult:
     stderr: str | None = None
     error: str | None = None
     waiting: bool = False   # refused under memory pressure and queued to run when it drops (marvin#845)
+    timed_out: bool = False      # the run hit its time limit (a stall, not a result)
+    unreachable: bool = False    # the machine could not be reached, or the link dropped mid-run
+    fell_back_from: str | None = None   # set when this is a Mac's rerun of work the box couldn't finish (#930)
+
+
+# ADR 0069 amendment (marvin #930, Gil 2026-10-30): only these tags may rerun on a Mac when the box stalls. quarantine
+# and security never do: a Mac must never run untrusted code. Any tag not listed here keeps "fail loudly".
+FALLBACK_NEEDS = frozenset({"test", "bench"})
+FALLBACK_LOG = Path.home() / ".claude" / "logs" / "dispatch-fallback.jsonl"
+# One record per fallback run in progress, started from this machine; a dead pid's record doesn't count.
+FALLBACK_RUNS_DIR = Path.home() / ".claude" / "dispatch" / "fallback"
+# At most this many fallback runs at once from one dispatcher, so a box that stalls on every job can't pile them all
+# onto the Macs (a fallback storm). Over the cap the job fails loudly and the log says "capped".
+FALLBACK_CAP = 2
+TIE_MARGIN = 0.1     # two Macs whose load scores differ by less than this are tied, and a tie goes to the Mini
+ASYNC_LOG_DIR = Path.home() / ".claude" / "logs" / "dispatch-async"
+KILL_GRACE_S = 15    # GNU timeout's -k: seconds after SIGTERM before SIGKILL on the box
 
 
 def tailscale_online_hosts_or_none() -> set[str] | None:
@@ -171,8 +188,165 @@ def select_machine(explicit_target: str | None = None, need: str | None = None) 
     return None
 
 
+def machine_load(device_id: str, info: dict) -> tuple[float, int, int] | None:
+    """(1-minute load, cores, dispatch runs in progress) for a Mac, or None when it can't be read. Plan section F's
+    reading: the run count matters because a run just started hasn't shown up in the load yet."""
+    if info.get("is_self"):
+        try:
+            load1 = os.getloadavg()[0]
+        except OSError:
+            return None
+        return load1, os.cpu_count() or 0, _live_task_count(Path.home() / ".claude" / "dispatch" / "tasks")
+    cmd = f"sysctl -n vm.loadavg hw.ncpu; ls {SHELL_TASKS_DIR} 2>/dev/null | grep -c '\\.json$'"
+    try:
+        proc = subprocess.run(["ssh", *SSH_OPTS, info["tailscale_hostname"], cmd],
+                              capture_output=True, text=True, timeout=10)
+        lines = proc.stdout.split("\n")
+        load1 = float(lines[0].strip("{} ").split()[0])
+        return load1, int(lines[1]), int((lines[2] if len(lines) > 2 else "0").strip() or 0)
+    except Exception:
+        return None
+
+
+def _live_task_count(tasks_dir: Path) -> int:
+    n = 0
+    for f in tasks_dir.glob("*.json") if tasks_dir.is_dir() else []:
+        try:
+            if _pid_alive(int(json.loads(f.read_text()).get("pid", 0))):
+                n += 1
+        except Exception:
+            continue
+    return n
+
+
+def load_score(reading: tuple[float, int, int] | None) -> float | None:
+    """Busy-ness of a Mac: 1-minute load per core, plus one per run already taken there. None when unknown."""
+    if not reading:
+        return None
+    load1, cores, runs = reading
+    if not cores or cores <= 0:
+        return None
+    return load1 / cores + runs
+
+
+def pick_fallback_mac() -> tuple[str, dict, float | None] | None:
+    """The less busy online Mac (general work), for a fallback rerun. A busy dispatch-state does not rule a Mac out:
+    the fallback must not be dropped because both Macs have builds going; it goes where there's most room. A tie or
+    an unreadable load goes to the Mini (more cores, plan section F)."""
+    online = _tailscale_online_hosts()
+    macs = {d: info for d, info in _candidates().items()
+            if accepts(info, GENERAL) and (info["is_self"] or info.get("tailscale_hostname") in online)}
+    if not macs:
+        return None
+    scores = {d: load_score(machine_load(d, info)) for d, info in macs.items()}
+    minis = [d for d, info in macs.items() if info.get("kind") == "desktop"]
+    if any(v is None for v in scores.values()):
+        choice = minis[0] if minis else next(d for d in macs if scores[d] is not None) if any(
+            v is not None for v in scores.values()) else next(iter(macs))
+        return choice, macs[choice], scores[choice]
+    best = min(scores, key=scores.get)
+    tied = [d for d in macs if scores[d] - scores[best] < TIE_MARGIN]
+    choice = next((d for d in tied if d in minis), best)
+    return choice, macs[choice], scores[choice]
+
+
+def _pid_alive(pid: int) -> bool:
+    if pid <= 0:
+        return False
+    try:
+        os.kill(pid, 0)
+    except ProcessLookupError:
+        return False
+    except PermissionError:
+        return True
+    return True
+
+
+def _fallback_runs_in_progress() -> int:
+    return _live_task_count(FALLBACK_RUNS_DIR)
+
+
+def _log_fallback(entry: dict) -> None:
+    try:
+        FALLBACK_LOG.parent.mkdir(parents=True, exist_ok=True)
+        with FALLBACK_LOG.open("a") as fh:
+            fh.write(json.dumps({"t": datetime.now(timezone.utc).isoformat(), **entry}) + "\n")
+    except Exception:
+        pass   # logging never changes the run's outcome
+
+
+def _fall_back(command: str, need: str, reason: str, box: str | None, box_error: str | None, mode: str,
+               timeout: int, label: str, ticket: str | None, repo: str | None) -> DispatchResult:
+    """Rerun `command` once on the less busy Mac. Only for FALLBACK_NEEDS; the caller has checked."""
+    base = {"need": need, "label": label, "from": box, "reason": reason, "box_error": (box_error or "")[:300]}
+    if _fallback_runs_in_progress() >= FALLBACK_CAP:
+        _log_fallback({**base, "to": None, "outcome": "capped"})
+        return DispatchResult(ok=False, device_id=box, error=(
+            f"{box or 'the box'} could not finish this {need} work ({reason}), and {FALLBACK_CAP} fallback runs are "
+            f"already going on the Macs (the fallback cap), so it was not rerun"), fell_back_from=box)
+    picked = pick_fallback_mac()
+    if picked is None:
+        _log_fallback({**base, "to": None, "outcome": "no-mac"})
+        return DispatchResult(ok=False, device_id=box, error=f"{box or 'the box'} could not finish this {need} work "
+                              f"({reason}) and no Mac is online to rerun it", fell_back_from=box)
+    device_id, info, score = picked
+    if info["is_self"]:
+        import memory_guard
+        held = memory_guard.guard(label, None, str(Path.home()))
+        if not held["ok"]:
+            _log_fallback({**base, "to": device_id, "score": score, "outcome": "refused", "detail": held["message"]})
+            return DispatchResult(ok=False, device_id=device_id, error=held["message"], fell_back_from=box)
+    FALLBACK_RUNS_DIR.mkdir(parents=True, exist_ok=True)
+    slot = FALLBACK_RUNS_DIR / f"{uuid.uuid4().hex[:12]}.json"
+    slot.write_text(json.dumps({"pid": os.getpid(), "need": need, "label": label, "to": device_id}))
+    started = time.monotonic()
+    try:
+        script = _build_wrapper_script(command, str(uuid.uuid4())[:8], label, device_id, ticket=ticket, repo=repo,
+                                       need=need)
+        result = (_run_local(script, mode, timeout) if info["is_self"]
+                  else _run_remote(info["tailscale_hostname"], script, mode, timeout, device_id, info.get("os", "macos")))
+    finally:
+        slot.unlink(missing_ok=True)
+    result.fell_back_from = box
+    _log_fallback({**base, "to": device_id, "score": score, "outcome": "ok" if result.ok else "failed",
+                   "seconds": round(time.monotonic() - started, 1)})
+    return result
+
+
+def _detach_sync_dispatch(command: str, need: str, timeout: int, target: str | None, label: str) -> DispatchResult:
+    """Async test/bench work runs as a detached *sync* dispatch, so this process's timeout and fallback still apply
+    to it. The caller gets control back at once, as with any async dispatch."""
+    ASYNC_LOG_DIR.mkdir(parents=True, exist_ok=True)
+    log = ASYNC_LOG_DIR / f"{datetime.now(timezone.utc).strftime('%Y%m%dT%H%M%S')}-{uuid.uuid4().hex[:6]}.log"
+    argv = [sys.executable, str(Path(__file__).resolve()), command, "--needs", need, "--timeout", str(timeout),
+            "--label", label]
+    if target:
+        argv += ["--target", target]
+    with open(log, "a") as out:
+        subprocess.Popen(argv, stdout=out, stderr=subprocess.STDOUT, stdin=subprocess.DEVNULL, start_new_session=True)
+    return DispatchResult(ok=True, device_id=None, output=None)
+
+
+def _remote_invocation(remote_path: str, timeout: int, remote_os: str) -> tuple[str, int]:
+    """The command ssh runs, and how long ssh is waited for. On Linux the run is wrapped in GNU timeout, so a stall is
+    killed on the box itself (SIGTERM, then SIGKILL) and nothing is left running there; ssh is given a little longer so
+    the box's own kill wins. A Mac has no GNU timeout: unchanged."""
+    if remote_os == "linux":
+        return f"timeout -k {KILL_GRACE_S} {timeout} {remote_path}", timeout + KILL_GRACE_S + 15
+    return remote_path, timeout
+
+
+def _classify_remote_exit(code: int) -> str | None:
+    """A stall ("timeout", "unreachable") or None for the job's own result."""
+    if code in (124, 137):
+        return "timeout"
+    if code == 255:
+        return "unreachable"
+    return None
+
+
 def _build_wrapper_script(command: str, task_id: str, task_label: str, device_id: str,
-                          ticket: str | None = None, repo: str | None = None) -> str:
+                          ticket: str | None = None, repo: str | None = None, need: str | None = None) -> str:
     """A script that writes a task record to TASKS_DIR/<task_id>.json (with metadata including the real runtime PID),
     marks the dispatch-state file busy, runs the real command, and on exit (via trap — fires even if the command
     fails or crashes, not just on clean exit) removes the task record and clears the state file and deletes its
@@ -207,7 +381,12 @@ def _build_wrapper_script(command: str, task_id: str, task_label: str, device_id
     record_prefix = record_json[:-1]
 
     tasks_dir, state = SHELL_TASKS_DIR, SHELL_STATE_PATH
-    plan_slots = dispatch_concurrency.effective_limit(dispatch_concurrency.load(), device_id)   # the plan's, not the credit's
+    # Only general work (builds) chooses plan or API credit. Tagged work (test, bench, quarantine, security) runs no
+    # model, and a test job falling back to a busy Mac must not send even builder_auth's 1-token probe (#930).
+    builder_auth = (f'''if [ -f "$HOME/.agents/lib/builder_auth.sh" ]; then
+  . "$HOME/.agents/lib/builder_auth.sh" && marvin_builder_auth {task_id}
+fi
+''' if _normalise_need(need) == GENERAL else "")
     return f"""#!/bin/bash
 mkdir -p {tasks_dir}
 mkdir -p "$HOME/.claude"
@@ -217,20 +396,20 @@ cat > {state} << 'DISPATCH_STATE_EOF'
 {busy_json}
 DISPATCH_STATE_EOF
 (cd "$HOME/.agents" && "$HOME/.agents/venv/bin/python" -m lib.dispatch_concurrency refresh-summary)
+# Job hooks (#931): on mac-mini-2012 the live display stops while jobs run. A hook never changes the job's outcome.
+"$HOME/.agents/venv/bin/python" "$HOME/.agents/lib/job_hooks.py" start >/dev/null 2>&1 || true
 trap 'rm -f "$0" {tasks_dir}/{task_id}.json; cat > {state} << 'DISPATCH_IDLE_EOF'
 {idle_json}
 DISPATCH_IDLE_EOF
 (cd "$HOME/.agents" && "$HOME/.agents/venv/bin/python" -m lib.dispatch_concurrency refresh-summary)
-"$HOME/.agents/venv/bin/python" "$HOME/.agents/lib/memory_guard.py" kick >/dev/null 2>&1' EXIT
+"$HOME/.agents/venv/bin/python" "$HOME/.agents/lib/memory_guard.py" kick >/dev/null 2>&1
+"$HOME/.agents/venv/bin/python" "$HOME/.agents/lib/job_hooks.py" stop >/dev/null 2>&1' EXIT
 export PATH="$HOME/.local/bin:/opt/homebrew/bin:/usr/local/bin:$PATH"
 if [ -f "$HOME/.claude/.oauth-token" ]; then
   export CLAUDE_CODE_OAUTH_TOKEN="$(cat "$HOME/.claude/.oauth-token")"
 fi
-# Plan first; the monthly API credit only for builds beyond this machine's plan slots (#775, #849).
-if [ -f "$HOME/.agents/lib/builder_auth.sh" ]; then
-  . "$HOME/.agents/lib/builder_auth.sh" && marvin_builder_auth {task_id} {plan_slots}
-fi
-if [ -f "$HOME/.claude/.gh-token" ]; then
+# Plan first; the monthly API credit only while this Mac's plan is at its usage limit (#775, Gil 2026-10-30).
+{builder_auth}if [ -f "$HOME/.claude/.gh-token" ]; then
   export GH_TOKEN="$(cat "$HOME/.claude/.gh-token")"
   # git itself asks the macOS keychain for credentials, which is locked in a non-interactive shell (every push from the macbook
   # died with exit 128, 2026-10-07); gh's credential helper reads GH_TOKEN instead. Set through the environment so it reaches
@@ -243,34 +422,49 @@ fi
 
 def dispatch(command: str, target: str | None = None, mode: str = "sync",
              timeout: int = 300, task_label: str | None = None, ticket: str | None = None,
-             repo: str | None = None, need: str | None = None, queue_argv: list[str] | None = None) -> DispatchResult:
+             repo: str | None = None, need: str | None = None, queue_argv: list[str] | None = None,
+             fallback: bool = True) -> DispatchResult:
     """Run `command` on an available device. mode: "sync" (wait, capture
     output) or "async" (fire-and-forget, returns immediately). Fails loud,
-    no automatic retry on a different machine. Optional ticket/repo metadata are stored
+    no automatic retry on a different machine -- except `test`/`bench` work (FALLBACK_NEEDS, ADR 0069's amendment,
+    marvin #930): when no box can take it, or the box times out or drops off mid-run, it reruns once on the less busy
+    Mac and the fallback is logged. A box run that finishes with failures is a result and stands. `fallback=False`
+    turns that off (an extra runner whose verdict comes from elsewhere). Optional ticket/repo metadata are stored
     in the task record for tracking and UI display.
     Work for this Mac first passes the memory guard (marvin#845): at warn or critical pressure it is refused with a
     plain message; given `queue_argv` (a command that re-runs this dispatch) that is queued until pressure drops and
     the result says `waiting`. Nothing running is stopped."""
+    tag = _normalise_need(need)
+    label = task_label or command[:60]
+    may_fall_back = fallback and tag in FALLBACK_NEEDS
+    if may_fall_back and mode == "async":
+        return _detach_sync_dispatch(command, tag, timeout, target, label)
+
     selected = select_machine(target, need=need)
     if selected is None:
-        tag = _normalise_need(need)
+        if may_fall_back:
+            return _fall_back(command, tag, "unavailable", target, "no box that accepts it is online and idle",
+                              mode, timeout, label, ticket, repo)
         reason = (f"target '{target}' unavailable or doesn't accept '{tag}' work" if target
                   else f"no machine that accepts '{tag}' work is currently available")
         return DispatchResult(ok=False, error=reason)
 
     device_id, info = selected
-    label = task_label or command[:60]
     if info["is_self"]:
         import memory_guard
         held = memory_guard.guard(label, queue_argv, str(Path.home()))
         if not held["ok"]:
             return DispatchResult(ok=False, device_id=device_id, error=held["message"], waiting=bool(held["queued"]))
     task_id = str(uuid.uuid4())[:8]
-    script = _build_wrapper_script(command, task_id, label, device_id, ticket=ticket, repo=repo)
+    script = _build_wrapper_script(command, task_id, label, device_id, ticket=ticket, repo=repo, need=tag)
 
     if info["is_self"]:
         return _run_local(script, mode, timeout)
-    return _run_remote(info["tailscale_hostname"], script, mode, timeout, device_id)
+    result = _run_remote(info["tailscale_hostname"], script, mode, timeout, device_id, info.get("os", "macos"))
+    if may_fall_back and (result.timed_out or result.unreachable):
+        return _fall_back(command, tag, "timeout" if result.timed_out else "unreachable", device_id, result.error,
+                          mode, timeout, label, ticket, repo)
+    return result
 
 
 def _run_local(script: str, mode: str, timeout: int) -> DispatchResult:
@@ -296,7 +490,8 @@ def _run_local(script: str, mode: str, timeout: int) -> DispatchResult:
         return DispatchResult(ok=False, device_id=self_id, error=str(exc))
 
 
-def _run_remote(host: str, script: str, mode: str, timeout: int, device_id: str) -> DispatchResult:
+def _run_remote(host: str, script: str, mode: str, timeout: int, device_id: str,
+                remote_os: str = "macos") -> DispatchResult:
     remote_path = f"/tmp/dispatch-{uuid.uuid4().hex[:8]}.sh"
     try:
         write_proc = subprocess.run(
@@ -304,7 +499,8 @@ def _run_remote(host: str, script: str, mode: str, timeout: int, device_id: str)
             input=script, capture_output=True, text=True, timeout=10,
         )
         if write_proc.returncode != 0:
-            return DispatchResult(ok=False, device_id=device_id, error=f"failed to write script to {host}: {write_proc.stderr[:300]}")
+            return DispatchResult(ok=False, device_id=device_id, unreachable=write_proc.returncode == 255,
+                                  error=f"failed to write script to {host}: {write_proc.stderr[:300]}")
 
         if mode == "async":
             subprocess.run(
@@ -313,17 +509,24 @@ def _run_remote(host: str, script: str, mode: str, timeout: int, device_id: str)
             )
             return DispatchResult(ok=True, device_id=device_id, output=None)
 
+        remote_cmd, ssh_wait = _remote_invocation(remote_path, timeout, remote_os)
         proc = subprocess.run(
-            ["ssh", *SSH_OPTS, host, remote_path],
-            capture_output=True, text=True, timeout=timeout,
+            ["ssh", *SSH_OPTS, host, remote_cmd],
+            capture_output=True, text=True, timeout=ssh_wait,
         )
         if proc.returncode != 0:
-            return DispatchResult(ok=False, device_id=device_id, error=f"exit {proc.returncode}: {proc.stderr[:500]}")
+            stall = _classify_remote_exit(proc.returncode) if remote_os == "linux" else (
+                "unreachable" if proc.returncode == 255 else None)
+            if stall == "timeout":
+                return DispatchResult(ok=False, device_id=device_id, timed_out=True, output=proc.stdout,
+                                      error=f"timed out after {timeout}s on {device_id} (stopped there)")
+            return DispatchResult(ok=False, device_id=device_id, unreachable=stall == "unreachable", output=proc.stdout,
+                                  error=f"exit {proc.returncode}: {proc.stderr[:500]}")
         return DispatchResult(ok=True, device_id=device_id, output=proc.stdout, stderr=proc.stderr)
     except subprocess.TimeoutExpired:
-        return DispatchResult(ok=False, device_id=device_id, error=f"timed out after {timeout}s")
+        return DispatchResult(ok=False, device_id=device_id, timed_out=True, error=f"timed out after {timeout}s")
     except Exception as exc:
-        return DispatchResult(ok=False, device_id=device_id, error=str(exc))
+        return DispatchResult(ok=False, device_id=device_id, unreachable=True, error=str(exc))
 
 
 def main() -> None:
@@ -334,14 +537,21 @@ def main() -> None:
     ap.add_argument("--async", dest="async_mode", action="store_true", help="fire-and-forget, don't wait for completion")
     ap.add_argument("--timeout", type=int, default=300, help="seconds to wait in sync mode (default 300)")
     ap.add_argument("--needs", default=None, help="work tag the job needs, e.g. quarantine or test (default: general)")
+    ap.add_argument("--no-fallback", action="store_true",
+                    help="test/bench work: never rerun on a Mac when the box stalls (an extra runner, not the verdict)")
+    ap.add_argument("--label", default=None, help="task label shown in the task record (default: the command)")
     args = ap.parse_args()
 
     # Async work under memory pressure waits for it to drop; the same command line runs again then (marvin#845).
     rerun = [sys.executable, str(Path(__file__).resolve()), *sys.argv[1:]] if args.async_mode else None
     result = dispatch(args.command, target=args.target, mode="async" if args.async_mode else "sync", timeout=args.timeout,
-                      need=args.needs, queue_argv=rerun)
+                      need=args.needs, queue_argv=rerun, fallback=not args.no_fallback, task_label=args.label)
+    if result.fell_back_from:
+        print(f"[dispatch] FELL BACK: {result.fell_back_from} could not finish it; rerun on {result.device_id}",
+              file=sys.stderr)
     if result.ok:
-        print(f"[dispatch] ran on {result.device_id}", file=sys.stderr)
+        print(f"[dispatch] ran on {result.device_id or 'a detached dispatch (see ~/.claude/logs/dispatch-async)'}",
+              file=sys.stderr)
         if result.output is not None:
             print(result.output, end="")
         if result.stderr is not None:

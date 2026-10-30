@@ -1,0 +1,14 @@
+{
+  "_doc": "ADR 0082: clean approvals a box-memory trust layer needs before its items pass on their own. null = never on its own (always a card in Safety reviews). Core file: changes wait for Gil.",
+  "needed": {
+    "handoff": 3,
+    "index-line": 5,
+    "memory-new.normal": 5,
+    "memory-new.high": 10,
+    "memory-edit.normal": 10,
+    "memory-edit.high": null,
+    "memory-delete.normal": 20,
+    "memory-delete.high": null,
+    "handoff-delete": null
+  }
+}

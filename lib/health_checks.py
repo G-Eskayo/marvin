@@ -1414,7 +1414,7 @@ MACHINE_STATE_LABELS = {
     "dashboard:build": "Dashboard app build", "webhook:build": "Webhook server build", "auth:gh": "GitHub credential",
     "desktoplive:running": "Desktop brain-map background", "jobs:placement": "Scheduled jobs vs. placement",
     "disk:space": "Disk space", "disk:headroom": "Disk headroom forecast", "jobs:exit": "Scheduled jobs' last run",
-    "memory:pressure": "Memory pressure"}
+    "memory:pressure": "Memory pressure", "disk:activity": "Disk writes by work"}
 
 
 def check_machine_state_everywhere(reachability: dict[str, str], runner=_run_machine_state) -> list[dict]:
@@ -1442,7 +1442,8 @@ def check_machine_state_everywhere(reachability: dict[str, str], runner=_run_mac
             continue
         state["_device"] = dev
         for key, sev, detail in evaluate_machine_state(state, _now()):
-            results.append(_result(f"{key}@{dev}", f"{labels[key]} -- {dev}", sev, detail))
+            # A key with no label yet shows under its own id instead of failing every card of this machine.
+            results.append(_result(f"{key}@{dev}", f"{labels.get(key, key)} -- {dev}", sev, detail))
     return results
 
 

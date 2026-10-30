@@ -38,6 +38,8 @@ contextBridge.exposeInMainWorld('api', {
     ticketContext: (ticketRef, repo) => ipcRenderer.invoke('mr:ticketContext', ticketRef, repo),
     // A PR description image as a data: URL, fetched by the main process (private repos need the credential).
     image: (url, kind) => ipcRenderer.invoke('mr:image', url, kind),
+    // A PR's mock-up in its own sandboxed MARVIN window (#938): { repo, number, sha, ref, path } -> { ok } | { ok: false, reason }.
+    openMockup: (args) => ipcRenderer.invoke('mr:openMockup', args),
     parity: () => ipcRenderer.invoke('mr:parity'),
     reviewStatus: () => ipcRenderer.invoke('mr:reviewStatus'),
     autoMergeReport: () => ipcRenderer.invoke('mr:autoMergeReport'),

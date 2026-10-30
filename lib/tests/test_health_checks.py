@@ -1622,3 +1622,21 @@ def test_react_to_accounts_summarises_and_never_raises():
 def test_the_health_sweep_entry_point_runs_the_accounts_check():
     import inspect
     assert "react_to_accounts()" in inspect.getsource(hc._cli)
+
+
+# Found 2026-10-30 (#640 inventory): evaluate_machine_state emitted disk:activity (#765) with no label, so labels[key]
+# raised KeyError and the whole machine-state block (GitHub credential, builds, disk) became one "unknown" row.
+def test_every_machine_state_key_has_a_label_and_an_unlabelled_one_breaks_nothing(monkeypatch):
+    import inspect, re
+    src = inspect.getsource(hc.evaluate_machine_state)
+    emitted = set(re.findall(r'out\.append\(\("([a-z]+:[a-z-]+)"', src))
+    assert emitted, "the key scan found nothing: evaluate_machine_state changed shape"
+    assert emitted <= set(hc.MACHINE_STATE_LABELS), f"no label for {emitted - set(hc.MACHINE_STATE_LABELS)}"
+
+    monkeypatch.setattr(hc.machine_profile, "registry_id", lambda: "mac-mini-1")
+    monkeypatch.setattr(hc.machine_profile, "remote_devices", lambda: {})
+    monkeypatch.setattr(hc, "_now", lambda: NOW)
+    monkeypatch.setattr(hc, "evaluate_machine_state", lambda state, now: [("auth:gh", "green", "ok"), ("brand:new", "yellow", "x")])
+    rows = {r["id"]: r for r in hc.check_machine_state_everywhere({}, runner=lambda t, s: "gh_token=ok\n")}
+    assert rows["auth:gh@mac-mini-1"]["severity"] == "green"
+    assert rows["brand:new@mac-mini-1"]["label"] == "brand:new -- mac-mini-1"

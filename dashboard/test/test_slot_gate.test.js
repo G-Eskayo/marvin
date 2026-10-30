@@ -26,31 +26,52 @@ afterEach(() => {
 const cache = { seed: async () => {}, store: async () => {} }
 
 describe('the gate runs its tests in the slot, merges first', () => {
-  it('holds the slot as a merge around both runs, and both runs know it is held (their own checks pass through)', async () => {
+  // Since marvin#826 every check goes through .github/run-check.sh <id>; `--affected` calls only ask whether to install.
+  const isRun = (cmd, args) => cmd === 'bash' && args[0] === '.github/run-check.sh' && args[2] !== '--affected'
+
+  it('holds the slot as a merge around every check run, and every run knows it is held (their own checks pass through)', async () => {
     const order = []
     const hold = vi.fn(async (args) => { order.push(['hold', ...args]); return { held: true, release: async () => { order.push('release') } } })
     const exec = vi.fn(async (cmd, args, opts) => {
-      if (args.includes('pytest') || args.includes('vitest')) order.push([args.includes('pytest') ? 'pytest' : 'vitest', opts?.env?.MARVIN_TEST_SLOT])
+      if (isRun(cmd, args)) order.push([args[1], opts?.env?.MARVIN_TEST_SLOT])
       return { stdout: '', stderr: '' }
     })
-    await _defaultRunTests('/repo', exec, undefined, async () => ['-n', '3'], cache, hold)
+    await _defaultRunTests('/repo', exec, undefined, async () => ['-n', '3'], cache, null, hold)
     expect(order[0]).toEqual(['hold', 'hold', '--merge', '--what', 'merge gate'])
-    expect(order.slice(1)).toEqual([['pytest', 'merge gate'], ['vitest', 'merge gate'], 'release'])
+    expect(order.at(-1)).toBe('release')
+    const runs = order.slice(1, -1)
+    expect(runs.map((r) => r[0])).toEqual(expect.arrayContaining(['python', 'dashboard']))
+    expect(runs.every((r) => r[1] === 'merge gate')).toBe(true)
   })
 
   it('releases the slot when a run fails', async () => {
     const release = vi.fn(async () => {})
-    const exec = vi.fn(async (cmd, args) => { if (args.includes('pytest')) throw new Error('2 failed'); return { stdout: '' } })
-    await expect(_defaultRunTests('/repo', exec, undefined, async () => [], cache, async () => ({ held: true, release }))).rejects.toThrow('2 failed')
+    const exec = vi.fn(async (cmd, args) => { if (isRun(cmd, args) && args[1] === 'python') throw new Error('2 failed'); return { stdout: '' } })
+    await expect(_defaultRunTests('/repo', exec, undefined, async () => [], cache, null, async () => ({ held: true, release }))).rejects.toThrow('2 failed')
     expect(release).toHaveBeenCalledOnce()
   })
 
-  it('vitest gets the same worker count as pytest; with -n auto or serial it keeps its own default', async () => {
-    for (const [par, want] of [[['-n', '3'], ['vitest', 'run', '--minWorkers=1', '--maxWorkers=3']], [['-n', 'auto'], ['vitest', 'run']], [[], ['vitest', 'run']]]) {
-      const calls = []
-      const exec = vi.fn(async (cmd, args) => { calls.push(args); return { stdout: '' } })
-      await _defaultRunTests('/repo', exec, undefined, async () => par, cache, async () => ({ held: false, release: async () => {} }))
-      expect(calls.find((a) => a.includes('vitest'))).toEqual(want)
+  it('both runners get the memory-sized worker count; with -n auto or serial they keep their own default', async () => {
+    for (const [par, want] of [[['-n', '3'], '3'], [['-n', 'auto'], undefined], [[], undefined]]) {
+      const envs = []
+      const exec = vi.fn(async (cmd, args, opts) => { if (isRun(cmd, args)) envs.push(opts?.env?.MARVIN_TEST_WORKERS); return { stdout: '' } })
+      await _defaultRunTests('/repo', exec, undefined, async () => par, cache, null, async () => ({ held: false, release: async () => {} }))
+      expect(envs.length).toBeGreaterThan(0)
+      expect(envs.every((w) => w === want)).toBe(true)
+    }
+  })
+
+  it('a worker count left in the environment from elsewhere never leaks into a run that asked for auto', async () => {
+    const saved = process.env.MARVIN_TEST_WORKERS
+    process.env.MARVIN_TEST_WORKERS = '9'
+    try {
+      const envs = []
+      const exec = vi.fn(async (cmd, args, opts) => { if (isRun(cmd, args)) envs.push(opts?.env?.MARVIN_TEST_WORKERS); return { stdout: '' } })
+      await _defaultRunTests('/repo', exec, undefined, async () => ['-n', 'auto'], cache, null, async () => ({ held: false, release: async () => {} }))
+      expect(envs.every((w) => w === undefined)).toBe(true)
+    } finally {
+      if (saved === undefined) delete process.env.MARVIN_TEST_WORKERS
+      else process.env.MARVIN_TEST_WORKERS = saved
     }
   })
 
