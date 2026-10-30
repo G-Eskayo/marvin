@@ -90,8 +90,18 @@ describe('does the PR body show an image', () => {
 })
 
 const PR = 'https://github.com/G-Eskayo/clarity-captions/pull/95'
-function ghView({ files = [], body = '', fails = false, head = HEAD, compare = {} } = {}) {
+function ghView({ files = [], body = '', fails = false, head = HEAD, compare = {}, commitDates = {}, prCommits = [] } = {}) {
   return vi.fn(async (cmd, args) => {
+    // An image commit in another repo (the instance repo): only its date is asked for, from that repo.
+    const own = /^repos\/([^/]+\/[^/]+)\/commits\/([0-9a-f]{40})$/.exec(args?.[1] || '')
+    if (cmd === 'gh' && args[0] === 'api' && own) {
+      const key = `${own[1]}@${own[2]}`
+      if (!(key in commitDates)) throw Object.assign(new Error('Command failed: gh api'), { stderr: 'HTTP 422: No commit found' })
+      return { stdout: JSON.stringify({ sha: own[2], commit: { committer: { date: commitDates[key] } } }), stderr: '' }
+    }
+    if (cmd === 'gh' && args[0] === 'api' && args.some((a) => /\/pulls\/\d+\/commits/.test(a))) {
+      return { stdout: JSON.stringify(prCommits.map(([sha, date]) => ({ sha, commit: { committer: { date } } }))), stderr: '' }
+    }
     if (cmd === 'gh' && args[1] === 'view' && args.includes('files,body,headRefOid')) {
       if (fails) throw Object.assign(new Error('Command failed: gh pr view'), { stderr: 'HTTP 502: Bad Gateway' })
       return { stdout: JSON.stringify({ files: files.map((path) => ({ path })), body, headRefOid: head }), stderr: '' }
@@ -171,6 +181,70 @@ describe('the approve gate refuses unpinned or stale images (marvin #733)', () =
 
   it('a non-UI PR is never asked about its images', async () => {
     await expect(assertUiEvidence(PR, ghView({ files: ['lib/x.py'], body: '![a](a.png)' }))).resolves.toBeUndefined()
+  })
+})
+
+describe('images kept in another repo, like MARVIN\'s instance repo (marvin #773)', () => {
+  // MARVIN's PR images live in G-Eskayo/marvin-instance (ADR 0071), so their commit never exists in the PR's repo.
+  // #766 was refused with "couldn't check whether the images (taken at 94d88fb) are current" because the gate asked
+  // the marvin repo for an instance-repo commit.
+  const MPR = 'https://github.com/G-Eskayo/marvin/pull/766'
+  const IMG = '94d88fb246160cd7dcc5a3a928a59adaf32cbb13'
+  const C1 = '1'.repeat(40), C2 = '2'.repeat(40)
+  const instancePinned = (sha) => `![s](https://raw.githubusercontent.com/G-Eskayo/marvin-instance/${sha}/docs/screenshots/x/s.png)`
+  const uiM = ['dashboard/src/components/PrCard.jsx']
+
+  it('never asks the PR\'s repo about an instance-repo commit', async () => {
+    const exec = ghView({ files: uiM, body: instancePinned(IMG), head: C2,
+      commitDates: { [`G-Eskayo/marvin-instance@${IMG}`]: '2026-10-29T20:00:00Z' },
+      prCommits: [[C1, '2026-10-29T19:00:00Z'], [C2, '2026-10-29T19:30:00Z']] })
+    await expect(assertUiEvidence(MPR, exec)).resolves.toBeUndefined()
+    expect(exec.mock.calls.some((c) => (c[1]?.[1] || '').includes(`marvin/compare/${IMG}`))).toBe(false)
+  })
+
+  it('images taken after the last commit are current, with no compare needed', async () => {
+    const exec = ghView({ files: uiM, body: instancePinned(IMG), head: C2,
+      commitDates: { [`G-Eskayo/marvin-instance@${IMG}`]: '2026-10-29T20:00:00Z' },
+      prCommits: [[C1, '2026-10-29T19:00:00Z'], [C2, '2026-10-29T19:30:00Z']] })
+    await expect(assertUiEvidence(MPR, exec)).resolves.toBeUndefined()
+  })
+
+  it('a look-changing commit after the images makes them stale, naming the file', async () => {
+    const exec = ghView({ files: uiM, body: instancePinned(IMG), head: C2,
+      commitDates: { [`G-Eskayo/marvin-instance@${IMG}`]: '2026-10-29T19:15:00Z' },
+      prCommits: [[C1, '2026-10-29T19:00:00Z'], [C2, '2026-10-29T19:30:00Z']],
+      compare: { [C1]: { files: [{ filename: 'dashboard/src/components/PrCard.jsx' }] } } })
+    await expect(assertUiEvidence(MPR, exec)).rejects.toMatchObject({
+      payload: { code: 'IMAGES_STALE', message: expect.stringContaining('PrCard.jsx') }
+    })
+  })
+
+  it('only logic changed after the images: still current', async () => {
+    const exec = ghView({ files: uiM, body: instancePinned(IMG), head: C2,
+      commitDates: { [`G-Eskayo/marvin-instance@${IMG}`]: '2026-10-29T19:15:00Z' },
+      prCommits: [[C1, '2026-10-29T19:00:00Z'], [C2, '2026-10-29T19:30:00Z']],
+      compare: { [C1]: { files: [{ filename: 'dashboard/webhook-server/merge.js' }] } } })
+    await expect(assertUiEvidence(MPR, exec)).resolves.toBeUndefined()
+  })
+
+  it('images older than every commit of the PR are stale when the PR changes the look', async () => {
+    const exec = ghView({ files: uiM, body: instancePinned(IMG), head: C2,
+      commitDates: { [`G-Eskayo/marvin-instance@${IMG}`]: '2026-10-28T10:00:00Z' },
+      prCommits: [[C1, '2026-10-29T19:00:00Z'], [C2, '2026-10-29T19:30:00Z']] })
+    await expect(assertUiEvidence(MPR, exec)).rejects.toMatchObject({ payload: { code: 'IMAGES_STALE' } })
+  })
+
+  it('an image commit its own repo can\'t find fails closed, naming that repo', async () => {
+    const exec = ghView({ files: uiM, body: instancePinned(IMG), head: C2, prCommits: [[C2, '2026-10-29T19:30:00Z']] })
+    await expect(assertUiEvidence(MPR, exec)).rejects.toMatchObject({
+      payload: { code: 'UI_EVIDENCE_UNCHECKED', message: expect.stringContaining('marvin-instance') }
+    })
+  })
+
+  it('same-repo images keep the direct compare', async () => {
+    const exec = ghView({ files: ['Apps/A/SettingsView.swift'], body: pinned(OLD), compare: { [OLD]: { files: [] } } })
+    await expect(assertUiEvidence(PR, exec)).resolves.toBeUndefined()
+    expect(exec.mock.calls.some((c) => (c[1]?.[1] || '').includes(`clarity-captions/compare/${OLD}`))).toBe(true)
   })
 })
 
