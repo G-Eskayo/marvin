@@ -214,6 +214,27 @@ def test_only_one_watch_runs_at_a_time():
     assert r["already"] is True and len(mg.queued()) == 1
 
 
+def test_the_watch_ends_when_another_trigger_empties_the_queue(tmp_path):
+    """Live on the Mini (2026-10-30) macOS sent the small watcher no pressure note at all, so a finished job's kick
+    is what starts the queue. The watcher then must not wait forever: a change to the queue directory wakes it."""
+    mg.guard("#1", ["true"], "/tmp", level_reader=_level("warn"), start_watcher=_no_watcher)
+
+    def events():
+        assert mg.drain(level_reader=_level("normal"), start=lambda e: None)["what"] == "#1"   # a helper's exit, say
+        yield mg.QUEUE_CHANGED
+        pytest.fail("read past the queue emptying")
+    r = mg.watch(events=events(), level_reader=_level("warn"))
+    assert r == {"already": False, "started": []}
+    assert not any(json.loads(l).get("event") == "pressure" for l in mg.LOG_PATH.read_text().splitlines())
+
+
+def test_a_queue_change_alone_starts_nothing_while_pressure_is_high(tmp_path):
+    mg.guard("#1", ["true"], "/tmp", level_reader=_level("warn"), start_watcher=_no_watcher)
+    mg.guard("#2", ["true"], "/tmp", level_reader=_level("warn"), start_watcher=_no_watcher)
+    r = mg.watch(events=iter([mg.QUEUE_CHANGED]), level_reader=_level("warn"))
+    assert r["started"] == [] and len(mg.queued()) == 2
+
+
 def test_a_finished_job_kicks_a_drain_only_when_work_is_waiting(monkeypatch):
     spawned = []
     monkeypatch.setattr(mg, "_spawn_detached", lambda argv: spawned.append(argv))
@@ -275,3 +296,15 @@ def _wait_for(cond, timeout=10.0):
             return
         time.sleep(0.05)
     raise AssertionError("condition not met in time")
+
+
+@pytest.mark.skipif(sys.platform != "darwin", reason="libdispatch sources are macOS only")
+def test_the_real_source_reports_a_change_to_the_queue_directory():
+    mg.guard("#1", ["true"], "/tmp", level_reader=_level("warn"), start_watcher=_no_watcher)
+    src = mg.PressureSource(watch_dir=mg.QUEUE_DIR)
+    try:
+        assert src.armed
+        next(mg.QUEUE_DIR.glob("*.json")).unlink()
+        assert src._q.get(timeout=5) == mg.QUEUE_CHANGED
+    finally:
+        src.close()

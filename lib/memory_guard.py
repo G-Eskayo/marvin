@@ -10,9 +10,12 @@ waits"), the owner is told once, and the work is queued. Nothing running is ever
 
 Queued work starts again on events, never on a timer:
   the notification  `watch` holds a libdispatch DISPATCH_SOURCE_TYPE_MEMORYPRESSURE source and blocks on it; when
-                    macOS reports the level back at normal, one queued item starts. It ends when the queue is empty.
+                    macOS reports the level back at normal, one queued item starts. It ends when the queue is empty
+                    (a second source on the queue directory wakes it when another trigger empties it). Live on the
+                    Mini macOS sent this small process no note at all (see PressureSource), so in practice:
   a finished job    a helper's exit, a dispatched task's exit and the end of a merge call `kick`, which starts one
                     more queued item if pressure is normal (pressure that stays normal sends no further notification).
+  a new start       a check at normal with work still queued starts the watcher, whose first look starts one item.
 One item per trigger, so each start sees the pressure the previous one caused. A level that can't be read never blocks
 (same as the disk pre-flight). MARVIN_MEMORY_PRESSURE_LEVEL overrides the reading (the test suite pins it to normal).
 
@@ -55,6 +58,9 @@ SYSCTL = "/usr/sbin/sysctl"   # absolute: launchd's PATH omits /usr/sbin
 LEVELS = {1: "normal", 2: "warn", 4: "critical"}
 HIGH = ("warn", "critical")
 _READ = object()
+QUEUE_CHANGED = "queue-changed"   # the watcher's other event: the queue directory changed (an item added or started)
+O_EVTONLY = 0x8000                # <sys/fcntl.h>: open a directory only to watch it
+DISPATCH_VNODE_WRITE = 0x2
 
 GB = lambda n: f"{n / 2**30:.1f} GB"  # noqa: E731
 
@@ -260,10 +266,17 @@ def kick() -> None:
 # ── the macOS notification ──────────────────────────────────────────────────────────────────────────────────────
 
 class PressureSource:
-    """A libdispatch DISPATCH_SOURCE_TYPE_MEMORYPRESSURE source for normal, warn and critical. macOS calls the handler
-    on each change of level; events() blocks on those calls, with no timer of its own."""
+    """A libdispatch DISPATCH_SOURCE_TYPE_MEMORYPRESSURE source for normal, warn and critical, plus (given watch_dir) a
+    DISPATCH_SOURCE_TYPE_VNODE source on the queue directory. macOS calls a handler on each change; events() blocks on
+    those calls, with no timer of its own.
 
-    def __init__(self) -> None:
+    Measured live on the Mac mini, 2026-10-30 (macOS 26): the kernel sent a small listener no pressure note at all,
+    neither warn nor the return to normal, while `memory_pressure -l warn` held warn for 40 s (same from Swift and
+    under launchd). XNU notifies the processes with the largest footprint first, so a bystander waits in vain. The
+    queue therefore also starts on finished jobs (`kick`), and the directory source lets this watcher end once one of
+    those has emptied the queue, rather than wait forever."""
+
+    def __init__(self, watch_dir: Path | None = None) -> None:
         d = ctypes.CDLL("/usr/lib/system/libdispatch.dylib")
         d.dispatch_source_create.restype = ctypes.c_void_p
         d.dispatch_source_create.argtypes = [ctypes.c_void_p, ctypes.c_ulong, ctypes.c_ulong, ctypes.c_void_p]
@@ -283,6 +296,21 @@ class PressureSource:
         if self._src:
             d.dispatch_source_set_event_handler_f(self._src, ctypes.cast(self._cb, ctypes.c_void_p))
             d.dispatch_resume(self._src)
+        self._dir_fd, self._dir_src = -1, None
+        self._dir_cb = ctypes.CFUNCTYPE(None, ctypes.c_void_p)(lambda _ctx: self._q.put(QUEUE_CHANGED))
+        if watch_dir is not None:
+            try:
+                Path(watch_dir).mkdir(parents=True, exist_ok=True)
+                self._dir_fd = os.open(str(watch_dir), O_EVTONLY)
+            except OSError:
+                self._dir_fd = -1
+            if self._dir_fd >= 0:
+                vnode = ctypes.addressof(ctypes.c_char.in_dll(d, "_dispatch_source_type_vnode"))
+                self._dir_src = d.dispatch_source_create(vnode, self._dir_fd, DISPATCH_VNODE_WRITE,
+                                                         d.dispatch_get_global_queue(0, 0))
+                if self._dir_src:
+                    d.dispatch_source_set_event_handler_f(self._dir_src, ctypes.cast(self._dir_cb, ctypes.c_void_p))
+                    d.dispatch_resume(self._dir_src)
 
     @property
     def armed(self) -> bool:
@@ -300,6 +328,11 @@ class PressureSource:
     def close(self) -> None:
         if self._src:
             self._d.dispatch_source_cancel(self._src)
+        if self._dir_src:
+            self._d.dispatch_source_cancel(self._dir_src)
+        if self._dir_fd >= 0:
+            os.close(self._dir_fd)
+            self._dir_fd = -1
 
 
 def _try_lock():
@@ -328,7 +361,7 @@ def watch(events: Iterable[str] | None = None, level_reader: Callable[[], str | 
         ended = False
         try:
             if events is None:
-                source = PressureSource()
+                source = PressureSource(watch_dir=QUEUE_DIR)
                 events = source.events()
             it = iter(events)
             record("watching", waiting=len(queued()))
@@ -343,6 +376,8 @@ def watch(events: Iterable[str] | None = None, level_reader: Callable[[], str | 
                 if level is None:
                     ended = True
                     break
+                if level == QUEUE_CHANGED:
+                    continue   # another trigger started or added an item: look at the queue again
                 record("pressure", level=level)
                 if level == "normal":
                     step()
