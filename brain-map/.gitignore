@@ -6,3 +6,5 @@ snapshot/
 DesktopLive/DesktopLive
 DesktopLive/DesktopLive.app
 *.log
+work.json
+.work.json.lock

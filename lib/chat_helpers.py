@@ -236,6 +236,7 @@ def handle(event: str, raw: str, *, jobs_dir: Path | None = None, sessions_path:
         return
     if not isinstance(payload, dict):
         return
+    real = jobs_dir is None  # the hook itself, not a test or a tool with its own folder
     jobs_dir = jobs_dir or _jobs_dir()
     kw = {"jobs_dir": jobs_dir, "sessions_path": sessions_path or _sessions_path(),
           "machine": _machine() if machine is None else machine, "now": now}
@@ -246,6 +247,8 @@ def handle(event: str, raw: str, *, jobs_dir: Path | None = None, sessions_path:
                 return  # internal agents (/btw, prompt suggestions) have no type: not a helper
             _update(aid, payload, lambda d, r: None, **kw)
             prune(jobs_dir, now=now.timestamp() if now else None)
+            if real:
+                _nudge_quietly()
         elif event == "launched":
             resp = payload.get("tool_response")
             resp = resp if isinstance(resp, dict) else {}
@@ -276,8 +279,23 @@ def handle(event: str, raw: str, *, jobs_dir: Path | None = None, sessions_path:
                          status="passed" if summary else "failed",
                          error="" if summary else "ended without a result")
             _update(aid, payload, finish, **kw)
+            if real:
+                _nudge_quietly()
     except Exception:  # noqa: BLE001 -- observing a chat must never break it
         return
+
+
+def _nudge_work() -> None:
+    """Tell the map's Work half a helper started or stopped (#854). Detached; see lib/work_nudge.py."""
+    import work_nudge  # noqa: PLC0415  (standard library only, beside this file)
+    work_nudge.nudge()
+
+
+def _nudge_quietly() -> None:
+    try:
+        _nudge_work()
+    except Exception:  # noqa: BLE001 -- the map being behind must never break a chat
+        pass
 
 
 def _bail(*_):

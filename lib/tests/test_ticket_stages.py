@@ -204,3 +204,26 @@ def test_claim_owner_is_per_project(tmp_path, monkeypatch):
     ts.record_stage(7, "claimed", "started", run_id="clarity-run", repo=clarity)
     assert ts.claim_owner(7, repo=None) == "marvin-run"
     assert ts.claim_owner(7, repo=clarity) == "clarity-run"
+
+
+def test_a_stage_written_to_the_real_folder_tells_the_maps_work_half(tmp_path, monkeypatch):
+    # #854: a pipeline builder reaches the map within one poll. Only the real stages folder does (a test's never).
+    nudges = []
+    monkeypatch.setattr(ts, "_nudge_work", lambda: nudges.append(1))
+    monkeypatch.setattr(ts, "STAGES_DIR", tmp_path)
+    ts.record_stage(42, "planning", "started")
+    assert nudges == []
+    monkeypatch.setattr(ts, "DEFAULT_STAGES_DIR", tmp_path)
+    ts.record_stage(42, "planning", "passed")
+    assert nudges == [1]
+
+
+def test_a_map_nudge_that_blows_up_never_fails_the_stage(tmp_path, monkeypatch):
+    monkeypatch.setattr(ts, "STAGES_DIR", tmp_path)
+    monkeypatch.setattr(ts, "DEFAULT_STAGES_DIR", tmp_path)
+
+    def boom():
+        raise RuntimeError("no")
+    monkeypatch.setattr(ts, "_nudge_work", boom)
+    assert ts.record_stage(42, "planning", "started")["status"] == "started"
+    assert len(ts.read_stages(42)) == 1

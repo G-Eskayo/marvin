@@ -74,6 +74,7 @@ final class DesktopWebView: WKWebView {
 let activityURL = readAccessDir.appendingPathComponent("activity.jsonl")
 let demoEventsURL = readAccessDir.appendingPathComponent("demo-events.jsonl")
 let treeDataURL = readAccessDir.appendingPathComponent("tree-data.json")
+let workURL = readAccessDir.appendingPathComponent("work.json") // the Body and Work layout's workers (#854)
 // Cross-Machine Network liveness — read directly rather than through a
 // generate.py regeneration cycle, so a disconnect shows up within one poll
 // interval instead of waiting for the next full graph rebuild (see ADR 0020).
@@ -92,6 +93,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate {
     var reconcileWork: DispatchWorkItem?
     var lastScreenSet = ""
     var lastMTime: Date?
+    var lastWorkMTime: Date?
     var reloadTimer: Timer?
     var activityTimer: Timer?
     var demoTimer: Timer?
@@ -131,6 +133,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate {
         // WebKit versions — see template.html's comment on this).
         activityTimer = Timer.scheduledTimer(withTimeInterval: 2, repeats: true) { [weak self] _ in
             self?.checkForActivity()
+            self?.checkForWork()
         }
         demoTimer = Timer.scheduledTimer(withTimeInterval: 1, repeats: true) { [weak self] _ in
             self?.checkForDemoEvents()
@@ -340,6 +343,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate {
 
     func webView(_ webView: WKWebView, didFinish navigation: WKNavigation!) {
         eventLog.write("page-loaded", "screen", webView.window?.screen?.localizedName ?? "none")
+        lastWorkMTime = nil
     }
 
     func webView(_ webView: WKWebView, didFail navigation: WKNavigation!, withError error: Error) {
@@ -369,19 +373,24 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate {
     func checkForUpdate() {
         guard let m = mtime(), m != lastMTime else { return }
         lastMTime = m
-        guard let data = try? Data(contentsOf: treeDataURL),
-              let obj = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
-              let treeJSON = try? JSONSerialization.data(withJSONObject: obj["tree"] ?? [:]),
-              let synJSON = try? JSONSerialization.data(withJSONObject: obj["synapses"] ?? []) else {
+        // treeCall (Activity.swift) also passes tree-data.json's "work", the Body and Work layout (#854).
+        guard let text = try? String(contentsOf: treeDataURL, encoding: .utf8), let js = treeCall(text: text) else {
             // tree-data.json didn't parse (e.g. generate.py mid-write) — fall
             // back to a full reload rather than silently staying stale.
             eventLog.write("page-reload", "reason", "tree-data.json did not parse")
             for webView in webViews { load(webView) }
             return
         }
-        let treeStr = String(data: treeJSON, encoding: .utf8) ?? "{}"
-        let synStr = String(data: synJSON, encoding: .utf8) ?? "[]"
-        let js = "if (window.updateTreeData) window.updateTreeData(\(treeStr), \(synStr));"
+        for webView in webViews { webView.evaluateJavaScript(js, completionHandler: nil) }
+    }
+
+    // work.json is rewritten whole when a helper or builder starts or stops (lib/work_nudge.py): push it on change,
+    // and again after a page load (didFinish clears lastWorkMTime), so a fresh page gets the current workers.
+    func checkForWork() {
+        let m = (try? FileManager.default.attributesOfItem(atPath: workURL.path))?[.modificationDate] as? Date
+        guard let m = m, m != lastWorkMTime else { return }
+        lastWorkMTime = m
+        guard let text = try? String(contentsOf: workURL, encoding: .utf8), let js = workCall(text: text) else { return }
         for webView in webViews { webView.evaluateJavaScript(js, completionHandler: nil) }
     }
 

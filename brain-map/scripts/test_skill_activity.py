@@ -79,3 +79,22 @@ def test_main_appends_a_line_and_trims_to_the_cap(agents, tmp_path, monkeypatch)
     last = json.loads(lines[-1])
     assert last["file"] == "skills/tdd/SKILL.md" and last["session"] == "s" and last["tool"] == "Edit"
     assert json.loads(lines[0])["ts"] == 1  # the oldest line went
+
+
+# ── #854: a helper's own tool calls name the helper, so the map's Work half lights that worker ──
+
+def test_a_tool_call_inside_a_helper_names_the_helper(agents):
+    e = skill_activity.entry_for({"tool_name": "Read", "tool_input": {"file_path": str(agents / "skills" / "tdd" / "SKILL.md")},
+                                  "session_id": "s1", "agent_id": "agent-a8bafa799a8984438"}, agents, 5.0)
+    assert e["agent"] == "a8bafa799a8984438"
+    assert e["file"] == "skills/tdd/SKILL.md"
+
+
+@pytest.mark.parametrize("bad", [None, "", 7, "has space", "../../x", "a" * 65])
+def test_a_missing_or_odd_agent_id_is_left_out(agents, bad):
+    e = skill_activity.entry_for({"tool_name": "Bash", "tool_input": {}, "agent_id": bad}, agents, 5.0)
+    assert "agent" not in e
+
+
+def test_the_main_chat_has_no_agent(agents):
+    assert "agent" not in skill_activity.entry_for({"tool_name": "Bash", "tool_input": {}}, agents, 5.0)

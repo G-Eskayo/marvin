@@ -9,7 +9,7 @@ const h = require('./host.js')
 function runOnPage(js) {
   const got = []
   const window = {}
-  for (const fn of ['triggerActivity', 'demoAddNode', 'demoRemoveNode', 'updateTreeData', 'setDeviceStatus']) {
+  for (const fn of ['triggerActivity', 'demoAddNode', 'demoRemoveNode', 'updateTreeData', 'setDeviceStatus', 'applyWork']) {
     window[fn] = (...args) => got.push(JSON.parse(JSON.stringify([fn, ...args])))   // plain data: the page runs in another realm
   }
   vm.runInNewContext(js, { window })
@@ -80,8 +80,8 @@ test('demo add and remove reach the page with their data intact', () => {
 
 test('tree data that does not parse asks for a reload instead of going stale', () => {
   assert.strictEqual(h.treeCall('{"tree": {"a": 1'), null)
-  assert.deepStrictEqual(runOnPage(h.treeCall('{"tree": {"a": 1}, "synapses": [1]}')), [['updateTreeData', { a: 1 }, [1]]])
-  assert.deepStrictEqual(runOnPage(h.treeCall('{}')), [['updateTreeData', {}, []]])
+  assert.deepStrictEqual(runOnPage(h.treeCall('{"tree": {"a": 1}, "synapses": [1]}')), [['updateTreeData', { a: 1 }, [1], null]])
+  assert.deepStrictEqual(runOnPage(h.treeCall('{}')), [['updateTreeData', {}, [], null]])
 })
 
 test('device liveness only reports changes, matches on the hostname prefix, and treats missing as offline', () => {
@@ -96,4 +96,26 @@ test('device liveness only reports changes, matches on the hostname prefix, and 
     ['setDeviceStatus', 'macbook-pro-1', false]].sort())
   assert.deepStrictEqual(h.livenessCalls(status, registry, first.last).calls, [])
   assert.deepStrictEqual(h.livenessCalls(null, null, {}).calls, [])
+})
+
+// ── #854 parity: the wallpaper shows the same Body and Work layout and data as the browser page ──
+
+test('tree data carries the Body and Work layout through to the page', () => {
+  const work = { tree: { id: 'MARVIN', children: [] }, synapses: [2] }
+  assert.deepStrictEqual(runOnPage(h.treeCall(JSON.stringify({ tree: { a: 1 }, synapses: [1], work }))),
+    [['updateTreeData', { a: 1 }, [1], work]])
+  assert.deepStrictEqual(runOnPage(h.treeCall('{"tree": {"a": 1}, "synapses": []}')), [['updateTreeData', { a: 1 }, [], null]])
+})
+
+test('work.json reaches the page as one applyWork call, and junk reaches nothing', () => {
+  const doc = { workers: [{ id: 'helper:a1', state: 'running', project: null }], projects: [] }
+  const got = []
+  vm.runInNewContext(h.workCall(JSON.stringify(doc)), { window: { applyWork: (d) => got.push(JSON.parse(JSON.stringify(d))) } })
+  assert.deepStrictEqual(got, [doc])
+  for (const bad of ['', '{', '[]', '{"workers": 3}', 'null']) assert.strictEqual(h.workCall(bad), null, bad)
+})
+
+test('a helper id on an activity line reaches the page, so the wallpaper lights that worker', () => {
+  assert.deepStrictEqual(h.activityCalls([JSON.stringify({ skill: 'MARVIN', agent: 'a1', extra: 1 })]).flatMap(runOnPage),
+    [['triggerActivity', { skill: 'MARVIN', agent: 'a1' }]])
 })
