@@ -222,6 +222,16 @@ describe('listPipelinePrs', () => {
     expect(b.checks).toMatchObject({ state: 'none', runs: [], checkedAt: null })
   })
 
+  // marvin#848: grouping by project reads the project: labels (ADR 0060); drafts sort last and hide Approve.
+  it('carries label names and whether it is a draft; a list without them means none and not a draft', async () => {
+    const [a, b] = await listPipelinePrs(async () => [
+      { number: 1, title: 't', url: 'u1', body: '', labels: [{ name: 'enhancement' }, { name: 'project:marvin-mobile' }], isDraft: true },
+      { number: 2, title: 't', url: 'u2', body: '' }
+    ])
+    expect(a).toMatchObject({ labels: ['enhancement', 'project:marvin-mobile'], isDraft: true })
+    expect(b).toMatchObject({ labels: [], isDraft: false })
+  })
+
   it('includes every open PR regardless of schema conformance', async () => {
     // Found live 2026-10-01: PR #119 (real, substantive, its own test-plan
     // checklist) sat invisible for 30 days because it didn't follow the

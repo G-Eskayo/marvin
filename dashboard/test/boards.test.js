@@ -275,6 +275,17 @@ describe('withProjectStatus', () => {
     expect(withProjectStatus([{ repo: 'G-Eskayo/marvin' }], null)[0].status).toBe('recent')
   })
 
+  it('names each board the one way, from overrides.json (marvin#848), whatever the registry calls it', () => {
+    const c = { projects: [{ id: 'clarity-captions', name: 'clarity-captions', repo: 'G-Eskayo/clarity-captions', status: 'active' }, { id: 'marvin', name: 'marvin', repo: 'G-Eskayo/marvin', status: 'active' }] }
+    const out = withProjectStatus([{ repo: 'G-Eskayo/clarity-captions', name: 'clarity-captions' }, { repo: 'G-Eskayo/marvin', name: 'marvin' }, { repo: 'G-Eskayo/unknown', name: 'unknown' }], c, { 'clarity-captions': { name: 'Seal Speak' }, marvin: { name: 'MARVIN' } })
+    expect(out.map((b) => b.name)).toEqual(['Seal Speak', 'MARVIN', 'unknown'])
+    expect(out[0].repo).toBe('G-Eskayo/clarity-captions') // the repo stays the key
+  })
+
+  it('a board keeps its registry name when there is no catalog or no override', () => {
+    expect(withProjectStatus([{ repo: 'G-Eskayo/marvin', name: 'marvin' }], null, null)[0].name).toBe('marvin')
+  })
+
   it('passes through lastActivity from the catalog', () => {
     const out = withProjectStatus([{ repo: 'G-Eskayo/marvin' }, { repo: 'G-Eskayo/Old_Thing' }], cat)
     expect(out[0].lastActivity).toBe('2026-10-08T12:00:00Z')

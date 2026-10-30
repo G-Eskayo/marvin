@@ -1,7 +1,8 @@
 import { describe, it, expect } from 'vitest'
 import {
   projectOfPr, tierOf, sortPrs, groupPrs, allView, needsYouSummary,
-  isCollapsed, toggleCollapsed, placeValue, historyItem, diffGroups, helperFor, OTHER, TIERS
+  isCollapsed, toggleCollapsed, placeValue, historyItem, diffGroups, helperFor, OTHER, TIERS,
+  openLede, helperNames, tierGroups
 } from '../src/lib/mr_groups.js'
 
 const PROJECTS = [
@@ -325,4 +326,44 @@ describe('helperFor: which helper tab owns a PR, by the helper-tab title (marvin
   it('no tabs (WezTerm not running): no owner shown', () => {
     expect(helperFor(pr(9), 'MARVIN', null)).toBe(null)
   })
+})
+
+// Wiring the real tab (marvin#848).
+describe('openLede: the line above the groups', () => {
+  it('counts PRs, the projects that have them (not the empty ones shown) and what needs you', () => {
+    const groups = groupPrs([pr(1), pr(2, { isDraft: true }), pr(3, { repo: 'G-Eskayo/clarity-captions' })], PROJECTS, { empty: 'show' })
+    expect(openLede(groups)).toBe('3 open PRs in 2 projects · 2 need you')
+  })
+  it('singulars', () => {
+    expect(openLede(groupPrs([pr(1)], PROJECTS))).toBe('1 open PR in 1 project · 1 needs you')
+    expect(openLede(groupPrs([pr(1, { isDraft: true })], PROJECTS))).toBe('1 open PR in 1 project · nothing needs you')
+  })
+})
+
+describe('helperNames: every name a helper tab may use for a project', () => {
+  it('the one name, the id, the catalog name it replaced and the aliases, no repeats', () => {
+    expect(helperNames({ id: 'clarity-captions', name: 'Seal Speak', catalogName: 'clarity-captions', aliases: ['seal'] })).toEqual(['Seal Speak', 'clarity-captions', 'seal'])
+  })
+  it('Other and unknown projects have none', () => {
+    expect(helperNames(null)).toEqual([])
+  })
+  it('a chip is found under the friendly name and under the old spelling', () => {
+    const p = { id: 'clarity-captions', name: 'Seal Speak', catalogName: 'clarity-captions' }
+    const card = pr(216, { repo: 'G-Eskayo/clarity-captions' })
+    expect(helperFor(card, helperNames(p), [{ state: 'done', group: 'Seal Speak', title: '#216 wire' }]).label).toBe('✓ Seal Speak · #216 wire')
+    expect(helperFor(card, helperNames(p), [{ state: 'running', group: 'clarity-captions', title: '#216 wire' }]).state).toBe('running')
+  })
+})
+
+describe('tierGroups: a group cut into its tiers, in order, empty tiers left out', () => {
+  it('needs you, running, waiting, being fixed, drafts', () => {
+    const prs = sortPrs([pr(1, { isDraft: true }), pr(2, { checks: { state: 'pending', failing: [], pending: ['t'] } }), pr(3)])
+    expect(tierGroups(prs).map((t) => [t.id, t.label, t.prs.map((p) => p.number)])).toEqual([
+      ['needs-you', 'Needs you', [3]], ['running', 'Checks running', [2]], ['draft', 'Draft', [1]]
+    ])
+  })
+  it('uses the card\'s live merge status, so a merging card is under Checks running', () => {
+    expect(tierGroups([pr(1)], { statusOf: () => 'approving' })[0].id).toBe('running')
+  })
+  it('nothing in, nothing out', () => expect(tierGroups([])).toEqual([]))
 })

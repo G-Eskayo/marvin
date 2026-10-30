@@ -249,3 +249,25 @@ describe('describePrState: auto-merge shadow verdict (#341)', () => {
     expect(describePrState({ ...ready }).note || '').not.toMatch(/Auto-merge/)
   })
 })
+
+// The owner's answer on #767 (drafts): Approve is hidden on a draft until it's marked ready for review.
+describe('describePrState: drafts (marvin#848)', () => {
+  it('an otherwise ready draft says it is a draft and offers no Approve; Deny stays', () => {
+    const s = state({ isDraft: true })
+    expect(s).toMatchObject({ kind: 'draft', approve: 'hidden', deny: 'enabled' })
+    expect(s.headline).toMatch(/draft/i)
+    expect(s.detail).toMatch(/ready for review/)
+  })
+  it('a draft waiting on checks or decisions keeps its own story but still no Approve', () => {
+    expect(state({ isDraft: true, checks: { state: 'pending', failing: [], pending: ['test'] } })).toMatchObject({ kind: 'waiting-checks', approve: 'hidden' })
+    expect(state({ isDraft: true, decisions: { pending: ['names'], problems: [] } })).toMatchObject({ kind: 'decisions-pending', approve: 'hidden', deny: 'enabled' })
+    expect(state({ isDraft: true }, { status: 'interrupted' })).toMatchObject({ approve: 'hidden' })
+  })
+  it('a merge already under way on a draft is shown as it is', () => {
+    expect(state({ isDraft: true }, { status: 'approving' }).kind).toBe('merging')
+    expect(state({ isDraft: true }, { status: 'queued' }).kind).toBe('queued')
+  })
+  it('a PR that is not a draft is unchanged', () => {
+    expect(state({ isDraft: false })).toMatchObject({ kind: 'ready', approve: 'enabled' })
+  })
+})

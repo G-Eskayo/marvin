@@ -7,6 +7,8 @@ import sys
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
+import pytest
+
 LIB = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(LIB))
 
@@ -382,3 +384,40 @@ def test_a_missing_instance_is_skipped_not_an_error(tmp_path, monkeypatch):
     monkeypatch.setenv("MARVIN_INSTANCE_DIR", str(tmp_path / "nope"))
     monkeypatch.setattr(pc, "HOME", tmp_path)
     assert pc.discover_local(roots=[], previous=[]) == []
+
+
+# ── display_name: one place for project names (marvin#848) ───────────────────
+
+NAMES_CATALOG = [
+    {"id": "marvin", "name": "marvin", "repo": "G-Eskayo/marvin"},
+    {"id": "clarity-captions", "name": "clarity-captions", "repo": "G-Eskayo/clarity-captions", "aliases": ["seal"]},
+    {"id": "marvin-mobile", "name": "marvin-mobile", "repo": "G-Eskayo/marvin-mobile"},
+    {"id": "eagle-project", "name": "eagle project", "repo": None},
+]
+NAMES_OVERRIDES = {
+    "marvin": {"name": "MARVIN"},
+    "clarity-captions": {"name": "Seal Speak", "aliases": ["clarity"]},
+    "marvin-mobile": {"name": "MARVIN Mobile"},
+}
+
+
+@pytest.mark.parametrize("term,name", [
+    ("marvin", "MARVIN"), ("MARVIN", "MARVIN"), ("G-Eskayo/marvin", "MARVIN"),
+    ("clarity-captions", "Seal Speak"), ("Seal Speak", "Seal Speak"), ("seal speak", "Seal Speak"),
+    ("seal", "Seal Speak"), ("clarity", "Seal Speak"),
+    ("marvin-mobile", "MARVIN Mobile"), ("Marvin Mobile", "MARVIN Mobile"),
+    ("eagle-project", "eagle project"),
+])
+def test_display_name_gives_the_one_name_for_any_spelling(term, name):
+    assert pc.display_name(term, NAMES_CATALOG, NAMES_OVERRIDES) == name
+
+
+def test_display_name_returns_an_unknown_group_unchanged():
+    assert pc.display_name("Disk cleanup", NAMES_CATALOG, NAMES_OVERRIDES) == "Disk cleanup"
+
+
+def test_display_name_survives_no_catalog_and_broken_overrides():
+    assert pc.display_name("marvin", None, None) == "marvin"
+    assert pc.display_name("marvin", NAMES_CATALOG, {"marvin": "oops"}) == "marvin"
+    assert pc.display_name("marvin", NAMES_CATALOG, {"marvin": {"name": "  "}}) == "marvin"
+
