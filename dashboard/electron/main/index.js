@@ -152,7 +152,7 @@ import { postTicketInput } from './ticket_input.js'
 import { createImageLoader, mediaFileFor } from './pr_images.js'
 import { resolveServiceDefaults, resolveDeviceId, peerHosts, primaryDeviceId } from './device_identity.js'
 import { createHelpersReader } from './chat_helpers.js'
-import { isPullOnlyNode, createFeedSource, feedOnlyGh, readNetworkRegistry } from './github_feed.js'
+import { isPullOnlyNode, createFeedSource, feedOnlyGh, readNetworkRegistry, assertActsHere as assertPullOnlyActs, canMergeHere } from './github_feed.js'
 
 // The pipeline's screenshot copy runs unattended beside the real dashboard: log, never show a modal (#384).
 if (isEvidenceCapture(process.env)) installCaptureGuard(process)
@@ -1000,7 +1000,7 @@ function registerMrReviewHandlers() {
     if (!prs.some((p) => p.url === url)) return null
     const rework = remembered('rework')[0]?.value
     const cards = await listPipelinePrs(async () => prs, {
-      canMerge: (repo) => canMergeFromDashboard(repo, readMergeableRepos()),
+      canMerge: (repo) => canMergeHere(pullOnly, canMergeFromDashboard(repo, readMergeableRepos())),
       sentBackTickets: keysFromBoards(sentBackKeys),
       closedTickets: keysFromBoards((repo, issues) => issues.filter((i) => i.state === 'CLOSED').map((i) => `${repo}#${i.number}`)),
       reworkStatus: rework ? async () => rework : null,
@@ -1011,7 +1011,7 @@ function registerMrReviewHandlers() {
     return cards.find((p) => p.url === url) || null
   }
   const mrList = coalesce(
-    () => listPipelinePrs(fixturePrs || listOpenPrs, { canMerge: (repo) => canMergeFromDashboard(repo, readMergeableRepos()), sentBackTickets, reworkStatus: reworkFromMemory, rebaseStatus: getRebaseStatus, closedTickets, autoMergeShadow: getAutoMergeShadow, uiPathsFor: (repo) => readUiPaths(repo) }),
+    () => listPipelinePrs(fixturePrs || listOpenPrs, { canMerge: (repo) => canMergeHere(pullOnly, canMergeFromDashboard(repo, readMergeableRepos())), sentBackTickets, reworkStatus: reworkFromMemory, rebaseStatus: getRebaseStatus, closedTickets, autoMergeShadow: getAutoMergeShadow, uiPathsFor: (repo) => readUiPaths(repo) }),
     () => `${githubState.localSeq()}:${githubState._genOf(null)}`
   )
   ipcMain.handle('mr:list', () => {
@@ -1065,9 +1065,13 @@ function registerMrReviewHandlers() {
     return fetchTicketContext(ticketRef, (n) => ghIssueView(n, repo))
   })
 
+  // marvin#954: the box (pull-only, ADR 0069) shows the Mini's list but never acts on it: no Approve, Deny or send-back
+  // from a machine that runs untrusted code, whatever the renderer sends.
+  const assertActsHere = () => assertPullOnlyActs(pullOnly)
   // marvin's gate is built in; another project needs its profile to opt in. Checked here from the PR url
   // itself, whatever the renderer claims, and again by the webhook (which is the real enforcement).
   const assertMergeable = (url) => {
+    assertActsHere()
     const repo = repoFromPrUrl(url)
     if (!repo || !canMergeFromDashboard(repo, readMergeableRepos())) {
       throw Object.assign(new Error(`Merging ${repo || 'this PR'} from the dashboard isn't set up: its project profile has not opted in (merge_from_dashboard). Review it on GitHub.`), { code: 'NO_MERGE_PROFILE' })
@@ -1105,6 +1109,7 @@ function registerMrReviewHandlers() {
 
   // "Too vague: needs options": ask the author to restate the questions as a Decisions section.
   ipcMain.handle('mr:sendBackForOptions', async (_event, { url, ticketNumber, reasons }) => {
+    assertActsHere()
     assertMergeable(url)
     const result = await sendBackForOptions({ prUrl: url, ticketNumber, reasons }, {
       exec: execFileAsync,
@@ -1116,6 +1121,7 @@ function registerMrReviewHandlers() {
 
   // The way out of a wrongly shown "sent back": see clearSentBackLabel (refuses while a rework is running).
   ipcMain.handle('mr:clearSentBack', async (_event, url) => {
+    assertActsHere()
     assertMergeable(url)
     const result = await clearSentBackLabel(url, execFileAsync)
     if (result.cleared) mrActions.cleared({ url, ticket: result.ticket })
@@ -1126,6 +1132,7 @@ function registerMrReviewHandlers() {
   // actions have real, visible side effects on GitHub (ADR 0025), and
   // "drop" specifically closes the PR and ticket with no undo.
   ipcMain.handle('mr:deny', async (_event, { number, url, ticketNumber, action, reasons, comment }) => {
+    assertActsHere()
     assertMergeable(url)
     const isDrop = action === 'drop'
     const { response } = await dialog.showMessageBox(mainWindow, {

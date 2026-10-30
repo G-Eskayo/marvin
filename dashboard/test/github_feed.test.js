@@ -178,3 +178,26 @@ describe('readNetworkRegistry', () => {
     expect(isPullOnlyNode({ deviceId: null, registry: readNetworkRegistry('/nonexistent.json'), platform: 'linux', env: {} })).toBe(true)
   })
 })
+
+describe('the box never acts on the PRs it shows (marvin#954)', () => {
+  it('Approve, Deny and send-back refuse on a pull-only node, in plain words', async () => {
+    const { assertActsHere, canMergeHere } = await import('../electron/main/github_feed.js')
+    expect(() => assertActsHere(true)).toThrow(/happen on a Mac/)
+    try { assertActsHere(true) } catch (e) { expect(e.code).toBe('PULL_ONLY') }
+    expect(() => assertActsHere(false)).not.toThrow()
+    expect(canMergeHere(true, true)).toBe(false)
+    expect(canMergeHere(false, true)).toBe(true)
+    expect(canMergeHere(false, false)).toBe(false)
+  })
+  it('index.js wires the guard into every acting MR handler', async () => {
+    const { readFileSync } = await import('fs')
+    const src = readFileSync(new URL('../electron/main/index.js', import.meta.url), 'utf-8')
+    for (const h of ['mr:deny', 'mr:sendBackForOptions', 'mr:clearSentBack']) {
+      const at = src.indexOf(`ipcMain.handle('${h}'`)
+      expect(at).toBeGreaterThan(-1)
+      expect(src.slice(at, at + 200)).toMatch(/assertActsHere\(\)/)
+    }
+    expect(src).toMatch(/const assertMergeable = \(url\) => \{\n\s+assertActsHere\(\)/)
+    expect((src.match(/canMerge: \(repo\) => canMergeHere\(pullOnly,/g) || []).length).toBe(2)
+  })
+})

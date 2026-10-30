@@ -154,3 +154,11 @@ export function createFeedSource({ path = FEED_PATH, now = Date.now, read, mtime
 export async function feedOnlyGh(args = []) {
   throw new FeedError(`Not available on this machine: it reads GitHub only through the Mini (asked: gh ${String(args[0] || '')} ${String(args[1] || '')}).`.replace(/ +\)/, ')'))
 }
+
+// The box shows the Mini's PR list but never acts on it (ADR 0069: it runs untrusted code). Approve, Deny and send-back
+// refuse here whatever the renderer sends; the cards show no merge controls (canMerge false).
+export const PULL_ONLY_ACTION = 'Approve, Deny and send-back happen on a Mac: this machine only shows what the Mini sees (ADR 0069).'
+export function assertActsHere(pullOnly) {
+  if (pullOnly) throw Object.assign(new Error(PULL_ONLY_ACTION), { code: 'PULL_ONLY' })
+}
+export const canMergeHere = (pullOnly, allowed) => !pullOnly && !!allowed
