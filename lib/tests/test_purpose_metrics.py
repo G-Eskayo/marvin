@@ -313,3 +313,33 @@ def test_sync_probe_survives_junk(tmp_path, junk):
 def test_sync_probe_is_registered_with_a_zero_threshold():
     fn, limit, what = pm.PROBES["code-sync-stuck"]
     assert limit == 0.0 and "#706" in what
+
+
+# ── box-mirror-failures: the pull-only node's mirror keeps working (#910) ──────────────────────────────────────────
+
+def _mirror_line(t, source="sync:mirror"):
+    import json as _j
+    return _j.dumps({"t": t.isoformat(), "machine": "mac-mini-2012", "source": source, "message": "fetch failed in .claude"})
+
+
+def test_mirror_failures_are_counted_over_the_window(tmp_path):
+    from datetime import timedelta
+    log = tmp_path / "errors.jsonl"
+    log.write_text("\n".join([_mirror_line(NOW - timedelta(days=1)), _mirror_line(NOW - timedelta(days=6)),
+                              _mirror_line(NOW - timedelta(days=8)),                  # outside 7 days
+                              _mirror_line(NOW - timedelta(hours=1), source="dashboard:mr:list"),
+                              "{garbled", "[]", ""]) + "\n")
+    assert pm._mirror_failures(path=log, now=NOW) == 2.0
+    assert pm._mirror_failures(days=2, path=log, now=NOW) == 1.0
+
+
+def test_mirror_failures_on_a_machine_without_the_log_are_zero(tmp_path):
+    # Macs never run the mirror; a missing or empty log is "none here", and the box's own count is summed in.
+    assert pm._mirror_failures(path=tmp_path / "missing.jsonl", now=NOW) == 0.0
+    (tmp_path / "empty.jsonl").write_text("")
+    assert pm._mirror_failures(path=tmp_path / "empty.jsonl", now=NOW) == 0.0
+
+
+def test_mirror_probe_is_registered():
+    fn, limit, what = pm.PROBES["box-mirror-failures"]
+    assert "#910" in what and limit >= 0
