@@ -1364,10 +1364,10 @@ import job_events  # noqa: E402  (run log shown in the dashboard's Health tab)
 
 @job_events.reported("code-sync-push", "Code sync (git pull/push)")
 def peer_care_after_sync(action: str, repo: Path, spawn=subprocess.Popen) -> None:
-    """marvin#847 (design #769 section 3, "heartbeat missing"): the end of each engine pull checks the peers this
+    """marvin#847 (design #769 section 3, "heartbeat missing"): the end of each engine pull (mirror on the 2012) checks the peers this
     machine watches. It adds no clock: it rides the sync that runs anyway. Detached, so a slow probe (or a wake that
     waits two minutes) never holds the sync up; a failure to start it never breaks the sync."""
-    if action != "pull" or Path(repo).expanduser().resolve() != DEFAULT_REPO.expanduser().resolve():
+    if action not in ("pull", "mirror") or Path(repo).expanduser().resolve() != DEFAULT_REPO.expanduser().resolve():
         return
     script = Path(__file__).resolve().parent / "peer_care.py"
     try:

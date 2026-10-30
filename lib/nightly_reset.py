@@ -284,7 +284,7 @@ def parse_work(ps_out: str, own_pid: int) -> list[dict]:
 
 def _out(cmd: list[str], timeout: float = 10) -> str:
     try:
-        return subprocess.run(cmd, capture_output=True, text=True, timeout=timeout).stdout
+        return subprocess.run(cmd, capture_output=True, text=True, errors="replace", timeout=timeout).stdout
     except (OSError, subprocess.SubprocessError):
         return ""
 
@@ -325,15 +325,32 @@ def go_token() -> Path:
     return STATE_DIR / "go"
 
 
-def restart(script: Path = ROOT_SCRIPT, dry_run: bool = False, device: str | None = None) -> tuple[bool, str]:
+def expect_back_ssh(device: str, watcher_host: str) -> list[str]:
+    """Tell a watcher, detached on its side, to expect `device` back within the deadline (peer_care expect-back)."""
+    remote = (f"nohup ~/.agents/venv/bin/python ~/.agents/lib/peer_care.py expect-back {device} "
+              f">/dev/null 2>&1 </dev/null &")
+    return ["ssh", "-o", "BatchMode=yes", "-o", "ConnectTimeout=5", watcher_host, remote]
+
+
+def announce(device: str, cfg: dict) -> None:
+    """Right before a planned restart: each watcher starts its one bounded wait for "I'm back"."""
+    import peer_care
+    for w in cfg["reset"]["needs_up"].get(device, []):
+        _out(expect_back_ssh(device, peer_care.ts_host(w)), timeout=15)
+
+
+def restart(script: Path = ROOT_SCRIPT, dry_run: bool = False, device: str | None = None, cfg: dict | None = None,
+            announce: Callable | None = None, runner: Callable = subprocess.run) -> tuple[bool, str]:
     """Ask the root script to restart. It refuses unless the go token was written in the last minute."""
     if not Path(script).exists():
         return False, f"the restart script isn't installed; run once at the Mac: {SETUP_COMMAND}"
     if device:
         go_token().parent.mkdir(parents=True, exist_ok=True)
         go_token().write_text(datetime.now().astimezone().isoformat())
+        if not dry_run:
+            (announce or globals()["announce"])(device, cfg or load_config())
     try:
-        r = subprocess.run(restart_command(dry_run, Path(script)), capture_output=True, text=True, timeout=60)
+        r = runner(restart_command(dry_run, Path(script)), capture_output=True, text=True, errors="replace", timeout=60)
     except (OSError, subprocess.SubprocessError) as e:
         return False, f"couldn't run the restart script: {e}"
     if r.returncode != 0:
@@ -442,7 +459,7 @@ def main(argv: list[str] | None = None) -> int:
         outcome = run_night(
             window, cfg, now=now, gather=lambda: gather_facts(device, cfg),
             send_notice=lambda when, reason="": send_notice(device, when, reason),
-            restart=lambda: restart(dry_run=a.dry_run, device=device),
+            restart=lambda: restart(dry_run=a.dry_run, device=device, cfg=cfg),
             wait=lambda until, pids=(), wake_on_state=False: kqueue_wait(
                 until, pids, state_path(device) if wake_on_state else None, now),
             load=lambda: load_state(device, night), save=lambda st: save_state(device, st),

@@ -400,3 +400,8 @@ def test_expect_back_skips_the_probe_when_im_back_already_arrived(tmp_path):
     r = pc.expect_back("mac-mini-1", CFG, minutes=10, sleep=lambda s: None,
                        handle=lambda p, trig: handled.append(trig), state_dir=tmp_path, now=lambda: T0)
     assert handled == [] and r["action"] == "back"
+
+
+def test_command_output_that_isnt_utf8_never_crashes_a_probe():
+    r = pc._run(["/bin/sh", "-c", r"printf 'x\325y'"])
+    assert r is not None and r.stdout.startswith("x")
