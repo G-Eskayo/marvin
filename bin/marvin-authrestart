@@ -37,7 +37,9 @@ say() { echo "marvin-authrestart: $*"; }
 
 fresh=0
 if [ -f "$token" ]; then
-  age=$(( $(date +%s) - $(stat -f %m "$token") ))
+  # GNU stat (Linux) reads -f as "file system" and -c %Y as mtime; BSD stat (macOS) has no -c and uses -f %m.
+  mtime=$(stat -c %Y "$token" 2>/dev/null || stat -f %m "$token")
+  age=$(( $(date +%s) - mtime ))
   [ "$age" -ge 0 ] && [ "$age" -le "$FRESH_S" ] && fresh=1
 fi
 

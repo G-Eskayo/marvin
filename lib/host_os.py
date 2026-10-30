@@ -40,13 +40,13 @@ def tailscale_bin_or_default() -> str:
     return tailscale_bin() or (MAC_TAILSCALE if os_name() == "macos" else LINUX_TAILSCALE)
 
 
-def memory_dir() -> Path:
+def memory_dir(home: Path | None = None) -> Path:
     """MARVIN's memory folder on this machine.
 
     The synced ~/.claude/settings.json names it in `autoMemoryDirectory` as the Macs' absolute path. Re-root the part
     after `.claude/` under THIS machine's ~/.claude, so mac-mini-2012 (home /home/marvin) reads the same synced memory
     the Macs write. A missing, malformed or out-of-tree setting falls back to Claude Code's own default for this home."""
-    home = Path.home()
+    home = Path.home() if home is None else Path(home)
     claude = home / ".claude"
     default = claude / "projects" / str(home).replace("/", "-") / "memory"
     try:
