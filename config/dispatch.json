@@ -6,6 +6,10 @@
     "mac-mini-1": 2,
     "macbook-pro-1": 1
   },
+  "credit_slots": {
+    "mac-mini-1": 2,
+    "macbook-pro-1": 0
+  },
   "guards": {
     "min_disk_gb": 15,
     "min_github_budget_pct": 20
