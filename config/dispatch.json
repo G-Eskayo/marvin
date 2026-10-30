@@ -1,10 +1,10 @@
 {
   "parallel": true,
-  "max_total": 3,
+  "max_total": 4,
   "max_per_project": 3,
   "machine_slots": {
     "mac-mini-1": 2,
-    "macbook-pro-1": 1
+    "macbook-pro-1": 2
   },
   "credit_slots": {
     "mac-mini-1": 2,

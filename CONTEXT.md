@@ -480,6 +480,19 @@ ever been closed unmerged. Gil approves almost everything; the wait is the cost.
   API credit, GitHub's hourly calls, our own machines' idle compute), where unused is waste. A **capacity** is space
   that must stay free (disk, memory, thermal headroom), where nearly full is a stall about to happen. Flow means
   budgets near their limit and capacities below their safe line.
+- **Soft line and hard line** (of a budget): at about 90% (soft line) MARVIN sheds low-priority background work;
+  at about 99% (hard line) it starts nothing new and lets running work finish. Interactive sessions are throttled
+  too, after background work and in steps: at the soft line their sub-agents and mechanical steps move to a
+  cheaper model and a one-line notice shows; near 95% they warn before starting anything big and offer to queue it
+  or run it on the API credit; at the hard line a big task needs Gil's yes. Nothing is cut off mid-task.
+- **Pace** (of a budget that expires, like the API credit or the weekly plan limit): projected spend to the reset
+  date. Under pace, queued work is pulled forward; over pace, it is slowed, so the budget lands near its limit.
+- **Fix level**: every fix Vitals offers is one of three. **Auto**: low-risk, reversible, touches only MARVIN's own
+  state; MARVIN runs it at once and reports it. **One tap**: a button Gil presses (spends a budget, touches another
+  project, or is hard to undo). **Decision**: a real choice with options. An auto fix that fails twice drops to one
+  tap, with the reason.
+- **ROI** (for MARVIN): measured by the north stars, as Independence and Flow over time, not as a separate hours
+  ratio.
 - **Monitored system**: MARVIN, plus anything MARVIN is connected to: work MARVIN does on a project (its
   pipeline, agents and helpers), and products MARVIN runs or keeps updated (the portfolio site, whose purpose is to
   stay current with what we're working on). A product that runs on its own with no tie to MARVIN is *not* one:
