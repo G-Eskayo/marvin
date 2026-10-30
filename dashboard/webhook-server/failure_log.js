@@ -1,4 +1,4 @@
-import { appendFileSync, mkdirSync } from 'fs'
+import { appendFileSync, mkdirSync, readFileSync } from 'fs'
 import path from 'path'
 import os from 'os'
 
@@ -54,5 +54,23 @@ export function recordFlaky({ tests, prUrl, project }, append = defaultAppend, n
     return record
   } catch {
     return null
+  }
+}
+
+// Was the owner already shown every one of these flaky tests on this PR? The gate holds a flaky pass for Approve
+// again (Gil 2026-10-30); the Approve that follows merges when the same test flakes again, instead of holding forever.
+// Anything unreadable is false: holding is the safe side.
+export function flakySeenBefore(prUrl, tests, read = () => readFileSync(defaultFlakyPath(), 'utf8')) {
+  try {
+    if (!prUrl || !Array.isArray(tests) || !tests.length) return false
+    const seen = new Set()
+    for (const line of String(read()).split('\n')) {
+      let rec
+      try { rec = JSON.parse(line) } catch { continue }
+      if (rec && rec.kind === 'flaky' && rec.pr_url === prUrl && Array.isArray(rec.tests)) rec.tests.forEach((t) => seen.add(t))
+    }
+    return tests.every((t) => seen.has(String(t).slice(0, 300)))
+  } catch {
+    return false
   }
 }
