@@ -58,7 +58,7 @@ def main() -> None:
     DEMO_EVENTS_PATH.write_text("", encoding="utf-8")
 
     if not skip_pulses:
-        print("1/3 — activity pulses across categories (camera should ease toward each in turn):")
+        print("1/3 — activity across categories (each node lights in turn; the camera stays put, #843):")
         for skill in PULSE_SEQUENCE:
             pulse(skill)
             time.sleep(3.0)

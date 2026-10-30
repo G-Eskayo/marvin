@@ -157,6 +157,7 @@ test('public project nodes in snapshot remain openable', async (t) => {
 test('the figure keeps one size while it rotates (no whole-figure pulsing)', async (t) => {
   if (skipReason) return t.skip(skipReason)
   const page = await openSnapshot()
+  await page.evaluate(() => window.__map.setAutoRotate(true)) // off by default since #843; turned on to test the turn
   await frames(page, SETTLE * 4) // let the fit settle
   const sizes = []
   for (let i = 0; i < 20; i++) { // 20 s of auto-rotation, sampled every second
@@ -170,6 +171,7 @@ test('the figure keeps one size while it rotates (no whole-figure pulsing)', asy
 test('the steady size still keeps every node on screen through a full turn', async (t) => {
   if (skipReason) return t.skip(skipReason)
   const page = await openSnapshot()
+  await page.evaluate(() => window.__map.setAutoRotate(true))
   await frames(page, SETTLE * 4)
   let worst = null
   for (let i = 0; i < 24; i++) {
@@ -186,6 +188,7 @@ test('the figure keeps one size in a real browser frame loop too', async (t) => 
   if (skipReason) return t.skip(skipReason)
   const page = await browser.newPage({ viewport: { width: 1280, height: 800 } })
   await page.goto(pathToFileURL(path.join(MAP, 'snapshot', 'index.html')).href)
+  await page.evaluate(() => window.__map.setAutoRotate(true))
   await page.waitForTimeout(3000)
   const sizes = await page.evaluate(async () => {
     const out = []

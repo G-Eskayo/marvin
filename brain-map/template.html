@@ -117,6 +117,8 @@
   #legend .swatch { width: 8px; height: 8px; border-radius: 50%; flex: 0 0 auto; }
   #legend .label { color: var(--text-secondary); letter-spacing: 0.1px; }
   #legend .row.off .label { color: var(--text-muted); }
+  #legend .note { display: none; color: var(--text-muted); font-size: 10px; padding: 6px 3px 0; }
+  #legend .note.show { display: block; }
   #legend .count { margin-left: auto; color: var(--text-muted); font-variant-numeric: tabular-nums; font-size: 10px; }
 
   #mode-toggle {
@@ -172,6 +174,23 @@
     background: none; border: none; color: var(--cat-project); cursor: pointer;
     font-family: inherit; font-size: 11px; margin-left: 8px; padding: 3px 6px;
   }
+  #event-tray {
+    position: absolute; bottom: 50px; right: 24px; max-width: 300px;
+    display: none; flex-direction: column; align-items: flex-end; gap: 6px;
+  }
+  #event-tray.show { display: flex; }
+  #event-tray-toggle, #event-tray-list {
+    font-size: 11px; color: var(--text-secondary); background: rgba(26,26,25,0.92);
+    backdrop-filter: blur(6px); border: 1px solid var(--border);
+  }
+  #event-tray-toggle { border-radius: 999px; padding: 5px 14px; cursor: pointer; font-family: inherit; }
+  #event-tray-list { display: none; border-radius: 6px; padding: 4px; max-height: 260px; overflow-y: auto; }
+  #event-tray-list.show { display: flex; flex-direction: column; }
+  #event-tray-list button {
+    background: none; border: none; color: var(--text-secondary); cursor: pointer; text-align: left;
+    font-size: 10.5px; padding: 4px 8px; border-radius: 4px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  }
+  #event-tray-list button:hover { background: rgba(255,255,255,0.06); }
   #code-layer-note {
     position: absolute; bottom: 50px; left: 50%; transform: translateX(-50%);
     font-size: 11px; color: var(--text-secondary); background: rgba(26,26,25,0.92);
@@ -226,6 +245,7 @@
     <div id="tooltip"></div>
     <button id="fs-close" class="mono" aria-label="Close full screen">close ✕</button>
     <div id="selection-note">Showing connections for <b id="sel-name" class="mono"></b><button id="sel-clear">clear ✕</button></div>
+    <div id="event-tray"><div id="event-tray-list"></div><button id="event-tray-toggle"></button></div>
     <div id="code-layer-note">Viewing code for <b id="code-name" class="mono"></b><button id="code-close">← back</button></div>
     <div id="code-layer-tests-toggle"><span id="tests-label">test files</span><button id="tests-toggle">show</button></div>
 
@@ -352,7 +372,28 @@
     synapses = synapses.filter(function (s) { return byId[s.a] && byId[s.b]; });
     synapseDegree = {};
     synapses.forEach(function (s) { synapseDegree[s.a] = (synapseDegree[s.a] || 0) + 1; synapseDegree[s.b] = (synapseDegree[s.b] || 0) + 1; });
+    // For live events (#843): the threads between any two nodes, the node that owns a file (longest owned path
+    // wins), and the code-layer nodes that live in each source file.
+    synByPair = {};
+    synapses.forEach(function (s) { (synByPair[pairKey(s.a, s.b)] = synByPair[pairKey(s.a, s.b)] || []).push(s); });
+    pathIndex = []; codeBySource = {};
+    Object.keys(byId).forEach(function (id) {
+      var nd = byId[id];
+      if (typeof nd.path === "string" && nd.path && nd.path.indexOf(" ") < 0) pathIndex.push({ path: nd.path.replace(/\/+$/, ""), node: nd });
+      var code = nd.code;
+      if (!code) return;
+      [code.files, code.functions, code.tests].forEach(function (list) {
+        (list || []).forEach(function (c) {
+          if (!c || typeof c.source_file !== "string") return;
+          var ids = codeBySource[c.source_file] = codeBySource[c.source_file] || [];
+          if (ids.indexOf(c.id) < 0) ids.push(c.id);
+        });
+      });
+    });
+    pathIndex.sort(function (x, y) { return y.path.length - x.path.length; });
   }
+  var synByPair = {}, pathIndex = [], codeBySource = {};
+  function pairKey(x, y) { return x < y ? x + "\u0000" + y : y + "\u0000" + x; }
   indexAll();
 
   // ── vector helpers ───────────────────────────────────────────────────
@@ -478,65 +519,145 @@
   // for showing the grow/shrink animation without regenerating anything
   // real. Demo nodes are tagged _demo so they're unmistakable if one were
   // ever left behind.
-  // A node quietly appearing under whichever branch happened to be off-
-  // camera is easy to miss entirely — direct user feedback after the first
-  // version had no camera movement on create/remove, only on activity.
-  // Reuses the exact same camera-ease + pulse-ripple triggerActivity
-  // already uses, so "look here, something changed" reads identically
-  // whether it's a real pulse or a create/destroy event.
-  // Real spring physics (Motion, vendored locally — see vendor/motion.*.js)
-  // for the pulse pop-in, then a second spring settling back to 0 for the
-  // afterglow. Uses Motion.spring()'s manually-sampled generator, NOT the
-  // high-level animate() — animate() drives its own updates via
-  // requestAnimationFrame internally, which is exactly what's suspended in
-  // wallpaper mode (see draw()'s note on WebKit occluded-view throttling);
-  // an animate()-driven pulse would silently never progress there.
-  // updateActivePulses() below samples both generators by hand once per
-  // frame, off the same Swift-timer-driven clock as everything else here.
-  function pulseOnly(node) {
-    activePulses.push({
-      id: node.id,
-      phase: "rise",
-      startTime: performance.now(),
-      gen: Motion.spring({ keyframes: [0, 1], stiffness: 400, damping: 20 }),
-      value: 0
-    });
+  // A node added or removed (demo or a device) lights the way any real event does. The camera stays where the
+  // viewer left it (#843): the tray says what happened, and tapping an item there is how you go and look.
+  function pulseOnly(node) { lightNode(node, clockNow()); }
+
+  // ── truthful activity (#843, decided with Gil 2026-10-29): nothing moves unless something real happened, at a
+  // speed a person can follow.
+  // - A node's brightness is its work rate over a short window: each event adds 1 to a level that fades with
+  //   LEVEL_TAU_MS, and below LEVEL_FLOOR the part is exactly dark, so idle frames are identical.
+  // - The branch from a node up to its trunk carries the same light (its region shows the leaf's activity).
+  // - A thread lights only from a causal pair: a Skill call, then a later event in the same session within
+  //   CAUSAL_WINDOW_S, on a node that skill has a thread to. A single event lights no thread.
+  // - A pulse takes PULSE_TRAVEL_MS to cross. One thread launches at most one pulse per PULSE_GAP_MS; events in
+  //   between ride on the next pulse, and the legend says how many one pulse stands for.
+  // - ok:false turns a node red until an ok:true for it, and lights the threads of what depends on it.
+  // Everything runs off the frame clock (the `now` the last draw got), never off its own timers, so the
+  // wallpaper's Swift-timer drive (rAF suspended) behaves exactly like a browser tab. ──
+  var LEVEL_TAU_MS = 4000, LEVEL_CAP = 20, LEVEL_FLOOR = 0.01;
+  var CAUSAL_WINDOW_S = 60;
+  var PULSE_TRAVEL_MS = 1600, PULSE_GAP_MS = 800;
+  var TRAY_WINDOW_MS = 60000, TRAY_SHOWN = 12, FOCUS_MS = 1200;
+  var FAIL_RGB = "248,81,73"; // the palette's existing red (--cat-project)
+  // Which end of each thread kind depends on the other, for "a red node lights the links to what depends on it".
+  // Kinds not listed light from a failure at either end.
+  var DEPENDENT_END = { calls: "a", undeclared: "a", "runs-on": "a", feeds: "b", builds: "b" };
+
+  var levels = {};          // "n:"/"r:"/"l:"/"c:" + id -> {v, at}
+  var failedIds = {};       // node id -> true while its last result was a failure
+  var sessions = {}, sessionOrder = []; // session id -> the skill call that can cause the next event
+  var linkState = {};       // thread key -> {pending, lastLaunch, from, to, s}
+  var pulses = [], pulseSeq = 0;
+  var trayItems = [], trayDirty = false, trayRenderedAt = -Infinity, trayOpen = false;
+  var focusNode = null, focusUntil = 0;
+
+  function clockNow() { return lastFrameTime == null ? performance.now() : lastFrameTime; }
+  function levelOf(key, now) {
+    var s = levels[key];
+    if (!s) return 0;
+    var v = s.v * Math.exp(-Math.max(0, now - s.at) / LEVEL_TAU_MS);
+    if (v < LEVEL_FLOOR) { delete levels[key]; return 0; }
+    return v;
+  }
+  function bump(key, now, n) { levels[key] = { v: Math.min(LEVEL_CAP, levelOf(key, now) + (n || 1)), at: now }; }
+  function brightness(key, now) { var v = levelOf(key, now); return v ? 1 - Math.exp(-v / 1.5) : 0; }
+  function linkKey(s) { return s.a + "→" + s.b + "|" + (s.type || "calls"); }
+
+  function lightNode(node, now) {
+    bump("n:" + node.id, now);
+    for (var x = node; x && x.parent; x = x.parent) bump("r:" + x.id, now);
   }
 
-  // Advances every active pulse's spring generator by the real elapsed
-  // time, called once per frame (not once per node — pulseIntensityOf()
-  // below is a cheap read of the result, called many times per frame).
-  function updateActivePulses(now) {
-    activePulses = activePulses.filter(function (p) {
-      if (p.phase === "rise") {
-        var sample = p.gen.next(now - p.startTime);
-        p.value = sample.value;
-        if (sample.done) {
-          p.phase = "fade";
-          p.startTime = now;
-          // stiffness 60 measured out to a ~2.5s fade — well short of the
-          // 4200ms camera-ease duration in nudgeCameraAndPulse, so the
-          // camera was still visibly moving toward a node for ~1.7s after
-          // its pulse had already faded to nothing: exactly the "why did
-          // it move, nothing lit up" report from 2026-07-17. Slowed to
-          // comfortably outlast the full camera move.
-          p.gen = Motion.spring({ keyframes: [1, 0], stiffness: 18, damping: 18 });
-        }
-        return true;
-      }
-      var fadeSample = p.gen.next(now - p.startTime);
-      p.value = fadeSample.value;
-      return !fadeSample.done; // false = filtered out, pulse fully settled
-    });
+  // A file as the hook writes it: relative to the agents folder. An absolute path is accepted only when it runs
+  // through an agents folder; anything else, or a path that climbs out with "..", names nothing.
+  function normFile(f) {
+    if (typeof f !== "string" || !f) return null;
+    var cut = f.lastIndexOf("/.agents/");
+    if (cut >= 0) f = f.slice(cut + 9);
+    else if (f.charAt(0) === "/") return null;
+    f = f.replace(/^(\.\/)+/, "");
+    if (!f || f.split("/").indexOf("..") >= 0) return null;
+    return f;
   }
-
-  function nudgeCameraAndPulse(node) {
-    pulseOnly(node);
-    if (!dragging) {
-      cameraTargetNode = node;
-      cameraEaseUntil = performance.now() + 4200;
+  function ownerOfFile(f) {
+    for (var i = 0; i < pathIndex.length; i++) {
+      var p = pathIndex[i].path;
+      if (f === p || f.indexOf(p + "/") === 0) return pathIndex[i].node;
     }
+    return null;
   }
+  // The node an event lands on: the file's owner when it has one, else the named node. Events for nodes that
+  // aren't in the tree are ignored; nothing is ever drawn for them.
+  function resolveEventNode(ev) {
+    var f = normFile(ev.file);
+    var owner = f ? ownerOfFile(f) : null;
+    if (owner) return owner;
+    return typeof ev.skill === "string" && byId.hasOwnProperty(ev.skill) ? byId[ev.skill] : null;
+  }
+  function isSkillCall(ev, node) { return ev.tool === "Skill" || (ev.tool === undefined && node !== tree && !ev.file); }
+
+  function traffic(from, to, now) {
+    (synByPair[pairKey(from.id, to.id)] || []).forEach(function (s) {
+      var k = linkKey(s);
+      bump("l:" + k, now);
+      if (REDUCE_MOTION) return; // brightness only
+      var st = linkState[k] || (linkState[k] = { pending: 0, lastLaunch: -Infinity });
+      st.pending++; st.from = from.id; st.to = to.id; st.s = s;
+    });
+  }
+
+  function ingestEvent(ev) {
+    if (typeof ev === "string") ev = { skill: ev }; // the older hosts pass only the skill id
+    if (!ev || typeof ev !== "object") return false;
+    var node = resolveEventNode(ev);
+    if (!node) return false;
+    var now = clockNow();
+    lightNode(node, now);
+    var f = normFile(ev.file);
+    if (f) (codeBySource[f] || []).forEach(function (id) { bump("c:" + id, now); });
+    if (ev.ok === false) failedIds[node.id] = true;
+    else if (ev.ok === true) delete failedIds[node.id];
+    // Pairs compare the event's own timestamps, and only inside one session (one machine's clock), so skew
+    // between Macs can't pair or split anything. Brightness uses the page's clock, so skew can't dim it either.
+    var ts = typeof ev.ts === "number" && isFinite(ev.ts) ? ev.ts : null;
+    var sid = typeof ev.session === "string" && ev.session ? ev.session : null;
+    if (sid !== null && ts !== null) {
+      var cause = sessions.hasOwnProperty(sid) ? sessions[sid] : null;
+      if (cause && cause.node !== node.id && byId[cause.node] && ts >= cause.ts && ts - cause.ts <= CAUSAL_WINDOW_S) {
+        traffic(byId[cause.node], node, now);
+      }
+      if (isSkillCall(ev, node) && (!cause || ts >= cause.ts)) {
+        if (!cause) { sessionOrder.push(sid); if (sessionOrder.length > 256) delete sessions[sessionOrder.shift()]; }
+        sessions[sid] = { node: node.id, ts: ts };
+      }
+    }
+    trayItems.push({ id: node.id, label: (node.name || node.id) + (f ? " · " + f.split("/").pop() : ""), at: now });
+    if (trayItems.length > 5000) trayItems.splice(0, trayItems.length - 5000);
+    trayDirty = true;
+    return true;
+  }
+
+  // Once per frame: launch the batched pulses that are due, drop the ones that have arrived.
+  function updatePulses(now) {
+    Object.keys(linkState).forEach(function (k) {
+      var st = linkState[k];
+      if (st.pending > 0 && now - st.lastLaunch >= PULSE_GAP_MS) {
+        pulses.push({ id: ++pulseSeq, key: k, s: st.s, from: st.from, to: st.to, start: now, n: st.pending });
+        st.pending = 0; st.lastLaunch = now;
+      } else if (!st.pending && now - st.lastLaunch > PULSE_GAP_MS) {
+        delete linkState[k];
+      }
+    });
+    pulses = pulses.filter(function (p) { return now - p.start < PULSE_TRAVEL_MS && byId[p.from] && byId[p.to]; });
+  }
+  function isRedLink(s) {
+    var dep = DEPENDENT_END[s.type || "calls"];
+    if (dep === "a") return !!failedIds[s.b];
+    if (dep === "b") return !!failedIds[s.a];
+    return !!(failedIds[s.a] || failedIds[s.b]);
+  }
+
 
   // Shared by the demo channel AND live device-liveness below — one node
   // add/remove path instead of two near-duplicates.
@@ -549,13 +670,13 @@
     parent.children.push(node);
     indexAll();
     relayout(true);
-    nudgeCameraAndPulse(node);
+    pulseOnly(node);
     return true;
   }
   function removeNodeFromTree(nodeId) {
     var node = byId[nodeId];
     if (!node || !node.parent) return false;
-    nudgeCameraAndPulse(node); // camera turns to it before it shrinks away
+    pulseOnly(node); // it lights as it shrinks away
     var parent = node.parent;
     parent.children = parent.children.filter(function (c) { return c.id !== nodeId; });
     indexAll();
@@ -596,7 +717,7 @@
         return;
       }
       var node = byId[id];
-      if (node && node.online === false) { node.online = true; nudgeCameraAndPulse(node); }
+      if (node && node.online === false) { node.online = true; pulseOnly(node); }
       return;
     }
     var node = byId[id];
@@ -648,11 +769,13 @@
 
   var yaw = 0.6, pitch = -0.2, camDist = 480;
   var dragging = false, moved = false, lastX = 0, lastY = 0;
-  var autoRotate = WALLPAPER || !REDUCE_MOTION;
+  // Off by default everywhere (#843: the camera never moves on its own). The legend's auto-rotate row turns it on;
+  // ?rotate=1 does the same for the wallpaper, which has no controls.
+  var autoRotate = /[?&]rotate=1\b/.test(location.search) && !REDUCE_MOTION;
   var priorCamDist = 480; // saved when opening code layer, restored on close
 
   canvas.addEventListener("mousedown", function (ev) {
-    dragging = true; moved = false; autoRotate = false; lastX = ev.clientX; lastY = ev.clientY;
+    dragging = true; moved = false; focusNode = null; lastX = ev.clientX; lastY = ev.clientY;
   });
   window.addEventListener("mouseup", function () { dragging = false; });
   window.addEventListener("mousemove", function (ev) {
@@ -788,78 +911,48 @@
     ctx.restore();
   }
 
-  // ── organic idle motion — a gentle per-node sway on top of the fixed
-  // tree position, so it reads as alive even with no recent activity.
-  // Small enough not to fight the layout; consistent between rendering
-  // and hit-testing since both read CURRENT_ELAPSED from the same frame. ──
+  // Nodes sit exactly where the layout put them. There used to be a gentle idle sway here; #843's rule is that
+  // nothing moves unless something real happened, so idle parts are still. swayedPos is kept as the one place
+  // every caller reads a node's drawn position from.
   var CURRENT_ELAPSED = 0;
-  function swayedPos(nd) {
-    if (nd.id === "MARVIN") return nd; // anchor point stays put
-    var phase = (nd.id.charCodeAt(0) * 7 + nd.id.length * 13 + nd.depth * 5) % 100;
-    var amt = WALLPAPER ? 3.2 : 2;
-    return {
-      x: nd.x + Math.sin(CURRENT_ELAPSED * 0.35 + phase) * amt,
-      y: nd.y + Math.cos(CURRENT_ELAPSED * 0.29 + phase * 1.4) * amt,
-      z: nd.z + Math.sin(CURRENT_ELAPSED * 0.22 + phase * 0.8) * amt
-    };
-  }
+  function swayedPos(nd) { return nd; }
   function projectNode(nd) { return project(swayedPos(nd)); }
 
-  // ── activity — live signal from skill_activity.py's PostToolUse hook.
-  // Polls a small local file (cheap: one fetch of a file that's usually a
-  // few KB), not a socket/websocket — matches the rest of this system's
-  // "poll cheaply, don't hold a connection open" pattern (see DesktopLive's
-  // mtime check). Drives both the pulse rings and the camera nudge. ──
+  // ── activity — live signal from skill_activity.py's PostToolUse hook, one JSON line per tool call
+  // ({skill, ts, tool, session, file}; older lines are just {skill, ts}). In a browser the page polls the small
+  // local file; DesktopLive and the Linux host read it themselves and push each line in through
+  // window.triggerActivity, since fetch() from a file:// page isn't reliable in a WKWebView. ──
   var ACTIVITY_URL = "./activity.jsonl";
-  var lastSeenTs = Date.now() / 1000; // don't replay history on load
-  var activePulses = []; // {id, state: {intensity}} — state is mutated in place by Motion, see pulseOnly()
   var cameraTargetNode = null, cameraEaseUntil = 0;
-  var wasAutoRotating = autoRotate;
 
-  // "MARVIN" (the root/anchor) is the generic heartbeat skill_activity.py
-  // logs for every non-Skill tool call (Bash, Edit, Read, ...) — widened
-  // 2026-07-17 so the graph shows *some* signal even outside explicit
-  // /skill invocations. But the root sits at the exact origin by design
-  // (see swayedPos above), so facingAngles(root) always resolves to a
-  // fixed {yaw:0, pitch:0} — a degenerate target, not a meaningful
-  // "look here" direction. Routing it through the full nudgeCameraAndPulse
-  // meant nearly every tool call yanked the camera back toward that fixed
-  // angle, fighting the auto-rotate and reading as erratic/random motion
-  // rather than a clear activity signal — confirmed 2026-07-17 by a live
-  // report of exactly this. Real, named-skill activity still gets the full
-  // pulse + camera-nudge treatment, since nudging toward an actual leaf
-  // node's position is meaningful; the generic heartbeat only pulses.
-  function triggerActivity(skillId) {
-    var node = byId[skillId];
-    if (!node) return;
-    if (skillId === "MARVIN") pulseOnly(node);
-    else nudgeCameraAndPulse(node);
-    // exposed for DesktopLive: fetch() to a local file from a file://-loaded
-    // WKWebView isn't guaranteed to work across WebKit versions, so the
-    // Swift host pushes activity directly via evaluateJavaScript instead of
-    // relying on this page's own fetch-based poll below (kept as a harmless
-    // fallback for when this file is opened in a normal browser/artifact).
+  // Takes an event object (one activity line) or, from older hosts, a bare skill id.
+  function triggerActivity(ev) { ingestEvent(ev); }
+
+  // Lines already read are remembered by their text, not by "newer than the last timestamp": a line stamped
+  // earlier than one already seen (out of order, or another Mac's clock behind) is still new. The first read is
+  // history and only primes the memory, so opening the page doesn't replay it.
+  var seenLines = null;
+  function ingestLines(text) {
+    var lines = String(text || "").split("\n").filter(function (l) { return l.trim(); });
+    var next = {};
+    lines.forEach(function (line) {
+      next[line] = true;
+      if (seenLines === null || seenLines[line]) return;
+      try { ingestEvent(JSON.parse(line)); } catch (e) { /* malformed line: skip, don't break polling */ }
+    });
+    seenLines = next; // the file is trimmed to its last 500 lines, so this stays that small
   }
-
   function pollActivity() {
     fetch(ACTIVITY_URL + "?_=" + Date.now())
       .then(function (r) { return r.ok ? r.text() : ""; })
-      .then(function (text) {
-        if (!text) return;
-        text.trim().split("\n").filter(Boolean).forEach(function (line) {
-          try {
-            var entry = JSON.parse(line);
-            if (entry.ts > lastSeenTs) { lastSeenTs = entry.ts; triggerActivity(entry.skill); }
-          } catch (e) { /* malformed line — skip, don't break polling */ }
-        });
-      })
-      .catch(function () { /* file may not exist yet — fine, just no activity so far */ });
+      .then(function (text) { ingestLines(text); })
+      .catch(function () { /* file may not exist yet: fine, just no activity so far */ });
   }
   // In wallpaper mode DesktopLive pushes activity via evaluateJavaScript
   // instead (see triggerActivity above) — polling here too would risk a
   // double-pulse on the same entry if file:// fetch happens to also work.
   window.triggerActivity = triggerActivity;
-  if (!WALLPAPER && !SNAPSHOT) setInterval(pollActivity, 3000);
+  if (!WALLPAPER && !SNAPSHOT) { pollActivity(); setInterval(pollActivity, 3000); }
 
   // yaw/pitch that puts a given node at screen-center, derived directly
   // from project()'s own rotation order (solve x1=0, then y2=0).
@@ -870,16 +963,8 @@
     return { yaw: fy, pitch: Math.max(-1.2, Math.min(1.2, fp)) };
   }
 
-  // 0..1 — cheap read of whatever updateActivePulses() last computed for
-  // this id. Called once per node/synapse per frame, so the actual spring
-  // sampling happens once per frame in updateActivePulses(), not here.
-  function pulseIntensityOf(id) {
-    var best = 0;
-    activePulses.forEach(function (p) {
-      if (p.id === id) best = Math.max(best, p.value);
-    });
-    return best;
-  }
+  // 0..1: how lit a node is right now, from its work rate (see the truthful-activity block above).
+  function pulseIntensityOf(id) { return brightness("n:" + id, clockNow()); }
 
   // ── legend / filters ─────────────────────────────────────────────────
   // Every category the palette knows, in palette order — never a separate
@@ -919,8 +1004,76 @@
       row.addEventListener("click", function () { activeCats[k] = !activeCats[k]; renderLegend(); });
       legendEl.appendChild(row);
     });
+    // Auto-rotate (#843): a toggle, off unless turned on.
+    var rot = document.createElement("div");
+    rot.className = "row" + (autoRotate ? "" : " off");
+    rot.id = "auto-rotate-toggle";
+    var rotLabel = document.createElement("div");
+    rotLabel.className = "label";
+    rotLabel.textContent = "auto-rotate";
+    var rotState = document.createElement("div");
+    rotState.className = "count mono";
+    rotState.textContent = autoRotate ? "on" : "off";
+    rot.appendChild(rotLabel); rot.appendChild(rotState);
+    rot.addEventListener("click", function () { autoRotate = !autoRotate; renderLegend(); });
+    legendEl.appendChild(rot);
+    // Shown only while pulses are batching: how many events one travelling pulse stands for.
+    var note = document.createElement("div");
+    note.id = "pulse-scale";
+    note.className = "note mono" + (pulseScaleText ? " show" : "");
+    note.textContent = pulseScaleText;
+    legendEl.appendChild(note);
+  }
+  var pulseScaleText = "";
+  function updatePulseScale() {
+    var most = 0;
+    pulses.forEach(function (p) { if (p.n > most) most = p.n; });
+    var text = most > 1 ? "1 pulse = up to " + most + " events" : "";
+    if (text === pulseScaleText) return;
+    pulseScaleText = text;
+    var el = document.getElementById("pulse-scale");
+    if (el) { el.textContent = text; el.classList.toggle("show", !!text); }
   }
   renderLegend();
+
+  // ── event tray (#843): what happened in the last minute, newest first. The camera never goes anywhere on its
+  // own; tapping an item here is how you go and look at its node. ──
+  var trayEl = document.getElementById("event-tray");
+  var trayToggle = document.getElementById("event-tray-toggle");
+  var trayList = document.getElementById("event-tray-list");
+  function trayText(n) { return n + (n === 1 ? " thing" : " things") + " happened in the last minute"; }
+  function buildTrayList(now) {
+    trayList.innerHTML = "";
+    trayItems.slice(-TRAY_SHOWN).reverse().forEach(function (it) {
+      var b = document.createElement("button");
+      b.className = "mono";
+      b.setAttribute("data-node", it.id);
+      b.textContent = it.label + " \u00b7 " + Math.max(0, Math.round((now - it.at) / 1000)) + "s ago";
+      b.addEventListener("click", function () { focusOn(it.id); });
+      trayList.appendChild(b);
+    });
+  }
+  function renderTray(now) {
+    while (trayItems.length && now - trayItems[0].at > TRAY_WINDOW_MS) { trayItems.shift(); trayDirty = true; }
+    if (!trayDirty && now - trayRenderedAt < 1000) return;
+    var changed = trayDirty;
+    trayDirty = false; trayRenderedAt = now;
+    var n = trayItems.length;
+    if (!n) trayOpen = false;
+    trayEl.classList.toggle("show", n > 0);
+    trayList.classList.toggle("show", trayOpen);
+    trayToggle.textContent = trayText(n);
+    if (trayOpen && changed) buildTrayList(now);
+  }
+  trayToggle.addEventListener("click", function () {
+    trayOpen = !trayOpen;
+    trayList.classList.toggle("show", trayOpen);
+    if (trayOpen) buildTrayList(clockNow());
+  });
+  function focusOn(id) {
+    if (!byId[id]) return;
+    focusNode = byId[id]; focusUntil = clockNow() + FOCUS_MS;
+  }
 
   document.getElementById("mode-skill").addEventListener("click", function () {
     mode = "skill";
@@ -1137,8 +1290,10 @@
     var dt = lastFrameTime === null ? 0 : Math.max(0, Math.min(0.1, (now - lastFrameTime) / 1000));
     lastFrameTime = now;
 
-    updateActivePulses(now);
+    updatePulses(now);
     updateCodeLayerNote();
+    renderTray(now);
+    updatePulseScale();
 
     // Handle code layer open/close camera transitions
     if (openNodeId !== null && !dragging) {
@@ -1155,6 +1310,16 @@
       priorCamDist = camDist;
       cameraTargetNode = null;
       cameraEaseUntil = now + 800;
+    }
+
+    // A tap on a tray item is the one thing that turns the camera to a node; it eases there and stops.
+    if (focusNode && now < focusUntil && !dragging && byId[focusNode.id]) {
+      var ft = facingAngles(focusNode);
+      var dy = ((ft.yaw - yaw + Math.PI) % (Math.PI * 2) + Math.PI * 2) % (Math.PI * 2) - Math.PI;
+      yaw += dy * 0.12;
+      pitch += (ft.pitch - pitch) * 0.12;
+    } else {
+      focusNode = null;
     }
 
     if (cameraTargetNode && now < cameraEaseUntil && !dragging) {
@@ -1205,6 +1370,8 @@
       var newFitScale = sample.value;
       fitVelocity = dt > 0 ? (newFitScale - fitScale) / dt : 0;
       fitScale = newFitScale;
+      // Settled: hold it exactly, so a still figure draws identical frames (#843).
+      if (Math.abs(targetFit - fitScale) < 1e-6 && Math.abs(fitVelocity) < 1e-4) { fitScale = targetFit; fitVelocity = 0; }
     }
 
     var selSyn = selected ? synapsesOf(selected) : [];
@@ -1222,9 +1389,11 @@
       ctx.beginPath();
       ctx.moveTo(pa.sx, pa.sy);
       ctx.lineTo(pb.sx, pb.sy);
-      var baseAlpha = (dim ? 0.07 : 0.32 - br.depth * 0.032) * fadedByOpen;
+      // The branch into a node carries the light of work at or under it: a leaf lighting shows up its region.
+      var regionLit = brightness("r:" + br.to.id, now);
+      var baseAlpha = Math.min(1, (dim ? 0.07 : 0.32 - br.depth * 0.032) + regionLit * 0.5) * fadedByOpen;
       ctx.strokeStyle = "rgba(88,166,255," + baseAlpha + ")";
-      ctx.lineWidth = Math.max(0.6, 3.2 - br.depth * 0.6);
+      ctx.lineWidth = Math.max(0.6, 3.2 - br.depth * 0.6) + regionLit * 1.2;
       ctx.stroke();
     });
 
@@ -1241,33 +1410,42 @@
       // Fade system layer when code layer is open, except the opened node itself
       var fadedByOpen = openNodeId !== null && !isOpenedNode ? 0.15 : 1;
       var isHov = hoveredSynapse === s;
-      var pulse = Math.max(pulseIntensityOf(s.a), pulseIntensityOf(s.b));
+      // Lit only by traffic across it (a causal pair, see ingestEvent), never by an end node's own work.
+      var pulse = brightness("l:" + linkKey(s), now);
+      var red = isRedLink(s);
+      var rgb = red ? FAIL_RGB : SYNAPSE_COLOR;
+      if (red) pulse = Math.max(pulse, 0.6); // a failure's dependents stay lit, without moving, until it passes
 
       ctx.beginPath();
       ctx.moveTo(pa.sx, pa.sy);
       ctx.quadraticCurveTo(mid.sx, mid.sy, pb.sx, pb.sy);
       ctx.setLineDash(synapseKind(s).dash);
       var alpha = (dim ? 0.08 : (isHov || isSelRelated ? 0.85 : 0.35) + pulse * 0.5) * fadedByOpen;
-      ctx.strokeStyle = "rgba(" + SYNAPSE_COLOR + "," + Math.min(1, alpha) + ")";
+      ctx.strokeStyle = "rgba(" + rgb + "," + Math.min(1, alpha) + ")";
       ctx.lineWidth = (isHov || isSelRelated ? 2 : 1.1) + pulse * 1.8;
       ctx.save();
-      if (!dim) { ctx.shadowBlur = 5 + pulse * 12; ctx.shadowColor = "rgba(" + SYNAPSE_COLOR + ",0.9)"; }
+      if (!dim) { ctx.shadowBlur = 5 + pulse * 12; ctx.shadowColor = "rgba(" + rgb + ",0.9)"; }
       ctx.stroke();
       ctx.restore();
       ctx.setLineDash([]);
+    });
 
-      if (!REDUCE_MOTION && !dim) {
-        var speed = 0.18 + pulse * 0.7; // signal travels faster while "live"
-        var tt = (elapsed * speed + (s.a.length * 13 % 100) / 100) % 1;
-        var pt = quadPoint(pa, mid, pb, tt);
-        ctx.beginPath();
-        ctx.arc(pt.sx, pt.sy, (isHov ? 3 : 2) + pulse * 2, 0, Math.PI * 2);
-        ctx.fillStyle = "rgba(" + SYNAPSE_COLOR + "," + (dim ? 0 : Math.min(1, 0.9 + pulse)) + ")";
-        ctx.save();
-        ctx.shadowBlur = 8; ctx.shadowColor = "rgba(" + SYNAPSE_COLOR + ",1)";
-        ctx.fill();
-        ctx.restore();
-      }
+    // pulses — one travelling dot per batch of real traffic, from the cause to the effect (none under Reduce Motion)
+    pulses.forEach(function (pu) {
+      var s = pu.s, na = byId[s.a], nb = byId[s.b];
+      if (!na || !nb || !allNodes.includes(na) || !allNodes.includes(nb)) return;
+      if ((na.cat !== "root" && !activeCats[na.cat]) || (nb.cat !== "root" && !activeCats[nb.cat])) return;
+      var pa = projectNode(na), pb = projectNode(nb);
+      var mid = curveMid(pa, pb);
+      var prog = Math.min(1, (now - pu.start) / PULSE_TRAVEL_MS);
+      var pt = quadPoint(pa, mid, pb, pu.from === s.a ? prog : 1 - prog);
+      ctx.beginPath();
+      ctx.arc(pt.sx, pt.sy, 3, 0, Math.PI * 2);
+      ctx.fillStyle = "rgba(" + SYNAPSE_COLOR + ",1)";
+      ctx.save();
+      ctx.shadowBlur = 8; ctx.shadowColor = "rgba(" + SYNAPSE_COLOR + ",1)";
+      ctx.fill();
+      ctx.restore();
     });
 
     // code layer — owned files/functions, test nodes (when toggled), and borrowed nodes, only when open
@@ -1307,16 +1485,19 @@
           var codeNode = codeNodeIds[nodeId];
           // Placeholder position: for now, stack near the opened node
           // Real implementation would use precomputed layout from compute_layout
+          // Same scatter as before, but fixed per node (it was re-randomised every frame, so it jittered).
           var baseProj = projectNode(openNode);
-          var offsetX = (Math.random() - 0.5) * 30;
-          var offsetY = (Math.random() - 0.5) * 30;
+          var offsetX = (stableUnit(nodeId, 1) - 0.5) * 30;
+          var offsetY = (stableUnit(nodeId, 2) - 0.5) * 30;
           var sx = baseProj.sx + offsetX, sy = baseProj.sy + offsetY;
           var r = 3.5; // function size tier
           if (!codeNode.source_location) r = 5; // file size tier
+          var lit = brightness("c:" + nodeId, now); // its file was read or edited
 
           ctx.beginPath();
-          ctx.arc(sx, sy, r, 0, Math.PI * 2);
-          ctx.fillStyle = codeNode.source_location ? "rgba(156,163,175,0.6)" : "rgba(176,190,197,0.8)";
+          ctx.arc(sx, sy, r + lit * 2, 0, Math.PI * 2);
+          ctx.fillStyle = lit > 0 ? "rgba(" + SYNAPSE_COLOR + "," + (0.6 + lit * 0.4) + ")" :
+            (codeNode.source_location ? "rgba(156,163,175,0.6)" : "rgba(176,190,197,0.8)");
           ctx.fill();
         });
 
@@ -1324,8 +1505,8 @@
         if (code.borrowed) {
           code.borrowed.forEach(function (bNode) {
             var baseProj = projectNode(openNode);
-            var offsetX = (Math.random() - 0.5) * 60;
-            var offsetY = (Math.random() - 0.5) * 60;
+            var offsetX = (stableUnit(bNode.id || bNode.label || "", 3) - 0.5) * 60;
+            var offsetY = (stableUnit(bNode.id || bNode.label || "", 4) - 0.5) * 60;
             var sx = baseProj.sx + offsetX, sy = baseProj.sy + offsetY;
             ctx.beginPath();
             ctx.arc(sx, sy, 2.5, 0, Math.PI * 2);
@@ -1359,6 +1540,7 @@
       // rather than leaving it greyed in place. Kept as a defensive
       // fallback only, not the live behavior.
       var color = nd.archived ? "#404040" : (nd.ready === false ? "#6b5b4a" : (nd.online === false ? "#5a5a5a" : CAT[nd.cat].color));
+      var failed = !!failedIds[nd.id]; // red, and stays red, until a pass for this node
       var pulse = pulseIntensityOf(nd.id);
 
       if (r < 0.4) return; // still basically zero-sized — nothing to draw yet
@@ -1377,7 +1559,7 @@
 
       ctx.beginPath();
       ctx.arc(p.sx, p.sy, r + pulse * 2, 0, Math.PI * 2);
-      ctx.fillStyle = dim ? "rgba(110,118,129,0.25)" : (pulse > 0 ? "rgba(" + SYNAPSE_COLOR + ",1)" : color);
+      ctx.fillStyle = dim ? "rgba(110,118,129,0.25)" : (failed ? "rgb(" + FAIL_RGB + ")" : (pulse > 0 ? "rgba(" + SYNAPSE_COLOR + ",1)" : color));
       ctx.globalAlpha = bf * (dim ? 0.4 : Math.min(1, 0.6 + depthT * 0.4 + pulse * 0.4));
       ctx.save();
       var hubGlow = nd.depth <= 1 ? 6 : 0;
@@ -1530,9 +1712,48 @@
     showTests: function (v) { if (arguments.length) showTests = !!v; return showTests; },
     fitScale: function () { return fitScale; },
     snapshot: function () { return SNAPSHOT; },
-    steady: function () { return { fit: steadyFit, key: steadyKey }; }
+    steady: function () { return { fit: steadyFit, key: steadyKey }; },
+    // #843: read back the live-activity state the frames are drawn from
+    camera: function () { return { yaw: yaw, pitch: pitch, camDist: camDist }; },
+    autoRotate: function () { return autoRotate; },
+    setAutoRotate: function (v) { autoRotate = !!v; renderLegend(); },
+    level: function (id) { var t = clockNow(); return Math.max(brightness("n:" + id, t), brightness("c:" + id, t)); },
+    region: function (id) { return brightness("r:" + id, clockNow()); },
+    parentOf: function (id) { return byId[id] && byId[id].parent ? byId[id].parent.id : null; },
+    failed: function (id) { return !!failedIds[id]; },
+    links: function () {
+      var t = clockNow();
+      return synapses.map(function (s) { return { a: s.a, b: s.b, type: s.type, level: brightness("l:" + linkKey(s), t), failed: isRedLink(s) }; })
+        .filter(function (l) { return l.level > 0 || l.failed; });
+    },
+    pulses: function () {
+      var t = clockNow();
+      return pulses.map(function (p) { return { id: p.id, a: p.s.a, b: p.s.b, from: p.from, to: p.to, n: p.n, progress: Math.min(1, (t - p.start) / PULSE_TRAVEL_MS) }; });
+    },
+    legendNote: function () { var el = document.getElementById("pulse-scale"); return el && el.classList.contains("show") ? el.textContent : ""; },
+    tray: function () { return { count: trayItems.length, visible: trayEl.classList.contains("show"), text: trayToggle.textContent }; },
+    ingestLines: ingestLines,
+    // a node whose code has a source file holding at least two code nodes (a file and its functions)
+    codeOwnerWithFile: function () {
+      for (var id in byId) {
+        var c = byId[id].code;
+        if (!c) continue;
+        var files = (c.files || []).concat(c.functions || []);
+        for (var i = 0; i < files.length; i++) {
+          var f = files[i].source_file, ids = files.filter(function (x) { return x.source_file === f; }).map(function (x) { return x.id; });
+          if (f && ids.length > 1) return { node: id, file: f, ids: ids };
+        }
+      }
+      return null;
+    }
   };
 
+  // A fixed 0..1 value per id (FNV-1a), for placements that must not change between frames.
+  function stableUnit(id, salt) {
+    var h = 2166136261 ^ salt;
+    for (var i = 0; i < id.length; i++) { h ^= id.charCodeAt(i); h = Math.imul(h, 16777619); }
+    return ((h >>> 0) % 10000) / 10000;
+  }
   function quadPoint(p0, p1, p2, t) {
     var u = 1 - t;
     return {

@@ -14,12 +14,36 @@ function newLines(text, lastCount) {
   return { lines: lines.slice(lastCount), count: lines.length }
 }
 
+// Activity lines after the last one seen (#843). activity.jsonl is trimmed to its last 500 lines on every write, so
+// once full its count stays 500 and a count can't tell new lines from old. `priming` reads history without
+// returning it, so starting up doesn't replay the file. If the last line seen is gone, everything is new.
+function linesAfter(text, last, priming = false) {
+  const lines = (text || '').split('\n').filter((l) => l.length > 0)
+  if (!lines.length) return { lines: [], last }
+  const tail = lines[lines.length - 1]
+  if (priming) return { lines: [], last: tail }
+  if (last === null || last === undefined) return { lines, last: tail }
+  const i = lines.lastIndexOf(last)
+  return { lines: i >= 0 ? lines.slice(i + 1) : lines, last: tail }
+}
+
 function parse(line) {
   try { return JSON.parse(line) } catch { return null }
 }
 
+// The fields of an activity line the page reads (template.html ingestEvent, #843), each only with its own type.
+const ACTIVITY_FIELDS = { skill: 'string', ts: 'number', tool: 'string', session: 'string', file: 'string', ok: 'boolean' }
+
+function activityEvent(o) {
+  const ev = {}
+  for (const [k, type] of Object.entries(ACTIVITY_FIELDS)) {
+    if (typeof o[k] === type && (type !== 'number' || Number.isFinite(o[k]))) ev[k] = o[k]
+  }
+  return ev
+}
+
 function activityCalls(lines) {
-  return lines.map(parse).filter((o) => o && typeof o.skill === 'string').map((o) => call('triggerActivity', o.skill))
+  return lines.map(parse).filter((o) => o && typeof o.skill === 'string').map((o) => call('triggerActivity', activityEvent(o)))
 }
 
 function demoCalls(lines) {
@@ -62,4 +86,4 @@ function livenessCalls(status, registry, last) {
   return { calls, last: next }
 }
 
-module.exports = { call, newLines, activityCalls, demoCalls, treeCall, livenessCalls }
+module.exports = { call, newLines, linesAfter, activityCalls, demoCalls, treeCall, livenessCalls }

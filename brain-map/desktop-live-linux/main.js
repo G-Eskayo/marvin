@@ -21,7 +21,7 @@ const STALL_MS = 60_000   // a page that stops drawing this long is reloaded (ma
 
 const windows = new Map()            // display id -> BrowserWindow
 let lastTreeMtime = 0
-let activityCount = 0
+let activityLast = null
 let demoCount = 0
 let liveness = {}
 let lastFrames = -1
@@ -93,6 +93,12 @@ function checkTree() {
   else { log('page-reload', 'tree-data.json did not parse'); for (const w of windows.values()) w.reload() }
 }
 
+// By the last line seen, not the count: the file is trimmed to 500 lines, so a full file's count never changes.
+function checkActivity() {
+  const { lines, last } = h.linesAfter(read(ACTIVITY), activityLast)
+  activityLast = last
+  for (const js of h.activityCalls(lines)) eachPage(js)
+}
 function checkFile(file, count, toCalls) {
   const { lines, count: next } = h.newLines(read(file), count)
   for (const js of toCalls(lines)) eachPage(js)
@@ -133,7 +139,7 @@ if (!app.requestSingleInstanceLock()) app.exit(0)   // one wallpaper per session
 app.disableHardwareAcceleration()   // Ivy Bridge GPU: software canvas is steadier for a 24 fps ambient view
 app.whenReady().then(() => {
   log('start', PAGE)
-  activityCount = lineCount(ACTIVITY)
+  activityLast = h.linesAfter(read(ACTIVITY), null, true).last
   demoCount = lineCount(DEMO)
   try { lastTreeMtime = fs.statSync(TREE).mtimeMs } catch { /* first generate.py run creates it */ }
   reconcile()
@@ -141,7 +147,7 @@ app.whenReady().then(() => {
   screen.on('display-removed', reconcile)
   screen.on('display-metrics-changed', reconcile)
   setInterval(checkTree, 30_000)
-  setInterval(() => { activityCount = checkFile(ACTIVITY, activityCount, h.activityCalls) }, 2_000)
+  setInterval(checkActivity, 2_000)
   setInterval(() => { demoCount = checkFile(DEMO, demoCount, h.demoCalls) }, 1_000)
   setInterval(checkDevices, 18_000)
   setTimeout(checkDevices, 3_000)
