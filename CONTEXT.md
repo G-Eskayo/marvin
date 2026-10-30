@@ -484,6 +484,17 @@ ever been closed unmerged. Gil approves almost everything; the wait is the cost.
   pipeline, agents and helpers), and products MARVIN runs or keeps updated (the portfolio site, whose purpose is to
   stay current with what we're working on). A product that runs on its own with no tie to MARVIN is *not* one:
   the Seal Speak app itself isn't watched, but the agents working on Seal Speak are.
+- **Purpose (of a monitored system)**: the one job it exists to do, stated as a signal that can be measured, e.g.
+  the portfolio site's "every active project's page reflects work merged in the last 30 days".
+- **Missed purpose**: a monitored system that is running without errors but not doing its job. Vitals shows it in
+  amber at the top of that system, with the reason and a fix. It is red only when it has also blocked something
+  else (a deadline, another system). It is not the same as a **decision**: a real choice for Gil (retire a producer,
+  lower a target), which goes to the decision lane.
+- **Truthful motion** (the live map and Vitals views): nothing moves unless something real happened, at a speed a
+  person can follow. A part lights when it works and stays red when it fails until it passes. A link lights only
+  when real traffic crosses it. Idle parts are still. The camera never moves by itself.
+- **Leaf node**: the outermost parts on the map (files, functions, sub-agents). They light when touched, the same as
+  any other part.
 
 ## Health monitoring (in design, 2026-10-01)
 
