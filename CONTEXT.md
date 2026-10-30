@@ -559,6 +559,19 @@ ever been closed unmerged. Gil approves almost everything; the wait is the cost.
   never hidden.
 - **Not enough data yet**: the state of a measure that has no baseline or history (a new install has no paid baseline
   and doesn't know its plan's limits). Never shown as 0% or as healthy.
+- **Dead and stuck** (of a worker): **dead** means its process ended without finishing; it is red at once. **Stuck**
+  means alive but with no **progress** (its log or transcript grew, a commit landed, it moved stage) for longer than
+  its limit: a builder or chat helper 15 min (amber) and 45 min (red), a spawned agent 10 and 30, a scheduled job 3x
+  and 6x its usual run. **Can't tell** (its Mac is asleep or out of reach) is grey, never red.
+- **Progress check**: when a worker reaches a limit, MARVIN looks at it before calling it stuck (is it running tests,
+  using CPU, talking to the network). If it is really working, it goes back to green and its limit starts again. A check can reset a worker at most
+  twice without real progress; the third time it goes amber anyway ("busy but not advancing").
+- **Dismiss and mute**: **dismissing** a red item clears that one occurrence; if the same failure happens again it
+  comes back red, marked "seen before". **Muting** keeps a known failure quiet until an end date, and the mute itself
+  shows in Vitals. Neither ever hides a failure invisibly.
+- **Recurring issue**: a failure that keeps coming back. Vitals counts every occurrence so recurring ones can be traced
+  to their root and fixed. The third dismissal of the same failure becomes a decision: fix the root, mute it, or
+  retire the check.
 - **Machine health**: each computer's own load (CPU, GPU, memory, thermal) shown in Vitals per Mac. It belongs to
   MARVIN's health because the point is for the computers to work together as one; work should go to whichever Mac
   has room, and to the GPU where it can.
