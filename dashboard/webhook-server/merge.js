@@ -5,7 +5,7 @@ import { readdirSync } from 'fs'
 import { tmpdir } from 'os'
 import path from 'path'
 import { classifyFailure, summarizeGateFailure, withRetry, MergeFailure, refusal } from './failure.js'
-import { recordFailure, recordFlaky } from './failure_log.js'
+import { recordFailure, recordFlaky, flakySeenBefore } from './failure_log.js'
 import { assertUiEvidence } from './ui_evidence.js'
 import { assertDecisions } from './decisions_gate.js'
 import { fileURLToPath } from 'url'
@@ -864,12 +864,23 @@ async function mergePrUnqueued(
                failingTests: summary.failingTests, reason: summary.comment }
     }
     if (Array.isArray(result.flaky) && result.flaky.length) {
-      // Flaky, not the PR's fault: say which test, where the owner reads it, and keep it out of the breaker's log.
+      // Flaky, not the PR's fault: never sent back and kept out of the breaker's log. Gil (2026-10-30): it waits for
+      // his Approve again rather than merging on its own; that Approve merges if the same test(s) flake again.
       const list = result.flaky.slice(0, FLAKY_RERUN_MAX).join(', ')
-      stage('gate', 'passed', `rebased and retested; flaky test(s) failed once, then passed on one rerun: ${list}`)
+      let seen = false
+      try { seen = flakySeenBefore(prUrl, result.flaky) === true } catch { seen = false }
       recordFlaky({ tests: result.flaky, prUrl, project: repo })
-      const note = `**Merge gate: flaky test**\n\nThis PR passed the gate, but ${result.flaky.length === 1 ? 'this test' : 'these tests'} failed once and passed when run again. The PR doesn't change ${result.flaky.length === 1 ? 'it' : 'them'}, so it was not sent back:\n\n${result.flaky.map((t) => `- \`${t}\``).join('\n')}\n\nA test that fails at random can send a good PR back; it needs fixing on its own.`
-      await exec('gh', ['pr', 'comment', prUrl, '--body', note]).catch(() => {})   // a refused comment never blocks the merge
+      const tests = result.flaky.map((t) => `- \`${t}\``).join('\n')
+      const one = result.flaky.length === 1
+      if (!seen) {
+        stage('gate', 'failed', `FLAKY_HOLD: flaky test(s) failed once, then passed on one rerun: ${list}`)
+        const note = `**Merge gate: held for a flaky test**\n\n${one ? 'This test' : 'These tests'} failed once and passed when run again. The PR doesn't change ${one ? 'it' : 'them'}, so it was not sent back:\n\n${tests}\n\nApprove it again to merge. A test that fails at random needs fixing on its own.`
+        await exec('gh', ['pr', 'comment', prUrl, '--body', note]).catch(() => {})
+        throw new MergeFailure(refusal('FLAKY_HOLD', 'gate', `A test this PR doesn't change failed once, then passed: ${list}.`,
+          'Approve it again to merge.', 'escalate'))
+      }
+      stage('gate', 'passed', `rebased and retested; approved again after a flaky hold: ${list}`)
+      await exec('gh', ['pr', 'comment', prUrl, '--body', `**Merge gate: flaky test again**\n\nApproved again after the hold, so it merges:\n\n${tests}`]).catch(() => {})
     } else {
       stage('gate', 'passed', 'rebased and retested clean')
     }

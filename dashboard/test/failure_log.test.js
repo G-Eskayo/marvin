@@ -64,3 +64,20 @@ describe('recordFlaky: a test that failed once then passed, kept apart from the 
     expect(r.tests.every((t) => t.length <= 300)).toBe(true)
   })
 })
+
+describe('flakySeenBefore: was the owner already shown these flaky tests on this PR?', () => {
+  const PR = 'https://github.com/G-Eskayo/marvin/pull/892'
+  const rec = (tests, pr = PR) => JSON.stringify({ t: '2026-10-30T00:00:00Z', kind: 'flaky', tests, pr_url: pr })
+  it('every test was held before on this PR: true', async () => {
+    const { flakySeenBefore } = await vi.importActual('../webhook-server/failure_log.js')
+    expect(flakySeenBefore(PR, ['a', 'b'], () => [rec(['a']), rec(['b', 'c'])].join('\n'))).toBe(true)
+  })
+  it('a new test, another PR\'s record, no file or garbage: false', async () => {
+    const { flakySeenBefore } = await vi.importActual('../webhook-server/failure_log.js')
+    expect(flakySeenBefore(PR, ['a', 'z'], () => rec(['a']))).toBe(false)
+    expect(flakySeenBefore(PR, ['a'], () => rec(['a'], 'https://github.com/G-Eskayo/marvin/pull/1'))).toBe(false)
+    expect(flakySeenBefore(PR, ['a'], () => { throw new Error('ENOENT') })).toBe(false)
+    expect(flakySeenBefore(PR, ['a'], () => '{not json\n' + JSON.stringify({ kind: 'flaky', tests: 'a', pr_url: PR }))).toBe(false)
+    expect(flakySeenBefore(PR, [], () => rec(['a']))).toBe(false)
+  })
+})
