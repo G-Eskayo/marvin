@@ -482,7 +482,7 @@ def _label_pr(pr_url: str, result: dict, gh=None) -> None:
                         if result.get(k) is not None)
     gh("pr", "comment", pr_url, "--body",
        f"Built on {BOX} in a disposable `{IMAGE}` VM, destroyed after the run (ADR 0069). "
-       f"It pushed as the bot, so ADR 0064's trust ramp applies: it waits for Gil until the bot has 5 clean approvals."
+       f"It pushed as the bot, so ADR 0064's trust ramp applies: it waits for the owner's Approve until the bot has 5 clean approvals."
        + (f"\n\nRun: {numbers}." if numbers else ""))
 
 
