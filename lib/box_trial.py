@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
-"""The box trial (marvin #932): the five work types Gil chose for mac-mini-2012 (`trial-work` on
-G-Eskayo/marvin-instance PR #6), each sent through task_dispatch with its work tag and its timeout. Nothing else goes to
+"""The box trial (marvin #932): the five work types the owner chose for mac-mini-2012 (`trial-work` on
+the instance's calibration PR #6, marvin #623), each sent through task_dispatch with its work tag and its timeout. Nothing else goes to
 the box from here; ticket builds never do.
 
     box_trial.py suite        full Python suite at -n 8          --needs test        480 s (3x 158 s)
