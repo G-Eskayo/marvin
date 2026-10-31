@@ -95,7 +95,9 @@ def _fake_gh(tmp_path, stderr="", rc=0, stdout="ok"):
 
 
 def _run(tmp_path, realbin, *args, env_extra=None):
-    env = {"PATH": f"{GATE.parent}:{realbin}:/usr/bin:/bin", "HOME": str(tmp_path), "GH_GATE_NO_BUDGET": "1", **(env_extra or {})}
+    # MARVIN_PULL_ONLY=0: these tests are about a full node; on the Linux box they'd otherwise hit the pull-only refusal.
+    env = {"PATH": f"{GATE.parent}:{realbin}:/usr/bin:/bin", "HOME": str(tmp_path), "GH_GATE_NO_BUDGET": "1",
+           "MARVIN_PULL_ONLY": "0", **(env_extra or {})}
     return subprocess.run([str(GATE), *args], capture_output=True, text=True, env=env, timeout=30)
 
 
@@ -264,3 +266,43 @@ def test_end_to_end_when_github_cant_be_asked_the_call_goes_through_with_a_note(
     fake.chmod(fake.stat().st_mode | stat.S_IEXEC)
     p = _run_gate(tmp_path, bin_dir, ["pr", "merge", "9", "-R", "o/r"])
     assert p.returncode == 0 and "couldn't check" in p.stderr and (tmp_path / "ran").exists()
+
+
+# ── marvin#954: a pull-only node (mac-mini-2012) never reaches gh's login prompt ─────────────────────────────────────
+
+REG_BOX = {"devices": {"mac-mini-2012": {"tailscale_hostname": "mac-mini-2012", "accepts": ["test", "security"]},
+                       "mac-mini-1": {"tailscale_hostname": "gils-mac-mini", "accepts": ["general", "macos"]}}}
+
+
+def test_pull_only_node_follows_machine_profile_rule():
+    assert gg.pull_only_node({}, "linux", "mac-mini-2012", REG_BOX) is True
+    assert gg.pull_only_node({}, "linux", "unknown-box", REG_BOX) is True           # unknown Linux: never trusted
+    assert gg.pull_only_node({}, "darwin", "anything", REG_BOX) is False             # a Mac is a full node
+    full_linux = {"devices": {"build": {"tailscale_hostname": "build", "accepts": ["general"]}}}
+    assert gg.pull_only_node({}, "linux", "build", full_linux) is False
+    assert gg.pull_only_node({"MARVIN_PULL_ONLY": "1"}, "darwin", "x", {}) is True
+    assert gg.pull_only_node({"MARVIN_PULL_ONLY": "0"}, "linux", "mac-mini-2012", REG_BOX) is False
+    assert gg.pull_only_node({}, "linux", "mac-mini-2012", {"devices": "garbage"}) is True
+
+
+def test_pull_only_refusal_only_without_a_handed_in_token_and_never_for_a_person():
+    assert gg.pull_only_refusal(["pr", "list"], {}, pull_only=True, at_terminal=False)
+    assert gg.pull_only_refusal(["pr", "list"], {"GH_TOKEN": "x"}, pull_only=True, at_terminal=False) is None   # a run's own token (vm_run)
+    assert gg.pull_only_refusal(["pr", "list"], {"GITHUB_TOKEN": "x"}, pull_only=True, at_terminal=False) is None
+    assert gg.pull_only_refusal(["pr", "list"], {}, pull_only=True, at_terminal=True) is None                 # a person at the box
+    assert gg.pull_only_refusal(["pr", "list"], {}, pull_only=False, at_terminal=False) is None
+
+
+def test_the_refusal_names_the_mini_and_never_reads_as_sign_in_again():
+    msg = gg.pull_only_refusal(["pr", "list", "--repo", "G-Eskayo/marvin"], {}, pull_only=True, at_terminal=False)
+    assert "the Mini" in msg and "gh pr list" in msg
+    import re
+    assert not re.search(r"auth|log ?in|credential|token|401", msg, re.I)   # what error_log maps to "sign-in expired"
+
+
+def test_on_a_pull_only_node_the_real_gh_is_never_run(tmp_path):
+    realbin = _fake_gh(tmp_path, stdout="REAL GH RAN", stderr="To get started with GitHub CLI, please run:  gh auth login", rc=4)
+    p = _run(tmp_path, realbin, "pr", "list", env_extra={"MARVIN_PULL_ONLY": "1"})
+    assert p.returncode == 1
+    assert "REAL GH RAN" not in p.stdout and "gh auth login" not in p.stderr
+    assert "reads GitHub only through the Mini" in p.stderr

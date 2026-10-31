@@ -112,3 +112,95 @@ def test_every_dashboard_caller_sends_a_command_the_observer_key_allows(monkeypa
     for command in _callers(monkeypatch):
         r = run(command, home)
         assert "refused" not in r.stderr, f"observer key refuses {command!r}"
+
+
+# --- marvin#954: the box's GitHub view comes from the Mini's feed file, by name, and nothing near it ---
+
+def test_the_github_feed_is_readable_by_its_exact_name(home):
+    (home / ".claude" / "logs" / "github-feed.json").write_text('{"version": 1, "repos": {}}')
+    r = run("cat ~/.claude/logs/github-feed.json", home)
+    assert r.returncode == 0 and '"repos"' in r.stdout
+
+
+@pytest.mark.parametrize("command", [
+    "cat ~/.claude/logs/github-feed.json ~/.claude/.gh-token",
+    "cat ~/.claude/logs/github-feed.json; cat ~/.claude/.gh-token",
+    "cat ~/.claude/logs/../.gh-token",
+    "cat ~/.claude/.gh-token",
+    "cat ~/.claude/.oauth-token",
+    "cat ~/.claude/.anthropic-api-key",
+    "cat ~/.claude/logs/github-feed.json.tmp",
+    "cat ~/.claude/logs/*.json",
+])
+def test_nothing_beside_the_feed_is_readable(home, command):
+    (home / ".claude" / ".gh-token").write_text("SECRET-CANARY")
+    r = run(command, home)
+    assert r.returncode != 0 and "refused" in r.stderr and "SECRET-CANARY" not in r.stdout
+
+
+def test_the_box_copy_script_asks_only_for_listed_reads(home):
+    """marvin-observer-feed.sh's requests, as sent, are on the list (else the box silently loses a view)."""
+    import re
+    feed = (SCRIPT.parent / "marvin-observer-feed.sh").read_text()
+    names = re.findall(r"^copy ([\w.-]+\.json)", feed, re.M)
+    assert set(names) == {"health-status.json", "github-feed.json"}
+    for n in names:
+        (home / ".claude" / "logs" / n).write_text("{}")
+        assert "refused" not in run(f"cat ~/.claude/logs/{n}", home).stderr
+
+
+def test_the_box_copy_keeps_the_last_good_file_when_the_mini_sends_junk(tmp_path):
+    """Run the real copy script against a fake ssh: junk or a failed ssh never replaces a good copy."""
+    logs = tmp_path / ".claude" / "logs"
+    logs.mkdir(parents=True)
+    (logs / "github-feed.json").write_text('{"good": true}')
+    (logs / "health-status.json").write_text('{"good": true}')
+    fake = tmp_path / "bin"
+    fake.mkdir()
+    (fake / "ssh").write_text('#!/bin/sh\ncase "$*" in *github-feed*) echo \'{"repos": [trunc\' ;; *) echo \'{"new": 1}\' ;; esac\n')
+    (fake / "ssh").chmod(0o755)
+    venv = tmp_path / ".agents" / "venv" / "bin"
+    venv.mkdir(parents=True)
+    (venv / "python").symlink_to(os.path.realpath(__import__("sys").executable))
+    env = {"HOME": str(tmp_path), "PATH": f"{fake}:/usr/bin:/bin", "MARVIN_OBSERVER_HOST": "primary-mac"}
+    r = subprocess.run(["/bin/bash", str(SCRIPT.parent / "marvin-observer-feed.sh")], env=env, capture_output=True, text=True, timeout=30)
+    assert r.returncode == 1 and "could not copy github-feed.json" in r.stderr
+    assert (logs / "github-feed.json").read_text() == '{"good": true}'
+    assert (logs / "health-status.json").read_text().strip() == '{"new": 1}'
+    assert oct((logs / "health-status.json").stat().st_mode & 0o777) == "0o600"
+    assert sorted(p.name for p in logs.iterdir()) == ["github-feed.json", "health-status.json"]
+
+
+def test_the_box_copy_with_no_primary_in_the_registry_copies_nothing_and_says_so(tmp_path):
+    """No machine is named in the script (identity rule): with no registry to ask, it stops loudly, never guesses."""
+    logs = tmp_path / ".claude" / "logs"
+    logs.mkdir(parents=True)
+    (logs / "health-status.json").write_text('{"good": true}')
+    fake = tmp_path / "bin"
+    fake.mkdir()
+    (fake / "ssh").write_text('#!/bin/sh\necho called >> "$HOME/ssh-calls"\necho \'{"new": 1}\'\n')
+    (fake / "ssh").chmod(0o755)
+    venv = tmp_path / ".agents" / "venv" / "bin"
+    venv.mkdir(parents=True)
+    (venv / "python").symlink_to(os.path.realpath(__import__("sys").executable))
+    env = {"HOME": str(tmp_path), "PATH": f"{fake}:/usr/bin:/bin"}
+    r = subprocess.run(["/bin/bash", str(SCRIPT.parent / "marvin-observer-feed.sh")], env=env, capture_output=True, text=True, timeout=30)
+    assert r.returncode == 1 and "no primary Mac in the machine registry" in r.stderr
+    assert not (tmp_path / "ssh-calls").exists()
+    assert (logs / "health-status.json").read_text() == '{"good": true}'
+
+
+def test_the_box_copy_finds_the_primary_through_the_registry_lookup_it_runs(tmp_path):
+    """The exact lookup the script runs answers with the primary's Tailscale hostname from the synced registry."""
+    import json, re, sys
+    import scanner_role
+    (tmp_path / ".claude").mkdir()
+    primary = scanner_role.PRIMARY_PREFIX + "1"
+    (tmp_path / ".claude" / "marvin-network.json").write_text(json.dumps({"devices": {
+        primary: {"tailscale_hostname": "the-primary", "hardware_uuid": "P", "accepts": ["general"]},
+        "linux-box": {"tailscale_hostname": "the-box", "hardware_uuid": "B", "os": "linux", "accepts": ["test"]}}}))
+    feed = (SCRIPT.parent / "marvin-observer-feed.sh").read_text()
+    code = re.search(r"-c '([^']*scanner_role[^']*)'", feed).group(1)
+    r = subprocess.run([sys.executable, "-c", code], cwd=SCRIPT.parents[2], capture_output=True, text=True, timeout=30,
+                       env={"HOME": str(tmp_path), "PATH": "/usr/bin:/bin"})
+    assert r.stdout.strip() == "the-primary", r.stderr

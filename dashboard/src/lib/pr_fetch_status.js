@@ -13,7 +13,20 @@ function ago(ms) {
   return m < 1 ? 'just now' : m < 60 ? `${m} min ago` : `${Math.round(m / 60)} h ago`
 }
 
-export function prFetchBanner({ errors = [], projects = 0, lastGoodAt = null } = {}, now = Date.now()) {
+// marvin#954: on a pull-only node (mac-mini-2012) the list is read from the Mini's feed, not GitHub. `source` says how old
+// it is: a quiet line while fresh, amber when the Mini stopped answering, red when there is nothing from it at all.
+// Never "sign in": that machine holds no GitHub credential by design.
+function miniBanner(source, errors) {
+  if (source.state === 'fresh' && !errors.length) return { tone: 'info', text: source.text }
+  if (source.state === 'fresh') {
+    const names = errors.map((e) => String(e.repo).split('/').pop()).join(', ')
+    return { tone: 'amber', text: `${source.text} Not in the Mini's feed yet: ${names}.` }
+  }
+  return { tone: source.state === 'missing' ? 'red' : 'amber', text: source.text }
+}
+
+export function prFetchBanner({ errors = [], projects = 0, lastGoodAt = null, source = null } = {}, now = Date.now()) {
+  if (source?.from === 'mini') return miniBanner(source, errors)
   if (!errors.length) return null
   const causes = [...new Set(errors.map((e) => plainCause(e.message)))].join('; ')
   const all = projects > 0 && errors.length >= projects

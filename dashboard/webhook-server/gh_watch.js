@@ -28,7 +28,9 @@ export function newestIdentity(body) {
 export function createChangeDetector({ probe, onChange }) {
   const seen = new Map() // repo -> { etag, identity }
 
+  // Returns how many repos GitHub answered for (200 or 304): marvin#954's "the Mini is still looking" signal.
   async function tick(repos) {
+    let answered = 0
     for (const known of [...seen.keys()]) {
       if (!repos.includes(known)) seen.delete(known)
     }
@@ -40,12 +42,14 @@ export function createChangeDetector({ probe, onChange }) {
       } catch {
         continue // offline / rate-limited: keep the last state, try next tick
       }
+      if (res.status === 200 || res.status === 304) answered += 1
       if (res.status !== 200) continue // 304 = unchanged; anything else = ignore
       const identity = newestIdentity(res.body)
       if (identity === undefined) continue // not an issue list: keep the last state
       seen.set(repo, { etag: res.etag ?? previous?.etag, identity })
       if (previous !== undefined && previous.identity !== identity) onChange(repo)
     }
+    return answered
   }
 
   return { tick }
@@ -80,14 +84,16 @@ export function createTreeProbe(env = process.env, doFetch = fetch) {
   }
 }
 
-export function startChangeWatch({ getRepos, probe, ping, intervalMs = 20_000, setIntervalFn = setInterval }) {
+// onTick(answered): after each round, how many repos GitHub answered for (a throwing onTick never stops the watch).
+export function startChangeWatch({ getRepos, probe, ping, intervalMs = 20_000, setIntervalFn = setInterval, onTick = null }) {
   const detector = createChangeDetector({ probe, onChange: (repo) => ping(repo) })
   let running = false
   const run = async () => {
     if (running) return // a slow tick must not stack
     running = true
     try {
-      await detector.tick(getRepos())
+      const answered = await detector.tick(getRepos())
+      try { onTick?.(answered) } catch { /* the watch outlives its listener */ }
     } finally {
       running = false
     }
