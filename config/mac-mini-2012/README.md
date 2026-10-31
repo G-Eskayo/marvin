@@ -27,6 +27,10 @@ and `CONTEXT.md` "Third node". Every file the box needs outside the repos is in 
 - The test harness, declared in `~/.agents/requirements-test.txt` (the venv has no pip):
   `uv pip install --python ~/.agents/venv/bin/python -r ~/.agents/requirements-test.txt`. Re-run it when that file changes.
 - `marvin-do` (this folder) → `~/.local/bin/`: mirrors steps into the on-screen activity window.
+- Box trial tools (#932), no sudo: `rg` from Kali's own repo without installing the package
+  (`apt-get download ripgrep && dpkg-deb -x ripgrep_*.deb x && install -m 755 x/usr/bin/rg ~/.local/bin/`), and
+  `uv tool install graphifyy==<the Macs' version>`; then `cd ~/.agents && graphify update .` once (~90 s; git-ignored).
+  The retrieval questions are never stored here: `lib/box_trial.py retrieval` hands them in on stdin per run.
 
 ## 4. Repos (pull-only)
 - `git clone github-agents-ro:G-Eskayo/marvin.git ~/.agents`

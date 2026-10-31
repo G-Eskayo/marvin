@@ -15,6 +15,7 @@ sys.path.insert(0, str(LIB))
 
 import pytest
 pytest.importorskip("lm_eval")
+pytest.importorskip("mlx_lm")   # Apple silicon only: lm_eval alone is on mac-mini-2012 too, mlx_lm isn't (#932)
 from mlx_lm_eval_adapter import score_continuation
 
 
