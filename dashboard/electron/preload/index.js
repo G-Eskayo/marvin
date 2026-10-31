@@ -124,6 +124,10 @@ contextBridge.exposeInMainWorld('api', {
     setMergeFromDashboard: (repo, value) => ipcRenderer.invoke('health:setMergeFromDashboard', repo, value),
     setDispatch: (repo, value) => ipcRenderer.invoke('health:setDispatch', repo, value)
   },
+  accounts: {
+    list: (opts) => ipcRenderer.invoke('accounts:list', opts),
+    renew: (id, machine) => ipcRenderer.invoke('accounts:renew', id, machine)
+  },
   instance: {
     features: () => ipcRenderer.invoke('instance:features'),
     setFeature: (name, value) => ipcRenderer.invoke('instance:setFeature', name, value)

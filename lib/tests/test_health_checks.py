@@ -1610,6 +1610,20 @@ def test_the_sweep_runs_the_mirror_row_with_the_reachability_it_measured(monkeyp
     assert seen["reach"] == {"machine:mac-mini-2012": "green"}
 
 
+# ── marvin#974: accounts ride the health sweep's schedule ───────────────────────────────────────────────────────────
+
+def test_react_to_accounts_summarises_and_never_raises():
+    rows = [{"state": "works"}, {"state": "works"}, {"state": "expiring"}]
+    assert hc.react_to_accounts(lambda: {"accounts": rows}) == "1 expiring, 2 works"
+    assert hc.react_to_accounts(lambda: {}).startswith("skipped")
+    assert hc.react_to_accounts(lambda: 1 / 0).startswith("could not check accounts: ZeroDivisionError")
+
+
+def test_the_health_sweep_entry_point_runs_the_accounts_check():
+    import inspect
+    assert "react_to_accounts()" in inspect.getsource(hc._cli)
+
+
 # Found 2026-10-30 (#640 inventory): evaluate_machine_state emitted disk:activity (#765) with no label, so labels[key]
 # raised KeyError and the whole machine-state block (GitHub credential, builds, disk) became one "unknown" row.
 def test_every_machine_state_key_has_a_label_and_an_unlabelled_one_breaks_nothing(monkeypatch):

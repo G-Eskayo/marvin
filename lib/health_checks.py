@@ -1866,6 +1866,25 @@ def react_to_low_disk(checks: list[dict], run=None, stamp_path: Path | None = No
     return out
 
 
+def react_to_accounts(sweep=None) -> str:
+    """marvin#974: on this sweep's schedule (no timer of its own), check every account MARVIN depends on, on every
+    machine, write ~/.claude/logs/accounts-status.json and alert once per state change (lib/accounts.py). A one-line
+    summary for the run log. Never raises: an account check failing must not break the health sweep."""
+    try:
+        if sweep is None:
+            import accounts
+            sweep = accounts.sweep_and_alert
+        rows = (sweep() or {}).get("accounts", [])
+    except Exception as exc:  # noqa: BLE001
+        return f"could not check accounts: {type(exc).__name__}: {str(exc)[:160]}"
+    if not rows:
+        return "skipped (a pull-only node; the Mini checks this machine's accounts)"
+    counts: dict[str, int] = {}
+    for r in rows:
+        counts[r.get("state", "?")] = counts.get(r.get("state", "?"), 0) + 1
+    return ", ".join(f"{n} {k}" for k, n in sorted(counts.items()))
+
+
 import job_events  # noqa: E402  (run log shown in the dashboard's Health tab)
 
 
@@ -1893,6 +1912,8 @@ def _cli() -> None:
 
     for aid in react_to_low_disk(out.get("checks", [])):
         job_events.step("Disk first aid", f"{aid['device']}: {'ok' if aid['ok'] else 'failed'}, {aid['detail']}")
+
+    job_events.step("Accounts", react_to_accounts())
 
     if "--json" in sys.argv:
         print(json.dumps(out, indent=2))
