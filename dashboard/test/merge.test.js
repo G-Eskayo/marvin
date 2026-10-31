@@ -41,7 +41,8 @@ import {
   _defaultRunTests,
   execWithGroupTimeout,
   assertTargetsBase,
-  assertNotSentBack
+  assertNotSentBack,
+  rerunFailingTests
 } from '../webhook-server/merge.js'
 import { summarizeGateFailure } from '../webhook-server/failure.js'
 import { MergeFailure, refusal, summarizeGateFailure } from '../webhook-server/failure.js'
@@ -189,7 +190,7 @@ describe('mergePr', () => {
 
     // marvin's gate finishes a rebase whose only conflicts are its generated files (#225)
     // the gate's own exec (gateExec: its abort signal, no per-command limit), wrapping this one
-    expect(rebaseAndRetestFn).toHaveBeenCalledWith('pipeline/g-eskayo/marvin#5', expect.any(Function), expect.any(String), expect.any(Function), 'main', expect.any(Function), null, expect.any(Function), undefined, null)
+    expect(rebaseAndRetestFn).toHaveBeenCalledWith('pipeline/g-eskayo/marvin#5', expect.any(Function), expect.any(String), expect.any(Function), 'main', expect.any(Function), null, expect.any(Function), undefined, null, rerunFailingTests)
     expect(exec).toHaveBeenCalledWith('gh', ['pr', 'merge', 'https://github.com/G-Eskayo/marvin/pull/71', '--merge'])
     expect(reengage).not.toHaveBeenCalled()
     expect(result).toEqual({ merged: true, reengaged: false, reason: null })
