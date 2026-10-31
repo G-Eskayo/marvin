@@ -42,6 +42,7 @@ branch is kept, so every commit stays reachable. Ignored build output
 (.build, node_modules) is what the removal actually frees.
 """
 from __future__ import annotations
+import contextlib
 import json
 import os
 import re
@@ -49,6 +50,7 @@ import shutil
 import subprocess
 import sys
 import time
+import uuid
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Callable
@@ -78,7 +80,7 @@ GITHUB_REPO_RE = re.compile(r"github\.com[:/]([^/]+/[^/]+?)(?:\.git)?/?$")
 # folders (pytest_temp_roots); tests point it at a temp dir of their own (conftest).
 TMP_ROOTS: list[Path] | None = None
 PYTEST_TEMP_MIN_AGE_S = 3600
-PYTEST_BASETEMP_RE = re.compile(r"^pytest-\d+$")
+PYTEST_BASETEMP_RE = re.compile(r"^pytest-(?:\d+|ctl-[0-9a-f]+)$")
 
 # Every gh call below runs through gh_env (#866): launchd and ssh shells have a locked keychain, so plain gh answered
 # 401 and the sweep kept every worktree as "could not check GitHub".
@@ -277,6 +279,28 @@ def pytest_temp_roots() -> list[Path]:
         if r.is_dir() and r not in out:
             out.append(r)
     return out
+
+
+@contextlib.contextmanager
+def disposable_basetemp():
+    """A context manager that yields pytest CLI args [\"--basetemp\", path] for a fresh, non-colliding basetemp,
+    and unconditionally removes the path on exit. The path is created under the real pytest-of-<user> owner dir,
+    creating that dir if needed."""
+    owner_dir = None
+    path = None
+    try:
+        roots = pytest_temp_roots()
+        if not roots:
+            raise OSError("No temp root available")
+        owner_dir = roots[0] / f"pytest-of-{os.getenv('USER', 'user')}"
+        owner_dir.mkdir(parents=True, exist_ok=True)
+        hex_suffix = uuid.uuid4().hex[:8]
+        path = owner_dir / f"pytest-ctl-{hex_suffix}"
+        path.mkdir(parents=True, exist_ok=True)
+        yield ["--basetemp", str(path)]
+    finally:
+        if path and path.exists():
+            shutil.rmtree(path, ignore_errors=True)
 
 
 def _open_paths() -> set[str] | None:

@@ -1029,6 +1029,38 @@ def test_only_pytest_basetemps_are_touched(tmp_path):
     assert other.exists() and stray.exists()
 
 
+def test_disposable_basetemp_pattern_matches(tmp_path):
+    """PYTEST_BASETEMP_RE matches disposable basetemp pattern pytest-ctl-<hex>."""
+    root = _pytest_root(tmp_path)
+    # Create a disposable-style basetemp
+    d = root / "pytest-ctl-deadbeef"
+    (d / "test_x0").mkdir(parents=True)
+    (d / "test_x0" / "blob").write_bytes(b"x" * 2**20)
+    os.utime(d / "test_x0", (time.time() - 10 * HOUR,) * 2)
+    os.utime(d, (time.time() - 10 * HOUR,) * 2)
+    _basetemp(root, 2, hours_old=0.1)
+
+    r = _trim(tmp_path)
+    assert not d.exists(), "disposable basetemp should be removed"
+    assert sorted(r["removed"]) == ["pytest-2", "pytest-ctl-deadbeef"]
+
+
+def test_non_matching_patterns_are_kept(tmp_path):
+    """Folders that don't match the basetemp pattern are left alone."""
+    root = _pytest_root(tmp_path)
+    # Create a folder with pytest-like name that doesn't match
+    other = root / "pytest-current"
+    other.mkdir()
+    (other / "test").mkdir()
+    os.utime(other, (time.time() - 50 * HOUR,) * 2)
+
+    _basetemp(root, 1, hours_old=0.1)
+    r = _trim(tmp_path)
+
+    assert other.exists(), "pytest-current symlink target pattern should not be removed"
+    assert "pytest-current" not in r["removed"]
+
+
 def test_no_pytest_folder_is_nothing_to_do(tmp_path):
     (tmp_path / "T").mkdir()
     assert _trim(tmp_path)["freed_bytes"] == 0

@@ -123,8 +123,10 @@ def run_rule_tests(repo: Path, full: bool = False) -> tuple[bool, str]:
     nodes = [n for n in (RULE_FILES if full else RULE_TESTS) if (repo / n.split("::")[0]).is_file()]
     if not nodes:
         return True, "no rule tests in this repo"
-    p = subprocess.run([sys.executable, "-m", "pytest", "-q", "-p", "no:cacheprovider", *nodes], cwd=repo,
-                       capture_output=True, text=True, timeout=300)
+    import cleanup_sweep
+    with cleanup_sweep.disposable_basetemp() as basetemp_args:
+        p = subprocess.run([sys.executable, "-m", "pytest", "-q", "-p", "no:cacheprovider", *nodes, *basetemp_args], cwd=repo,
+                           capture_output=True, text=True, timeout=300)
     return p.returncode == 0, (p.stdout + p.stderr)[-4000:]
 
 

@@ -71,11 +71,13 @@ def _added_tests(clone: Path, base: str, head: str) -> list[str]:
 
 
 def _pytest(tree: Path, tests: list[str], python: str = sys.executable, run=subprocess.run) -> int:
-    try:
-        return run([python, "-m", "pytest", "-q", "-x", "-p", "no:cacheprovider", *tests], cwd=tree,
-                   capture_output=True, text=True, timeout=TEST_TIMEOUT_S).returncode
-    except subprocess.TimeoutExpired:
-        return -1
+    import cleanup_sweep
+    with cleanup_sweep.disposable_basetemp() as basetemp_args:
+        try:
+            return run([python, "-m", "pytest", "-q", "-x", "-p", "no:cacheprovider", *tests, *basetemp_args], cwd=tree,
+                       capture_output=True, text=True, timeout=TEST_TIMEOUT_S).returncode
+        except subprocess.TimeoutExpired:
+            return -1
 
 
 def regression_test_check(clone: Path, base: str, head: str, pytest=_pytest) -> dict:
