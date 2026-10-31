@@ -221,7 +221,7 @@ def test_chat_helpers_are_recorded_for_people_only_and_capped_short():
 
 
 # Portable paths (2026-10-30): settings.json is synced to every machine, mac-mini-2012's home is /home/marvin, and
-# `install` on the Mini (2026-10-25) put /Users/gileskayo back into 20 hook commands, so every hook failed on Linux.
+# `install` on the Mini (2026-10-25) put the Mac's own home folder back into 20 hook commands, so every hook failed on Linux.
 
 def test_installed_hook_commands_name_no_home_folder_and_expand_to_this_machines(tmp_path, monkeypatch):
     import os
