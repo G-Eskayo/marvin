@@ -83,6 +83,12 @@ const approveFlow = createApproveFlow({
   },
   // The list must not keep showing a PR that just merged: it leaves at once, and GitHub confirms in the background.
   after: (url, result) => {
+    // marvin#231: queued on the merge server, nothing merged yet: the list is read again so the card shows its place.
+    if (result?.mergeQueued) {
+      githubChanged(`github:${repoFromPrUrl(url)}`)
+      mainWindow?.webContents.send('mr:refresh')
+      return
+    }
     if (result?.merged) mrActions.merged(url)
     else mrActions.reengaged(url)
     clearReworkCache()
@@ -951,6 +957,13 @@ function registerMrReviewHandlers() {
     const res = await fetch(MR_WEBHOOK_URL.replace(/\/approve$/, '/rebase-status'), { signal: AbortSignal.timeout(3000) })
     return res.ok ? res.json() : {}
   }
+  // marvin#231: the merge queue lives with the merge server (the Mini); each card's line is worked out from it here.
+  const getMergeQueue = async () => {
+    const res = await fetch(MR_WEBHOOK_URL.replace(/\/approve$/, '/merge-queue'), { signal: AbortSignal.timeout(3000) })
+    return res.ok ? res.json() : null
+  }
+  // A repo's open tickets from the boards already in memory (main-red, incident, sent back): no extra GitHub read.
+  const boardIssuesFor = (repo) => (remembered('board').find((b) => b.repo === repo)?.value?.issues || []).filter((i) => i && i.state === 'OPEN')
   // Safety net for stacked PRs whose parent merged without the post-merge move (stack_retarget.js). Reads the PR list
   // already in memory; asks GitHub only about an orphaned PR, at most every 5 minutes each.
   const stackRetarget = createStackRetarget({
@@ -986,12 +999,14 @@ function registerMrReviewHandlers() {
       reworkStatus: rework ? async () => rework : null,
       rebaseStatus: getRebaseStatus,
       autoMergeShadow: getAutoMergeShadow,
-      uiPathsFor: (repo) => readUiPaths(repo)
+      uiPathsFor: (repo) => readUiPaths(repo),
+      mergeQueue: getMergeQueue,
+      issuesFor: boardIssuesFor
     })
     return cards.find((p) => p.url === url) || null
   }
   const mrList = coalesce(
-    () => listPipelinePrs(fixturePrs || listOpenPrs, { canMerge: (repo) => canMergeFromDashboard(repo, readMergeableRepos()), sentBackTickets, reworkStatus: reworkFromMemory, rebaseStatus: getRebaseStatus, closedTickets, autoMergeShadow: getAutoMergeShadow, uiPathsFor: (repo) => readUiPaths(repo) }),
+    () => listPipelinePrs(fixturePrs || listOpenPrs, { canMerge: (repo) => canMergeFromDashboard(repo, readMergeableRepos()), sentBackTickets, reworkStatus: reworkFromMemory, rebaseStatus: getRebaseStatus, closedTickets, autoMergeShadow: getAutoMergeShadow, uiPathsFor: (repo) => readUiPaths(repo), mergeQueue: getMergeQueue, issuesFor: boardIssuesFor }),
     () => `${githubState.localSeq()}:${githubState._genOf(null)}`
   )
   ipcMain.handle('mr:list', () => {

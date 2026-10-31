@@ -4,8 +4,8 @@
 // contradicting each other ("nothing to approve" beside "approve once checks finish", 2026-10-06). Now the
 // conditions are ranked and the first one that applies is the whole story: one headline, one explanation, and
 // only the buttons that make sense. A button that cannot be used is hidden, not left looking clickable; the
-// exception is a PR that is only WAITING (checks running, an older PR first), where a disabled Approve tells
-// you it is coming.
+// exception is a PR that is only WAITING (checks running, decisions to answer), where a disabled Approve tells
+// you it is coming. Order is the merge queue's (marvin#231): a stacked PR can be approved, and waits in the queue.
 
 // Refusals the screen already explains with a state of its own. If one of these is left over from an earlier
 // click it is stale as soon as the state changes, so it is never shown as an error.
@@ -13,7 +13,6 @@ const MIRRORED_REFUSALS = /^(SENT_BACK|CI_PENDING|CI_FAILED|WRONG_BASE|NO_UI_EVI
 
 export function describePrState(pr, { status = 'idle', errorMessage = null, progress = false, machine = null } = {}) {
   const ci = pr.checks || { state: 'none', failing: [], pending: [] }
-  const waiting = pr.waitingOn || []
   const base = (kind, tone, headline, detail, approve, deny, extra = {}) => ({ kind, tone, headline, detail, approve, deny, actions: [], note: null, rework: null, checkProgress: false, ...extra })
   const main = pr.baseProblem?.expected || 'main'
   // Each check's own row is known (marvin#555): the card can show the progress bar and per-check drill-down.
@@ -73,6 +72,16 @@ export function describePrState(pr, { status = 'idle', errorMessage = null, prog
       `${errorMessage || 'The merge gate rejected it.'} The ticket will be rebuilt and this PR updated.`, 'hidden', 'hidden')
   }
 
+  // marvin#231: approved and in the merge queue on the merge Mac (one queue for both Macs and the phone). It merges by
+  // itself in its turn; the line under the title says where it is or what it waits for. Deny still takes it out.
+  const mq = pr.mergeQueue
+  if (mq?.state === 'running') {
+    return base('merging', 'working', 'Merging…', 'You can leave this screen; it carries on.', 'hidden', 'hidden')
+  }
+  if (mq?.queued) {
+    return base('in-queue', 'working', 'Approved: in the merge queue', null, 'hidden', 'enabled')
+  }
+
   // What the post-merge rebase found (#225): {state: clean | conflict | tests_failed | error, after, files}.
   const rb = pr.rebase || null
 
@@ -123,10 +132,10 @@ export function describePrState(pr, { status = 'idle', errorMessage = null, prog
     // Stacked on another open PR: it waits for that one, and is moved onto main automatically when it merges.
     const b = pr.baseProblem
     const parent = `#${b.parent.number}${b.parent.title ? ` ${b.parent.title}` : ''}`
+    // marvin#231: Approve queues it; the queue merges ${parent} first, then moves this one onto main and retests it.
     return base('stacked', 'wait', `Stacked on ${parent}`,
-      `It builds on ${parent}. Approve that one first: when it merges, this PR is moved onto ${b.expected} automatically, ` +
-        `rebased and retested, and Approve becomes available here. Until then merging it would not put the work on ${b.expected}.`,
-      'disabled', 'enabled')
+      `It builds on #${b.parent.number}. Approving queues it: it merges after #${b.parent.number}, moved onto ${b.expected}, rebased and retested.`,
+      'enabled', 'enabled')
   }
 
   if (pr.baseProblem) {
@@ -137,11 +146,8 @@ export function describePrState(pr, { status = 'idle', errorMessage = null, prog
       'hidden', 'enabled')
   }
 
-  if (waiting.length) {
-    const first = waiting.map((w) => `#${w.number}`).join(', ')
-    return base('waiting-order', 'wait', `Waiting for ${first} to merge first`,
-      `It changes the same files (${(waiting[0].shared || []).slice(0, 2).join(', ')}), so merging this one now would conflict.`, 'disabled', 'enabled')
-  }
+  // An older PR changing the same files no longer holds this one (marvin#231): Approve queues it, and the queue rebases
+  // and retests it on the main of its turn; a conflict then goes to the resolver.
 
   if (ci.state === 'pending') {
     // Gil, 2026-10-21: with each check known, the progress view (N of M done, what's running, last checked) replaces

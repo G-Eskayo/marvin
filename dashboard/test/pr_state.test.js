@@ -75,10 +75,22 @@ describe('describePrState: one headline, only the buttons that make sense', () =
     expect(state({}).checkProgress).toBe(false)
   })
 
-  it('waiting on an older PR names it', () => {
+  it('marvin#231: an older PR on the same files no longer holds Approve; the merge queue orders them', () => {
     const s = state({ waitingOn: [{ number: 29, shared: ['ContentView.swift'] }] })
-    expect(s).toMatchObject({ kind: 'waiting-order', approve: 'disabled' })
-    expect(s.headline).toMatch(/#29/)
+    expect(s).toMatchObject({ kind: 'ready', approve: 'enabled' })
+  })
+
+  it('marvin#231: a queued PR says it is in the merge queue, offers no second Approve, and keeps Deny', () => {
+    const q = state({ mergeQueue: { queued: true, state: 'waiting', reason: "waits for #936 (it's built on it)" } })
+    expect(q).toMatchObject({ kind: 'in-queue', tone: 'working', headline: 'Approved: in the merge queue', approve: 'hidden', deny: 'enabled' })
+    expect(state({ mergeQueue: { queued: true, state: 'queued', reason: 'queued · 2nd · starts after #971' } }).kind).toBe('in-queue')
+    expect(state({ mergeQueue: { queued: true, state: 'running', reason: 'merging now' } })).toMatchObject({ kind: 'merging', approve: 'hidden', deny: 'hidden' })
+    // Not approved: the line is only a line; the card's own state is unchanged.
+    expect(state({ mergeQueue: { queued: false, state: 'waiting', reason: "your answers aren't built yet" } }).kind).toBe('ready')
+  })
+
+  it('a queued PR that was sent back meanwhile says sent back, not queued', () => {
+    expect(state({ sentBack: true, mergeQueue: { queued: true, state: 'waiting', reason: 'sent back for rework' } }).kind).toBe('sent-back')
   })
 
   it('a wrong base with no open parent PR is blocked and says what to do', () => {
@@ -215,11 +227,11 @@ describe('describePrState: post-merge rebase', () => {
     expect(v.detail).toContain('#229')
   })
 
-  it('a PR stacked on an open parent is waiting, not an error, and says it moves onto main by itself', () => {
+  it('a PR stacked on an open parent is waiting, not an error, and can be approved: the queue merges its parent first (marvin#231)', () => {
     const s = state({ baseProblem: { base: 'ticket/215-parent', expected: 'main', parent: { number: 307, title: 'North stars single source' } } })
-    expect(s).toMatchObject({ kind: 'stacked', tone: 'wait', approve: 'disabled' })
+    expect(s).toMatchObject({ kind: 'stacked', tone: 'wait', approve: 'enabled' })
     expect(s.headline).toContain('#307 North stars single source')
-    expect(s.detail).toMatch(/moved onto main automatically/)
+    expect(s.detail).toMatch(/Approving queues it: it merges after #307/)
   })
 })
 

@@ -56,8 +56,9 @@ describe('waitingOn: merge older PRs that touch the same files first', () => {
 
 describe('assertInOrder', () => {
   const prs = [pr(29, ['x']), pr(30, ['x'])]
-  it('throws a message naming what to merge first', () => {
-    expect(() => assertInOrder(prs, prs[1].url)).toThrow(/merge #29 first/i)
+  // marvin#231: sharing files with an older PR no longer refuses the click; Approve queues it (merge_order.js).
+  it('lets a PR that shares files with an older one through: the merge queue orders them', () => {
+    expect(() => assertInOrder(prs, prs[1].url)).not.toThrow()
   })
   it('passes for the head of the line and for a PR that is not listed', () => {
     expect(() => assertInOrder(prs, prs[0].url)).not.toThrow()
@@ -91,10 +92,11 @@ describe('baseProblem: a PR must target the base branch', () => {
     expect(r.base).toBe('feature/a')
     expect(r.parent).toBeNull()
   })
-  it('assertInOrder refuses it with the reason', () => {
+  it('assertInOrder lets a stacked PR through (the queue merges its parent first), and refuses a side branch with no PR', () => {
     const prs = [p(7, 'main', 'feature/a'), p(8, 'feature/a', 'feature/b')]
-    expect(() => assertInOrder(prs, 'u8')).toThrow(/targets "feature\/a", not main/)
-    expect(() => assertInOrder(prs, 'u8')).toThrow(/#7/)
+    expect(() => assertInOrder(prs, 'u8')).not.toThrow()
+    const orphan = [p(8, 'feature/a', 'feature/b')]
+    expect(() => assertInOrder(orphan, 'u8')).toThrow(/targets "feature\/a", not main/)
   })
   it('the MR list carries it', async () => {
     const raw = [{ ...p(8, 'feature/a', 'feature/b'), body: '', files: [] }]
@@ -140,13 +142,13 @@ describe('prsForOrderCheck: the Approve-time order check sees sent-back PRs the 
     const prs = await prsForOrderCheck(raw(), async () => new Set(['G-Eskayo/marvin#161']))
     expect(() => assertInOrder(prs, 'https://github.com/G-Eskayo/marvin/pull/209')).not.toThrow()
   })
-  it('still waits on the older PR when its ticket was not sent back', async () => {
+  it('marvin#231: an older PR on the same files no longer refuses the click either way; the queue orders them', async () => {
     const prs = await prsForOrderCheck(raw(), async () => new Set())
-    expect(() => assertInOrder(prs, 'https://github.com/G-Eskayo/marvin/pull/209')).toThrow(/Merge #208 first/)
+    expect(() => assertInOrder(prs, 'https://github.com/G-Eskayo/marvin/pull/209')).not.toThrow()
   })
-  it('a failing sent-back lookup falls back to the plain order check rather than throwing', async () => {
+  it('a failing sent-back lookup still never throws', async () => {
     const prs = await prsForOrderCheck(raw(), async () => { throw new Error('gh down') })
-    expect(() => assertInOrder(prs, 'https://github.com/G-Eskayo/marvin/pull/209')).toThrow(/Merge #208 first/)
+    expect(() => assertInOrder(prs, 'https://github.com/G-Eskayo/marvin/pull/209')).not.toThrow()
   })
 })
 
