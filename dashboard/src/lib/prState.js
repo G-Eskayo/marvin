@@ -102,7 +102,7 @@ export function describePrState(pr, { status = 'idle', errorMessage = null } = {
   if (waiting.length) {
     const first = waiting.map((w) => `#${w.number}`).join(', ')
     return base('waiting-order', 'wait', `Waiting for ${first} to merge first`,
-      `It changes the same files (${(waiting[0].shared || []).slice(0, 2).join(', ')}), so merging this one now would conflict.`, 'disabled', 'enabled')
+      `It changes the same files (${(waiting[0].shared || []).slice(0, 2).join(', ')}). Click Approve to queue it; it will merge when dependencies are met.`, 'enabled', 'enabled')
   }
 
   if (ci.state === 'pending') {

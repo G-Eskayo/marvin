@@ -7,7 +7,7 @@ export function createMergeOps({ maxMergingMs = 45 * 60_000 } = {}) {
   // and a new attempt may start.
   const live = (url, now) => {
     const o = ops.get(url)
-    if (o && o.state === 'merging' && now - o.since > maxMergingMs) {
+    if (o && (o.state === 'merging' || o.state === 'queued') && now - o.since > maxMergingMs) {
       const expired = { state: 'error', reason: 'The merge did not finish within the time limit and was given up on. Approve again to retry.' }
       ops.set(url, expired)
       return expired
@@ -16,9 +16,12 @@ export function createMergeOps({ maxMergingMs = 45 * 60_000 } = {}) {
   }
   return {
     start(url, now = Date.now()) {
-      if (live(url, now)?.state === 'merging') return false
+      if (live(url, now)?.state === 'merging' || live(url, now)?.state === 'queued') return false
       ops.set(url, { state: 'merging', since: now })
       return true
+    },
+    queuePr(url, position, now = Date.now()) {
+      ops.set(url, { state: 'queued', position, since: now })
     },
     finish(url, result) {
       if (result?.reengaged) ops.set(url, { state: 'reengaged', reason: result.reason })

@@ -19,6 +19,7 @@ import { promisify } from 'util'
 import { createPortfolio } from '../electron/main/portfolio.js'
 import { handlePortfolioRequest } from '../electron/main/portfolio_remote.js'
 import { resolveServiceDefaults } from '../electron/main/device_identity.js'
+import { enqueue, status as queueStatus } from './merge_queue.js'
 
 // Authenticate gh/git children from the pipeline's shared credential file (see gh_auth.js).
 const ghTokenSource = loadGhToken()
@@ -131,6 +132,14 @@ const server = createServer(async (req, res) => {
     return
   }
 
+  if (req.method === 'GET' && req.url === '/queue-status') {
+    // Return merge queue status for all repos
+    const repos = readRegistry().map(b => b.repo)
+    const allQueues = repos.map(repo => queueStatus(repo))
+    res.writeHead(200, { 'Content-Type': 'application/json' }).end(JSON.stringify({ queues: allQueues }))
+    return
+  }
+
   if (req.method !== 'POST' || (req.url !== '/approve' && req.url !== '/deny')) {
     res.writeHead(404).end()
     return
@@ -151,14 +160,12 @@ const server = createServer(async (req, res) => {
 
   if (isApprove) {
     try {
-      // mergePr() returning normally covers both a real merge (merged:
-      // true) and G-Eskayo/marvin#91's merge-time gate routing the ticket
-      // to re-engagement instead (merged: false, reengaged: true) -- the
-      // latter is an expected outcome, not a server error, so it gets a
-      // 200 with the real reason attached rather than a bare 500.
-      const result = await mergePr(payload.pr_url, undefined, undefined, undefined, undefined, undefined, undefined, undefined, { baselineFails: (names) => baselineFailsOnMain(names) })
+      // enqueue() now handles the merge, returns fast with { queued: true, position }
+      // or a hard refusal with { queued: false, error, code, ... }
+      const result = await enqueue(payload.pr_url, promisify(execFile))
       res.writeHead(200, { 'Content-Type': 'application/json' }).end(JSON.stringify(result))
     } catch (err) {
+      // Hard refusal from enqueue (targets base, sent back check)
       // Structured: code, stage, retryable, action, remediation -- so the dashboard can say
       // what broke and the pipeline can act on it (see failure.js).
       const { status, body } = failureResponse(err)

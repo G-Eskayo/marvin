@@ -657,34 +657,39 @@ function registerMrReviewHandlers() {
   // the renderer -- a native OS-level confirm dialog can't be spoofed by a
   // fast double-click the way a custom in-page confirm affordance could.
   ipcMain.handle('mr:approve', async (_event, { number, url }) => {
-    // Checked here, not just greyed out in the UI, so a stale screen can't skip it. Sent-back PRs are marked the same way
-    // the list marks them, or a newer PR waits forever on one that can't merge (marvin #209). A refusal is recorded (#215).
+    // Checked here, not just greyed out in the UI, so a stale screen can't skip it. A refusal is recorded (#215).
     await guardApprove(url, {
       assertMergeable,
       loadPrs: async () => prsForOrderCheck(await listOpenPrs({ fresh: true }), sentBackTickets),
       record: recordRefusal
     })
-    if (!mergeOps.start(url)) return { merged: false, cancelled: true, alreadyMerging: true }
+    if (!mergeOps.start(url)) return { queued: false, cancelled: true, alreadyMerging: true }
     try {
       // The Approve & Merge click is the decision. The native popup is opt-in (prefs.json: confirmMerge) -- the
-      // duplicate-start guard above, the merge gate's retest and the base/order checks are what protect a stray click.
+      // duplicate-start guard above, and the merge gate's retest are what protect a stray click.
       if (readPrefs(join(app.getPath('userData'), 'prefs.json')).confirmMerge) {
         const { response } = await dialog.showMessageBox(mainWindow, {
           type: 'warning',
-          buttons: ['Cancel', 'Merge PR'],
+          buttons: ['Cancel', 'Queue for Merge'],
           defaultId: 0,
           cancelId: 0,
-          message: `Merge PR #${number}?`,
-          detail: `This fires the approval webhook and merges ${url} via gh pr merge. This can't be undone from here.`
+          message: `Queue PR #${number} for merge?`,
+          detail: `This enqueues ${url} in the merge queue. It will merge when all dependencies are met. This can't be undone from here.`
         })
         if (response !== 1) {
           mergeOps.cancel(url)
-          return { merged: false, cancelled: true }
+          return { queued: false, cancelled: true }
         }
       }
       const result = await approveMr(url, MR_WEBHOOK_URL, postJson)
-      mergeOps.finish(url, result)
-      githubChanged(null)  // the list must not keep showing a PR that just merged
+      // result is now { queued: true, position } or a hard refusal
+      if (result.queued) {
+        // Mark as queued in mergeOps (no finish, keep state until merge completes)
+        mergeOps.queuePr(url, result.position)
+      } else {
+        mergeOps.fail(url, result.error || 'Failed to enqueue')
+      }
+      githubChanged(null)  // refresh the list
       clearReworkCache()
       return { ...result, cancelled: false }
     } catch (err) {
