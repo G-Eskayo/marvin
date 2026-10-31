@@ -1528,9 +1528,28 @@ Mac has no push channel. Gil applies the hooks on each Mac with `marvin_hooks.py
 
 ## Merge order and the sent-back loop (2026-10-05)
 
-- **Order:** a PR waits on every OLDER open PR in its repo that shares a changed file (`dashboard/electron/main/pr_order.js`). Derived from the PRs' file lists each time; the MR list shows it, Approve & Merge is disabled with the reason, and `mr:approve` re-checks it in the main process so a stale screen cannot skip it. Deny stays available.
+- **Order:** ~~a PR waits on every OLDER open PR in its repo that shares a changed file; Approve is disabled with the reason.~~ Replaced 2026-10-30 by the **merge queue** (below, marvin#231): Approve is no longer refused for order; the queue decides each PR's turn.
 - **Merge state survives navigation:** `merge_ops.js` holds each PR's merging / re-engaged / error state in the main process.
 - **Sent-back loop (closed, Gil chose the in-place option):** a `needs-reengagement` ticket is re-dispatched even though its first attempt's PR/branch/rescue ref exist (the existing-work guard exempts those, but not commits already on the base branch). The executor rebuilds `pipeline/<ref>` from the current main, `mr_raiser` pushes with `--force-with-lease` (pipeline branches only; the old work is kept under `refs/rescue/`), and an already-open PR is updated and commented instead of duplicated. Opening the PR clears `needs-reengagement`. After 3 claims a ticket is left for a person (`MAX_REENGAGE_ATTEMPTS`).
+
+## Merge queue (decided with Gil 2026-10-30, marvin#231)
+
+- **Merge queue**: one per repo, kept by the merge server, so the desktop and the phone approve into the same one.
+  Approving a PR puts it in the queue instead of merging it on the spot; the queue merges its PRs one at a time, each
+  rebased onto the main of its turn and retested, with no further clicks. Approving a PR already queued keeps its place;
+  new commits on a queued PR keep its place too, and the new commit is what gets tested. A PR that fails leaves the
+  queue with its reason; one that conflicts stays queued while MARVIN resolves the conflict.
+- **Merge order**: the queue's order, worked out by MARVIN, never listed by the owner. A stacked PR goes after the PR it
+  is built on; then the order approved. While main is red, only a PR that fixes main goes.
+- **Main-red fix**: a PR that closes the ticket saying main is red (or an incident ticket). It jumps the queue; every
+  other PR waits for it.
+- **Queue line**: the one line under a PR's title in MR Review saying where it stands: its place ("queued · 2nd · starts
+  after #971") or what it waits for ("waits for #936 (it's built on it)", "main is red · waits for #986", "checks
+  failing: …", "conflicts with main after #970 · MARVIN is fixing it"). A PR's own blockers are said before what it
+  waits for, since they need doing whatever merges first. Written so the next-step view (#860) can read it.
+- **Answers not built yet**: the owner answered a PR's Decisions, but no reply says they were acted on and no work
+  commit came after them (merging main in doesn't count). It is MARVIN's move: the PR never merges like that, and
+  approving it asks for the follow-up at once.
 
 ## clarity-captions app-build check is now required (2026-10-05)
 

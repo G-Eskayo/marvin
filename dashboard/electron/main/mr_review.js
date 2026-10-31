@@ -6,6 +6,7 @@ import { parsePrImages } from './pr_images.js'
 import { detectMockups } from './mockups.js'
 import { prSummary } from './pr_summary.js'
 import { summarizeDecisions, vagueness } from '../../webhook-server/decisions.js'
+import { mergeOrder, enrichForOrder, mainStateFrom } from '../../webhook-server/merge_order.js'
 
 // Reads open PRs and identifies which follow the MR pipeline's evidence
 // schema (G-Eskayo/marvin#72, ADR 0024) -- one fixed, structured PR body
@@ -272,7 +273,35 @@ function needsImages(pr, uiPathsFor) {
   return unpinned.length ? { files, unpinned } : null
 }
 
-export async function listPipelinePrs(listOpenPrs, { canMerge = canMergeFromDashboard, sentBackTickets = null, reworkStatus = null, rebaseStatus = null, closedTickets = null, autoMergeShadow = null, uiPathsFor = () => [] } = {}) {
+// marvin#231: each PR's line from the merge queue (queued and where, or what it waits for), worked out here by the same
+// mergeOrder() the merge server runs, from this list plus what only the merge server knows (GET /merge-queue: the queue
+// itself, answered-but-unbuilt Decisions, failed conflict repairs, main's health) and the boards' open tickets (main-red).
+// Best effort: without the merge server, no PR is shown queued, and its own blockers still are.
+export function queueLines(prs, { queue = null, issuesFor = () => [], sentBackKeys = new Set(), rebased = {} } = {}) {
+  const facts = queue?.facts || {}
+  const unbuilt = new Set(Array.isArray(facts.unbuilt) ? facts.unbuilt : [])
+  const out = {}
+  const byRepo = new Map()
+  for (const p of prs) {
+    const repo = p.repo || MARVIN_REPO
+    if (!byRepo.has(repo)) byRepo.set(repo, [])
+    byRepo.get(repo).push({ ...p, repo })
+  }
+  for (const [repo, list] of byRepo) {
+    // The boards' tickets when this Mac has them in memory, else the merge server's list of main-red/incident tickets.
+    let issues = []
+    try { issues = issuesFor(repo) || [] } catch { issues = [] }
+    if (!issues.length && Array.isArray(facts.tickets?.[repo])) issues = facts.tickets[repo]
+    const enriched = enrichForOrder(list, { repo, issues, unbuilt, repairFailed: facts.repairFailed || {}, rebaseStatus: rebased, sentBack: sentBackKeys })
+    const main = mainStateFrom({ issues, health: repo === MARVIN_REPO ? facts.health || null : null })
+    const q = queue?.repos?.[repo] || {}
+    const order = mergeOrder(enriched, main, { items: q.items || [], failed: q.failed || {}, lastMerged: q.lastMerged ?? null, running: q.running || null })
+    Object.assign(out, order.entries)
+  }
+  return out
+}
+
+export async function listPipelinePrs(listOpenPrs, { canMerge = canMergeFromDashboard, sentBackTickets = null, reworkStatus = null, rebaseStatus = null, closedTickets = null, autoMergeShadow = null, uiPathsFor = () => [], mergeQueue = null, issuesFor = null } = {}) {
   const prs = await listOpenPrs()
   // The webhook's post-merge rebase results, by PR url (#225). Best effort: without them a card just doesn't say.
   let rebased = {}
@@ -324,6 +353,13 @@ export async function listPipelinePrs(listOpenPrs, { canMerge = canMergeFromDash
   // Each PR with the facts that decide whether it can be waited on (sent back for rework; conflicts), so merge order skips the
   // ones that cannot merge as they stand.
   const withState = markBlocked(markSentBack(prs, sentBackKeys), uiPathsFor)
+  // The merge queue's line for each PR (marvin#231). Best effort, like the rebase results.
+  let lines = {}
+  if (mergeQueue) {
+    let queue = null
+    try { queue = await mergeQueue() } catch { queue = null }
+    try { lines = queueLines(prs, { queue, issuesFor: issuesFor || (() => []), sentBackKeys, rebased }) } catch { lines = {} }
+  }
   return prs.map((pr) => {
     const ticketRef = parseTicketRef(pr.body || '')
     const hasSchema = hasEvidenceSchema(pr.body)
@@ -358,6 +394,8 @@ export async function listPipelinePrs(listOpenPrs, { canMerge = canMergeFromDash
       mockups: detectMockups(pr.body || '', pr.files),
       baseProblem: baseProblem(prs.map((p) => ({ ...p, repo: p.repo || MARVIN_REPO })), { ...pr, repo: pr.repo || MARVIN_REPO }),
       waitingOn: waitingOn(withState, { ...pr, repo: pr.repo || MARVIN_REPO }),
+      // marvin#231: { queued, state, tone, reason, position, waitsFor } from the merge queue, or null.
+      mergeQueue: lines[pr.url] || null,
       hasSchema,
       // The ticket was sent back for rework (marvin #129): approving would merge work that was just rejected.
       sentBack: ticketRef !== null && sentBackKeys.has(`${pr.repo || MARVIN_REPO}#${ticketRef}`),

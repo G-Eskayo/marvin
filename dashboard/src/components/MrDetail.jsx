@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react'
-import { EvidenceTable, ApproveDenyActions, CorrectionNotice } from './MrReview.jsx'
+import { EvidenceTable, ApproveDenyActions, CorrectionNotice, QueueLine } from './MrReview.jsx'
 import { projectIdOf } from '../lib/projects.js'
 import StageStrip from './StageStrip.jsx'
 import Related, { useRelated } from './Related.jsx'
@@ -198,6 +198,7 @@ export default function MrDetail({ pr, onBack, onApproved, onDenied, onOpenDocs,
           <h2 className="font-mono text-lg font-semibold text-white">
             #{pr.number} — {pr.title}
           </h2>
+          <QueueLine entry={pr.mergeQueue} className="mt-0.5" />
           {pr.hasSchema && pr.evidence.subsystem && (
             <p className="text-sm text-neutral-500">
               {pr.evidence.subsystem} — {pr.evidence.verdict}

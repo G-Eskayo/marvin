@@ -30,6 +30,7 @@ every duplicate for the same comment except the lowest-numbered one, so a race s
 
     owner_decisions.py waiting [--json]   # PRs whose decisions are in and not yet acted on (not "Needs Gil")
     owner_decisions.py scan [--dry-run]   # what the hourly scan runs: file / close follow-ups
+    owner_decisions.py request --repo R --pr N   # the merge queue (marvin#231): file this PR's follow-up now
 """
 from __future__ import annotations
 
@@ -49,6 +50,7 @@ ADDRESSED_MARKER = "<!-- marvin:decisions-addressed -->"
 FOLLOWUP_LABEL = "owner-decisions"
 DEFAULT_GRACE_HOURS = 4.0
 COMMENTS_PER_PR = 30
+COMMITS_PER_PR = 20
 MAX_PAGES = 5
 _MARKER_RE = re.compile(r"<!-- marvin:owner-decisions pr=(\d+) comment=(\d+) since=(\S+) question=(yes|no) -->")
 _JSON_BLOCK_RE = re.compile(r"```marvin-decisions[ \t]*\n(.*?)\n```", re.S)
@@ -60,7 +62,7 @@ query($q: String!, $f: String!, $after: String) {
     nodes { ... on PullRequest {
       number title url headRefName
       repository { nameWithOwner }
-      commits(last: 1) { nodes { commit { committedDate } } }
+      commits(last: %d) { nodes { commit { committedDate authoredDate parents { totalCount } } } }
       comments(last: %d) { nodes { databaseId url createdAt body author { login } } }
     } }
   }
@@ -68,7 +70,7 @@ query($q: String!, $f: String!, $after: String) {
     nodes { ... on Issue { number title url state stateReason body repository { nameWithOwner } } }
   }
 }
-""" % COMMENTS_PER_PR
+""" % (COMMITS_PER_PR, COMMENTS_PER_PR)
 
 
 def grace_hours(env=None) -> float:
@@ -154,6 +156,10 @@ def pr_status(pr: dict, now: datetime, grace: float, completed_comments: set[int
     # A commit alone tells the owner nothing (marvin #733: on clarity-captions #155 he couldn't tell whether the
     # screenshots were redone), so only a marked reply or a completed follow-up counts; the commit is noted for the ask.
     committed_since = bool(last_commit and last_commit > since)
+    # The merge queue's "your answers aren't built yet" (marvin#231): no work commit after the answers. A list without
+    # last_work_at (an older caller) falls back to the last commit.
+    last_work = _ts(pr["last_work_at"]) if "last_work_at" in pr else last_commit
+    built_since = bool(last_work and last_work > since)
     by = None
     if any(_login(c) == owner and ADDRESSED_MARKER in (c.get("body") or "") and _ts(c["createdAt"]) > since
              for c in comments):
@@ -165,7 +171,7 @@ def pr_status(pr: dict, now: datetime, grace: float, completed_comments: set[int
             "branch": pr.get("headRefName") or "", "comment_id": latest.get("databaseId"),
             "comment_url": latest.get("url") or "", "since": latest["createdAt"], "question": parsed["question"],
             "malformed": parsed["malformed"], "texts": parsed["texts"], "addressed_by": by, "age_hours": age,
-            "committed_since": committed_since,
+            "committed_since": committed_since, "built_since": built_since,
             "overdue": by is None and age >= grace}
 
 
@@ -203,6 +209,7 @@ def fetch(repos, run=subprocess.run) -> dict | None:
                 prs.append({"repo": n["repository"]["nameWithOwner"], "number": n["number"], "title": n["title"],
                             "url": n["url"], "headRefName": n.get("headRefName"),
                             "last_commit_at": commits[-1]["commit"]["committedDate"] if commits else None,
+                            "last_work_at": last_work_at(commits),
                             "comments": (n.get("comments") or {}).get("nodes") or []})
             if after is None:
                 followups = [x for x in (data.get("followups") or {}).get("nodes") or []
@@ -214,6 +221,21 @@ def fetch(repos, run=subprocess.run) -> dict | None:
             break
         after = page["pageInfo"]["endCursor"]
     return {"prs": prs, "followups": followups, "complete": complete}
+
+
+def last_work_at(commit_nodes) -> str | None:
+    """When the newest commit that carries work was written: merge commits are left out (merging main into a branch, or
+    a stacked branch's base into it, builds nothing), and the AUTHOR date is used, so a rebase that re-commits old
+    work doesn't make it look new (marvin#231: #941/#942 had only main merged in after the owner's answers)."""
+    best = None
+    for n in commit_nodes or []:
+        c = (n or {}).get("commit") or {}
+        if ((c.get("parents") or {}).get("totalCount") or 1) > 1:
+            continue
+        t = _ts(c.get("authoredDate") or c.get("committedDate"))
+        if t and (best is None or t > best):
+            best = t
+    return best.strftime("%Y-%m-%dT%H:%M:%SZ") if best else None
 
 
 def followup_marker(body: str | None) -> dict | None:
@@ -370,6 +392,23 @@ def sync(repos, now: datetime | None = None, run=subprocess.run, dry_run: bool =
     return {"ok": True, "filed": filed, "closed": closed, "waiting": [s for s in sts if not s["addressed_by"]]}
 
 
+def request(repo: str, number: int, now: datetime | None = None, run=subprocess.run, dry_run: bool = False) -> str:
+    """The owner approved PR #number while his answers aren't acted on (marvin#231): file its follow-up now, without the
+    scan's grace hours. Idempotent like the scan: one follow-up per Decisions comment, from either Mac."""
+    data = fetch([repo], run)
+    if data is None:
+        return "skipped: could not read GitHub"
+    s = next((x for x in statuses(data, now or datetime.now(timezone.utc), 0.0) if x["number"] == number), None)
+    if s is None:
+        return "nothing to request: no owner Decisions on this PR"
+    if s["addressed_by"]:
+        return f"nothing to request: already addressed ({s['addressed_by']})"
+    if any((followup_marker(x.get("body")) or {}).get("comment") == s["comment_id"] and x.get("state") == "OPEN"
+           for x in data["followups"]):
+        return "already filed"
+    return _file(s, run, dry_run)
+
+
 def summary_line(sync_result: dict) -> str:
     if not sync_result.get("ok"):
         return sync_result.get("note", "could not read GitHub")
@@ -405,7 +444,15 @@ def main(argv=None) -> int:
     if argv[:1] == ["scan"]:
         print(summary_line(sync(_registered_repos(), dry_run="--dry-run" in argv)))
         return 0
-    print("usage: owner_decisions.py waiting [--json] | scan [--dry-run]", file=sys.stderr)
+    if argv[:1] == ["request"] and "--repo" in argv and "--pr" in argv:
+        try:
+            repo, number = argv[argv.index("--repo") + 1], int(argv[argv.index("--pr") + 1])
+        except (IndexError, ValueError):
+            print("usage: owner_decisions.py request --repo OWNER/NAME --pr N", file=sys.stderr)
+            return 2
+        print(request(repo, number, dry_run="--dry-run" in argv))
+        return 0
+    print("usage: owner_decisions.py waiting [--json] | scan [--dry-run] | request --repo R --pr N [--dry-run]", file=sys.stderr)
     return 2
 
 

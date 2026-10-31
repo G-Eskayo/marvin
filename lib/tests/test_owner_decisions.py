@@ -140,7 +140,8 @@ class FakeGitHub:
     def node(self, p):
         return {"number": p["number"], "title": p["title"], "url": p["url"], "headRefName": p["headRefName"],
                 "repository": {"nameWithOwner": p["repo"]},
-                "commits": {"nodes": [{"commit": {"committedDate": p["last_commit_at"]}}] if p["last_commit_at"] else []},
+                "commits": {"nodes": p["commit_nodes"] if "commit_nodes" in p else
+                            [{"commit": {"committedDate": p["last_commit_at"]}}] if p["last_commit_at"] else []},
                 "comments": {"nodes": p["comments"]}}
 
     def __call__(self, cmd, **kw):
@@ -333,3 +334,61 @@ def test_the_search_reaches_github_from_outside_a_git_repo(tmp_path):
     od.fetch([REPO, "G-Eskayo/clarity-captions"], real)
     assert seen and "error parsing" not in seen[0] and "not a git repository" not in seen[0], seen[0]
     assert "127.0.0.1:1" in seen[0], seen[0]
+
+
+# ── marvin#231: "your answers aren't built yet" (the merge queue reads built_since) ─────────────────────────────
+
+def node(authored, committed=None, parents=1):
+    return {"commit": {"authoredDate": iso(authored), "committedDate": iso(committed or authored), "parents": {"totalCount": parents}}}
+
+
+def test_merging_main_in_after_the_answers_is_not_building_them():
+    # #941/#942 on 2026-10-30: the only commits after the owner's answers merged main (and the stacked base) in.
+    nodes = [node(T0 - timedelta(hours=2)), node(T0 + timedelta(hours=5), parents=2)]
+    assert od.last_work_at(nodes) == iso(T0 - timedelta(hours=2))
+    p = {**pr([decisions()], last_commit=T0 + timedelta(hours=5)), "last_work_at": od.last_work_at(nodes)}
+    s = od.pr_status(p, LATE, 4)
+    assert s["committed_since"] and not s["built_since"]
+
+
+def test_a_rebase_that_recommits_old_work_is_not_new_work_but_a_new_commit_is():
+    rebased = [node(T0 - timedelta(hours=1), committed=T0 + timedelta(hours=3))]   # author date kept by the rebase
+    assert not od.pr_status({**pr([decisions()]), "last_work_at": od.last_work_at(rebased)}, LATE, 4)["built_since"]
+    built = rebased + [node(T0 + timedelta(hours=4))]
+    assert od.pr_status({**pr([decisions()]), "last_work_at": od.last_work_at(built)}, LATE, 4)["built_since"]
+
+
+def test_no_commits_at_all_and_junk_nodes_are_not_work():
+    assert od.last_work_at([]) is None and od.last_work_at(None) is None
+    assert od.last_work_at([{}, {"commit": {}}, {"commit": {"authoredDate": "not a date"}}]) is None
+
+
+def test_fetch_carries_last_work_at_from_github():
+    p = pr([decisions()], last_commit=T0 + timedelta(hours=5))
+    p["commit_nodes"] = [node(T0 - timedelta(hours=2)), node(T0 + timedelta(hours=5), parents=2)]
+    [row] = od.fetch([REPO], FakeGitHub([p]))["prs"]
+    assert row["last_work_at"] == iso(T0 - timedelta(hours=2))
+    assert not od.statuses({"prs": [row], "followups": []}, LATE, 4)[0]["built_since"]
+
+
+def test_request_files_the_follow_up_now_without_the_grace_hours_and_only_once():
+    gh = FakeGitHub([pr([decisions()])])
+    first = od.request(REPO, 577, now=T0 + timedelta(minutes=5), run=gh)
+    assert first.startswith("filed") and len(gh.open_followups()) == 1
+    assert od.request(REPO, 577, now=T0 + timedelta(minutes=6), run=gh) == "already filed"
+    od.sync([REPO], now=LATE, run=gh, grace=4)          # the hourly scan later: still one
+    assert len(gh.issues) == 1
+
+
+def test_request_on_an_addressed_pr_or_one_without_decisions_files_nothing():
+    marked = comment(f"Done.\n{od.ADDRESSED_MARKER}", T0 + timedelta(hours=1))
+    gh = FakeGitHub([pr([decisions(), marked]), pr([], number=578)])
+    assert od.request(REPO, 577, now=LATE, run=gh).startswith("nothing to request")
+    assert od.request(REPO, 578, now=LATE, run=gh).startswith("nothing to request")
+    assert gh.issues == []
+
+
+def test_request_when_github_is_unreadable_says_so_and_files_nothing():
+    gh = FakeGitHub([pr([decisions()])], fail={"api graphql"})
+    assert od.request(REPO, 577, now=LATE, run=gh).startswith("skipped")
+    assert gh.issues == []

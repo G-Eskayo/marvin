@@ -7,11 +7,19 @@ const pr = (n, ticket, files, extra = {}) => ({ number: n, url: url(n), repo: 'G
   files: files.map((path) => ({ path })), baseRefName: 'main', ...extra })
 
 describe('guardApprove', () => {
-  it('records an order-check refusal with the PR, its ticket and the OUT_OF_ORDER code', async () => {
+  // marvin#231: "Merge #208 first" is gone: Approve queues the merge and the queue works out the order.
+  it('an older PR on the same files is not a refusal any more: nothing recorded, the click goes on to the queue', async () => {
     const record = vi.fn()
     const prs = [pr(208, 161, ['a.js']), pr(209, 158, ['a.js'])]
-    await expect(guardApprove(url(209), { assertMergeable: () => {}, loadPrs: async () => prs, record })).rejects.toThrow(/Merge #208 first/)
-    expect(record).toHaveBeenCalledWith(expect.objectContaining({ prUrl: url(209), ticket: 158, code: 'OUT_OF_ORDER', stage: 'request' }))
+    await guardApprove(url(209), { assertMergeable: () => {}, loadPrs: async () => prs, record })
+    expect(record).not.toHaveBeenCalled()
+  })
+
+  it('a PR stacked on an open PR is not refused either: the queue merges its base first', async () => {
+    const record = vi.fn()
+    const prs = [pr(941, 932, ['a.js'], { headRefName: 'ticket/932' }), pr(942, 933, ['b.js'], { baseRefName: 'ticket/932' })]
+    await guardApprove(url(942), { assertMergeable: () => {}, loadPrs: async () => prs, record })
+    expect(record).not.toHaveBeenCalled()
   })
 
   it('records a base-check refusal as WRONG_BASE', async () => {

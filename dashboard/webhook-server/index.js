@@ -2,7 +2,10 @@ import { readFileSync } from 'fs'
 import os from 'os'
 import path from 'path'
 import { createServer } from 'http'
-import { mergePr, baselineFailsOnMain, mergesAhead, execWithGroupTimeout, runDiskFirstAid, memoryGuardCheck, withMergeMark, forgetQueuedMerge, readMergeReady, sweepGateClones } from './merge.js'
+import { mergePr, baselineFailsOnMain, mergesAhead, execWithGroupTimeout, runDiskFirstAid, memoryGuardCheck, withMergeMark, forgetQueuedMerge, readMergeReady, sweepGateClones, repoJobsDone, triggerTicketPipeline } from './merge.js'
+import { createMergeQueue, createQueueStore } from './merge_queue.js'
+import { createUnbuiltCache, createFixTicketsCache, createQueueLoader, createBaseLookup, createFollowUpRequester, readMainHealth, readRepairFailures } from './merge_facts.js'
+import { pendingCheckHeads } from '../electron/main/mr_repos.js'
 import { snapshotExec } from './pr_snapshot.js'
 import { createMergeTracker, createInflightStore, takeInterruptedMerges, recordMergeDuration, estimateMergeMs, machineLoad, approveResponder, wantsStream, createMergeLatch, alreadyMergingBody } from './merge_progress.js'
 import { resolveDeviceId, peerHosts } from '../electron/main/device_identity.js'
@@ -19,7 +22,7 @@ import { appendError } from '../electron/main/error_log.js'
 import { readRebaseStatus } from './rebase_status.js'
 import { readLiveSessions } from './sessions.js'
 import { listHelpers } from './chat_helpers.js'
-import { startChangeWatch, createGithubProbe } from './gh_watch.js'
+import { startChangeWatch, createGithubProbe, startCheckWatch, createCheckProbe } from './gh_watch.js'
 import { readRegistry } from '../electron/main/boards.js'
 import { execFile } from 'child_process'
 import { promisify } from 'util'
@@ -156,6 +159,17 @@ const server = createServer(async (req, res) => {
     return
   }
 
+  // marvin#231: the merge queue, for MR Review on either Mac and the phone: what is queued per repo (in approval order),
+  // what left it failing, what runs now, and the facts the order is worked out from that only this Mac has.
+  if (req.method === 'GET' && req.url === '/merge-queue') {
+    res.writeHead(200, { 'Content-Type': 'application/json' }).end(JSON.stringify({
+      repos: mergeQueue.snapshot(),
+      facts: { unbuilt: [...unbuiltCache.get()], unbuiltAt: unbuiltCache.at(), repairFailed: readRepairFailures(), health: readMainHealth(), tickets: fixTickets.get() },
+      machine: machineId
+    }))
+    return
+  }
+
   if (req.method === 'GET' && req.url === '/rebase-status') {
     res.writeHead(200, { 'Content-Type': 'application/json' }).end(JSON.stringify(readRebaseStatus()))
     return
@@ -216,69 +230,41 @@ const server = createServer(async (req, res) => {
   }
 
   if (isApprove) {
-    // marvin#568: each stage is pushed as it happens -- on this response when the dashboard asks for a stream, and to
-    // an open dashboard on this Mac through the refresh port (a merge started from the phone or the other Mac shows
-    // too). Logged to dashboard-webhook.log, and recorded in flight so a restart reports it as interrupted.
     const prUrl = typeof payload?.pr_url === 'string' && payload.pr_url.startsWith('https://github.com/') ? payload.pr_url : null
     const reply = approveResponder(res, { streaming: !!prUrl && wantsStream(req.headers.accept) })
+    // Not a PR url: refused at once, as before (mergePr's own check says why).
+    if (!prUrl) {
+      const { status, body } = await runMerge(payload?.pr_url, { by: payload?.by, reply })
+      reply.result(status, body)
+      return
+    }
     // marvin#766: a PR this process is already merging is not started again (a retry after a dropped stream).
-    if (prUrl && !mergeLatch.take(prUrl)) {
+    if (mergeQueue.isRunning(prUrl)) {
       reply.result(409, alreadyMergingBody(machineId))
       return
     }
+    // marvin#231: Approve queues the merge. The queue merges in the order it works out (stacked PRs base first, only the
+    // fix while main is red), one at a time per repo. When this PR is next it runs now and this response follows it,
+    // as before; otherwise the answer is its place and what it waits for, and it merges by itself when its turn comes.
+    // marvin#940: this Approve drops the same PR's copy queued for memory, so the memory queue never runs it twice.
+    if (payload.by !== 'memory-queue') await forgetQueuedMerge(prUrl)
+    let answered = false
+    const attach = {
+      url: prUrl,
+      reply,
+      queued: (entry) => {
+        if (answered) return
+        answered = true
+        reply.result(200, queuedBody(prUrl, entry))
+      },
+      ran: () => { answered = true }
+    }
     try {
-      const tracker = prUrl ? createMergeTracker({
-        url: prUrl,
-        repo: repoOfPr(prUrl),
-        machineId,
-        inflight,
-        measure: () => machineLoad(),
-        estimate: (repo, gated) => estimateMergeMs(repo, gated),
-        record: recordMergeDuration,
-        emit: (event) => {
-          reply.event(event)
-          forwardRefreshPing(DASHBOARD_REFRESH_URL, (url) => postJson(url, { topics: ['merge'], source: 'merge', merge: { url: prUrl, event } }))
-        }
-      }) : null
-      tracker?.start(mergesAhead(prUrl))
-      // marvin#940: this merge starting drops the same PR's copy queued for memory, so the queue never runs it twice.
-      if (prUrl && payload.by !== 'memory-queue') await forgetQueuedMerge(prUrl)
-      try {
-        // mergePr() returning normally covers both a real merge (merged:
-        // true) and G-Eskayo/marvin#91's merge-time gate routing the ticket
-        // to re-engagement instead (merged: false, reengaged: true) -- the
-        // latter is an expected outcome, not a server error, so it gets a
-        // 200 with the real reason attached rather than a bare 500.
-        // P5: the preflight's seven reads of this PR share one (pr_snapshot.js); merge.js and its checks are unchanged.
-        // marvin#940: marked as a merge from here to its end, so new helpers wait and other test runs let it go first;
-        // its end kicks the memory guard's queue (a merge ending may let the next queued item start).
-        const result = await withMergeMark(() => mergePr(payload.pr_url, snapshotExec(payload.pr_url, execWithGroupTimeout), undefined, undefined, undefined, undefined, undefined, undefined, {
-          baselineFails: (names) => baselineFailsOnMain(names),
-          progress: tracker ? tracker.progress : undefined,
-          loadNow: () => ({ ...machineLoad(), id: machineId }),
-          // A nearly full disk gets the cleanup sweep's rebuildable trims once before the gate refuses (2026-10-28).
-          diskFirstAid: () => runDiskFirstAid(),
-          // marvin#845: no rebase + retest while memory pressure is at warn or critical; this Approve is queued instead.
-          memoryCheck: (url) => memoryGuardCheck(url, PORT)
-        }))
-        tracker?.finish(result)
-        if (result?.merged) appendMerge(payload.pr_url, payload.by === 'auto' ? 'auto' : 'you')
-        else if (result?.reengaged) console.error(approveErrorLine(payload.pr_url, { error: `${result.code || 'SENT_BACK'} at ${result.stage || 'gate'}: ${String(result.reason || 'sent back for rework').split('\n')[0].slice(0, 200)}` }))
-        reply.result(200, result)
-      } catch (err) {
-        // Structured: code, stage, retryable, action, remediation -- so the dashboard can say
-        // what broke and the pipeline can act on it (see failure.js).
-        const { status, body } = failureResponse(err)
-        tracker?.fail(body)
-        console.error(approveErrorLine(payload.pr_url, body))
-        await recordApproveError(payload.pr_url, body)
-        appendError({ source: 'webhook:approve', message: `Approve refused for ${payload.pr_url}`, raw: body.error })
-        reply.result(status, body)
-      }
+      await mergeQueue.approve(repoOfPr(prUrl), prUrl, { by: payload.by === 'auto' ? 'auto' : payload.by === 'memory-queue' ? 'memory-queue' : 'you', attach })
     } finally {
-      if (prUrl) mergeLatch.release(prUrl)
-      // marvin#940: an approval that waited for memory has run by itself. The dashboards (here and on the other Macs)
-      // show it waiting; this is their trigger to look again (approval_retry.js concludes it from GitHub's state).
+      if (!answered) attach.queued(mergeQueue.view(repoOfPr(prUrl))?.entries?.[prUrl] || null)
+      // marvin#940: an approval that waited for memory has run (or is queued) by itself. The dashboards show it waiting;
+      // this is their trigger to look again (approval_retry.js concludes it from GitHub's state).
       if (payload?.by === 'memory-queue') announceThisMac('memory-queue run finished')
     }
     return
@@ -327,6 +313,110 @@ const inflight = createInflightStore()
 const mergeLatch = createMergeLatch()
 const repoOfPr = (url) => (String(url).match(/github\.com\/([^/]+\/[^/]+)\/pull\//) || [])[1] || null
 
+// One merge through the existing gate, exactly as an Approve ran it before the queue (marvin#568 stages, #845 memory,
+// #940 the merge mark): { status, body }. `reply` is the Approve still waiting for its answer, when there is one; a
+// merge the queue starts by itself is followed through the refresh pings instead (this Mac's dashboard, and the
+// other Macs' through their own reads of /merge-queue).
+async function runMerge(prUrl, { by = 'you', reply = null } = {}) {
+  const valid = typeof prUrl === 'string' && prUrl.startsWith('https://github.com/')
+  if (valid && !mergeLatch.take(prUrl)) return { status: 409, body: alreadyMergingBody(machineId) }
+  try {
+    const tracker = valid ? createMergeTracker({
+      url: prUrl,
+      repo: repoOfPr(prUrl),
+      machineId,
+      inflight,
+      measure: () => machineLoad(),
+      estimate: (repo, gated) => estimateMergeMs(repo, gated),
+      record: recordMergeDuration,
+      emit: (event) => {
+        reply?.event(event)
+        forwardRefreshPing(DASHBOARD_REFRESH_URL, (url) => postJson(url, { topics: ['merge'], source: 'merge', merge: { url: prUrl, event } }))
+      }
+    }) : null
+    tracker?.start(mergesAhead(prUrl))
+    try {
+      // mergePr() returning normally covers both a real merge (merged: true) and G-Eskayo/marvin#91's merge-time gate
+      // routing the ticket to re-engagement instead (merged: false, reengaged: true): an expected outcome, a 200.
+      // P5: the preflight's seven reads of this PR share one (pr_snapshot.js); merge.js and its checks are unchanged.
+      // marvin#940: marked as a merge from here to its end, so new helpers wait and other test runs let it go first;
+      // its end kicks the memory guard's queue (a merge ending may let the next queued item start).
+      const result = await withMergeMark(() => mergePr(prUrl, snapshotExec(prUrl, execWithGroupTimeout), undefined, undefined, undefined, undefined, undefined, undefined, {
+        baselineFails: (names) => baselineFailsOnMain(names),
+        progress: tracker ? tracker.progress : undefined,
+        loadNow: () => ({ ...machineLoad(), id: machineId }),
+        // A nearly full disk gets the cleanup sweep's rebuildable trims once before the gate refuses (2026-10-28).
+        diskFirstAid: () => runDiskFirstAid(),
+        // marvin#845: no rebase + retest while memory pressure is at warn or critical; this Approve is queued instead.
+        memoryCheck: (url) => memoryGuardCheck(url, PORT)
+      }))
+      tracker?.finish(result)
+      if (result?.merged) appendMerge(prUrl, by === 'auto' ? 'auto' : 'you')
+      else if (result?.reengaged) console.error(approveErrorLine(prUrl, { error: `${result.code || 'SENT_BACK'} at ${result.stage || 'gate'}: ${String(result.reason || 'sent back for rework').split('\n')[0].slice(0, 200)}` }))
+      return { status: 200, body: result }
+    } catch (err) {
+      // Structured: code, stage, retryable, action, remediation -- so the dashboard can say what broke and the pipeline
+      // can act on it (see failure.js). Recorded in the refusal log (#215) and the error log.
+      const { status, body } = failureResponse(err)
+      tracker?.fail(body)
+      console.error(approveErrorLine(prUrl, body))
+      await recordApproveError(prUrl, body)
+      appendError({ source: 'webhook:approve', message: `Approve refused for ${prUrl}`, raw: body.error })
+      return { status, body }
+    }
+  } finally {
+    if (valid) mergeLatch.release(prUrl)
+  }
+}
+
+// What an Approve that is not run straight away is told: it is in the queue, where, and what it waits for.
+function queuedBody(prUrl, entry) {
+  return { merged: false, mergeQueued: true, url: prUrl, state: entry?.state || 'queued', position: entry?.position ?? null,
+    reason: entry?.reason || 'queued', waitsFor: entry?.waitsFor ?? null }
+}
+
+// marvin#231: the queue and what it reads. Answered-but-unbuilt Decisions are re-read on triggers (startup, an Approve,
+// a GitHub change on a repo with something queued), never on a timer.
+const execAsync = promisify(execFile)
+const unbuiltCache = createUnbuiltCache({ exec: execAsync, log: (m) => console.warn(m) })
+const requestFollowUp = createFollowUpRequester({ exec: execAsync, log: (m) => console.log(m) })
+const fixTickets = createFixTicketsCache({ exec: execAsync, owners: () => [...new Set(readRegistry().map((b) => String(b.repo).split('/')[0]).filter(Boolean))], log: (m) => console.warn(m) })
+// Everything MR Review reads from here besides the queue: refreshed together on each trigger.
+const refreshFacts = () => Promise.all([unbuiltCache.refresh(), fixTickets.refresh()])
+const triggeredResolver = new Map() // url -> head sha the conflict resolver was started for
+const mergeQueue = createMergeQueue({
+  store: createQueueStore(),
+  load: createQueueLoader({ exec: execAsync, unbuilt: () => unbuiltCache.get(), baseOf: createBaseLookup({ exec: execAsync }) }),
+  run: async (url, attach) => {
+    attach?.ran()
+    const { status, body } = await runMerge(url, { by: 'you', reply: attach?.reply || null })
+    if (attach) attach.reply.result(status, body)
+    return status === 200 ? { result: body } : { body }
+  },
+  // The merge's after-steps run in the repo's job line (stacked PRs moved onto main, the others conflict-checked):
+  // the next decision waits for them, so a stacked PR is seen on main, not as an orphan.
+  afterRun: (repo) => repoJobsDone(repo),
+  onWaiting: (repo, pr, entry) => {
+    if (entry.unbuilt) requestFollowUp(repo, pr.number)
+    // A conflict goes to the #230 resolver, which the ticket scan runs (conflict_repair.py): started once per commit.
+    if (entry.conflict && !pr.repairFailed && triggeredResolver.get(pr.url) !== pr.headRefOid) {
+      triggeredResolver.set(pr.url, pr.headRefOid)
+      try { triggerTicketPipeline() } catch { /* the hourly scan gets it */ }
+    }
+  },
+  log: (m) => console.log(m)
+})
+// The check watch (marvin#555) for queued PRs only: their checks finishing is a trigger. Nothing queued: no requests.
+function queuedPendingHeads() {
+  const heads = []
+  for (const repo of Object.keys(mergeQueue.snapshot())) {
+    const view = mergeQueue.view(repo)
+    if (!view) continue
+    for (const pr of view.prs || []) if (view.entries[pr.url]?.queued) heads.push(...pendingCheckHeads(repo, [pr]))
+  }
+  return heads
+}
+
 server.listen(PORT, () => {
   console.log(`MR-approval webhook listening on http://localhost:${PORT}/approve`)
   console.log(`GitHub credential source: ${ghTokenSource}`)
@@ -345,6 +435,16 @@ server.listen(PORT, () => {
   // could not reach this one) are retried on this, not on a timer.
   announceThisMac('webhook started')
 
+  // marvin#231: a restart picks the queue up where it was (it is on disk): the facts are read, then each repo with
+  // something queued decides again. A merge that was running when the process died is simply run again from GitHub's
+  // state (the gate starts from scratch), unless it merged or closed meanwhile (then it leaves the queue).
+  refreshFacts().finally(() => mergeQueue.kickAll().catch((e) => console.warn(`[merge-queue] startup: ${e?.message || e}`)))
+  startCheckWatch({
+    getHeads: () => queuedPendingHeads(),
+    probe: createCheckProbe(),
+    onChange: (repo) => { mergeQueue.kick(repo).catch(() => {}) }
+  })
+
   // Trigger source for GitHub-side changes to any board repo: tell an open dashboard on this
   // machine what changed the moment it does (best-effort, like /mr-ready).
   // Support repos (ADR 0073) ride the same detector: a change re-syncs the support cache, and on a helper install the
@@ -362,6 +462,9 @@ server.listen(PORT, () => {
       }
       console.log(`[gh-watch] change detected on ${repo} at ${new Date().toISOString()}`)
       if (rebuildCheck(repo)) console.log(`[rebuild-check] started for ${repo}`) // #443: any merge path updates the app
+      // marvin#231: a PR updated, a ticket labelled, main's CI opening or closing its main-red ticket: the queue looks
+      // again (answers first, so a just-built PR is seen built).
+      refreshFacts().finally(() => mergeQueue.kick(repo).catch(() => {}))
       forwardRefreshPing(DASHBOARD_REFRESH_URL, (url) => postJson(url, { topics: ['activity', 'mr'], source: `github:${repo}` }))
       forwardRefreshPing(MOBILE_REFRESH_URL, postJson)
     }

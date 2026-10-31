@@ -27,7 +27,7 @@ const KIND_ORDER = [
   ['decisions-pending', 'needs-you'], ['ready', 'needs-you'], ['tests-after-rebase', 'needs-you'],
   ['interrupted', 'needs-you'], ['error', 'needs-you'], ['needs-options', 'needs-you'], ['ticket-closed', 'needs-you'],
   ['merging', 'running'], ['waiting-checks', 'running'], ['github-outage', 'running'],
-  ['stacked', 'waiting'], ['waiting-order', 'waiting'],
+  ['stacked', 'waiting'], ['in-queue', 'waiting'], // marvin#231: approved, in the merge queue
   ['sent-back-now', 'stuck'], ['sent-back', 'stuck'], ['conflict', 'stuck'], ['checks-failed', 'stuck'],
   ['needs-images', 'stuck'], ['wrong-base', 'stuck']
 ]
