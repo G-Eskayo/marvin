@@ -1,0 +1,100 @@
+---
+import Marketing from '~/layouts/Marketing.astro';
+import { SITE, REPO_URL, issue } from '~/lib/site';
+const n = SITE.name;
+const mail = SITE.contactEmail
+  ? `mailto:${SITE.contactEmail}?subject=${encodeURIComponent(`${n} waitlist`)}`
+  : null;
+---
+
+<Marketing title="Join the waitlist" description={`Get told when ${n} installs for anyone, not just its builder.`}>
+  <header class="m-pagehead m-narrow">
+    <p class="m-eyebrow">Waitlist</p>
+    <h1>{n} isn't ready to install yet. Here's how to hear first.</h1>
+    <p>
+      It runs every day on my machines, but setting it up still takes knowing how I set it up. When a stranger can
+      install it and be guided through the rest, it ships as the first release. Until then there's no download here.
+    </p>
+  </header>
+
+  <div class="m-narrow">
+    <div class="m-grid m-join">
+      <section class="m-panel">
+        <p class="m-step">Option 1</p>
+        <h2>Watch releases on GitHub</h2>
+        <ol>
+          <li>Open <a href={REPO_URL}>the repo</a> (a free GitHub account is all you need).</li>
+          <li>Click <strong>Watch</strong>, then <strong>Custom</strong>.</li>
+          <li>Tick <strong>Releases</strong> and apply.</li>
+        </ol>
+        <p class="m-dim">You'll get one notification when the first release ships. Nothing else.</p>
+        <a class="m-btn m-btn--primary" href={REPO_URL}>Open the repo on GitHub</a>
+      </section>
+      {
+        mail ? (
+          <section class="m-panel">
+            <p class="m-step">Option 2</p>
+            <h2>Email me</h2>
+            <p class="m-dim">
+              One line is plenty. Say what you'd use it for if you like. I'll write back when it's ready, once. No
+              list service, no newsletter.
+            </p>
+            <a class="m-btn" href={mail}>Email to join</a>
+          </section>
+        ) : (
+          <section class="m-panel">
+            <p class="m-step">Option 2</p>
+            <h2>Follow the work</h2>
+            <p class="m-dim">
+              The <a href="/changelog/">changelog</a> shows what landed and the <a href="/roadmap/">roadmap</a> shows
+              what's next. Nothing to sign up for.
+            </p>
+            <a class="m-btn" href="/roadmap/">See the roadmap</a>
+          </section>
+        )
+      }
+    </div>
+
+    <section class="m-prose m-what">
+      <h2>What has to happen first</h2>
+      <p>
+        The blocker is the default build: a fresh download, with no help from me, that ends at a working {n}. That work
+        is tracked in the open, in <a href={issue(646)}>ticket #646</a> and the tickets around it.
+      </p>
+      <h2>What you'll need when it's ready</h2>
+      <ul>
+        <li>A Mac. The core and its tests also run on Linux; the desktop app is macOS only today.</li>
+        <li>Claude Code, signed in.</li>
+        <li>Python 3.9 to 3.12, and about 300 MB for the local embedding model.</li>
+        <li>A GitHub account, for tickets and pull requests.</li>
+      </ul>
+      <p class="m-dim">
+        Want to read the code before then? It's all on <a href={REPO_URL}>GitHub</a>, and the <a href="/docs/">docs</a>
+        explain each feature down to its source.
+      </p>
+    </section>
+  </div>
+</Marketing>
+
+<style>
+  .m-join {
+    margin-bottom: 2.5rem;
+  }
+  .m-join h2 {
+    font-size: 1.6rem;
+  }
+  .m-join ol {
+    padding-left: 1.2rem;
+  }
+  .m-step {
+    font-family: var(--m-font-mono);
+    font-size: 0.8rem;
+    letter-spacing: 0.12em;
+    text-transform: uppercase;
+    color: var(--m-orange);
+    margin-bottom: 0.4rem;
+  }
+  .m-what h2 {
+    font-size: 1.6rem;
+  }
+</style>

@@ -1,0 +1,18 @@
+{
+  "counted_on": "2026-11-02",
+  "command": "gh pr list -R G-Eskayo/marvin --state merged --limit 2000 --json number,mergedAt,headRefName; bucketed by the Monday of the merge week (UTC); pipeline = branch starts with pipeline/",
+  "note": "The week of 2 Nov is one day old when counted.",
+  "weeks": [
+    { "week": "2026-08-24", "pipeline": 2, "other": 9 },
+    { "week": "2026-08-31", "pipeline": 5, "other": 1 },
+    { "week": "2026-09-07", "pipeline": 0, "other": 0 },
+    { "week": "2026-09-14", "pipeline": 0, "other": 0 },
+    { "week": "2026-09-21", "pipeline": 0, "other": 0 },
+    { "week": "2026-09-28", "pipeline": 4, "other": 0 },
+    { "week": "2026-10-05", "pipeline": 64, "other": 41 },
+    { "week": "2026-10-12", "pipeline": 0, "other": 20 },
+    { "week": "2026-10-19", "pipeline": 1, "other": 40 },
+    { "week": "2026-10-26", "pipeline": 5, "other": 102 },
+    { "week": "2026-11-02", "pipeline": 0, "other": 5 }
+  ]
+}

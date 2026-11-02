@@ -1,0 +1,51 @@
+---
+import Marketing from '~/layouts/Marketing.astro';
+import { SITE, REPO_URL } from '~/lib/site';
+const n = SITE.name;
+---
+
+<Marketing title="About" description={`Who builds ${n}, and the rules it's built by.`}>
+  <header class="m-pagehead m-narrow">
+    <p class="m-eyebrow">About</p>
+    <h1>One builder, one system, built in the open.</h1>
+  </header>
+
+  <article class="m-narrow m-prose">
+    <p>
+      I'm {SITE.builder}. I started {n} in May 2026 as a small layer of memory around Claude Code, because I was tired of
+      explaining my own projects to it every morning. It grew from there: skills, a pipeline that builds tickets while
+      I'm away, gates that keep it honest, a dashboard to watch it all, and a second and third machine to run it on.
+    </p>
+    <p>
+      I use it every day. Its pipeline wrote 81 of the engine's own merged PRs, and it helped me ship
+      <a href={SITE.builtWith[0].url}>{SITE.builtWith[0].name}</a> to the App Store. The repo has 2,000+ commits and 80+
+      written-down decisions, and every one of them is public.
+    </p>
+
+    <h2>The rules it's built by</h2>
+    <ul>
+      <li><strong>The simplest thing that actually works.</strong> Study the problem until the small answer shows up, instead of adding machinery.</li>
+      <li><strong>Tests try to break it.</strong> Bad input, failing dependencies, wrong order, a person's mistakes. If it's reachable from outside, attack it like an adversary would.</li>
+      <li><strong>Verified, not assumed.</strong> A claim counts when code checks it. That goes for this site too: every number has a date and a command.</li>
+      <li><strong>Errors are never silent.</strong> If something fails, it says so, with a reason, where you'll see it.</li>
+      <li><strong>Leave people more capable.</strong> Automate the chores. Coach on the things that make you better.</li>
+    </ul>
+
+    <h2>Get in touch</h2>
+    <p>
+      {
+        SITE.contactEmail ? (
+          <>
+            Email <a href={`mailto:${SITE.contactEmail}`}>{SITE.contactEmail}</a>, or open an issue on{' '}
+            <a href={REPO_URL}>GitHub</a>.
+          </>
+        ) : (
+          <>
+            Open an issue on <a href={REPO_URL}>GitHub</a>, or find me at <a href={SITE.builderSite}>{new URL(SITE.builderSite).host}</a>.
+          </>
+        )
+      }
+      {' '}Want to know when it installs for anyone? <a href="/waitlist/">Join the waitlist</a>.
+    </p>
+  </article>
+</Marketing>

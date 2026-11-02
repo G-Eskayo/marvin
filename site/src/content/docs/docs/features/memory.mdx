@@ -1,0 +1,118 @@
+---
+title: Memory and context retrieval
+description: How MARVIN keeps notes between sessions and pulls only the skills and knowledge a task needs, using local embeddings with a tag-index fallback.
+sidebar:
+  order: 2
+---
+import FeatureStatus from '~/components/FeatureStatus.astro';
+
+<FeatureStatus page="memory" />
+
+## What it does
+
+MARVIN keeps what it learns in plain Markdown notes of four kinds (user, feedback, project, reference) and gives every session a short index of them, so a new session starts knowing the owner's rules and the state of their projects. For skills and knowledge files it goes further: `retrieve.py` embeds the task with a local model, searches three ChromaDB collections, re-ranks the hits by keyword, fuses the two orders by rank, and returns the top five paths to read. When the embedding model or ChromaDB isn't there, it falls back to matching tags in a manifest. If you want an exact string, use `rg`. If you want "what's connected to this note", use the memory graph described below.
+
+## Why it exists
+
+Claude Code forgets everything when a session ends. The owner kept re-explaining the same rules ("work in a worktree", "pair a ticket number with its title") and the same project facts, and loading every skill and note up front burned context on things the task didn't need. Memory fixes the first problem. Retrieval fixes the second: pull the right boxes, nothing else.
+
+## See it work
+
+Run on 2026-11-02 against the live index on the owner's laptop. The query and intent are harmless; the results are public skill files.
+
+```text
+$ ~/.agents/venv/bin/python ~/.agents/skills/self-improve/scripts/retrieve.py \
+    "debug a failing test" --intent debug
+  [0.710] (semantic) ~/.agents/skills/diagnose/SKILL.md
+           diagnose
+  [0.642] (semantic) ~/.agents/skills/tdd/SKILL.md
+           tdd
+  [0.603] (semantic) ~/.agents/skills/triage/SKILL.md
+           triage
+  [0.575] (semantic) ~/.agents/skills/audit/SKILL.md
+           audit
+  [0.559] (semantic) ~/.agents/skills/safety-monitor/SKILL.md
+           safety-monitor
+```
+
+The score is cosine similarity (1 minus the ChromaDB distance). `--intent debug` raises the cut-off to 0.55, so only close matches come back. The index behind it, counted the same day: `skills` 29 entries, `general` 4, `knowledge` 2, built from a 35-entry `~/.claude/manifest.json`.
+
+## How it works
+
+Memory and retrieval are two paths that meet in the session's context:
+
+```text
+ memory notes (*.md, 4 kinds)        skills/*/SKILL.md + tagged notes
+          │                                    │
+     MEMORY.md index              rebuild-manifest.py (PostToolUse hook)
+          │                                    │
+  loaded every session            manifest.json ──► rebuild-embeddings.py
+  (Claude Code auto-memory,                    │         (Ollama nomic-embed-text)
+   or the launcher for                         ▼
+   headless runs)                 ChromaDB: skills / knowledge / general
+          │                                    │
+          └──────────► session ◄──── retrieve.py "<task>" → top 5 paths
+```
+
+1. **Notes.** Each memory note has frontmatter with a `type` of `user`, `feedback`, `project` or `reference`. `MEMORY.md` is the one-line-per-note index. Claude Code loads it into interactive sessions; for headless runs the [launcher](https://github.com/G-Eskayo/marvin/blob/main/lib/marvin_launcher.py) injects it by launch kind (the ticket planner gets it, the ticket executor gets only notes tagged `work-rule`).
+2. **Manifest.** After any Write or Edit inside a skill folder or a memory folder, the `rebuild-manifest.py` hook rereads frontmatter and writes `~/.claude/manifest.json`: every skill, plus every memory note that carries `tags:`. It skips the rebuild for edits anywhere else.
+3. **Embeddings.** The manifest rebuild chains `rebuild-embeddings.py`, which embeds each file (tags plus body, first 4,000 characters) with `nomic-embed-text` through Ollama. A `type:skill` tag goes to the `skills` collection, `type:knowledge` to `knowledge`, everything else to `general`. Only files whose content hash changed are re-embedded; deleted files are pruned.
+4. **Vector search.** `retrieve.py` embeds the query, takes up to 10 nearest hits from each collection, drops any below the intent's threshold (0.25 for `create`/`ideate`/`brainstorm`, 0.40 for `plan`/`research`, 0.50 for `tdd`, 0.55 for `debug`/`fix`/`diagnose`, 0.35 otherwise) and keeps the best 5.
+5. **Keyword re-rank.** BM25 scores those same candidates against the query, using each candidate's path and tags as the text.
+6. **Rank fusion.** Reciprocal rank fusion (k = 60) adds `1/(60 + rank)` from each ordering and returns the top 5.
+7. **Fallback.** No Ollama, or no semantic hit above the threshold: the script counts how many query words appear in each manifest entry's tag words and returns the best overlaps, marked `(tags)`.
+8. **Model scope.** `--model haiku|sonnet|opus` drops entries whose `model-scope` excludes that tier.
+
+The memory graph is a separate, file-based recall path. `lib/memory_graph.py` follows the `[[links]]` between notes: `neighbors`, `path`, and `related "<query>"`, which blends a direct name/description match with Personalized PageRank. It builds fresh from the files on each call, so there's no stored graph to go stale. Notes whose fact stopped holding carry `superseded_by` or `invalid_at` and rank at a quarter of their score.
+
+## Use it
+
+```bash
+# Pull the files a task needs (always use the venv; bare python3 lacks the deps)
+~/.agents/venv/bin/python ~/.agents/skills/self-improve/scripts/retrieve.py "<task>" --intent plan --json
+
+# Rebuild the manifest and embeddings by hand
+~/.agents/venv/bin/python ~/.agents/skills/self-improve/scripts/rebuild-manifest.py
+
+# Find notes near a topic, or how two notes connect
+~/.agents/venv/bin/python ~/.agents/lib/memory_graph.py related "merge gate" --k 5
+~/.agents/venv/bin/python ~/.agents/lib/memory_graph.py path <note-a> <note-b>
+```
+
+To add a memory, write a note with `name`, `description` and `metadata: type:` frontmatter and add one line to `MEMORY.md`. Add `tags:` if you want it in the vector index too. The `index` skill tells a session to run `retrieve.py` first and match the manifest by hand only if that fails.
+
+## Configure
+
+| Setting | Where | Default |
+|---|---|---|
+| Memory folder | `autoMemoryDirectory` in `~/.claude/settings.json` (read by `lib/host_os.py`) | Claude Code's per-home default under `~/.claude/projects/` |
+| Manifest | `~/.claude/manifest.json` (generated, don't edit) | |
+| Vector store | `~/.claude/chroma` | |
+| Embedding model and endpoint | `EMBED_MODEL`, `OLLAMA_URL` in `retrieve.py` and `rebuild-embeddings.py` | `nomic-embed-text` at `http://localhost:11434/api/embed` |
+| Results returned | `TOP_K` in `retrieve.py` | 5 |
+| Similarity cut-offs | `INTENT_THRESHOLD_MAP`, `DEFAULT_THRESHOLD` in `retrieve.py` | see step 4 |
+| Per-skill model tier | `model-scope:` in a file's frontmatter | `all` |
+
+## Requirements and limitations
+
+- Ollama with `nomic-embed-text` (about 274 MB) and the Python venv with `chromadb`, `rank_bm25` and `requests`. `setup.sh` installs all three. Runs on macOS and Linux.
+- The keyword step only re-ranks what the vector search already found, and it reads paths and tags, not file bodies. It can reorder results; it can't add one.
+- If `rank_bm25` is missing from the venv, the keyword step is skipped silently and you get pure vector order. That was the case on the laptop on 2026-11-02, which is why the results above come back in plain vector order.
+- Most memory notes aren't in the vector index. On 2026-11-02 the laptop had 193 notes (91 project, 79 feedback, 21 reference, 2 user, counted from their `type:` lines) and 2 of them carried `tags:`. The rest reach a session through `MEMORY.md` and the memory graph.
+- Graph recall is measured on a small set: in the 2026-10-26 retrieval eval, `memory_graph related` put the right note in the top 5 for 5 of 6 memory questions (hit@5 0.83, `bench/RESULTS.md`).
+
+## Design and source
+
+- [ADR 0059: Every model run goes through the MARVIN launcher, and every producer declares an output contract](https://github.com/G-Eskayo/marvin/blob/main/docs/adr/0059-marvin-launcher-and-output-contracts.md): which launch kinds get the memory index, the lexicon and the work-rules slice.
+- [ADR 0023: route.py's keyword classifier, replaced with an embedding classifier](https://github.com/G-Eskayo/marvin/blob/main/docs/adr/0023-route-py-embedding-classifier-scope.md): reuses the same Ollama embedding call and the same "fall back when Ollama is down" rule as `retrieve.py`.
+- Source: [`retrieve.py`](https://github.com/G-Eskayo/marvin/blob/main/skills/self-improve/scripts/retrieve.py), [`rebuild-manifest.py`](https://github.com/G-Eskayo/marvin/blob/main/skills/self-improve/scripts/rebuild-manifest.py), [`rebuild-embeddings.py`](https://github.com/G-Eskayo/marvin/blob/main/skills/self-improve/scripts/rebuild-embeddings.py), [`lib/memory_graph.py`](https://github.com/G-Eskayo/marvin/blob/main/lib/memory_graph.py), [`lib/memory_lint.py`](https://github.com/G-Eskayo/marvin/blob/main/lib/memory_lint.py), [`skills/index/SKILL.md`](https://github.com/G-Eskayo/marvin/blob/main/skills/index/SKILL.md).
+- PRs: [#309 Hooks at user level, launch-kind aware, one memory everywhere](https://github.com/G-Eskayo/marvin/pull/309); [#709 Memory lint: broken links, orphans, conflict markers, index drift, as a Health check](https://github.com/G-Eskayo/marvin/pull/709); [#710 Memory graph: neighbors, path, related (PageRank) over memory links](https://github.com/G-Eskayo/marvin/pull/710); [#711 Memory facts: superseded_by / invalid_at / valid_from](https://github.com/G-Eskayo/marvin/pull/711); [#713 Retrieval eval: rg vs graphify vs memory_graph, gold answers, no LLM judge](https://github.com/G-Eskayo/marvin/pull/713).
+- Alternatives rejected: a stored link graph (it would go stale, so `memory_graph` rebuilds per call); deleting replaced facts (they're marked `superseded_by` and down-ranked instead, the "invalidate, don't delete" pattern from Zep/Graphiti, recorded in `CONTEXT.md`); and a similarity ratio for link-typo suggestions (note names share long prefixes, so lint only suggests within 2 edits).
+
+## Related features
+
+- [Skills](/docs/features/skills/): what retrieval mostly returns.
+- [Dashboard](/docs/features/dashboard/): the Health check "Memory links and index are sound" (`memory:lint`).
+- Lexicon: the shared vocabulary, loaded every session next to the memory index.
+- Handoffs: the `handoff` skill writes a resume document to `~/.claude/handoffs/` before a context switch, so the next session picks up the thread.
+- Session start, routing classifier, qa-agent knowledge base.

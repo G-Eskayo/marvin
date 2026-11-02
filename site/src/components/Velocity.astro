@@ -1,0 +1,119 @@
+---
+// Merged PRs per week on the engine repo, split by who wrote them. Data: src/data/velocity.json (dated, with its
+// command). Drawn at build time as plain SVG: no chart library, nothing to load.
+import data from '~/data/velocity.json';
+import { REPO_URL, fmtDate } from '~/lib/site';
+
+const W = 640;
+const H = 220;
+const pad = { l: 34, r: 8, t: 12, b: 34 };
+const weeks = data.weeks;
+const max = Math.max(...weeks.map((w) => w.pipeline + w.other));
+const top = Math.ceil(max / 25) * 25;
+const bw = (W - pad.l - pad.r) / weeks.length;
+const y = (v: number) => pad.t + (H - pad.t - pad.b) * (1 - v / top);
+const ticks = [0, top / 2, top];
+const label = (iso: string) => new Date(`${iso}T12:00:00Z`).toLocaleDateString('en-US', { month: 'short', day: 'numeric', timeZone: 'UTC' });
+const total = weeks.reduce((s, w) => s + w.pipeline + w.other, 0);
+const pipe = weeks.reduce((s, w) => s + w.pipeline, 0);
+---
+
+<figure class="m-vel">
+  <svg viewBox={`0 0 ${W} ${H}`} role="img" aria-labelledby="vel-t vel-d">
+    <title id="vel-t">Merged pull requests per week</title>
+    <desc id="vel-d">{total} merged PRs from {label(weeks[0].week)} to {label(weeks.at(-1)!.week)}; {pipe} written by the pipeline.</desc>
+    {
+      ticks.map((t) => (
+        <g class="tick">
+          <line x1={pad.l} x2={W - pad.r} y1={y(t)} y2={y(t)} />
+          <text x={pad.l - 6} y={y(t) + 4}>{t}</text>
+        </g>
+      ))
+    }
+    {
+      weeks.map((w, i) => {
+        const x = pad.l + i * bw + bw * 0.18;
+        const wd = bw * 0.64;
+        return (
+          <g>
+            <rect class="other" x={x} width={wd} y={y(w.pipeline + w.other)} height={y(w.pipeline) - y(w.pipeline + w.other)}>
+              <title>{`Week of ${label(w.week)}: ${w.other} from sessions`}</title>
+            </rect>
+            <rect class="pipe" x={x} width={wd} y={y(w.pipeline)} height={y(0) - y(w.pipeline)}>
+              <title>{`Week of ${label(w.week)}: ${w.pipeline} by the pipeline`}</title>
+            </rect>
+            {i % 2 === 0 && (
+              <text class="x" x={x + wd / 2} y={H - pad.b + 16}>
+                {label(w.week)}
+              </text>
+            )}
+          </g>
+        );
+      })
+    }
+  </svg>
+  <figcaption>
+    <span><i class="sw pipe"></i>Written by the pipeline ({pipe})</span>
+    <span><i class="sw other"></i>Written in a session with me ({total - pipe})</span>
+    <span class="m-source">
+      Merged PRs on <a href={`${REPO_URL}/pulls?q=is%3Apr+is%3Amerged`}>the engine repo</a> by week, counted {fmtDate(data.counted_on)}. {data.note}
+    </span>
+  </figcaption>
+</figure>
+
+<style>
+  .m-vel {
+    margin: 1.25rem 0 1.5rem;
+    border: 1px solid var(--m-line);
+    padding: 1rem;
+    background: var(--m-bg-panel);
+  }
+  .m-vel svg {
+    width: 100%;
+    height: auto;
+    display: block;
+  }
+  .tick line {
+    stroke: var(--m-hair);
+  }
+  .tick text,
+  text.x {
+    fill: var(--m-ink-dim);
+    font-family: var(--m-font-mono);
+    font-size: 11px;
+  }
+  .tick text {
+    text-anchor: end;
+  }
+  text.x {
+    text-anchor: middle;
+  }
+  rect.pipe,
+  .sw.pipe {
+    fill: var(--m-green);
+    background: var(--m-green);
+  }
+  rect.other,
+  .sw.other {
+    fill: var(--m-amber);
+    background: var(--m-amber);
+    opacity: 0.85;
+  }
+  figcaption {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.4rem 1.25rem;
+    margin-top: 0.75rem;
+    font-size: 0.9rem;
+  }
+  .sw {
+    display: inline-block;
+    width: 0.8em;
+    height: 0.8em;
+    margin-right: 0.4em;
+    vertical-align: -0.05em;
+  }
+  .m-source {
+    flex-basis: 100%;
+  }
+</style>

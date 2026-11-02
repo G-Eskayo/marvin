@@ -1,0 +1,117 @@
+---
+title: Ticket pipeline
+description: How MARVIN turns a ready GitHub issue into a tested pull request on its own, several at a time, and stops itself when the environment breaks.
+sidebar:
+  order: 1
+---
+import FeatureStatus from '~/components/FeatureStatus.astro';
+
+<FeatureStatus page="ticket-pipeline" />
+
+## What it does
+
+Every hour a scan claims the most important GitHub issues labelled `ready-for-agent` and hands each to a machine with a free slot. That machine builds the ticket in its own git worktree, measures the result against a baseline, checks that tests changed with the code, and runs a code review. Only a build that passes all three becomes a pull request, with the evidence in its description and `Closes #n`. Several run at once. As of 2026-11-02, 100 pipeline-written PRs have merged: 81 on G-Eskayo/marvin and 19 on G-Eskayo/clarity-captions (counted with `gh pr list --state merged`, head branch starting `pipeline/`).
+
+When the work needs you (a design call, a login, a purchase), triage marks it `ready-for-human`. Use an interactive Claude Code session for that.
+
+## Why it exists
+
+Filing a ticket shouldn't mean sitting there and driving Claude through it. The pipeline keeps working while you're away, so it had to be safe to leave alone. Early unattended runs edited the real checkout, kept retrying an environment that was broken, and called tickets "too vague" when the model service was down. Each of those is now a guard in the code.
+
+## See it work
+
+The primary scanner's run log, read 2026-11-02 on the Mac mini (trimmed; two private projects removed):
+
+```text
+$ ~/.agents/venv/bin/python -c 'import json,os
+r = json.load(open(os.path.expanduser("~/.claude/logs/jobs/ticket-pipeline.json")))["runs"][-2]
+print(r["id"], r["status"], r["started_at"])
+for s in r["steps"]: print(" ", s["at"][11:19], s["step"], "|", s["detail"])'
+9e897f68 passed 2026-11-02T17:56:21Z
+  17:56:21 Code freshness     | current: up to date with origin/main (as of the last fetch)
+  18:00:21 Ticket agents      | 8 applied, 511 proposed, 0 failed
+  18:00:55 Conflicted PRs     | none
+  18:00:57 Owner decisions    | 12 PR(s) waiting on MARVIN
+  18:00:57 Circuit breaker    | clear
+  18:01:23 Scanning tickets   | 116 ready; next is #821 Docs: relative links inside documents do nothing
+  18:01:24 Choosing a machine | macbook-pro-1
+  18:01:24 Claiming ticket    | #821 Docs: relative links inside documents do nothing
+  18:01:26 Dispatching        | to macbook-pro-1
+  18:01:27 Scanning tickets   | 116 ready; next is #827 Support: the request link loads GitHub inside the app window...
+  18:01:28 Choosing a machine | disk 12.2346 GB free on mac-mini-1, minimum 15
+```
+
+One ticket went to the laptop. The next waited: the Mac mini was under its 15 GB disk guard.
+
+## How it works
+
+![The life of a ticket, from idea to running on both Macs, with every loop back](/diagrams/life-of-a-ticket.svg)
+
+1. **Scan.** launchd runs `lib/ticket_pipeline.py` hourly. The Mac mini is the primary scanner; another Mac scans only when the primary's heartbeat is over 150 minutes old or says it's paused (`lib/scanner_role.py`). No scan dispatches while this Mac's own MARVIN code is stale or its code sync is stuck.
+2. **Claim.** It reads ready, unclaimed, unblocked tickets across MARVIN and every project with dispatch on, orders them by priority, and labels each `claimed:<machine>` with a run id, under a file lock.
+3. **Fill slots.** With parallel dispatch on, it keeps starting tickets until a total, per-project or per-machine cap is hit. A machine is skipped, with the reason logged, when disk or the GitHub request budget is under its guard, the breaker is tripped, or a needed tool is missing (`lib/dispatch_concurrency.py`).
+4. **Build in a worktree.** `lib/run_ticket.py` runs on the chosen machine. A fresh worktree comes off `origin/main` on branch `pipeline/<repo>#<n>`; leftovers from an earlier attempt are saved under `refs/rescue/` first, and a preflight proves the agent's shell is in that worktree before any tokens are spent.
+5. **Plan, then execute.** A flagship-model run with read-only tools writes a design doc and task list. A Haiku run edits files and runs tests. Both are headless `claude -p` with `dontAsk` and an allowlist. Commits, pushes and `gh pr create` happen in plain Python (`lib/mr_raiser.py`), never inside the agent.
+6. **Measure and check.** `lib/metrics_registry.py` compares against the baseline, and only `improved` passes. Code must ship with a test change, and a code review's must-fix findings go back to the builder. Up to 3 rounds.
+7. **PR or retry.** A pass opens the PR. A failure comments on the ticket, releases the claim with a backoff and logs the cause. Three failed runs in a row park the ticket for a person.
+
+Each step writes a stage event to `~/.claude/logs/ticket-stages/`. The dashboard draws them as a strip of pills on every PR and ticket card (`claimed` through `done`), marking a started stage as stalled after 10 quiet minutes, 35 for the merge gate.
+
+### The failure breaker
+
+`lib/failure_breaker.py` reduces each failure to a signature such as `verify-timeout` or `model-unavailable`. When one signature hits 3 different tickets of a project within 2 hours with no success since, that project's dispatch pauses and Health goes red. A success in that project clears it. One ticket failing repeatedly never trips it; that's the per-ticket strike count's job. This MacBook's log on 2026-11-02 held 98 failures since 2026-10-08: `verdict:unchanged` 21, `verify-timeout` 17, `verdict:code` (code review) 8, `verdict:mixed` 7, `model-unavailable` 5, and 33 unclassified. Merge refusals go to the same file as `refusal` and never count.
+
+## Use it
+
+```bash
+# Preview the next scan without claiming anything
+~/.agents/venv/bin/python ~/.agents/lib/ticket_pipeline.py --dry-run
+
+# Build one ticket on this machine (a number, or owner/repo#number)
+~/.agents/venv/bin/python ~/.agents/lib/run_ticket.py 821
+
+# Is dispatch paused, and why?
+~/.agents/venv/bin/python ~/.agents/lib/failure_breaker.py status
+~/.agents/venv/bin/python ~/.agents/lib/failure_breaker.py clear   # after you fix the cause
+```
+
+To queue work, label an issue `ready-for-agent`. The scan's steps show live in the dashboard's Activity tab, and the parallel toggle sits in its device strip.
+
+## Configure
+
+| Setting | Where | Default / today |
+|---|---|---|
+| Scan interval | `~/Library/LaunchAgents/com.marvin.ticket-pipeline.plist`, `StartInterval` | 3600 s |
+| `parallel` | `config/dispatch.json` | code default `false`; on in this install |
+| `max_total`, `max_per_project` | `config/dispatch.json` | defaults 2 and 1; this install 4 and 3 |
+| `machine_slots` | `config/dispatch.json` | defaults Mini 2, MacBook 1; this install 2 and 2 |
+| `credit_slots` | `config/dispatch.json` | extra slots that open only while that Mac's API credit is ready |
+| `guards.min_disk_gb`, `guards.min_github_budget_pct` | `config/dispatch.json` | 15 GB, 20% |
+| Per-project dispatch, machines, test commands | `config/projects/<name>.json` in your instance repo | dispatch off until set |
+| Breaker window and threshold | `WINDOW_HOURS`, `MIN_DISTINCT_TICKETS` in `lib/failure_breaker.py` | 2 h, 3 tickets |
+
+Limits take whole numbers from 1 to 8. An invalid field falls back to its default, and an unreadable guard never blocks dispatch.
+
+## Requirements and limitations
+
+- macOS with launchd, Claude Code signed in, `gh` authenticated, and the MARVIN venv. The scan's job is a launchd agent; a Linux node isn't a scanner today.
+- Machine names are fixed in code (`mac-mini-1`, `macbook-pro-1`), and the primary scanner is whichever host id starts with `mac-mini`. A second install with other hardware needs those changed.
+- A ticket the planner can't turn into a concrete task list (`TOO_VAGUE`) goes to a person. A test command outside the executor's allowlist is refused.
+- Verification times out on a loaded machine; it's the second most common failure above. Timeouts aren't strikes, but 5 failed or timed-out runs in a row park the ticket.
+- Every PR still waits for the owner's Approve. Auto-merge for low-risk PRs runs in shadow mode only.
+
+## Design and source
+
+- ADRs: [0013 task dispatch as a general primitive](https://github.com/G-Eskayo/marvin/blob/main/docs/adr/0013-task-dispatch-general-primitive-v1-scope.md), [0026 concurrent dispatch, safety at merge time](https://github.com/G-Eskayo/marvin/blob/main/docs/adr/0026-concurrent-dispatch-smart-merge.md), [0030 `dontAsk` plus an allowlist](https://github.com/G-Eskayo/marvin/blob/main/docs/adr/0030-headless-dispatch-dontask-allowlist.md), [0032 Mac mini as primary host](https://github.com/G-Eskayo/marvin/blob/main/docs/adr/0032-mac-mini-primary-automation-host.md), [0052 parallel dispatch](https://github.com/G-Eskayo/marvin/blob/main/docs/adr/0052-parallel-ticket-dispatch-toggle.md), [0074 stage strip](https://github.com/G-Eskayo/marvin/blob/main/docs/adr/0074-pipeline-stage-strip-visibility.md).
+- Source: [`lib/ticket_pipeline.py`](https://github.com/G-Eskayo/marvin/blob/main/lib/ticket_pipeline.py), [`lib/run_ticket.py`](https://github.com/G-Eskayo/marvin/blob/main/lib/run_ticket.py), [`lib/sandbox_orchestration.py`](https://github.com/G-Eskayo/marvin/blob/main/lib/sandbox_orchestration.py), [`lib/metrics_registry.py`](https://github.com/G-Eskayo/marvin/blob/main/lib/metrics_registry.py), [`lib/dispatch_concurrency.py`](https://github.com/G-Eskayo/marvin/blob/main/lib/dispatch_concurrency.py), [`lib/failure_breaker.py`](https://github.com/G-Eskayo/marvin/blob/main/lib/failure_breaker.py), [`dashboard/src/lib/stage_strip.js`](https://github.com/G-Eskayo/marvin/blob/main/dashboard/src/lib/stage_strip.js). The long walk-through: [docs/life-of-a-ticket.md](https://github.com/G-Eskayo/marvin/blob/main/docs/life-of-a-ticket.md).
+- Key PRs: [#368 Implement G-Eskayo/marvin#217](https://github.com/G-Eskayo/marvin/pull/368) (the stage strip, itself pipeline-built), [#693 Pipeline refuses to dispatch while its own code is stale (#458)](https://github.com/G-Eskayo/marvin/pull/693), [#701 Standby takes over while the primary is paused for stale code (#458)](https://github.com/G-Eskayo/marvin/pull/701), [#850 Plan first, credit for overflow: builds bill the API credit only beyond a Mac's plan slots (#849)](https://github.com/G-Eskayo/marvin/pull/850).
+- Alternatives rejected: `bypassPermissions` for headless runs, because it also drops protection for file and network access the PR diff would never show (ADR 0030). Throttling dispatch to avoid conflicting PRs; instead the merge gate rebases and retests a PR that's behind `main` (ADR 0026). Fan-out to several machines per task, deferred: v1 dispatches to one target (ADR 0013). Moving every job to the Mac mini and deleting the laptop's copy; the laptop's plist stays so it can take over (ADR 0032).
+
+## Related features
+
+- [Merge gate](/docs/features/merge-gate/): what happens after you press Approve.
+- [Decisions](/docs/features/decisions/): how a PR asks the owner to choose.
+- [Dashboard](/docs/features/dashboard/): the Activity tab, MR Review and the stage strip.
+- [Skills](/docs/features/skills/) and [Memory](/docs/features/memory/).
+- [The map](/docs/features/map/): the whole system at a glance.
+- Launcher and output contracts, Plan-first builds, Helper tabs.
