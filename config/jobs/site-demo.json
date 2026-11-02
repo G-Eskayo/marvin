@@ -1,0 +1,8 @@
+{
+  "name": "site-demo",
+  "description": "Private demo of the MARVIN website (lib/site_demo.py, marvin#1007): the last build, served on this machine's Tailscale address only",
+  "command": ["~/.agents/venv/bin/python", "~/.agents-site-demo/lib/site_demo.py", "serve"],
+  "schedule": {"keep_alive": true},
+  "env": {"HOME": "~", "PATH": "~/.local/bin:/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:~/.agents/venv/bin"},
+  "log": "site-demo"
+}
