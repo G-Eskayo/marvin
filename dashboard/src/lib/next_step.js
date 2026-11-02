@@ -115,6 +115,14 @@ export function prStep(pr, ctx = {}) {
 
   if (kind === 'merging') return mine('Merging', 'ship')
   if (kind === 'in-queue') return mine('In the merge queue', 'ship')
+  // The merge queue's order for a PR's own blockers (merge_order.js ownReason, owner 2026-10-30): options, then
+  // Decisions, then unbuilt answers, before failing checks or a conflict. They need doing whatever else is wrong.
+  if (kind !== 'sent-back' && kind !== 'ticket-closed') {
+    if (pr.vague || pr.decisions?.problems?.length) return step('owner', 'Send back for options', 'yours')
+    const n = pr.decisions?.pending?.length || 0
+    if (n) return step('owner', `Answer ${n} decision${n === 1 ? '' : 's'}`, 'yours')
+    if (mq?.unbuilt) return mine('Building your answers', 'build')
+  }
   if (kind === 'sent-back') return mine(live ? 'Being fixed' : 'Sent back', 'build')
   if (kind === 'ticket-closed') return step('owner', 'Close it', 'yours')
   if (kind === 'conflict') {
@@ -123,12 +131,6 @@ export function prStep(pr, ctx = {}) {
   }
   if (kind === 'checks-failed') return mine('Being fixed', 'build')
   if (kind === 'needs-images') return mine('Adding images', 'review')
-  if (kind === 'needs-options') return step('owner', 'Send back for options', 'yours')
-  if (kind === 'decisions-pending') {
-    const n = pr.decisions?.pending?.length || 0
-    return step('owner', `Answer ${n} decision${n === 1 ? '' : 's'}`, 'yours')
-  }
-  if (mq?.unbuilt) return mine('Building your answers', 'build')
   if (kind === 'waiting-checks') return mine('Checks running', 'review')
   if (kind === 'wrong-base') return step('owner', 'Change the base', 'yours')
   if (kind === 'error' || kind === 'tests-after-rebase') return step('owner', 'Approve again', 'yours')

@@ -231,3 +231,21 @@ describe('a queue that lists a ticket twice (seen on real data, 2026-11-02)', ()
     expect(s.next.map((i) => [i.number, i.step.verb])).toEqual([[3, 'Next'], [4, 'Ready']])
   })
 })
+
+describe('a PR\'s own blockers in the merge queue\'s order (seen on real data)', () => {
+  it('Decisions waiting beat a conflict: the owner\'s move, and the line doesn\'t repeat the verb', () => {
+    const p = pr(70, { conflicts: true, decisions: { pending: ['a', 'b'], problems: [] }, mergeQueue: { reason: '2 Decisions are waiting for you' } })
+    expect(prStep(p)).toMatchObject({ owner: 'owner', verb: 'Answer 2 decisions', section: 'yours' })
+    const h = render(feedOf({ prs: [p] }))
+    expect(h).not.toContain('waiting for you<')
+    expect(h).not.toContain('2 Decisions are waiting')
+  })
+  it('unbuilt answers beat failing checks', () => {
+    const p = pr(71, { checks: { state: 'failing', failing: ['ci'], pending: [] }, mergeQueue: { reason: "your answers aren't built yet", unbuilt: true } })
+    expect(prStep(p)).toMatchObject({ owner: 'marvin', verb: 'Building your answers' })
+  })
+  it('at 860 px the right label sits at the row\'s right edge (the middle column spans the row)', () => {
+    const h = render(feedOf(snapshot()))
+    expect(h).toMatch(/class="flex w-full min-w-0 flex-1 items-center gap-4 lg:w-auto"/)
+  })
+})

@@ -98,6 +98,10 @@ function Chip({ project }) {
   return <span className="mr-1.5 inline-block rounded border border-neutral-700 px-1.5 text-[11px] leading-4 text-neutral-300">{project}</span>
 }
 
+// A queue line that only repeats the row's verb is left out (the owner's "Hide the line", PR #987).
+const SAID_BY_VERB = /Decisions? (?:is|are) waiting for you|asks you to choose without options|your answers aren't built yet/
+const queueReason = (pr) => (pr?.mergeQueue?.reason && !SAID_BY_VERB.test(pr.mergeQueue.reason) ? pr.mergeQueue.reason : null)
+
 // "02:10" today, "Oct 8 02:10" before today.
 export function clock(ms, now = Date.now()) {
   if (ms == null) return null
@@ -129,13 +133,13 @@ export function metaFor(item, section, now = Date.now()) {
     if (item.type === 'ticket') parts.push('ticket', item.step.verb === 'Give info' ? 'needs-info' : 'ready-for-human')
     if (pr?.checks?.state === 'passing') parts.push('checks passed')
     if (pr?.mockups?.length) parts.push('mock-up')
-    if (pr?.mergeQueue?.reason && item.step.verb !== 'Approve') parts.push(pr.mergeQueue.reason)
+    if (queueReason(pr) && item.step.verb !== 'Approve') parts.push(queueReason(pr))
   }
   if (section === 'marvin') {
     const runs = pr?.checks?.runs
     if (item.step.verb === 'Checks running' && Array.isArray(runs) && runs.length) parts.push(`GitHub checks ${runs.filter((r) => r.state && r.state !== 'pending').length} of ${runs.length}`)
     if (pr?.sentBack) parts.push(item.worker ? 'sent back, fix in progress' : 'sent back')
-    else if (pr?.mergeQueue?.reason && item.step.verb !== 'Checks running') parts.push(pr.mergeQueue.reason)
+    else if (queueReason(pr) && item.step.verb !== 'Checks running') parts.push(queueReason(pr))
     if (item.worker) parts.push(item.worker)
     const ran = durationText(item.startedAt, now)
     if (ran) parts.push(ran)
@@ -174,7 +178,7 @@ function Row({ item, section, onOpen, now }) {
     <button onClick={() => onOpen(item)} data-testid="now-row" data-section={section}
       className="flex w-full min-w-0 flex-col gap-2 px-4 py-3 text-left hover:bg-white/[0.03] lg:flex-row lg:items-center lg:gap-0">
       <span className={`shrink-0 text-sm font-semibold lg:w-[164px] ${VERB_TONE[section]}`}>{leftLabel(item, section, now)}</span>
-      <span className="flex min-w-0 flex-1 items-center gap-4">
+      <span className="flex w-full min-w-0 flex-1 items-center gap-4 lg:w-auto">
         <span className="min-w-0 flex-1">
           <span className="block break-words text-sm text-neutral-100 [overflow-wrap:anywhere]">{item.title}</span>
           <span className="mt-0.5 block break-words text-xs text-neutral-500 [overflow-wrap:anywhere]">
