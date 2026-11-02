@@ -214,3 +214,11 @@ def test_a_whole_suite_pytest_waits_for_the_slot_and_one_file_does_not(slot_dir)
     out, err = whole.communicate(timeout=60)
     assert "waiting for someone else's suite" in err
     assert whole.returncode in (0, 5), out + err   # 5 = nothing selected
+
+
+def test_the_tests_slot_is_not_this_machines_real_one():
+    """#1006: the test home links ~/.cache to the real one, so a slot under it was this Mac's real slot, and a real
+    merge running here held tests that launch helpers or dispatch. The tests' slot must be its own real folder."""
+    d = Path(os.environ[ts.DIR_ENV])
+    assert d.resolve() != Path(ts.DEFAULT_DIR).resolve()
+    assert not any(p.is_symlink() for p in [d, *d.parents] if p != p.parent and str(p).startswith(str(Path.home())))
