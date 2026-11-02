@@ -1,0 +1,442 @@
+/* Marketing pages: celestial navigation, "mission control at night". Hairline panels, diamond nodes on panel edges,
+   the display face for headings and the mono face for data. Motion only where it means something. */
+*,
+*::before,
+*::after {
+  box-sizing: border-box;
+}
+html {
+  -webkit-text-size-adjust: 100%;
+}
+body {
+  margin: 0;
+  background: var(--m-bg);
+  color: var(--m-ink);
+  font-family: var(--m-font-body);
+  font-size: 1.0625rem;
+  line-height: 1.6;
+  overflow-x: hidden;
+}
+a {
+  color: var(--m-amber);
+  text-underline-offset: 0.18em;
+}
+a:hover {
+  color: var(--m-ink);
+}
+img,
+svg {
+  max-width: 100%;
+}
+h1,
+h2,
+h3 {
+  font-family: var(--m-font-display);
+  font-weight: 800;
+  line-height: 1.08;
+  letter-spacing: 0.01em;
+  margin: 0 0 0.6em;
+  text-wrap: balance;
+}
+h1 {
+  font-size: clamp(2.2rem, 5.6vw, 4rem);
+}
+h2 {
+  font-size: clamp(1.7rem, 3.6vw, 2.5rem);
+}
+h3 {
+  font-size: 1.35rem;
+  font-weight: 600;
+}
+p {
+  margin: 0 0 1em;
+}
+code,
+.m-mono {
+  font-family: var(--m-font-mono);
+}
+code {
+  font-size: 0.92em;
+  background: var(--m-bg-raise);
+  padding: 0.05em 0.35em;
+  border-radius: 2px;
+}
+.m-wrap {
+  width: min(72rem, 100% - 2rem);
+  margin-inline: auto;
+}
+.m-narrow {
+  width: min(46rem, 100% - 2rem);
+  margin-inline: auto;
+}
+.m-dim {
+  color: var(--m-ink-dim);
+}
+.m-small {
+  font-size: 0.875rem;
+}
+.m-skip {
+  position: absolute;
+  left: -999px;
+}
+.m-skip:focus {
+  left: 1rem;
+  top: 1rem;
+  z-index: 10;
+  background: var(--m-bg-panel);
+  padding: 0.5rem;
+}
+:focus-visible {
+  outline: 2px solid var(--m-orange);
+  outline-offset: 2px;
+}
+
+/* Eyebrow / data labels */
+.m-eyebrow {
+  font-family: var(--m-font-mono);
+  font-size: 0.8rem;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: var(--m-orange);
+  margin-bottom: 0.9rem;
+  display: inline-flex;
+  align-items: center;
+  gap: 0.6em;
+}
+.m-eyebrow::before {
+  content: '';
+  width: 0.55em;
+  height: 0.55em;
+  transform: rotate(45deg);
+  border: 1px solid currentColor;
+}
+
+/* Buttons */
+.m-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.5em;
+  min-height: 44px;
+  padding: 0.55rem 1.1rem;
+  font-family: var(--m-font-display);
+  font-weight: 600;
+  font-size: 1.05rem;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  text-decoration: none;
+  border: 1px solid var(--m-amber);
+  color: var(--m-amber);
+  border-radius: 2px;
+  background: transparent;
+  cursor: pointer;
+}
+.m-btn:hover {
+  background: var(--m-hair);
+  color: var(--m-ink);
+}
+.m-btn--primary {
+  background: var(--m-amber);
+  color: var(--m-on-accent);
+}
+.m-btn--primary:hover {
+  background: var(--m-ink);
+  border-color: var(--m-ink);
+  color: var(--m-bg);
+}
+.m-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.75rem;
+  margin: 1.5rem 0;
+}
+
+/* Header */
+.m-header {
+  position: sticky;
+  top: 0;
+  z-index: 5;
+  background: color-mix(in srgb, var(--m-bg) 88%, transparent);
+  backdrop-filter: blur(8px);
+  border-bottom: 1px solid var(--m-hair);
+}
+.m-header-in {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 1rem;
+  min-height: 3.75rem;
+}
+.m-brand {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.55rem;
+  text-decoration: none;
+  color: var(--m-ink);
+  font-family: var(--m-font-display);
+  font-weight: 800;
+  font-size: 1.35rem;
+  letter-spacing: 0.12em;
+}
+.m-brand svg {
+  width: 1.7rem;
+  height: 1.7rem;
+}
+.m-brand polyline {
+  fill: none;
+  stroke: var(--m-amber);
+  stroke-width: 34;
+  stroke-linejoin: round;
+  stroke-linecap: round;
+}
+.m-brand circle {
+  fill: var(--m-green);
+}
+.m-brand circle.o {
+  fill: none;
+  stroke: var(--m-orange);
+  stroke-width: 18;
+  stroke-dasharray: 34 26;
+}
+.m-nav {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+}
+.m-links {
+  display: flex;
+  list-style: none;
+  margin: 0 0.5rem 0 0;
+  padding: 0;
+  gap: 1.3rem;
+}
+.m-links a,
+.m-menu a {
+  color: var(--m-ink-dim);
+  text-decoration: none;
+  font-size: 0.95rem;
+}
+.m-links a:hover,
+.m-links a[aria-current='page'],
+.m-menu a[aria-current='page'] {
+  color: var(--m-ink);
+}
+.m-links a[aria-current='page'] {
+  box-shadow: 0 1px 0 var(--m-amber);
+}
+.m-menu {
+  display: none;
+  position: relative;
+}
+.m-menu summary {
+  list-style: none;
+  cursor: pointer;
+  min-height: 44px;
+  display: flex;
+  align-items: center;
+  padding: 0 0.6rem;
+  border: 1px solid var(--m-hair);
+  font-family: var(--m-font-mono);
+  font-size: 0.85rem;
+  text-transform: uppercase;
+  letter-spacing: 0.1em;
+  color: var(--m-ink-dim);
+}
+.m-menu summary::-webkit-details-marker {
+  display: none;
+}
+.m-menu ul {
+  position: absolute;
+  right: 0;
+  top: calc(100% + 0.4rem);
+  list-style: none;
+  margin: 0;
+  padding: 0.5rem 0;
+  min-width: 12rem;
+  background: var(--m-bg-panel);
+  border: 1px solid var(--m-line);
+}
+.m-menu li a {
+  display: block;
+  padding: 0.65rem 1rem;
+}
+.m-theme {
+  width: 44px;
+  height: 44px;
+  display: grid;
+  place-items: center;
+  background: none;
+  border: 1px solid var(--m-hair);
+  color: var(--m-ink-dim);
+  cursor: pointer;
+  border-radius: 2px;
+}
+.m-theme svg {
+  width: 18px;
+  height: 18px;
+  fill: currentColor;
+}
+.m-theme:hover {
+  color: var(--m-ink);
+}
+.m-cta {
+  min-height: 44px;
+  font-size: 0.95rem;
+  white-space: nowrap;
+}
+@media (max-width: 62rem) {
+  .m-links {
+    display: none;
+  }
+  .m-menu {
+    display: block;
+  }
+}
+@media (max-width: 30rem) {
+  .m-cta {
+    padding-inline: 0.7rem;
+    font-size: 0.85rem;
+  }
+  .m-brand span {
+    display: none;
+  }
+}
+
+/* Sections and panels */
+.m-section {
+  padding: clamp(3rem, 7vw, 5.5rem) 0;
+  border-top: 1px solid var(--m-hair);
+}
+.m-section:first-child {
+  border-top: 0;
+}
+.m-lede {
+  font-size: 1.2rem;
+  color: var(--m-ink-dim);
+  max-width: 42rem;
+}
+.m-panel {
+  position: relative;
+  border: 1px solid var(--m-line);
+  background: var(--m-bg-panel);
+  padding: 1.25rem 1.35rem;
+}
+.m-panel::before,
+.m-panel::after {
+  content: '';
+  position: absolute;
+  width: 7px;
+  height: 7px;
+  background: var(--m-amber);
+  transform: rotate(45deg);
+  top: -4px;
+}
+.m-panel::before {
+  left: 14px;
+}
+.m-panel::after {
+  right: 14px;
+}
+.m-grid {
+  display: grid;
+  gap: 1.25rem;
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 17rem), 1fr));
+}
+.m-grid h3 {
+  margin-top: 0.2rem;
+}
+.m-grid p:last-child {
+  margin-bottom: 0;
+}
+
+/* Page heading for inner pages */
+.m-pagehead {
+  padding: clamp(2.5rem, 6vw, 4.5rem) 0 1.5rem;
+}
+.m-pagehead p {
+  font-size: 1.2rem;
+  color: var(--m-ink-dim);
+  max-width: 44rem;
+}
+
+/* Prose for long-form pages (/why, /about) */
+.m-prose h2 {
+  margin-top: 2.6rem;
+}
+.m-prose h3 {
+  margin-top: 1.8rem;
+}
+.m-prose ul,
+.m-prose ol {
+  padding-left: 1.25rem;
+}
+.m-prose li {
+  margin-bottom: 0.4rem;
+}
+.m-table-wrap {
+  overflow-x: auto;
+  margin: 1rem 0 1.5rem;
+}
+.m-prose table,
+table.m-table {
+  border-collapse: collapse;
+  width: 100%;
+  font-size: 0.95rem;
+}
+.m-prose th,
+.m-prose td,
+.m-table th,
+.m-table td {
+  text-align: left;
+  border-bottom: 1px solid var(--m-hair);
+  padding: 0.5rem 0.75rem 0.5rem 0;
+  vertical-align: top;
+}
+.m-prose th,
+.m-table th {
+  font-family: var(--m-font-mono);
+  font-weight: 400;
+  font-size: 0.8rem;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: var(--m-ink-dim);
+}
+.m-source {
+  font-size: 0.85rem;
+  color: var(--m-ink-faint);
+}
+
+/* Footer */
+.m-footer {
+  border-top: 1px solid var(--m-hair);
+  padding: 2.5rem 0 3rem;
+  margin-top: 2rem;
+}
+.m-footer-in {
+  display: flex;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 1.5rem;
+}
+.m-footer-name {
+  font-family: var(--m-font-display);
+  font-weight: 800;
+  letter-spacing: 0.12em;
+  font-size: 1.2rem;
+  margin-bottom: 0.3rem;
+}
+.m-footer ul {
+  list-style: none;
+  padding: 0;
+  margin: 0;
+  display: grid;
+  grid-template-columns: repeat(2, minmax(8rem, auto));
+  gap: 0.35rem 2rem;
+}
+.m-footer a {
+  color: var(--m-ink-dim);
+  text-decoration: none;
+}
+.m-footer a:hover {
+  color: var(--m-ink);
+}

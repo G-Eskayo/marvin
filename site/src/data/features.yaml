@@ -1,0 +1,430 @@
+# Every MARVIN feature the site talks about, with its release status and evidence (marvin#1007, plan §3.1 and §4).
+# One file so the docs index, each feature page's badge and the roadmap can't disagree.
+#
+# status:
+#   released  merged to main AND run evidence in daily use (a loaded job, a log written in the last 7 days, an app)
+#   testing   merged to main, but behind a flag, in shadow mode, or with no run evidence yet ("Built, in testing")
+#   planned   an ADR or open ticket, no merged implementation. Roadmap only: never a feature page, never a date.
+#   retired   removed; kept so old links explain where it went
+# verified_on: the day the evidence was last checked against main and the running system.
+# page: the docs page slug (src/content/docs/docs/features/<page>.mdx). scripts/check.mjs fails the build when a
+#   released feature has no evidence, a page is missing, or a planned feature has a page.
+# ticket: planned items link here (G-Eskayo/marvin issue number).
+
+areas:
+  - id: memory
+    title: Memory and knowledge
+  - id: pipeline
+    title: Works while you're away
+  - id: control
+    title: You stay in charge
+  - id: visibility
+    title: See what it's doing
+  - id: machines
+    title: Machines and upkeep
+  - id: research
+    title: Research and measurement
+
+features:
+  # ── Memory and knowledge ──────────────────────────────────────────────
+  - id: memory
+    title: Memory and context retrieval
+    area: memory
+    status: released
+    summary: Four kinds of memory notes; vector search re-ranked by keyword and fused by rank, with tag matching as the fallback.
+    evidence: [skills/self-improve/scripts/retrieve.py]
+    adrs: ["0059"]
+    verified_on: 2026-11-02
+    page: memory
+  - id: skills
+    title: Skills
+    area: memory
+    status: released
+    summary: 33 on-demand playbooks (TDD, diagnose, research, grill, handoff, audit and more), loaded only when a task needs them.
+    evidence: [skills/]
+    adrs: ["0059"]
+    verified_on: 2026-11-02
+    page: skills
+  - id: lexicon
+    title: Lexicon
+    area: memory
+    status: released
+    summary: A shared vocabulary loaded every session, so a term means the same thing tomorrow.
+    evidence: [skills/lexicon/SKILL.md]
+    verified_on: 2026-11-02
+  - id: session-start
+    title: Session start and shared "working on"
+    area: memory
+    status: released
+    summary: A hook runs the start-of-session checks; parallel sessions see what each other are editing.
+    evidence: [docs/adr/0062-sessions-share-a-live-working-on-list.md, lib/session_start_report.py]
+    adrs: ["0062"]
+    verified_on: 2026-11-02
+  - id: qa-agent
+    title: qa-agent knowledge base
+    area: memory
+    status: released
+    summary: A store of best practices and past outcomes, queried on request before unfamiliar library work.
+    evidence: [skills/qa-agent/SKILL.md]
+    adrs: ["0027"]
+    verified_on: 2026-11-02
+  - id: routing
+    title: Routing classifier
+    area: memory
+    status: released
+    summary: An embedding classifier reads the first prompt and suggests the model or profile that fits.
+    evidence: [skills/route/scripts/auto_route_hook.py]
+    adrs: ["0023"]
+    verified_on: 2026-11-02
+
+  # ── Works while you're away ───────────────────────────────────────────
+  - id: ticket-pipeline
+    title: Ticket pipeline
+    area: pipeline
+    status: released
+    summary: "A ticket becomes a PR on its own: isolated worktree, planner and executor, measured result, evidence in the PR."
+    evidence: [lib/sandbox_orchestration.py, lib/metrics_registry.py]
+    adrs: ["0013", "0026", "0030", "0032"]
+    verified_on: 2026-11-02
+    page: ticket-pipeline
+  - id: parallel-dispatch
+    title: Parallel dispatch
+    area: pipeline
+    status: released
+    summary: Several tickets at once, with per-machine and per-project slots and disk and GitHub budget guards.
+    evidence: [lib/dispatch_concurrency.py, config/dispatch.json]
+    adrs: ["0052"]
+    verified_on: 2026-11-02
+    page: ticket-pipeline
+  - id: stage-strip
+    title: Pipeline stage strip
+    area: pipeline
+    status: released
+    summary: A stage-by-stage strip on every PR and ticket card, showing where a build stopped.
+    evidence: [dashboard/src/lib/stage_strip.js, lib/ticket_stages.py]
+    adrs: ["0074"]
+    verified_on: 2026-11-02
+    page: ticket-pipeline
+  - id: failure-breaker
+    title: Failure breaker
+    area: pipeline
+    status: released
+    summary: Every failure is logged with a cause; the pipeline pauses itself after 3 tickets fail the same way in 2 hours.
+    evidence: [lib/failure_breaker.py]
+    verified_on: 2026-11-02
+    page: ticket-pipeline
+  - id: launcher
+    title: Launcher and output contracts
+    area: pipeline
+    status: released
+    summary: Every model run goes through one launcher, and every producer of output needs a named consumer.
+    evidence: [docs/adr/0059-marvin-launcher-and-output-contracts.md]
+    adrs: ["0059"]
+    verified_on: 2026-11-02
+  - id: helper-tabs
+    title: Helper tabs
+    area: pipeline
+    status: released
+    summary: Helper agents start in labelled terminal tabs and finish on their own exit, not on a timer.
+    evidence: ["https://github.com/G-Eskayo/marvin/pull/754"]
+    shipped: 2026-10-29
+    verified_on: 2026-11-02
+  - id: plan-first-credit
+    title: Plan-first builds
+    area: pipeline
+    status: released
+    summary: Builds use the plan's normal slots first and only spill over to API credit when those are busy.
+    evidence: ["https://github.com/G-Eskayo/marvin/pull/850"]
+    shipped: 2026-10-30
+    verified_on: 2026-11-02
+
+  # ── You stay in charge ────────────────────────────────────────────────
+  - id: merge-gate
+    title: Merge gate
+    area: control
+    status: released
+    summary: Rebase, re-run the tests the change can affect, check the screenshots, and log every refusal with its reason.
+    evidence: [dashboard/webhook-server/merge.js]
+    adrs: ["0061", "0063"]
+    verified_on: 2026-11-02
+    page: merge-gate
+  - id: parallel-build-tests
+    title: Memory-sized parallel tests in builds
+    area: control
+    status: testing
+    why_testing: Merged on 2026-11-02; no run evidence yet.
+    summary: The pipeline's build step runs its Python tests in parallel, with workers sized to free memory.
+    evidence: ["https://github.com/G-Eskayo/marvin/pull/996"]
+    verified_on: 2026-11-02
+    page: merge-gate
+  - id: decisions
+    title: Decisions
+    area: control
+    status: released
+    summary: When a PR needs the owner to choose, it asks with tickable options, and the merge server enforces the answer.
+    evidence: [dashboard/webhook-server/decisions.js, lib/decisions_check.py]
+    adrs: ["0025", "0037", "0080-the-work-loop"]
+    shipped: 2026-10-30
+    verified_on: 2026-11-02
+    page: decisions
+  - id: github-gate
+    title: GitHub gate
+    area: control
+    status: released
+    summary: One gh wrapper for every call, with a rate budget, a call log and rules for what a PR body must carry.
+    evidence: [bin/gh]
+    verified_on: 2026-11-02
+  - id: safety-monitor
+    title: Safety monitor and quarantine
+    area: control
+    status: released
+    summary: Scores autonomous output for risk; flagged items wait for review, one card at a time.
+    evidence: [skills/safety-monitor/SKILL.md]
+    adrs: ["0015"]
+    verified_on: 2026-11-02
+  - id: merge-queue
+    title: Merge queue
+    area: control
+    status: testing
+    why_testing: Merged on 2026-11-02; its ADR is still Proposed.
+    summary: Approve queues the merge, and MARVIN works out the order.
+    evidence: ["https://github.com/G-Eskayo/marvin/pull/987", "https://github.com/G-Eskayo/marvin/pull/1000"]
+    adrs: ["0078"]
+    verified_on: 2026-11-02
+  - id: auto-merge
+    title: Auto-merge for low-risk PRs
+    area: control
+    status: testing
+    why_testing: Runs in shadow mode. It scores every PR but merges none on its own yet.
+    summary: Scores each PR's risk and would merge the low-risk ones without asking.
+    evidence: [docs/adr/0064-auto-merge-low-risk-prs.md]
+    adrs: ["0064"]
+    verified_on: 2026-11-02
+
+  # ── See what it's doing ───────────────────────────────────────────────
+  - id: dashboard
+    title: Dashboard app
+    area: visibility
+    status: released
+    summary: "MARVIN.app, a desktop mission control: Vitals, MR Review, Docs, Activity and more."
+    evidence: [dashboard/]
+    adrs: ["0048"]
+    verified_on: 2026-11-02
+    page: dashboard
+  - id: vitals
+    title: Health checks
+    area: visibility
+    status: released
+    summary: Health checks discovered from the scheduler, across every machine and job, shown in the Health tab.
+    evidence: [lib/health_checks.py]
+    adrs: ["0033"]
+    verified_on: 2026-11-02
+    page: dashboard
+  - id: activity
+    title: Activity
+    area: visibility
+    status: released
+    summary: A ranked "needs you" queue, the helper agents at work, and each project's goals.
+    evidence: [docs/adr/0053-activity-next-up-queue.md]
+    adrs: ["0053"]
+    verified_on: 2026-11-02
+    page: dashboard
+  - id: docs-tab
+    title: Docs tab
+    area: visibility
+    status: released
+    summary: Every project's docs and ADRs, read live, private repos included.
+    evidence: ["https://github.com/G-Eskayo/marvin/pull/885"]
+    shipped: 2026-10-30
+    verified_on: 2026-11-02
+    page: dashboard
+  - id: proposals
+    title: Proposals
+    area: visibility
+    status: released
+    summary: Big ideas written for a lay reader, reviewed next to the PRs.
+    evidence: [docs/adr/0068-proposals-are-big-ideas-in-mr-review.md]
+    adrs: ["0068"]
+    verified_on: 2026-11-02
+  - id: boot
+    title: Boot sequence and identity
+    area: visibility
+    status: released
+    summary: A celestial-navigation boot that shows the real health verdict, and the constellation-M icon.
+    evidence: ["https://github.com/G-Eskayo/marvin/pull/432", "https://github.com/G-Eskayo/marvin/pull/437"]
+    verified_on: 2026-11-02
+    page: dashboard
+  - id: map
+    title: The map
+    area: visibility
+    status: released
+    summary: A 3D map drawn from the real system, published as a privacy-checked snapshot and used as a live wallpaper.
+    evidence: [brain-map/generate.py, brain-map/export_snapshot.py]
+    adrs: ["0018", "0019", "0020", "0049", "0050", "0057"]
+    shipped: 2026-10-30
+    verified_on: 2026-11-02
+    page: map
+  - id: usage
+    title: Usage accounting
+    area: visibility
+    status: released
+    summary: Token, tool and GitHub usage per machine, over 24 hours, 7 days and 30 days.
+    evidence: ["https://github.com/G-Eskayo/marvin/pull/418"]
+    verified_on: 2026-11-02
+  - id: mobile
+    title: MARVIN Mobile (iPhone)
+    area: visibility
+    status: testing
+    why_testing: A demo slice; its backend job isn't loaded on the always-on machine yet.
+    summary: MARVIN on the iPhone over a private network.
+    evidence: [docs/adr/0039-marvin-mobile-split-compute.md]
+    adrs: ["0039", "0046"]
+    verified_on: 2026-11-02
+
+  # ── Machines and upkeep ───────────────────────────────────────────────
+  - id: sync
+    title: Cross-machine sync
+    area: machines
+    status: released
+    summary: Two-way code and state sync between machines, with a union merge for append-only files. It has failures, and logs them.
+    evidence: [lib/code_sync.py]
+    adrs: ["0021", "0022", "0076", "0077"]
+    verified_on: 2026-11-02
+  - id: engine-instance
+    title: Engine and instance split
+    area: machines
+    status: released
+    summary: The engine is public; each person's state lives in their own private instance repo.
+    evidence: [lib/instance.py]
+    adrs: ["0071"]
+    verified_on: 2026-11-02
+  - id: disk
+    title: Disk ledger and trim
+    area: machines
+    status: released
+    summary: Forecasts disk use, trims automatically, and deletes by what a file would cost to replace.
+    evidence: [docs/adr/0056-disk-ledger-trim-and-headroom-forecast.md]
+    adrs: ["0056", "0065"]
+    verified_on: 2026-11-02
+  - id: worktree-cleanup
+    title: Worktree cleanup
+    area: machines
+    status: released
+    summary: Backs up leftover edits to a branch, then removes stale worktrees.
+    evidence: ["https://github.com/G-Eskayo/marvin/pull/630"]
+    verified_on: 2026-11-02
+  - id: versioning
+    title: Versioning and changelog
+    area: machines
+    status: released
+    summary: Labels on a merged PR set the version bump and write the changelog line.
+    evidence: [VERSION, CHANGELOG.md]
+    adrs: ["0028"]
+    verified_on: 2026-11-02
+  - id: support-link
+    title: Support link
+    area: machines
+    status: released
+    summary: Two MARVIN installs connect so one can help the other, and every fix is verified.
+    evidence: ["https://github.com/G-Eskayo/marvin/pull/662"]
+    adrs: ["0073"]
+    verified_on: 2026-11-02
+  - id: onboarding
+    title: Project onboarding
+    area: machines
+    status: testing
+    why_testing: The first real run on an outside repo is still open.
+    summary: One command wires a new repo into MARVIN.
+    evidence: [docs/adr/0036-project-onboarding.md]
+    adrs: ["0036", "0058", "0060"]
+    verified_on: 2026-11-02
+  - id: linux-node
+    title: Third machine on Linux
+    area: machines
+    status: testing
+    why_testing: It runs tests and scheduled jobs; its ADR is still Proposed.
+    summary: A Linux box takes test runs, benchmarks and scans off the Macs.
+    evidence: ["https://github.com/G-Eskayo/marvin/pull/918", "https://github.com/G-Eskayo/marvin/pull/919"]
+    adrs: ["0082"]
+    verified_on: 2026-11-02
+  - id: peer-care
+    title: Peer care and nightly reset
+    area: machines
+    status: testing
+    why_testing: Merged; follow-up tickets are still open.
+    summary: The machines look after each other and reset safely at night.
+    evidence: ["https://github.com/G-Eskayo/marvin/pull/856"]
+    adrs: ["0081"]
+    verified_on: 2026-11-02
+  - id: history-store
+    title: History store
+    area: machines
+    status: testing
+    why_testing: Its loader job's last run failed.
+    summary: One local database per machine for the history every tab reads.
+    evidence: [lib/history_store.py]
+    adrs: ["0066", "0080-one-store"]
+    verified_on: 2026-11-02
+
+  # ── Research and measurement ──────────────────────────────────────────
+  - id: research-colony
+    title: Research colony, digests and morning brief
+    area: research
+    status: released
+    summary: Feeds and papers turn into a daily digest, a research digest and one morning brief.
+    evidence: [skills/research-colony/SKILL.md]
+    adrs: ["0014", "0067"]
+    verified_on: 2026-11-02
+  - id: bench
+    title: Bench
+    area: research
+    status: released
+    summary: A/B runs of profiles on cost and correctness, and a retrieval eval with the method in the open.
+    evidence: [bench/RESULTS.md]
+    verified_on: 2026-11-02
+  - id: code-graph
+    title: Code graph
+    area: research
+    status: released
+    summary: A knowledge graph of the code, rebuilt after every merge, with a health check when it falls behind.
+    evidence: ["https://github.com/G-Eskayo/marvin/pull/694"]
+    verified_on: 2026-11-02
+
+  # ── Planned: roadmap only ─────────────────────────────────────────────
+  - id: fresh-install
+    title: Fresh install for anyone
+    area: machines
+    status: planned
+    summary: A stranger installs MARVIN and is guided through setup. This is what turns "join the waitlist" into "download".
+    ticket: 646
+  - id: twenty-plan
+    title: Run on the $20 plan
+    area: pipeline
+    status: planned
+    summary: Step down to cheaper models at the usage limit, and measure the result against the north stars again.
+    ticket: 594
+  - id: voice-endpoint
+    title: Talk to MARVIN
+    area: visibility
+    status: planned
+    summary: Words in, a spoken reply out; actions confirmed on the phone.
+    ticket: 670
+    adrs: ["0075"]
+  - id: vitals-v5
+    title: Vitals v5
+    area: visibility
+    status: planned
+    summary: Retire the health checks that lie, and show flow and independence instead of a wall of cards.
+    ticket: 835
+  - id: add-ons
+    title: Paid add-ons
+    area: machines
+    status: planned
+    summary: The engine stays free and open; optional add-ons are built on top of it.
+    adrs: ["0072"]
+  - id: security-node
+    title: Security node
+    area: machines
+    status: planned
+    summary: A separate machine that watches the others.
+    adrs: ["0069"]

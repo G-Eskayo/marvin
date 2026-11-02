@@ -1,0 +1,362 @@
+---
+// Landing hero. The viewport on the right plays the boot's star-draw (stars arrive, the lock finds the origin star,
+// lines grow out from it, each star it reaches turns green), then hands over to the live map: the public snapshot
+// of the real system (the privacy-checked export, site.config.json mapUrl). Reduced motion starts at the final frame.
+// ?hero=stars or ?hero=map shows one half only, so the Decision on the PR can compare all three.
+import { SITE } from '~/lib/site';
+
+const P = { bl: [262, 772], tl: [262, 262], c: [512, 560], tr: [762, 262], br: [762, 772] } as const;
+let seed = 7;
+const rnd = () => (seed = (seed * 16807) % 2147483647) / 2147483647;
+const sky = Array.from({ length: 46 }, (_, i) => ({
+  x: 30 + rnd() * 964,
+  y: 30 + rnd() * 964,
+  r: 1.6 + rnd() * 3.2,
+  o: 0.18 + rnd() * 0.45,
+  d: (rnd() * 0.9).toFixed(2),
+  i,
+}));
+const seg = (a: readonly number[], b: readonly number[]) => Math.hypot(b[0] - a[0], b[1] - a[1]);
+const lines = [
+  { from: P.c, to: P.tl, delay: 1.45, len: seg(P.c, P.tl) },
+  { from: P.c, to: P.tr, delay: 1.45, len: seg(P.c, P.tr) },
+  { from: P.tl, to: P.bl, delay: 1.95, len: seg(P.tl, P.bl) },
+  { from: P.tr, to: P.br, delay: 1.95, len: seg(P.tr, P.br) },
+];
+const outer = [
+  { p: P.tl, lit: 1.85 },
+  { p: P.tr, lit: 1.85 },
+  { p: P.bl, lit: 2.35 },
+  { p: P.br, lit: 2.35 },
+];
+---
+
+<section class="m-hero m-night" data-hero="both">
+  <div class="m-wrap m-hero-in">
+    <div class="m-hero-copy">
+      <p class="m-eyebrow">Open source · for Claude Code</p>
+      <h1>{SITE.description}</h1>
+      <p class="m-hero-sub">
+        {SITE.name} remembers what you decided, loads the right playbook for the job, and turns tickets into tested pull
+        requests on its own. You still approve every merge.
+      </p>
+      <div class="m-actions">
+        <a class="m-btn m-btn--primary" href="/waitlist/">Join the waitlist</a>
+        <a class="m-btn" href="/docs/">Read the docs</a>
+      </div>
+      <p class="m-hero-status">
+        <span class="m-dot" aria-hidden="true"></span>
+        Early. It runs every day on three machines, but it isn't packaged for anyone else yet.
+      </p>
+    </div>
+
+    <figure class="m-viewport" aria-label="The constellation M, then a live map of the real system">
+      <div class="m-vp-hud" aria-hidden="true">
+        <span class="m-vp-label m-vp-label--boot">Boot · origin lock</span>
+        <span class="m-vp-label m-vp-label--map">Live map · the real system</span>
+      </div>
+      <svg class="m-sky" viewBox="0 0 1024 1024" role="img" aria-label="Five stars joined into the letter M">
+        <g class="m-sky-bg">
+          {sky.map((s) => <circle cx={s.x} cy={s.y} r={s.r} style={`--o:${s.o};--d:${s.d}s`} />)}
+        </g>
+        <g class="m-lines">
+          {
+            lines.map((l) => (
+              <line
+                x1={l.from[0]}
+                y1={l.from[1]}
+                x2={l.to[0]}
+                y2={l.to[1]}
+                style={`--len:${l.len.toFixed(0)};--d:${l.delay}s`}
+              />
+            ))
+          }
+        </g>
+        <g class="m-lock" transform={`translate(${P.c[0]} ${P.c[1]})`}>
+          <path d="M-150 -90 v-60 h60 M90 -150 h60 v60 M150 90 v60 h-60 M-90 150 h-60 v-60" />
+        </g>
+        <circle class="m-orbit" cx={P.c[0]} cy={P.c[1]} r="118" />
+        {outer.map((s) => <circle class="m-star" cx={s.p[0]} cy={s.p[1]} r="44" style={`--lit:${s.lit}s`} />)}
+        <circle class="m-core" cx={P.c[0]} cy={P.c[1]} r="64" />
+      </svg>
+      <iframe
+        class="m-map"
+        title="Live map of the system"
+        data-src={`${SITE.mapUrl}?embed=1`}
+        tabindex="-1"
+        aria-hidden="true"
+        loading="lazy"></iframe>
+      <figcaption>
+        <a href="/map/">Open the full map</a>
+        <span class="m-dim">Drawn from the running system, not a mock-up.</span>
+      </figcaption>
+    </figure>
+  </div>
+</section>
+
+<script is:inline>
+  (function () {
+    var hero = document.querySelector('.m-hero');
+    if (!hero) return;
+    var q = new URLSearchParams(location.search).get('hero');
+    if (q === 'stars' || q === 'map') hero.dataset.hero = q;
+    var reduce = matchMedia('(prefers-reduced-motion: reduce)').matches;
+    var frame = hero.querySelector('.m-map');
+    function showMap() {
+      if (frame && !frame.src) frame.src = frame.dataset.src;
+      hero.classList.add('is-map');
+    }
+    if (hero.dataset.hero === 'stars') return;
+    if (hero.dataset.hero === 'map' || reduce) return showMap();
+    setTimeout(showMap, 3400);
+  })();
+</script>
+
+<style>
+  .m-night {
+    --m-bg: #05040a;
+    --m-bg-raise: #0d0b16;
+    --m-bg-panel: #0b0913;
+    --m-ink: #ece6d6;
+    --m-ink-dim: #a99f88;
+    --m-ink-faint: #6f6754;
+    --m-amber: #f0b32a;
+    --m-line: #7a5a14;
+    --m-hair: rgba(240, 179, 42, 0.22);
+    --m-orange: #ff6a1f;
+    --m-green: #54ff8a;
+    --m-moon: #cfd6e6;
+    --m-on-accent: #05040a;
+    background:
+      radial-gradient(ellipse 70% 80% at 75% 45%, #120f1f 0%, transparent 70%),
+      var(--m-bg);
+    color: var(--m-ink);
+    color-scheme: dark;
+  }
+  .m-hero {
+    border-bottom: 1px solid var(--m-hair);
+    overflow: hidden;
+  }
+  .m-hero-in {
+    display: grid;
+    grid-template-columns: minmax(0, 1.1fr) minmax(0, 0.9fr);
+    gap: clamp(1.5rem, 4vw, 3.5rem);
+    align-items: center;
+    padding: clamp(2.5rem, 6vw, 5rem) 0;
+  }
+  .m-hero h1 {
+    font-size: clamp(2.1rem, 4.6vw, 3.6rem);
+  }
+  .m-hero-sub {
+    font-size: 1.2rem;
+    color: var(--m-ink-dim);
+    max-width: 36rem;
+  }
+  .m-hero-status {
+    font-family: var(--m-font-mono);
+    font-size: 0.85rem;
+    color: var(--m-ink-dim);
+    display: flex;
+    gap: 0.6rem;
+    align-items: baseline;
+    max-width: 34rem;
+  }
+  .m-dot {
+    flex: none;
+    width: 8px;
+    height: 8px;
+    background: var(--m-orange);
+    transform: translateY(-1px) rotate(45deg);
+  }
+  .m-viewport {
+    position: relative;
+    margin: 0;
+    aspect-ratio: 1;
+    border: 1px solid var(--m-line);
+    background: #030207;
+  }
+  .m-viewport::before,
+  .m-viewport::after {
+    content: '';
+    position: absolute;
+    z-index: 2;
+    width: 9px;
+    height: 9px;
+    background: var(--m-amber);
+    transform: rotate(45deg);
+    top: -5px;
+  }
+  .m-viewport::before {
+    left: 18px;
+  }
+  .m-viewport::after {
+    right: 18px;
+  }
+  .m-vp-hud {
+    position: absolute;
+    z-index: 2;
+    top: 0.7rem;
+    left: 0.9rem;
+    font-family: var(--m-font-mono);
+    font-size: 0.72rem;
+    letter-spacing: 0.12em;
+    text-transform: uppercase;
+    color: var(--m-orange);
+  }
+  .m-vp-label--map,
+  .is-map .m-vp-label--boot {
+    display: none;
+  }
+  .is-map .m-vp-label--map {
+    display: inline;
+    color: var(--m-green);
+  }
+  .m-sky,
+  .m-map {
+    position: absolute;
+    inset: 0;
+    width: 100%;
+    height: 100%;
+    border: 0;
+  }
+  .m-sky {
+    padding: 9%;
+    transition: opacity 0.9s ease;
+  }
+  .m-map {
+    /* The embedded page declares no color scheme; matching it keeps the iframe transparent over the night panel. */
+    color-scheme: light;
+    opacity: 0;
+    pointer-events: none;
+    transition: opacity 1.2s ease;
+  }
+  .is-map .m-map {
+    opacity: 1;
+  }
+  .is-map .m-sky {
+    opacity: 0;
+  }
+  .m-viewport figcaption {
+    position: absolute;
+    z-index: 2;
+    left: 0.9rem;
+    right: 0.9rem;
+    bottom: 0.7rem;
+    display: flex;
+    flex-wrap: wrap;
+    justify-content: space-between;
+    gap: 0.25rem 1rem;
+    font-size: 0.85rem;
+  }
+  /* The draw */
+  .m-sky-bg circle {
+    fill: var(--m-moon);
+    opacity: 0;
+    animation: m-fade 0.6s ease forwards;
+    animation-delay: var(--d);
+  }
+  @keyframes m-fade {
+    to {
+      opacity: var(--o);
+    }
+  }
+  .m-lines line {
+    stroke: var(--m-amber);
+    stroke-width: 22;
+    stroke-linecap: round;
+    stroke-dasharray: var(--len);
+    stroke-dashoffset: var(--len);
+    animation: m-draw 0.5s ease-out forwards;
+    animation-delay: var(--d);
+  }
+  @keyframes m-draw {
+    to {
+      stroke-dashoffset: 0;
+    }
+  }
+  .m-star {
+    fill: var(--m-moon);
+    opacity: 0;
+    animation:
+      m-arrive 0.5s ease forwards 0.5s,
+      m-lit 0.35s ease forwards var(--lit);
+  }
+  @keyframes m-arrive {
+    to {
+      opacity: 0.75;
+    }
+  }
+  @keyframes m-lit {
+    to {
+      fill: var(--m-green);
+      opacity: 1;
+    }
+  }
+  .m-lock path {
+    fill: none;
+    stroke: var(--m-orange);
+    stroke-width: 12;
+    opacity: 0;
+    transform: scale(1.6);
+    animation: m-lock 0.45s ease-out forwards 0.95s;
+  }
+  @keyframes m-lock {
+    to {
+      opacity: 1;
+      transform: scale(1);
+    }
+  }
+  .m-core {
+    fill: var(--m-moon);
+    opacity: 0;
+    animation:
+      m-arrive 0.5s ease forwards 0.55s,
+      m-ignite 0.4s ease forwards 1.3s;
+  }
+  @keyframes m-ignite {
+    to {
+      fill: var(--m-green);
+      opacity: 1;
+      filter: drop-shadow(0 0 18px rgba(84, 255, 138, 0.8));
+    }
+  }
+  .m-orbit {
+    fill: none;
+    stroke: var(--m-orange);
+    stroke-width: 10;
+    stroke-dasharray: 30 24;
+    opacity: 0;
+    animation: m-fade1 0.5s ease forwards 1.35s;
+  }
+  @keyframes m-fade1 {
+    to {
+      opacity: 1;
+    }
+  }
+  [data-hero='map'] .m-sky {
+    display: none;
+  }
+  @media (prefers-reduced-motion: reduce) {
+    .m-sky *,
+    .m-sky circle,
+    .m-lines line,
+    .m-lock path {
+      animation-duration: 0.001s !important;
+      animation-delay: 0s !important;
+    }
+    .m-sky,
+    .m-map {
+      transition: none;
+    }
+  }
+  @media (max-width: 52rem) {
+    .m-hero-in {
+      grid-template-columns: 1fr;
+    }
+    .m-viewport {
+      max-width: 26rem;
+      width: 100%;
+      justify-self: center;
+    }
+  }
+</style>

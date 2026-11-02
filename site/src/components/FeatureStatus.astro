@@ -1,0 +1,78 @@
+---
+// The status block at the top of a feature page: every feature in features.yaml that folds into this page, with its
+// badge, its "verified on" date, its evidence and its ADRs. Pages never type a status by hand.
+import StatusBadge from './StatusBadge.astro';
+import { FEATURES, adrLinks, evidenceHref, evidenceLabel, fmtDate } from '~/lib/site';
+
+interface Props {
+  page: string;
+}
+const { page } = Astro.props;
+const rows = FEATURES.filter((f) => f.page === page);
+if (rows.length === 0) throw new Error(`FeatureStatus: no feature in features.yaml has page: ${page}`);
+---
+
+<aside class="m-fs not-content" aria-label="Release status">
+  {
+    rows.map((f) => (
+      <div class="m-fs-row">
+        <div class="m-fs-head">
+          <StatusBadge status={f.status} />
+          <span class="m-fs-title">{f.title}</span>
+          {f.verified_on && <span class="m-fs-date">verified on {fmtDate(f.verified_on)}</span>}
+        </div>
+        {f.why_testing && <p class="m-fs-why">{f.why_testing}</p>}
+        <p class="m-fs-links">
+          {(f.evidence ?? []).map((e) => (
+            <a href={evidenceHref(e)}>{evidenceLabel(e)}</a>
+          ))}
+          {(f.adrs ?? []).flatMap((id) => adrLinks(id)).map((a) => (
+            <a href={a.href} title={a.title}>
+              ADR {a.id}
+            </a>
+          ))}
+        </p>
+      </div>
+    ))
+  }
+</aside>
+
+<style>
+  .m-fs {
+    border: 1px solid var(--sl-color-hairline-light);
+    border-left: 3px solid var(--sl-color-accent);
+    background: var(--sl-color-gray-6);
+    padding: 0.75rem 1rem;
+    margin-bottom: 1.5rem;
+    display: grid;
+    gap: 0.6rem;
+  }
+  .m-fs-head {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 0.4rem 0.75rem;
+  }
+  .m-fs-title {
+    font-weight: 600;
+    color: var(--sl-color-white);
+  }
+  .m-fs-date,
+  .m-fs-why {
+    font-size: var(--sl-text-xs);
+    color: var(--sl-color-gray-3);
+    margin: 0;
+  }
+  .m-fs-links {
+    margin: 0;
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.25rem 0.9rem;
+    font-family: var(--m-font-mono);
+    font-size: var(--sl-text-xs);
+  }
+  .m-fs-links a {
+    color: var(--sl-color-accent);
+    word-break: break-all;
+  }
+</style>
