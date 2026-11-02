@@ -581,6 +581,15 @@ def check_memory_lint() -> dict:
     return memory_lint.check()
 
 
+def check_profile_parity() -> dict | None:
+    """The owner's public profile facts (instance config/public-profile.json) match every surface: the live site, the
+    resume PDF, the master resume, GitHub and the product sites (marvin#1038). Amber names the surface and field that
+    drifted; a surface that couldn't be read is never a pass. Nothing to report when the instance keeps no facts file.
+    The surfaces are read at most every few hours (profile_parity.REFRESH_HOURS); between reads the last report shows."""
+    import profile_parity
+    return profile_parity.check()
+
+
 SEAL_BETA_STATUS_PATH = Path.home() / ".claude" / "seal-beta" / "status.json"
 SEAL_BETA_PLIST = "com.marvin.seal-beta-ingest.plist"
 SEAL_BETA_STALE_MINUTES = 60      # the job runs every 10 minutes
@@ -1756,6 +1765,7 @@ def default_checks(reach: dict[str, str] | None = None, reach_results: list[dict
         ("github:gate", "GitHub calls go through the gate", check_gh_gate, CHECK_BUDGET_S),
         ("main:green", "The main branch passes its tests", check_main_health, CHECK_BUDGET_S),
         ("memory:lint", "Memory links and index are sound", check_memory_lint, CHECK_BUDGET_S),
+        ("profile:parity", "Public profile matches everywhere", check_profile_parity, CHECK_BUDGET_S),
         ("seal:beta-ingest", "Seal Speak beta reports are picked up", check_seal_beta_ingest, CHECK_BUDGET_S),
         ("brief:builder", "Morning brief builder", check_brief_builder, CHECK_BUDGET_S),
         ("merge:service", "Merge service reachable", check_merge_service, CROSS_MACHINE_BUDGET_S),

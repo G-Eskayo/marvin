@@ -1626,3 +1626,32 @@ def test_every_machine_state_key_has_a_label_and_an_unlabelled_one_breaks_nothin
     rows = {r["id"]: r for r in hc.check_machine_state_everywhere({}, runner=lambda t, s: "gh_token=ok\n")}
     assert rows["auth:gh@mac-mini-1"]["severity"] == "green"
     assert rows["brand:new@mac-mini-1"]["label"] == "brand:new -- mac-mini-1"
+
+
+# ---- profile parity (marvin#1038) ----
+
+def test_profile_parity_is_a_registered_health_check():
+    ids = [spec[0] for spec in hc.default_checks()]
+    assert "profile:parity" in ids
+    assert ids.index("profile:parity") == ids.index("memory:lint") + 1
+
+
+def test_profile_parity_reports_nothing_without_a_facts_file(tmp_path, monkeypatch):
+    monkeypatch.setenv("MARVIN_INSTANCE_DIR", str(tmp_path))
+    assert hc.check_profile_parity() is None
+
+
+def test_profile_parity_drift_turns_the_row_amber_with_the_field(tmp_path, monkeypatch):
+    import profile_parity
+    monkeypatch.setenv("MARVIN_INSTANCE_DIR", str(tmp_path))
+    monkeypatch.setattr(profile_parity, "CACHE_PATH", tmp_path / "cache.json")
+    page = tmp_path / "about.html"
+    page.write_text("<p>Eagle Scout: 31 merit badges, 3 Eagle Palms</p>")
+    (tmp_path / "config").mkdir()
+    (tmp_path / "config" / "public-profile.json").write_text(json.dumps({
+        "facts": {"palms": {"value": 2}},
+        "rules": [{"id": "p", "field": "Eagle Palms", "kind": "count", "fact": "palms", "pattern": r"\b(\w+) Eagle Palms?\b"}],
+        "surfaces": [{"id": "site", "label": "Live site", "kind": "url", "public": True, "urls": [page.as_uri()]}]}))
+    rows = hc.guarded("profile:parity", "Public profile matches everywhere", hc.check_profile_parity)
+    assert rows[0]["severity"] == "yellow"
+    assert "Live site" in rows[0]["detail"] and "Eagle Palms" in rows[0]["detail"]
