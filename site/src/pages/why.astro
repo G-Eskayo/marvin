@@ -31,12 +31,12 @@ const n = SITE.name;
     <ul>
       <li>
         <strong>Choose the context.</strong> Memory, decisions and a shared vocabulary live outside the model. A session
-        loads the ones the task needs, and skills load only when they're called. <a href="/docs/features/memory/">Memory</a>,
+        loads the ones the task needs, and skills load only when they're called. <a href="/docs/features/memory/">Memory</a>,{' '}
         <a href="/docs/features/skills/">skills</a>.
       </li>
       <li>
         <strong>Gate every change.</strong> The pipeline works in its own worktree, measures its result, and keeps it only
-        if nothing got worse. Nothing reaches main without my Approve and a gate that re-checks it.
+        if nothing got worse. Nothing reaches main without my Approve and a gate that re-checks it.{' '}
         <a href="/docs/features/ticket-pipeline/">Pipeline</a>, <a href="/docs/features/merge-gate/">merge gate</a>.
       </li>
       <li>
@@ -88,7 +88,7 @@ const n = SITE.name;
       I added a code knowledge graph and told every session to search it first. Then I tested it: 30 real questions with
       known answers, scored without an AI judge. Plain keyword search put the answer in the top five 67% of the time.
       The graph managed 38%. On questions that need two files, keyword search found 3 of 4 and the graph found none. So
-      the rule flipped to keyword search first, and the graph kept the structure questions it's good at.
+      the rule flipped to keyword search first, and the graph kept the structure questions it's good at.{' '}
       <a href={blob('bench/RESULTS.md')}>Results, 26 Oct 2026</a>.
     </p>
 
@@ -122,7 +122,7 @@ const n = SITE.name;
       <li><strong>Be the best tool for making tools.</strong> Work that makes {n} better at building and shipping things beats work that builds one thing.</li>
     </ol>
     <p>
-      What's being built now and next is on the <a href="/roadmap/">roadmap</a>. What changed recently is in the
+      What's being built now and next is on the <a href="/roadmap/">roadmap</a>. What changed recently is in the{' '}
       <a href="/changelog/">changelog</a>.
     </p>
 
