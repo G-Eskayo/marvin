@@ -208,6 +208,7 @@ contextBridge.exposeInMainWorld('api', {
     helpers: () => ipcRenderer.invoke('activity:helpers'),
     overview: () => ipcRenderer.invoke('activity:overview'),
     needsYou: () => ipcRenderer.invoke('activity:needsYou'),
+    openTickets: () => ipcRenderer.invoke('activity:openTickets'),
     progress: () => ipcRenderer.invoke('activity:progress')
   },
   triggers: {

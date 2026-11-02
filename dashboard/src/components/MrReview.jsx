@@ -581,6 +581,10 @@ export default function MrReview(props) {
     window.api.proposals?.list?.().then((r) => { if (live && r?.ok) setProposalCount(r.proposals.length) }).catch(() => {})
     return () => { live = false }
   }, [])
+  // The Workshop's control (#862) links its unbuilt views here: Shipped opens Merged, Proposals opens Proposals.
+  useEffect(() => {
+    if (['open', 'merged', 'proposals'].includes(props.nav?.view)) { setHistoryPr(null); setView(props.nav.view) }
+  }, [props.nav?.at])
   // Open, Merged and Proposals each keep their place; a merged PR opens at its top and Back returns to it (#755).
   useScrollPlace('mr-view', historyPr ? `merged:${historyPr.url}` : view)
   if (historyPr) {

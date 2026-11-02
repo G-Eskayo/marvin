@@ -671,6 +671,7 @@ function registerDocsHandlers() {
   ipcMain.handle('mr:parity', () => relations.parity())
   ipcMain.handle('activity:overview', () => relations.overview())
   ipcMain.handle('activity:needsYou', () => relations.needsYou())
+  ipcMain.handle('activity:openTickets', () => relations.openTickets())
   // Activity ▸ Projects (marvin#625's progress strip): built from memory and local files only, no GitHub call. Merges
   // are the Merged view's saved list plus the merge server's own record (local HTTP), deduped by URL.
   const progress = createProjectProgress({
