@@ -74,7 +74,8 @@ export function describePrState(pr, { status = 'idle', errorMessage = null, prog
 
   // marvin#231: approved and in the merge queue on the merge Mac (one queue for both Macs and the phone). It merges by
   // itself in its turn; the line under the title says where it is or what it waits for. Deny still takes it out.
-  const mq = pr.mergeQueue
+  // A merge that just failed here says so (its failed stage on the strip), even while the list still shows it queued.
+  const mq = status === 'error' ? null : pr.mergeQueue
   if (mq?.state === 'running') {
     return base('merging', 'working', 'Merging…', 'You can leave this screen; it carries on.', 'hidden', 'hidden')
   }

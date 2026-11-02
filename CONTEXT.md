@@ -1554,6 +1554,9 @@ Mac has no push channel. Gil applies the hooks on each Mac with `marvin_hooks.py
   and no written answer, need no more work and no reply: the PR can merge. A question that marks no built option only
   counts when its first option, marked Recommended, is the one picked.
 - **Queue line, once**: the line is left out when the card's headline already says the same thing.
+- **One card, both states** (owner, 2026-11-02): a queued PR's card reads "Approved: in the merge queue" with its queue
+  line; when its turn comes the same card becomes the merge pipeline (the stage strip), on every Mac, whichever device
+  approved it, and a Mac that opens mid-merge catches up to where the merge is.
 
 ## clarity-captions app-build check is now required (2026-10-05)
 
