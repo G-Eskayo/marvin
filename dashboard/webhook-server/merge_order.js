@@ -48,12 +48,21 @@ export function isFixTicket(issue) {
 
 // What MARVIN already knows about main: CI's open main-red ticket (lib/main_red.py) and, for marvin itself, the full
 // suite on a clean main (lib/main_health.py, ~/.claude/logs/main-health.json, `health`).
-export function mainStateFrom({ issues = [], health = null, base = 'main' } = {}) {
+// A local health check (main-health.json) counts only for the commit main is on now. On 2026-11-02 the queue held
+// every merge because the Mini's check from 10-31, on an older commit, still said red, while GitHub's CI on main was
+// green. GitHub's CI owns main's state (its main-red job files the ticket); an old or unmatched local check is ignored.
+export function healthCountsFor(health, headSha) {
+  if (!health || !health.sha || !headSha) return false
+  const a = String(health.sha).toLowerCase(), b = String(headSha).toLowerCase()
+  return a.length >= 7 && (b.startsWith(a) || a.startsWith(b))
+}
+
+export function mainStateFrom({ issues = [], health = null, base = 'main', headSha = null } = {}) {
   const open = (issues || []).filter((i) => i && (!i.state || String(i.state).toUpperCase() === 'OPEN'))
   const byNumber = (a, b) => a - b
   const redTickets = open.filter(isRedTicket).map((i) => i.number).sort(byNumber)
   const fixTickets = open.filter(isFixTicket).map((i) => i.number).sort(byNumber)
-  const healthRed = !!health && health.ok === false
+  const healthRed = healthCountsFor(health, headSha) && health.ok === false
   return { base, red: redTickets.length > 0 || healthRed, redTickets, fixTickets, healthRed }
 }
 

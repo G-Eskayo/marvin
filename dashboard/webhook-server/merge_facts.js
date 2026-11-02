@@ -129,9 +129,17 @@ export function createQueueLoader({ exec, unbuilt, baseOf, health = readMainHeal
     const issues = JSON.parse(String(issuesOut?.stdout || ''))
     if (!Array.isArray(prs) || !Array.isArray(issues)) throw new Error('GitHub did not answer with lists')
     const base = await baseOf(repo)
+    // main's current commit, so an old local health check can't hold the queue (healthCountsFor). Unreadable: the
+    // local check is ignored and CI's main-red ticket alone says red.
+    let headSha = null
+    if (repo === engineRepo()) {
+      try {
+        headSha = String((await exec('gh', ['api', `repos/${repo}/commits/${base}`, '--jq', '.sha']))?.stdout || '').trim() || null
+      } catch { headSha = null }
+    }
     return {
       openPrs: enrichForOrder(prs.filter((p) => !p.isCrossRepository).map((p) => ({ ...p, repo })), { repo, issues, unbuilt: unbuilt(), repairFailed: repairs(), rebaseStatus: rebase() }),
-      mainState: mainStateFrom({ issues, health: repo === engineRepo() ? health() : null, base })
+      mainState: mainStateFrom({ issues, health: repo === engineRepo() ? health() : null, base, headSha })
     }
   }
 }
