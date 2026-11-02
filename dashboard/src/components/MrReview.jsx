@@ -4,7 +4,7 @@ import { cleanIpcError } from '../lib/ipcError.js'
 import { useEffect, useRef, useState } from 'react'
 import ProposalsSection from './ProposalsSection.jsx'
 import { toggleLabel } from '../lib/proposals_view.js'
-import { describePrState } from '../lib/prState.js'
+import { describePrState, queueLineFor } from '../lib/prState.js'
 import StageStrip from './StageStrip.jsx'
 import MrDetail from './MrDetail.jsx'
 import { useScrollPlace } from './ScrollPlaces.jsx'
@@ -260,6 +260,13 @@ export function ApproveDenyActions({ pr, onApproved, onDenied, inDetail = false 
         if (!result.alreadyMerging) setStatus('idle')
         return
       }
+      // marvin#231: in the merge queue on the merge Mac; it merges by itself in its turn. The list is read again, so the
+      // card shows its place from the queue.
+      if (result.mergeQueued) {
+        setStatus('idle')
+        onApproved?.(null)
+        return
+      }
       // No Mac could take it (marvin#762): it is saved and merges by itself when one comes back.
       if (result.queued) {
         setStatus('queued')
@@ -353,7 +360,7 @@ export function ApproveDenyActions({ pr, onApproved, onDenied, inDetail = false 
               disabled={view.approve === 'disabled'}
               className="rounded-md bg-blue-600 px-4 py-1.5 text-sm font-medium text-white transition-colors hover:bg-blue-500 disabled:opacity-50"
             >
-              Approve &amp; Merge
+              Approve
             </button>
           )}
         </div>
@@ -473,6 +480,14 @@ function ParitySummary({ parity }) {
   )
 }
 
+// marvin#231: the merge queue's one line for a PR, under its title: amber when it waits (and why), sky when it is queued
+// (its place) or merging. Nothing when nothing is in its way and it isn't approved.
+export function QueueLine({ entry, className = '' }) {
+  if (!entry?.reason) return null
+  const tone = entry.tone === 'sky' ? 'text-sky-400' : 'text-amber-400'
+  return <p data-queue-line={entry.state} className={`text-xs ${tone} ${className}`}>{entry.reason}</p>
+}
+
 function PrCard({ pr, parity, onOpenTicket, onApproved, onDenied, onSelect, waiting = false }) {
   const [prEvents, setPrEvents] = useState([])
 
@@ -501,6 +516,7 @@ function PrCard({ pr, parity, onOpenTicket, onApproved, onDenied, onSelect, wait
             #{pr.number} — {displayTitle(pr.title, parity?.ticket?.title)}{' '}
             {pr.repo !== 'G-Eskayo/marvin' && <span className="rounded bg-sky-950 px-1.5 py-0.5 font-sans text-[10px] font-normal text-sky-300">{pr.repo.split('/')[1]}</span>}
           </p>
+          <QueueLine entry={queueLineFor(pr)} />
           {pr.hasSchema ? (
             <>
               {pr.evidence.subsystem && (

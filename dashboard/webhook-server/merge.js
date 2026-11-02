@@ -564,6 +564,12 @@ function inRepoQueue(key, fn) {
   return run
 }
 
+// marvin#231: resolves once every job queued so far for this repo (a merge's post-merge checks and stacked-PR moves)
+// has finished, so the merge queue decides its next step on the repo as those left it.
+export function repoJobsDone(repo) {
+  return (repoQueues.get(repo || '(unknown)') || Promise.resolve()).then(() => {}, () => {})
+}
+
 // How many jobs (merges, post-merge checks) a new merge of this PR would wait behind.
 export function mergesAhead(prUrl) {
   return queueDepth.get(repoFromPrUrl(prUrl) || '(unknown)') || 0
