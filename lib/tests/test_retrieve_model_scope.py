@@ -133,3 +133,29 @@ class TestTagFallback:
             results = retrieve.tag_fallback("skill", model="haiku")
             assert len(results) == 1
             assert results[0]["path"] == "~/skill2"
+
+
+# Found 2026-11-02: rank_bm25 was missing from the MacBook's venv and `except Exception: pass` hid it, so the keyword
+# half of hybrid retrieval was silently off. Keep going without it (retrieval still works), but say so.
+
+def test_bm25_missing_keeps_going_but_warns(monkeypatch, capsys):
+    import builtins
+    real_import = builtins.__import__
+    def no_bm25(name, *a, **k):
+        if name == "rank_bm25":
+            raise ModuleNotFoundError("No module named 'rank_bm25'")
+        return real_import(name, *a, **k)
+    monkeypatch.setattr(builtins, "__import__", no_bm25)
+    cands = [{"path": "a.md", "tags": ["merge"]}, {"path": "b.md", "tags": []}]
+    out = retrieve.bm25_rerank("merge", cands)
+    assert out == cands and all("bm25_score" not in c for c in out)
+    err = capsys.readouterr().err
+    assert "WARN" in err and "rank_bm25" in err and "keyword" in err
+
+
+def test_a_bm25_crash_warns_and_never_raises(monkeypatch, capsys):
+    import rank_bm25
+    monkeypatch.setattr(rank_bm25, "BM25Okapi", lambda docs: (_ for _ in ()).throw(ValueError("boom")))
+    cands = [{"path": "a.md", "tags": []}]
+    assert retrieve.bm25_rerank("q", cands) == cands
+    assert "WARN" in capsys.readouterr().err
