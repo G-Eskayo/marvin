@@ -29,10 +29,41 @@ export function ShowBody({ item, file, error, api }) {
   return <FileView file={file} loadImage={(src) => api.image(src)} fitImage />
 }
 
+const KIND_WORD = { image: 'Image', pdf: 'PDF', markdown: 'Markdown', html: 'Page', link: 'Link', json: 'JSON', table: 'Table', code: 'Code', text: 'Text', notebook: 'Notebook' }
+
+// The history strip (#715): this project's earlier items, newest first; a click shows that one again here.
+export function HistoryStrip({ history = [], currentId, onSelect }) {
+  if (history.length < 2) return null
+  return (
+    <nav className="flex gap-2 overflow-x-auto border-b border-neutral-800 px-3 py-2" data-history-strip="">
+      {history.map((h) => {
+        const on = h.id === currentId
+        return (
+          <button
+            key={h.id}
+            onClick={() => !on && onSelect(h.id)}
+            title={h.label}
+            aria-current={on ? 'true' : undefined}
+            className={`shrink-0 max-w-[14rem] rounded border px-2 py-1 text-left text-xs ${on ? 'border-amber-600/70 text-neutral-100' : 'border-neutral-800 text-neutral-400 hover:border-neutral-600'}`}
+          >
+            <span className="block truncate">{h.label}</span>
+            <span className="block text-[10px] text-neutral-500">{KIND_WORD[h.kind] || 'File'} · {new Date(h.at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</span>
+          </button>
+        )
+      })}
+    </nav>
+  )
+}
+
 export default function ShowWindow({ project, api = window.api.show }) {
   const [item, setItem] = useState(null)
   const [file, setFile] = useState(null)
   const [error, setError] = useState(null)
+  const [notice, setNotice] = useState(null)
+  const select = (id) => {
+    setNotice(null)
+    api.select(id).then((r) => !r?.ok && setNotice(r?.reason || 'That item can\'t be shown any more')).catch((err) => setNotice(String(err?.message || err)))
+  }
 
   useEffect(() => {
     let live = true
@@ -73,6 +104,8 @@ export default function ShowWindow({ project, api = window.api.show }) {
           </button>
         )}
       </header>
+      <HistoryStrip history={item?.history || []} currentId={item?.historyId} onSelect={select} />
+      {notice && <p className="border-b border-neutral-800 px-3 py-1 text-xs text-red-400" data-show-notice="">{notice}</p>}
       <main className="min-h-0 flex-1 overflow-auto p-3">
         <ShowBody item={item} file={file} error={error} api={api} />
       </main>

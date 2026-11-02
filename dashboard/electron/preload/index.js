@@ -157,6 +157,7 @@ contextBridge.exposeInMainWorld('api', {
   show: {
     current: () => ipcRenderer.invoke('show:current'),
     read: () => ipcRenderer.invoke('show:read'),
+    select: (id) => ipcRenderer.invoke('show:select', id),
     image: (src) => ipcRenderer.invoke('show:image', src),
     openInDocs: () => ipcRenderer.invoke('show:openInDocs'),
     openLink: (url) => ipcRenderer.invoke('show:openLink', url),

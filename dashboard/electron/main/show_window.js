@@ -81,9 +81,23 @@ export function createShowWindows({
   partition = SHOW_PARTITION,
   devOrigin = null,
   backgroundColor = '#0f1117',
-  checkPath = checkShowPath
+  checkPath = checkShowPath,
+  history = null, // { load() -> { [project]: [entry] }, save(obj) }: each project's earlier items (the history strip)
+  now = () => Date.now()
 }) {
   const byProject = new Map() // project id -> { win, item, frameId }
+  let past = null // project id -> [{ id, label, kind, at, request }], newest first
+  const pastOf = (projectId) => {
+    if (!past) {
+      try {
+        past = history?.load() || {}
+      } catch {
+        past = {}
+      }
+      if (!past || typeof past !== 'object') past = {}
+    }
+    return Array.isArray(past[projectId]) ? past[projectId] : []
+  }
   const frames = new Map() // frame id -> { read(file) }, the one HTML page each window shows
   let ses = null
   const csp = showFrameCsp(devOrigin)
@@ -240,6 +254,7 @@ export function createShowWindows({
       item.frameUrl = `${MOCKUP_SCHEME}://${id}/${encodeURIComponent(frames.get(id).page)}`
     }
     entry.item = item
+    item.historyId = remember(project.id, item, body)
     // Closed while this show was being resolved (or a moment before): open it again rather than lose the item.
     if (!alive(entry)) {
       entry = makeWindow(project)
@@ -255,11 +270,40 @@ export function createShowWindows({
     return { ok: true, project: project.id, projectName: project.name, window: reused ? 'reused' : 'opened', label: item.label, kind: item.kind }
   }
 
-  // What the window's page is told about its item (never the read handle).
+  // The history strip: each shown item once per project (shown again = moved to the front), newest first, capped.
+  // The request is kept so a click shows it again, checked again (a file since deleted says so, nothing stale shows).
+  const HISTORY_CAP = 20
+  function remember(projectId, item, body) {
+    const request = JSON.parse(JSON.stringify(body || {}))
+    const key = JSON.stringify({ ...request, label: undefined })
+    const list = pastOf(projectId).filter((e) => JSON.stringify({ ...e.request, label: undefined }) !== key)
+    const id = newId()
+    list.unshift({ id, label: item.label, kind: item.kind, at: now(), request })
+    past[projectId] = list.slice(0, HISTORY_CAP)
+    try {
+      history?.save(past)
+    } catch {
+      // unwritable: the strip still works for this run
+    }
+    return id
+  }
+
+  // What the window's page is told about its item (never the read handle), with its project's history.
   function publicItem(item) {
     if (!item) return null
     const { read: _read, ...rest } = item
-    return rest
+    const strip = pastOf(item.project.id).map(({ id, label, kind, at }) => ({ id, label, kind, at }))
+    return { ...rest, history: strip }
+  }
+
+  // A click on the history strip: that earlier item, shown again in the same window.
+  async function select(webContents, id) {
+    const entry = entryOf(webContents)
+    if (!entry) return { ok: false, reason: 'This window is closed' }
+    const projectId = [...byProject].find(([, e]) => e === entry)?.[0]
+    const hit = pastOf(projectId).find((e) => e.id === id)
+    if (!hit) return { ok: false, reason: 'Not in this window\'s history' }
+    return show(hit.request)
   }
 
   const entryOf = (webContents) => [...byProject.values()].find((e) => alive(e) && e.win.webContents === webContents) || null
@@ -311,5 +355,5 @@ export function createShowWindows({
     return f.kind === 'image' ? { ok: true, dataUrl: f.dataUrl } : no(f.reason || 'not an image')
   }
 
-  return { show, current, read, image, itemOf, handle, _byProject: byProject, _frames: frames }
+  return { show, select, current, read, image, itemOf, handle, _byProject: byProject, _frames: frames }
 }

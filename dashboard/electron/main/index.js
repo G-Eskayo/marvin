@@ -3,7 +3,7 @@ import { pathToFileURL } from 'url'
 import { instrumentIpc } from './timing.js'
 import { installDevSiteCors } from './dev_site_cors.js'
 import { join, dirname } from 'path'
-import { existsSync, mkdirSync, appendFileSync, statSync, readFileSync } from 'fs'
+import { existsSync, mkdirSync, appendFileSync, statSync, readFileSync, writeFileSync, renameSync } from 'fs'
 import { homedir } from 'os'
 import { execFile } from 'child_process'
 import { promisify } from 'util'
@@ -162,6 +162,7 @@ import { createImageLoader, mediaFileFor } from './pr_images.js'
 import { createMockupSource, MOCKUP_SCHEME } from './mockups.js'
 import { createMockupWindows } from './mockup_window.js'
 import { createShowWindows } from './show_window.js'
+import { varPath } from './marvin_paths.js'
 import { allowedRoots } from './show.js'
 import { readFileForView, fileFromBuffer } from './outbox.js'
 import { resolveLocalClone } from './docs_local.js'
@@ -1231,10 +1232,21 @@ function registerShowHandlers() {
     readFileForView,
     fileFromBuffer,
     focusApp: () => app.focus({ steal: true }),
-    devOrigin: process.env['ELECTRON_RENDERER_URL'] || null
+    devOrigin: process.env['ELECTRON_RENDERER_URL'] || null,
+    // Each project's earlier items (the history strip), per machine: ~/.agents/var/show-history.json.
+    history: {
+      load: () => JSON.parse(readFileSync(varPath('show-history.json'), 'utf8')),
+      save: (obj) => {
+        const file = varPath('show-history.json')
+        mkdirSync(dirname(file), { recursive: true })
+        writeFileSync(`${file}.tmp`, JSON.stringify(obj))
+        renameSync(`${file}.tmp`, file)
+      }
+    }
   })
   ipcMain.handle('show:current', (event) => showWindows.current(event.sender))
   ipcMain.handle('show:read', (event) => showWindows.read(event.sender))
+  ipcMain.handle('show:select', (event, id) => showWindows.select(event.sender, String(id || '')))
   ipcMain.handle('show:image', (event, src) => showWindows.image(event.sender, src))
   ipcMain.handle('show:openLink', (_event, url) => openLink(String(url || ''), { openExternal: shell.openExternal }))
   // "Open in Docs": the main window comes forward on the Docs tab at this item (an outbox file as its deliverable, a

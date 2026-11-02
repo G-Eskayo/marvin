@@ -92,6 +92,12 @@ HOOKS: list[Hook] = [
         ("PreToolUse", "SubagentHandback", "report"),
         ("SubagentStop", None, "stop"),
     )),
+    # Show Gil things with marvin-show, never a file card or a temp path (#715). The guard denies a file card or an
+    # artifact from a temp folder (it had dropped out of settings.json, so the 2026-11-02 screenshots slipped
+    # through); the temp-deliverable hook reminds a session whose reply points at a temp-only image, PDF or page.
+    Hook("PreToolUse", _py("lib/deliverable_location_guard.py"), _ALL, "SendUserFile|Artifact", 5),
+    Hook("PostToolUse", (*_py("lib/temp_deliverable_hook.py"), "post"), _ALL, "Write|Edit|MultiEdit|Bash", 5),
+    *(Hook(event, (*_py("lib/temp_deliverable_hook.py"), "stop"), _ALL, None, 5) for event in ("Stop", "SubagentStop")),
 ]
 
 

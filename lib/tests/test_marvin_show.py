@@ -211,3 +211,102 @@ def test_post_show_talks_json_to_a_real_local_server():
     assert seen == {"type": "application/json", "origin": None, "body": {"kind": "url", "url": "https://x"}}
     # Nothing listening: None, not an exception.
     assert ms.post_show({}, srv.server_address[1], timeout=2) is None
+
+
+# ── which Mac ───────────────────────────────────────────────────────────────────────────────────────────────────────
+
+def test_the_mac_with_the_most_recent_input_wins_and_an_asleep_one_never_does():
+    assert ms.pick_mac(300.0, {"gils-mac-mini": 4.0}) == "gils-mac-mini"
+    assert ms.pick_mac(2.0, {"gils-mac-mini": 4.0}) is None
+    assert ms.pick_mac(5.0, {"gils-mac-mini": 5.0}) is None  # a tie stays here
+    assert ms.pick_mac(900.0, {"gils-mac-mini": None}) is None  # asleep / off / no answer
+    assert ms.pick_mac(None, {"gils-mac-mini": 10.0}) == "gils-mac-mini"
+    assert ms.pick_mac(None, {}) is None
+    assert ms.parse_idle('    |   "HIDIdleTime" = 1500000000\n') == 1.5
+    assert ms.parse_idle("ssh: connect to host x port 22: Operation timed out") is None
+
+
+class FakeRun:
+    """ssh to the other Mac, scripted: the inbox folder, then that Mac's marvin-show --here."""
+
+    def __init__(self, answer=None, code=0, inbox_ok=True):
+        self.calls, self.answer, self.code, self.inbox_ok = [], answer, code, inbox_ok
+
+    def __call__(self, host, cmd, timeout=8, stdin=None):
+        import subprocess as sp
+        self.calls.append(cmd)
+        if "show-inbox" in cmd and "mkdir" in cmd:
+            return sp.CompletedProcess(cmd, 0 if self.inbox_ok else 255, "/Users/g/.agents/var/show-inbox/1-2" if self.inbox_ok else "", "")
+        if self.answer is None:
+            return sp.CompletedProcess(cmd, 255, "", "ssh: Operation timed out")
+        return sp.CompletedProcess(cmd, self.code, json.dumps(self.answer) + "\n", "")
+
+
+def test_a_file_goes_to_the_other_macs_inbox_then_its_own_marvin_show(world):
+    page = world["scratch"] / "m" / "index.html"
+    page.parent.mkdir()
+    (page.parent / "app.js").write_text("x")
+    page.write_text('<script src="app.js"></script>')
+    copied = []
+    run = FakeRun({"ok": True, "project": "marvin", "window": "reused", "request": {"x": 1}})
+    body = {"kind": "file", "path": str(page), "project": "marvin", "outboxName": "marvin-2026-11-02-m", "label": "it's a page"}
+    code, answer = ms.deliver_remote("gils-mac-mini", body, run=run, copy=lambda h, s, d: copied.append((s.name, d)) or True)
+    assert code == 0 and answer == {"ok": True, "project": "marvin", "window": "reused"}
+    assert copied == [("index.html", "/Users/g/.agents/var/show-inbox/1-2/index.html"), ("app.js", "/Users/g/.agents/var/show-inbox/1-2/app.js")]
+    cmd = run.calls[-1]
+    assert cmd.startswith("$HOME/.agents/bin/marvin-show --here --json --project marvin")
+    assert "--outbox-name marvin-2026-11-02-m" in cmd and "'it'\"'\"'s a page'" in cmd  # quoted for the remote shell
+    assert cmd.endswith("/Users/g/.agents/var/show-inbox/1-2/index.html")
+
+
+def test_the_other_mac_failing_means_show_it_here(world):
+    f = world["agents"] / "a.md"
+    f.write_text("x")
+    body = {"kind": "file", "path": str(f), "project": "marvin"}
+    ok_copy = lambda h, s, d: True
+    assert ms.deliver_remote("m", body, run=FakeRun(inbox_ok=False), copy=ok_copy) is None  # asleep at the first ssh
+    assert ms.deliver_remote("m", body, run=FakeRun(answer=None), copy=ok_copy) is None  # dropped mid-way
+    assert ms.deliver_remote("m", body, run=FakeRun({"ok": True}), copy=lambda h, s, d: False) is None  # copy failed
+    assert ms.deliver_remote("m", body, run=FakeRun({"ok": False, "reason": "x"}, code=3), copy=ok_copy) is None  # its dashboard down
+    assert ms.deliver_remote("m", {**body, "path": str(world["agents"] / "gone.md")}, run=FakeRun({"ok": True}), copy=ok_copy) is None
+    # Refused there is an answer, not a fallback.
+    assert ms.deliver_remote("m", body, run=FakeRun({"ok": False, "reason": "Outside"}, code=2), copy=ok_copy) == (2, {"ok": False, "reason": "Outside"})
+
+
+def test_a_huge_file_is_not_sent_across(world, monkeypatch):
+    monkeypatch.setattr(ms, "MAX_COPY_BYTES", 10)
+    f = world["agents"] / "big.png"
+    f.write_bytes(b"x" * 100)
+    assert ms.deliver_remote("m", {"kind": "file", "path": str(f)}, run=FakeRun({"ok": True}), copy=lambda *a: True) is None
+
+
+def test_pr_files_and_urls_go_across_without_copying():
+    run = FakeRun({"ok": True})
+    ms.deliver_remote("m", {"kind": "pr", "repo": "G-Eskayo/marvin", "number": 934, "path": "docs/a.md"}, run=run, copy=None)
+    assert run.calls[-1].endswith("--pr 934 --repo G-Eskayo/marvin docs/a.md")
+    ms.deliver_remote("m", {"kind": "pr", "repo": "G-Eskayo/marvin", "ref": "design/924", "path": "docs/a.md"}, run=run)
+    assert run.calls[-1].endswith("https://github.com/G-Eskayo/marvin/blob/design/924/docs/a.md")
+    ms.deliver_remote("m", {"kind": "url", "url": "https://x.example/a b"}, run=run)
+    assert run.calls[-1].endswith("'https://x.example/a b'")
+
+
+def test_the_inbox_keeps_a_week(tmp_path):
+    old, new = tmp_path / "old", tmp_path / "new"
+    old.mkdir(), new.mkdir()
+    os.utime(old, (0, 0))
+    ms.prune_inbox(tmp_path)
+    assert not old.exists() and new.exists()
+    ms.prune_inbox(tmp_path / "missing")  # no inbox yet: nothing to do
+
+
+def test_main_with_here_never_asks_the_other_mac(world, monkeypatch, capsys):
+    f = world["agents"] / "a.md"
+    f.write_text("x")
+    monkeypatch.setattr(ms, "read_catalog", lambda: world["projects"])
+    monkeypatch.setattr(ms, "HOME", world["home"])
+    monkeypatch.setattr(ms, "mac_peers", lambda: (_ for _ in ()).throw(AssertionError("asked a peer")))
+    monkeypatch.setattr(ms, "prune_inbox", lambda: None)
+    monkeypatch.setattr(ms, "deliver", lambda body, port, launch=True: (0, {"ok": True, "project": body.get("project"), "window": "opened", "label": "a.md"}))
+    monkeypatch.setattr(ms, "build_request", lambda t, **kw: ({"kind": "file", "path": t, "project": "marvin"}, t))
+    assert ms.main([str(f), "--here", "--outbox-name", "marvin-2026-11-02-a"]) == 0
+    assert "Shown on this Mac, in the marvin window" in capsys.readouterr().out

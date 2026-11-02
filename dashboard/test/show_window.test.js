@@ -289,3 +289,62 @@ describe('PR files', () => {
     expect(await sw.read(windows[0].webContents)).toBeNull()
   })
 })
+
+describe('the history strip', () => {
+  const memStore = (initial = {}) => {
+    let saved = JSON.parse(JSON.stringify(initial))
+    return { load: vi.fn(() => JSON.parse(JSON.stringify(saved))), save: vi.fn((o) => { saved = JSON.parse(JSON.stringify(o)) }), get: () => saved }
+  }
+
+  it('each project keeps its own earlier items, newest first; showing one again moves it to the front', async () => {
+    const a = put('agents/a.md', 'A')
+    const b = put('agents/b.md', 'B')
+    const s = put('cc/s.md', 'S')
+    const store = memStore()
+    const { sw, windows } = make({ history: store })
+    await sw.show({ kind: 'file', path: a })
+    await sw.show({ kind: 'file', path: s })
+    await sw.show({ kind: 'file', path: b })
+    await sw.show({ kind: 'file', path: a, label: 'A again' })
+    const marvin = sw.current(windows[0].webContents)
+    expect(marvin.history.map((h) => h.label)).toEqual(['A again', 'b.md'])
+    expect(marvin.historyId).toBe(marvin.history[0].id)
+    expect(sw.current(windows[1].webContents).history.map((h) => h.label)).toEqual(['s.md'])
+    expect(marvin.history[0].request).toBeUndefined() // the page never sees the stored request
+    expect(store.get().marvin).toHaveLength(2)
+  })
+
+  it('a click shows the earlier item again; a file deleted since is refused, not shown stale', async () => {
+    const a = put('agents/a.md', 'A')
+    const b = put('agents/b.md', 'B')
+    const { sw, windows } = make({ history: memStore() })
+    await sw.show({ kind: 'file', path: a })
+    await sw.show({ kind: 'file', path: b })
+    windows[0].ready()
+    const older = sw.current(windows[0].webContents).history.find((h) => h.label === 'a.md')
+    expect((await sw.select(windows[0].webContents, older.id)).ok).toBe(true)
+    expect(sw.current(windows[0].webContents).label).toBe('a.md')
+    unlinkSync(b)
+    const gone = sw.current(windows[0].webContents).history.find((h) => h.label === 'b.md')
+    const r = await sw.select(windows[0].webContents, gone.id)
+    expect(r.ok).toBe(false)
+    expect(sw.current(windows[0].webContents).label).toBe('a.md')
+    expect((await sw.select(windows[0].webContents, 'not-an-id')).ok).toBe(false)
+  })
+
+  it('history survives a restart, is capped, and a corrupt or unwritable store never breaks a show', async () => {
+    const a = put('agents/a.md', 'A')
+    const store = memStore()
+    const first = make({ history: store })
+    for (let i = 0; i < 25; i++) await first.sw.show({ kind: 'file', path: put(`agents/f${i}.md`, `${i}`) })
+    expect(store.get().marvin).toHaveLength(20)
+    const second = make({ history: store })
+    await second.sw.show({ kind: 'file', path: a })
+    expect(second.sw.current(second.windows[0].webContents).history).toHaveLength(20)
+    expect(second.sw.current(second.windows[0].webContents).history[1].label).toBe('f24.md')
+    const broken = make({ history: { load: () => { throw new Error('corrupt') }, save: () => { throw new Error('read-only') } } })
+    expect((await broken.sw.show({ kind: 'file', path: a })).ok).toBe(true)
+    const junk = make({ history: { load: () => 'nonsense', save: () => {} } })
+    expect((await junk.sw.show({ kind: 'file', path: a })).ok).toBe(true)
+  })
+})
