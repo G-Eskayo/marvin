@@ -33,7 +33,7 @@ def delegation_preamble(repo: str | None = None) -> str:
         f"{where} CONTEXT.md decisions (and docs/adr/) for every area you touch. A design that contradicts a "
         "recorded decision is a defect: if you think the decision is wrong, say so rather than work around it. "
         "Search for an existing pattern to reuse before writing anything new. Your plan or report must state which "
-        "existing pattern you reused (file and function), or why none fit. Show Gil anything he should look at with "
+        "existing pattern you reused (file and function), or why none fit. Show the owner anything they should look at with "
         "`marvin-show <file|url|path --pr N>` (docs/agents/showing-things.md), never a file card or a temp path."
     )
 
