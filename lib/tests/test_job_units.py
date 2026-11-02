@@ -49,6 +49,10 @@ def test_every_first_job_has_one_definition_that_loads(name):
     {"name": "x", "command": ["x"], "schedule": {"every_s": 60}, "env": {"A": 1}},
     {"name": "x", "command": ["x\nExecStartPost=/bin/rm -rf ~"], "schedule": {"every_s": 60}},
     {"name": "x", "command": ["x"], "schedule": {"every_s": 60}, "surprise": True},
+    {"name": "x", "command": ["x"], "schedule": {"keep_alive": False}},          # a service that never runs
+    {"name": "x", "command": ["x"], "schedule": {"keep_alive": 1}},              # truthy is not true
+    {"name": "x", "command": ["x"], "schedule": {"keep_alive": True, "every_s": 60}},   # both at once
+    {"name": "x", "command": ["x"], "schedule": {"keep_alive": True, "at_load": False}},  # can't not start
 ])
 def test_a_malformed_definition_is_refused_not_rendered(bad):
     with pytest.raises(ju.JobError):
@@ -296,6 +300,49 @@ def test_mac_install_of_a_changed_plist_reloads_it(tmp_path):
     assert ["launchctl", "bootout", "gui/501/com.marvin.usage-scan"] in run.calls
     assert ["launchctl", "bootstrap", "gui/501", str(plist)] in run.calls
     assert out[0]["changed"] is True
+
+
+# ── keep_alive: a long-running service (the site demo server, marvin#1007) ──
+
+SERVICE = {"name": "svc", "command": ["~/bin/serve", "--port", "1"], "schedule": {"keep_alive": True}}
+
+
+def test_keep_alive_on_launchd_starts_at_load_restarts_and_is_throttled():
+    p = plistlib.loads(ju.render_plist(ju.validate(dict(SERVICE)), MAC_HOME))
+    assert (p["RunAtLoad"], p["KeepAlive"], p["ThrottleInterval"]) == (True, True, ju.RESTART_S)
+    assert "StartInterval" not in p and "StartCalendarInterval" not in p
+    assert p["ProgramArguments"][0] == f"{MAC_HOME}/bin/serve"
+
+
+def test_keep_alive_on_systemd_is_a_restarting_service_with_no_timer():
+    service, timer = ju.render_systemd(ju.validate(dict(SERVICE)), BOX_HOME)
+    u = _unit(service)
+    assert timer is None
+    assert u["Type"] == ["simple"] and u["Restart"] == ["always"] and u["RestartSec"] == [str(ju.RESTART_S)]
+    assert u["WantedBy"] == ["default.target"]
+
+
+def test_keep_alive_linux_install_enables_the_service_and_restarts_it_on_change(tmp_path, monkeypatch):
+    monkeypatch.setattr(ju, "JOBS_DIR", tmp_path / "jobs")
+    (tmp_path / "jobs").mkdir()
+    (tmp_path / "jobs" / "svc.json").write_text(json.dumps(SERVICE))
+    run = FakeRun()
+    out = ju.install(["svc"], os_name="linux", home=tmp_path, run=run)
+    d = tmp_path / ".config" / "systemd" / "user"
+    assert (d / "marvin-svc.service").exists() and not (d / "marvin-svc.timer").exists()
+    assert ["systemctl", "--user", "restart", "marvin-svc.service"] in run.calls
+    assert ["systemctl", "--user", "enable", "--now", "marvin-svc.service"] in run.calls
+    assert out == [{"job": "svc", "changed": True, "ok": True}]
+    run2 = FakeRun()
+    ju.install(["svc"], os_name="linux", home=tmp_path, run=run2)
+    assert ["systemctl", "--user", "restart", "marvin-svc.service"] not in run2.calls   # unchanged: left running
+
+
+def test_site_demo_job_is_a_keep_alive_service_with_no_machine_paths():
+    job = ju.load("site-demo")
+    assert job["schedule"] == {"keep_alive": True}
+    assert all(a.startswith("~/") or not a.startswith("/") for a in job["command"])
+    assert "serve" in job["command"]
 
 
 def test_install_refuses_an_os_it_has_no_adapter_for(tmp_path):
