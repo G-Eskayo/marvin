@@ -157,6 +157,19 @@ describe('the approve gate refuses unpinned or stale images (marvin #733)', () =
     })
   })
 
+  it('UI files that only changed on main (merged into the branch) do not make the images stale', async () => {
+    const exec = ghView({ files: ui, body: pinned(OLD), compare: { [OLD]: { files: [{ filename: 'dashboard/src/components/MergeMotion.jsx' }, { filename: 'Apps/B/Other.swift' }] } } })
+    await expect(assertUiEvidence(PR, exec)).resolves.toBeUndefined()
+  })
+
+  it('the PR\'s own UI file changed after the images, among main\'s: still IMAGES_STALE, naming only its own', async () => {
+    const exec = ghView({ files: ui, body: pinned(OLD), compare: { [OLD]: { files: [{ filename: 'dashboard/src/components/MergeMotion.jsx' }, { filename: 'Apps/A/SettingsView.swift' }] } } })
+    const err = await assertUiEvidence(PR, exec).catch((e) => e)
+    expect(err.payload.code).toBe('IMAGES_STALE')
+    expect(err.payload.message).toContain('SettingsView.swift')
+    expect(err.payload.message).not.toContain('MergeMotion.jsx')
+  })
+
   it('only logic changed since the images: still current (#155: no new screenshots needed)', async () => {
     const exec = ghView({ files: ui, body: pinned(OLD), compare: { [OLD]: { files: [{ filename: 'Packages/Core/Logic.swift' }] } } })
     await expect(assertUiEvidence(PR, exec)).resolves.toBeUndefined()

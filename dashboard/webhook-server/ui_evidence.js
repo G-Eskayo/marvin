@@ -168,7 +168,10 @@ export async function assertUiEvidence(prUrl, exec, extraPatterns = []) {
         } catch (error) { throw unchecked(sha, prRepo, error) }
       }
     }
-    const newer = uiFiles(since, extraPatterns)
+    // Only the PR's own UI files can make its images stale. A compare across a merge of main also lists what main
+    // changed, which this PR's images were never meant to show (2026-11-02: #971 refused for 10 files from main).
+    const own = new Set(files)
+    const newer = uiFiles(since.filter((f) => own.has(f)), extraPatterns)
     if (newer.length) {
       throw new MergeFailure(refusal('IMAGES_STALE', 'request',
         `the images were taken at ${sha.slice(0, 7)}, and ${listed(newer)} changed after that, so they may not show what PR #${number} looks like now`,
