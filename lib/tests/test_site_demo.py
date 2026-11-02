@@ -84,7 +84,7 @@ def test_it_refuses_to_serve_anywhere_but_the_tailnet_or_loopback(ip):
         sd.check_bind(ip)
 
 
-@pytest.mark.parametrize("ip", ["100.82.55.107", "100.64.0.1", "100.127.255.254", "127.0.0.1"])
+@pytest.mark.parametrize("ip", ["100.101.102.103", "100.64.0.1", "100.127.255.254", "127.0.0.1"])
 def test_tailnet_and_loopback_addresses_are_allowed(ip):
     assert sd.check_bind(ip) == ip
 
@@ -94,7 +94,7 @@ def _fake_tailscale(stdout, code=0):
 
 
 @pytest.mark.parametrize("out,want", [
-    ("100.82.55.107\n", "100.82.55.107"),
+    ("100.101.102.103\n", "100.101.102.103"),
     ("fd7a:115c::1\n100.70.1.2\n", "100.70.1.2"),       # skips IPv6 and anything else
     ("192.168.1.4\n", None),                             # a LAN address is not the tailnet
     ("garbage", None),
@@ -114,7 +114,7 @@ def test_no_tailscale_means_no_address_and_serve_exits_without_binding(home, mon
 
 def test_tailscale_down_is_no_address(monkeypatch):
     monkeypatch.setattr(sd.host_os, "tailscale_bin", lambda: "/x/tailscale")
-    assert sd.tailscale_ipv4(_fake_tailscale("100.82.55.107", code=1)) is None
+    assert sd.tailscale_ipv4(_fake_tailscale("100.101.102.103", code=1)) is None
 
 
 def test_magicdns_name_drops_the_trailing_dot_and_survives_junk(monkeypatch):
