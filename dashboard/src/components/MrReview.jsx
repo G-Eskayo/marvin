@@ -488,6 +488,26 @@ export function QueueLine({ entry, className = '' }) {
   return <p data-queue-line={entry.state} className={`text-xs ${tone} ${className}`}>{entry.reason}</p>
 }
 
+// marvin#231 follow-up, one card for both states: while a PR waits its line says where it is in the queue; once its
+// merge runs (here, or on another Mac and relayed), the stage strip says it all, so the queue line steps aside.
+export function PrQueueLine({ pr, className = '' }) {
+  const [merging, setMerging] = useState(false)
+  useEffect(() => {
+    let cancelled = false
+    let pushed = false
+    const off = window.api?.mr?.onMergeEvent?.((url, op) => {
+      if (cancelled || url !== pr.url) return
+      pushed = true
+      setMerging(op?.state === 'merging')
+    })
+    window.api?.mr?.mergeState?.(pr.url, pr.headRefOid)
+      .then((m) => { if (!cancelled && !pushed) setMerging(m?.state === 'merging') })
+      .catch(() => {})
+    return () => { cancelled = true; off?.() }
+  }, [pr.url, pr.headRefOid])
+  return merging ? null : <QueueLine entry={queueLineFor(pr)} className={className} />
+}
+
 function PrCard({ pr, parity, onOpenTicket, onApproved, onDenied, onSelect, waiting = false }) {
   const [prEvents, setPrEvents] = useState([])
 
@@ -516,7 +536,7 @@ function PrCard({ pr, parity, onOpenTicket, onApproved, onDenied, onSelect, wait
             #{pr.number} — {displayTitle(pr.title, parity?.ticket?.title)}{' '}
             {pr.repo !== 'G-Eskayo/marvin' && <span className="rounded bg-sky-950 px-1.5 py-0.5 font-sans text-[10px] font-normal text-sky-300">{pr.repo.split('/')[1]}</span>}
           </p>
-          <QueueLine entry={queueLineFor(pr)} />
+          <PrQueueLine pr={pr} />
           {pr.hasSchema ? (
             <>
               {pr.evidence.subsystem && (

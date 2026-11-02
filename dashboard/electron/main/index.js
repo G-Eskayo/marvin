@@ -27,7 +27,7 @@ import { listTicketActivity, getTicketTimeline } from './activity.js'
 import { getDeviceStatuses } from './devices.js'
 import { getQueue, clearQueueCache } from './queue.js'
 import { getConcurrency, setConcurrency, scanNow } from './dispatch_concurrency.js'
-import { createMergeOps } from './merge_ops.js'
+import { createMergeOps, receiveMergeMessage } from './merge_ops.js'
 import { createApprovalLedger } from './approval_ledger.js'
 import { createApprovalRetry } from './approval_retry.js'
 import { createApproveFlow } from './approve_flow.js'
@@ -957,6 +957,23 @@ function registerMrReviewHandlers() {
     const res = await fetch(MR_WEBHOOK_URL.replace(/\/approve$/, '/rebase-status'), { signal: AbortSignal.timeout(3000) })
     return res.ok ? res.json() : {}
   }
+  // marvin#231 follow-up: a card the queue says is merging, with no strip here (the app opened mid-merge, or this Mac
+  // was asleep for its events), reads where that merge is from the merge server once: GET /merge-progress. Run when
+  // the list is built (load, and each refresh trigger), never on a timer; one read per PR at a time.
+  const catchingUp = new Set()
+  function catchUpMerges(list) {
+    for (const pr of Array.isArray(list) ? list : []) {
+      if (pr?.mergeQueue?.state !== 'running' || catchingUp.has(pr.url)) continue
+      if (mergeOps.get(pr.url)?.state === 'merging') continue
+      catchingUp.add(pr.url)
+      fetch(`${MR_WEBHOOK_URL.replace(/\/approve$/, '/merge-progress')}?url=${encodeURIComponent(pr.url)}`, { signal: AbortSignal.timeout(3000) })
+        .then((res) => (res.ok ? res.json() : null))
+        .then((body) => { if (body?.merge?.progress) pushMergeOp(pr.url, mergeOps.adopt(pr.url, body.merge.progress)) })
+        .catch(() => { /* the next event or refresh catches it */ })
+        .finally(() => catchingUp.delete(pr.url))
+    }
+  }
+
   // marvin#231: the merge queue lives with the merge server (the Mini); each card's line is worked out from it here.
   const getMergeQueue = async () => {
     const res = await fetch(MR_WEBHOOK_URL.replace(/\/approve$/, '/merge-queue'), { signal: AbortSignal.timeout(3000) })
@@ -1009,9 +1026,11 @@ function registerMrReviewHandlers() {
     () => listPipelinePrs(fixturePrs || listOpenPrs, { canMerge: (repo) => canMergeFromDashboard(repo, readMergeableRepos()), sentBackTickets, reworkStatus: reworkFromMemory, rebaseStatus: getRebaseStatus, closedTickets, autoMergeShadow: getAutoMergeShadow, uiPathsFor: (repo) => readUiPaths(repo), mergeQueue: getMergeQueue, issuesFor: boardIssuesFor }),
     () => `${githubState.localSeq()}:${githubState._genOf(null)}`
   )
-  ipcMain.handle('mr:list', () => {
+  ipcMain.handle('mr:list', async () => {
     if (!fixturePrs) listOpenPrs().then((prs) => stackRetarget.check(prs)).catch(() => {})
-    return mrList()
+    const list = await mrList()
+    catchUpMerges(list)
+    return list
   })
 
   // Local-first actions (CONTEXT.md "Dashboard actions render their true result locally at once, and confirm in the
@@ -1238,7 +1257,9 @@ app.whenReady().then(() => {
       } else if (topic === 'merge') {
         // A merge's stage event from the webhook on this Mac (marvin#568): local state only, never a GitHub read.
         const m = payload.merge
-        if (m && typeof m.url === 'string' && m.url.startsWith('https://github.com/')) pushMergeOp(m.url, mergeOps.event(m.url, m.event))
+        // marvin#231 follow-up: the same message relayed from the merge server on another Mac. Its progress so far is taken
+        // when it is ahead (it fills in events missed, lost or out of order); a message without one is the bare event.
+        if (m && typeof m.url === 'string' && m.url.startsWith('https://github.com/')) pushMergeOp(m.url, receiveMergeMessage(mergeOps, m))
       } else triggerHub.emit(topic, payload.source || 'ping')
     }
   }, { port: DASHBOARD_REFRESH_PORT, host: '127.0.0.1' })
