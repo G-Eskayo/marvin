@@ -139,8 +139,9 @@ class FakeGitHub:
 
     def node(self, p):
         return {"number": p["number"], "title": p["title"], "url": p["url"], "headRefName": p["headRefName"],
-                "repository": {"nameWithOwner": p["repo"]},
-                "commits": {"nodes": [{"commit": {"committedDate": p["last_commit_at"]}}] if p["last_commit_at"] else []},
+                "body": p.get("body"), "repository": {"nameWithOwner": p["repo"]},
+                "commits": {"nodes": p["commit_nodes"] if "commit_nodes" in p else
+                            [{"commit": {"committedDate": p["last_commit_at"]}}] if p["last_commit_at"] else []},
                 "comments": {"nodes": p["comments"]}}
 
     def __call__(self, cmd, **kw):
@@ -333,3 +334,108 @@ def test_the_search_reaches_github_from_outside_a_git_repo(tmp_path):
     od.fetch([REPO, "G-Eskayo/clarity-captions"], real)
     assert seen and "error parsing" not in seen[0] and "not a git repository" not in seen[0], seen[0]
     assert "127.0.0.1:1" in seen[0], seen[0]
+
+
+# ── marvin#231: "your answers aren't built yet" (the merge queue reads built_since) ─────────────────────────────
+
+def node(authored, committed=None, parents=1):
+    return {"commit": {"authoredDate": iso(authored), "committedDate": iso(committed or authored), "parents": {"totalCount": parents}}}
+
+
+def test_merging_main_in_after_the_answers_is_not_building_them():
+    # #941/#942 on 2026-10-30: the only commits after the owner's answers merged main (and the stacked base) in.
+    nodes = [node(T0 - timedelta(hours=2)), node(T0 + timedelta(hours=5), parents=2)]
+    assert od.last_work_at(nodes) == iso(T0 - timedelta(hours=2))
+    p = {**pr([decisions()], last_commit=T0 + timedelta(hours=5)), "last_work_at": od.last_work_at(nodes)}
+    s = od.pr_status(p, LATE, 4)
+    assert s["committed_since"] and not s["built_since"]
+
+
+def test_a_rebase_that_recommits_old_work_is_not_new_work_but_a_new_commit_is():
+    rebased = [node(T0 - timedelta(hours=1), committed=T0 + timedelta(hours=3))]   # author date kept by the rebase
+    assert not od.pr_status({**pr([decisions()]), "last_work_at": od.last_work_at(rebased)}, LATE, 4)["built_since"]
+    built = rebased + [node(T0 + timedelta(hours=4))]
+    assert od.pr_status({**pr([decisions()]), "last_work_at": od.last_work_at(built)}, LATE, 4)["built_since"]
+
+
+def test_no_commits_at_all_and_junk_nodes_are_not_work():
+    assert od.last_work_at([]) is None and od.last_work_at(None) is None
+    assert od.last_work_at([{}, {"commit": {}}, {"commit": {"authoredDate": "not a date"}}]) is None
+
+
+def test_fetch_carries_last_work_at_from_github():
+    p = pr([decisions()], last_commit=T0 + timedelta(hours=5))
+    p["commit_nodes"] = [node(T0 - timedelta(hours=2)), node(T0 + timedelta(hours=5), parents=2)]
+    [row] = od.fetch([REPO], FakeGitHub([p]))["prs"]
+    assert row["last_work_at"] == iso(T0 - timedelta(hours=2))
+    assert not od.statuses({"prs": [row], "followups": []}, LATE, 4)[0]["built_since"]
+
+
+def test_request_files_the_follow_up_now_without_the_grace_hours_and_only_once():
+    gh = FakeGitHub([pr([decisions()])])
+    first = od.request(REPO, 577, now=T0 + timedelta(minutes=5), run=gh)
+    assert first.startswith("filed") and len(gh.open_followups()) == 1
+    assert od.request(REPO, 577, now=T0 + timedelta(minutes=6), run=gh) == "already filed"
+    od.sync([REPO], now=LATE, run=gh, grace=4)          # the hourly scan later: still one
+    assert len(gh.issues) == 1
+
+
+def test_request_on_an_addressed_pr_or_one_without_decisions_files_nothing():
+    marked = comment(f"Done.\n{od.ADDRESSED_MARKER}", T0 + timedelta(hours=1))
+    gh = FakeGitHub([pr([decisions(), marked]), pr([], number=578)])
+    assert od.request(REPO, 577, now=LATE, run=gh).startswith("nothing to request")
+    assert od.request(REPO, 578, now=LATE, run=gh).startswith("nothing to request")
+    assert gh.issues == []
+
+
+def test_request_when_github_is_unreadable_says_so_and_files_nothing():
+    gh = FakeGitHub([pr([decisions()])], fail={"api graphql"})
+    assert od.request(REPO, 577, now=LATE, run=gh).startswith("skipped")
+    assert gh.issues == []
+
+
+# ── owner decision on PR #987: answers that only pick what is built count as built (one rule with decisions.js) ──
+
+import pytest  # noqa: E402
+from pathlib import Path  # noqa: E402
+import decisions_check  # noqa: E402
+
+AS_BUILT = Path(__file__).resolve().parents[2] / "dashboard" / "test" / "fixtures" / "as_built"
+EXPECTED = json.loads((AS_BUILT / "expected.json").read_text())
+needs_node = pytest.mark.skipif(not decisions_check.find_node(), reason="node isn't installed")
+
+
+@needs_node
+@pytest.mark.parametrize("name", sorted(EXPECTED))
+def test_python_agrees_with_the_dashboard_on_the_same_bodies(name):
+    # dashboard/test/answers_as_built.test.js asserts the same expected.json against decisions.js directly.
+    assert decisions_check.as_built((AS_BUILT / name).read_text()) is EXPECTED[name]
+
+
+@needs_node
+def test_956_counts_as_built_and_981_with_a_note_still_waits_on_marvin():
+    def status(name):
+        p = {**pr([decisions()]), "body": (AS_BUILT / name).read_text()}
+        return od.pr_status(p, LATE, 4)
+    s956, s981 = status("pr956.md"), status("pr981.md")
+    assert s956["addressed_by"] == "as-built" and not s956["overdue"]
+    assert s981["addressed_by"] is None and s981["overdue"]
+
+
+def test_as_built_fails_closed_without_node():
+    assert decisions_check.as_built("anything", node=None) is False
+    assert decisions_check.as_built("", node="/bin/false") is False
+    assert decisions_check.as_built("x", node="/bin/false") is False
+
+
+def test_an_as_built_pr_files_no_follow_up_and_closes_an_open_one():
+    gh = FakeGitHub([{**pr([decisions()]), "body": "x"}])
+    od.sync([REPO], now=LATE, run=gh, grace=4)          # body not as built yet (stubbed below): one follow-up
+    assert len(gh.open_followups()) == 1
+    real = od._as_built
+    od._as_built = lambda body: True
+    try:
+        r = od.sync([REPO], now=LATE + timedelta(hours=1), run=gh, grace=4)
+    finally:
+        od._as_built = real
+    assert gh.open_followups() == [] and r["closed"]

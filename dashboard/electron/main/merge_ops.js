@@ -1,8 +1,8 @@
 import { emptyProgress, applyMergeEvent, opForHead, closeRunning } from '../../src/lib/merge_progress.js'
 import { repoFromPrUrl } from './mr_repos.js'
 
-// What each PR's Approve & Merge is doing right now, held in the main process so it survives the
-// renderer unmounting (navigating away used to reset the button to "Approve & Merge" mid-merge).
+// What each PR's Approve is doing right now, held in the main process so it survives the
+// renderer unmounting (navigating away used to reset the button to "Approve" mid-merge).
 // Failures and re-engagements are kept until the next attempt so the message is still there on return -- but only for
 // the commit they happened on: once the PR has a newer head, the old failure no longer describes it (Gil, 2026-10-21).
 //
