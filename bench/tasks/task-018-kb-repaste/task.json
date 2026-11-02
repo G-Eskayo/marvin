@@ -1,0 +1,17 @@
+{
+  "id": "task-018-kb-repaste",
+  "type": "qa",
+  "cwd": "tmp",
+  "prompt_file": "prompt.md",
+  "timeout": 180,
+  "expect": [
+    "Context quality matters more than model size"
+  ],
+  "disallow_tools": [
+    "Read",
+    "Glob",
+    "Grep",
+    "Bash"
+  ],
+  "note": "Re-paste lever for marvin#645: the same three questions as task-014-kb-lookup, but with no KB. Instead the whole project notes file (all 18 marvin-bench entries of qa-knowledge, about 1.4k tokens, exported 2026-11-02) is pasted into the prompt, the way a user without MARVIN's memory would re-supply context. Compare clean on this task with marvin on task-014 to see what memory retrieval saves over re-pasting."
+}
