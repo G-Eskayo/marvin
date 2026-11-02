@@ -809,7 +809,8 @@ its ticketing system creates shows up there with drill-down status. Boards live 
   killer-sudoku.
 - **Columns (derived by one pure function, `dashboard/electron/main/board.js`, first match wins):**
   1. **Done** — issue closed.
-  2. **In review / testing** — an open PR closes the ticket (PR body `Closes #n`), or the last
+  2. **In review / testing** — an open PR **names** the ticket (PR body `Closes #n` or `Part of #n`, from this
+     repo or any other onboarded project's: see **Names its ticket** below), or the last
      pipeline stage is verifying/gate/merging. Card shows the PR link and whether the PR carries
      Dev Environment Evidence; clicking the PR opens it in the MR Review tab.
   3. **Blocked** — label `blocked`; or `Blocked by #n` in the body with #n still open; or the
@@ -835,6 +836,17 @@ its ticketing system creates shows up there with drill-down status. Boards live 
   rebuilt and relaunched by the 30-min code-sync cycle (`dashboard_rebuild.py`): a change settles for
   15 min, and a running app is rebuilt once it is >=1h behind (was 2h / 24h, which made a new feature
   take up to a day to show). Trade-off accepted: the relaunch drops unsaved in-tab edits (Portfolio).
+
+- **Names its ticket (2026-11-02, marvin#1004).** An open PR names its ticket as `Closes #n` (it finishes the ticket;
+  GitHub closes it on merge) or `Part of #n` (a step: a mock-up, a stacked slice, a plan, docs; the ticket stays open).
+  Either form takes `owner/repo#n` or the issue URL. The relation index has them as two relations, `closes` and
+  `part-of` ("part of" / "worked on in" in the Related panel); a bare mention or "for #n" is only `mentions`. Both put
+  the ticket's card In review and satisfy the parity check. PRs are matched across repos: every board gets every
+  onboarded project's open PRs (read once per project, the same cached board data the relation index uses), so a
+  marvin-instance PR that closes a marvin ticket moves that card. One parser per language,
+  `dashboard/electron/main/ticket_refs.js` and `lib/pr_ticket_check.py`, both run
+  `dashboard/test/fixtures/pr_ticket_refs_cases.json`. `bin/gh` refuses a PR body that names no ticket
+  (`PR_NAMES_NO_TICKET`; override `MARVIN_NO_TICKET="<reason>"`). The rule: `docs/agents/issue-tracker.md`.
 
 ### Triggers over polling (decided 2026-10-03)
 
@@ -1027,7 +1039,7 @@ nothing connected them. "Where things are" was only the tidy agent's file-filing
   not another button")**: `electron/main/relations.js` reads every ticket and PR body, every doc, and each
   PR's changed files, and derives edges: ticket->ticket (blocked by / mentions), ticket->doc ("ADR 0033"
   resolves to that project's `docs/adr/0033-*.md`, also `CONTEXT.md`/`README.md` and explicit paths),
-  PR->ticket (closes / mentions), PR->doc (changes / mentions), doc->ticket (`#12`, `owner/repo#12`),
+  PR->ticket (closes / part of / mentions), PR->doc (changes / mentions), doc->ticket (`#12`, `owner/repo#12`),
   doc->doc. Edit a doc or a ticket and its relations change with it; nothing to sync. Code fences and
   inline code are ignored. Surfaces: `#12` and `ADR 0033` inside a doc or ticket body are clickable
   (linkify, `dash://` links that stay in the app); a **Related** panel on every doc, ticket and MR lists

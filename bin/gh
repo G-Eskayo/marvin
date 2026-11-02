@@ -322,6 +322,14 @@ def main(argv: list[str]) -> int:
             return 1
     except ImportError:
         pass
+    # A PR names its ticket, "Closes #N" or "Part of #N" (marvin#1004): lib/pr_ticket_check.py. Onboarded repos only;
+    # MARVIN_NO_TICKET="<reason>" lets one call through, logged.
+    try:
+        import pr_ticket_check
+        if pr_ticket_check.gate(argv, _say, lambda e: _log({"t": time.time(), "caller": _caller(), **e})):
+            return 1
+    except ImportError:
+        pass
     if len(argv) >= 2 and argv[0] == "pr" and argv[1] in ("create", "ready", "merge"):
         override = os.environ.get(UI_EVIDENCE_OK, "").strip()
         try:

@@ -191,7 +191,10 @@ def _gh(args):
     import subprocess
     sys.path.insert(0, str(Path(__file__).resolve().parent))
     from project_catalog import run_env
-    return subprocess.run(["gh", *args], capture_output=True, text=True, check=True, timeout=60, env=run_env()).stdout
+    # It only adds its mutation section to a PR someone else wrote; whether that PR names its ticket is the author's
+    # rule to meet (lib/pr_ticket_check.py, marvin#1004), not a reason to fail the scoring.
+    env = {**run_env(), "MARVIN_NO_TICKET": "shadow mutation score: adds a section to an existing PR body"}
+    return subprocess.run(["gh", *args], capture_output=True, text=True, check=True, timeout=60, env=env).stdout
 
 
 def _score_one(prs: list[dict], repo: str, path: Path) -> None:

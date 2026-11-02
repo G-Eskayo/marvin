@@ -167,9 +167,26 @@ function defaultEvidenceRun(repo) {
 
 export function clearEvidenceCache() { evidenceCache.clear() }
 
-export async function loadBoard(repo, { gh, registryRepos = [], stagesFor = defaultStagesFor, liveNumbers, data, evidence = {} } = {}) {
+// Every other project's open PRs, each tagged with its repo: one read per project (from the same cached board data),
+// so a PR in one repo that closes or is part of a ticket in another moves that ticket's card (marvin#1004).
+// A project that fails to load only loses its own PRs.
+export async function prsOfProjects(repos, getData, except = null) {
+  const others = [...new Set(repos)].filter((r) => r !== except)
+  const lists = await Promise.all(others.map(async (r) => {
+    try {
+      return ((await getData(r)).prs || []).map((p) => ({ ...p, repo: r }))
+    } catch {
+      return []
+    }
+  }))
+  return lists.flat()
+}
+
+export async function loadBoard(repo, { gh, registryRepos = [], stagesFor = defaultStagesFor, liveNumbers, data, evidence = {}, otherPrs = [] } = {}) {
   try {
-    const { issues: ownIssues, prs } = data || (await fetchBoardData(repo, gh))
+    const { issues: ownIssues, prs: ownPrs } = data || (await fetchBoardData(repo, gh))
+    // This repo's PRs plus every other project's (otherPrs): a ticket's PR can live in any project's repo.
+    const prs = [...ownPrs, ...otherPrs.filter((p) => p.repo !== repo)]
     const thisProjectId = projectIdOf(repo)
 
     // Partition own issues: separate those with project:<x> labels where x is not this repo.
@@ -219,7 +236,7 @@ export async function loadBoard(repo, { gh, registryRepos = [], stagesFor = defa
       const foreignBoard = buildBoard({
         repo: foreignRepo,
         issues: foreignIssues,
-        prs: []
+        prs: [...ownPrs.map((p) => ({ ...p, repo })), ...otherPrs]
       })
       foreignBoards.push({ repo: foreignRepo, board: foreignBoard })
     }

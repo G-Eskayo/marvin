@@ -72,7 +72,8 @@ if this ticket's files overlap with another open PR's, note that clearly
 in your own PR description so whoever merges knows the order matters.
 
 When done: commit, push the branch, open a PR against main
-(\`gh pr create --repo ${REPO} ... --base main --head ${BRANCH_NAME}\`),
+(\`gh pr create --repo ${REPO} ... --base main --head ${BRANCH_NAME}\`)
+whose body says \`Closes #${ISSUE_NUMBER}\` (or \`Part of #${ISSUE_NUMBER}\` if it is only a step),
 comment on issue #${ISSUE_NUMBER} with the PR link and what you verified,
 and release the claim label
 (\`gh issue edit ${ISSUE_NUMBER} --repo ${REPO} --remove-label
