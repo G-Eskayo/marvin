@@ -153,6 +153,24 @@ contextBridge.exposeInMainWorld('api', {
     open: (relPath) => ipcRenderer.invoke('outbox:open', relPath),
     openLink: (url) => ipcRenderer.invoke('outbox:openLink', url)
   },
+  // `marvin show` windows (#715): each window asks for its own item; the main window is told to open Docs at one.
+  show: {
+    current: () => ipcRenderer.invoke('show:current'),
+    read: () => ipcRenderer.invoke('show:read'),
+    image: (src) => ipcRenderer.invoke('show:image', src),
+    openInDocs: () => ipcRenderer.invoke('show:openInDocs'),
+    openLink: (url) => ipcRenderer.invoke('show:openLink', url),
+    onItem: (callback) => {
+      const listener = (_e, item) => callback(item)
+      ipcRenderer.on('show:item', listener)
+      return () => ipcRenderer.removeListener('show:item', listener)
+    },
+    onOpenInDocs: (callback) => {
+      const listener = (_e, target) => callback(target)
+      ipcRenderer.on('show:openInDocs', listener)
+      return () => ipcRenderer.removeListener('show:openInDocs', listener)
+    }
+  },
   portfolio: {
     // Opens the dev site in Google Chrome, or takes you to the tab that already has it (marvin#377).
     openDevSite: () => ipcRenderer.invoke('portfolio:openDevSite'),

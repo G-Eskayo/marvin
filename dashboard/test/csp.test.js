@@ -27,8 +27,9 @@ describe('renderer Content Security Policy', () => {
   })
 
   it('frames nothing remote, and runs the PDF worker only from the app bundle (#402)', () => {
-    // A sandboxed HTML file is a srcdoc frame (not fetched); frames and workers fall back to default-src / script-src.
-    expect(directive('frame-src')).toBeNull()
+    // A sandboxed HTML file is a srcdoc frame (not fetched). The one framed scheme is marvin-mockup:, the sandboxed
+    // page a `marvin show` window serves from the main process (#715); workers fall back to script-src.
+    expect(directive('frame-src')).toEqual(['marvin-mockup:'])
     expect(directive('worker-src')).toBeNull()
     expect(directive('child-src')).toBeNull()
   })
