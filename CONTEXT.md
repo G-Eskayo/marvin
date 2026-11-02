@@ -1554,6 +1554,9 @@ Mac has no push channel. Gil applies the hooks on each Mac with `marvin_hooks.py
   and no written answer, need no more work and no reply: the PR can merge. A question that marks no built option only
   counts when its first option, marked Recommended, is the one picked.
 - **Queue line, once**: the line is left out when the card's headline already says the same thing.
+- **One card, both states** (owner, 2026-11-02): a queued PR's card reads "Approved: in the merge queue" with its queue
+  line; when its turn comes the same card becomes the merge pipeline (the stage strip), on every Mac, whichever device
+  approved it, and a Mac that opens mid-merge catches up to where the merge is.
 
 ## clarity-captions app-build check is now required (2026-10-05)
 
@@ -1934,8 +1937,10 @@ MARVIN-as-OS north star).
   except the Macs' code sync. The box's only scheduled job is the **mirror** (pull-only code sync,
   every 10 minutes). Its health is checked from the Macs, which already reach every registered device; Mac-only checks
   skip it. Everything else arrives as dispatched work.
-- **Bot PRs** (built 2026-10-16): PRs by MARVIN-bot-gil always wait for Gil, which is stricter than the 5-PR ramp.
-  A per-author streak can replace that later.
+- **Bot PRs** (built 2026-10-16, ramp 2026-10-30, #952): PRs by MARVIN-bot-gil wait for Gil until the bot's own
+  **author ramp** opens: 5 clean approvals in a row (`ramp_authors` in config/auto_merge.json, `trust_ramp.record_author`).
+  A deny, revert or break resets it to 0; the project's ramp must also be open. Trust is by author only: the `from-box`
+  label (#951) is information and changes no verdict.
 - **Open in this design** (as of 2026-10-16): the box's GitHub identity; sudo scope; Claude Code sign-in on Linux.
 
 ## One "needs a person" state, bot comments don't reset strikes, one plan per run (2026-10-22, #605)

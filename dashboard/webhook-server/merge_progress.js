@@ -238,7 +238,8 @@ export function createMergeTracker({ url, repo = null, machineId = null, emit = 
       log(`[merge] ${label} ${stage}: ${ev.detail.split('\n')[0].slice(0, 200)}`)
     }
     inflight?.set(url, { id: attempt, seq, stage, startedAt, machine: machineId })
-    try { emit(ev) } catch { /* a reader going away never stops the merge */ }
+    // The progress so far rides along (marvin#231 follow-up): a Mac that missed events catches up from the next one.
+    try { emit(ev, progress) } catch { /* a reader going away never stops the merge */ }
     return ev
   }
 

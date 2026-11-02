@@ -169,3 +169,121 @@ def test_a_bot_pr_is_scored_ask_through_the_shadow_verdict():
     facts = {"existing_top_level": {"lib"}, "new_top_level_this_week": 0, "ramp_open": True}
     v = sh.verdict(pr, facts)
     assert any("mac-mini-2012" in r for r in v.get("reasons", []))
+
+
+# ── the bot's own trust ramp (ADR 0069 rule 5, #952) ─────────────────────────────────────────────────────────────
+
+BOT = "MARVIN-bot-gil"
+
+
+def bot_pr(n=1, author=BOT, labels=()):
+    return {**pr(n), "author": author, "labels": list(labels)}
+
+
+def test_a_bot_pr_auto_merges_through_shadow_only_with_its_author_ramp_open():
+    assert sh.verdict(bot_pr(), FACTS)["verdict"] == "ask"
+    assert sh.verdict(bot_pr(), {**FACTS, "author_ramp_open": False})["verdict"] == "ask"
+    assert sh.verdict(bot_pr(), {**FACTS, "author_ramp_open": True})["verdict"] == "auto"
+
+
+def test_a_from_box_label_on_someone_elses_pr_changes_no_verdict():
+    assert sh.verdict(bot_pr(author="G-Eskayo", labels=["from-box"]), FACTS)["verdict"] == "auto"
+    assert sh.verdict(bot_pr(labels=["from-box"]), FACTS)["verdict"] == "ask"
+
+
+def view(state, merged_by=None, reviews=(), author=BOT, n=1, closed="2026-10-30T10:00:00Z"):
+    return {"number": n, "state": state, "author": {"login": author}, "closedAt": closed,
+            "mergedBy": {"login": merged_by} if merged_by else None,
+            "reviews": [{"author": {"login": a}, "state": s} for a, s in reviews]}
+
+
+@pytest.mark.parametrize("v,event", [
+    (view("MERGED", "G-Eskayo"), "approved-merge"),                         # the dashboard's Approve merges as Gil
+    (view("MERGED", "g-eskayo"), "approved-merge"),
+    (view("MERGED", BOT, [("G-Eskayo", "APPROVED")]), "approved-merge"),
+    (view("MERGED", BOT), "manual-merge"),                                  # merged around Gil: counts for nothing
+    (view("MERGED", BOT, [("someone", "APPROVED")]), "manual-merge"),
+    (view("MERGED", BOT, [("G-Eskayo", "APPROVED"), ("G-Eskayo", "CHANGES_REQUESTED")]), "manual-merge"),
+    (view("MERGED", BOT, [("G-Eskayo", "CHANGES_REQUESTED"), ("G-Eskayo", "APPROVED"), ("G-Eskayo", "COMMENTED")]),
+     "approved-merge"),
+    (view("CLOSED"), "deny"),
+    (view("CLOSED", None, [("G-Eskayo", "APPROVED")]), "deny"),
+    (view("OPEN"), None),
+    ({}, None),
+    ({"state": "MERGED", "mergedBy": None, "reviews": None}, "manual-merge"),
+])
+def test_a_closed_bot_pr_becomes_a_ramp_event(v, event):
+    assert sh.ramp_event(v) == event
+
+
+def fake_gh(prs_by_author):
+    calls = []
+
+    def gh(args):
+        calls.append(args)
+        login = args[args.index("--author") + 1]
+        return json.dumps(prs_by_author.get(login, []))
+    gh.calls = calls
+    return gh
+
+
+RULES_BOT = {"ramp_authors": [BOT]}
+
+
+def test_closed_bot_prs_are_recorded_in_order_and_once(tmp_path):
+    import trust_ramp as tr
+    ramp = tmp_path / "ramp.json"
+    closed = [view("MERGED", "G-Eskayo", n=n, closed=f"2026-10-{20 + n}T00:00:00Z") for n in (4, 2, 3, 1)]
+    gh = fake_gh({BOT: closed})
+    for _ in range(3):                                                       # hourly runs: repeats count once
+        sh.record_author_ramps(M, RULES_BOT, gh=gh, ramp_path=ramp)
+    assert tr.author_streak(BOT, path=ramp) == 4 and not tr.author_is_open(BOT, path=ramp)
+    gh = fake_gh({BOT: closed + [view("MERGED", "G-Eskayo", n=5, closed="2026-10-29T00:00:00Z")]})
+    sh.record_author_ramps(M, RULES_BOT, gh=gh, ramp_path=ramp)
+    assert tr.author_is_open(BOT, path=ramp)
+
+
+def test_a_deny_at_four_resets_the_bot_to_zero_whatever_order_github_lists_them(tmp_path):
+    import trust_ramp as tr
+    ramp = tmp_path / "ramp.json"
+    prs = [view("MERGED", "G-Eskayo", n=n, closed=f"2026-10-2{n}T00:00:00Z") for n in (1, 2, 3, 4)]
+    prs.insert(0, view("CLOSED", n=5, closed="2026-10-29T00:00:00Z"))       # newest first, as gh lists them
+    sh.record_author_ramps(M, RULES_BOT, gh=fake_gh({BOT: prs}), ramp_path=ramp)
+    assert tr.author_streak(BOT, path=ramp) == 0 and not tr.author_is_open(BOT, path=ramp)
+
+
+def test_a_pr_by_someone_else_is_never_recorded_into_the_bots_ramp(tmp_path):
+    import trust_ramp as tr
+    ramp = tmp_path / "ramp.json"
+    impostors = [view("MERGED", "G-Eskayo", author="G-Eskayo", n=n) for n in range(1, 8)]
+    impostors += [view("MERGED", "G-Eskayo", author="MARVIN-bot-gi1", n=n) for n in range(8, 15)]
+    sh.record_author_ramps(M, RULES_BOT, gh=fake_gh({BOT: impostors}), ramp_path=ramp)
+    assert tr.author_streak(BOT, path=ramp) == 0
+    assert not ramp.exists() or "G-Eskayo" not in json.dumps(json.loads(ramp.read_text()).get("authors"))
+
+
+def test_recording_is_best_effort(tmp_path):
+    ramp = tmp_path / "ramp.json"
+    ramp.write_text("{corrupt")
+
+    def broken(args):
+        raise RuntimeError("gh down")
+    assert sh.record_author_ramps(M, RULES_BOT, gh=broken, ramp_path=ramp) == []
+    closed = [view("MERGED", "G-Eskayo", n=1)]
+    assert sh.record_author_ramps(M, RULES_BOT, gh=fake_gh({BOT: closed}), ramp_path=ramp) == []
+    assert ramp.read_text() == "{corrupt"
+    assert sh.record_author_ramps(M, RULES_BOT, gh=lambda a: "not json", ramp_path=tmp_path / "r2.json") == []
+    assert sh.record_author_ramps(M, {"ask_all": True}, gh=fake_gh({BOT: closed}), ramp_path=tmp_path / "r3.json") == []
+
+
+def test_the_facts_for_a_pr_carry_its_authors_ramp(tmp_path):
+    import trust_ramp as tr
+    ramp = tmp_path / "ramp.json"
+    base = dict(FACTS)
+    f = sh.author_facts(base, {"author": BOT}, RULES_BOT, ramp_path=ramp)
+    assert f["author_ramp_open"] is False and f["author_ramp_streak"] == 0
+    for n in range(1, 6):
+        tr.record_author(BOT, n, "approved-merge", path=ramp)
+    assert sh.author_facts(base, {"author": "marvin-bot-GIL"}, RULES_BOT, ramp_path=ramp)["author_ramp_open"] is True
+    assert sh.author_facts(base, {"author": "G-Eskayo"}, RULES_BOT, ramp_path=ramp)["author_ramp_open"] is False
+    assert base == FACTS                                                      # the shared facts are not changed

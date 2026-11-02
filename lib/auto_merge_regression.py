@@ -124,14 +124,16 @@ def regression_rules(rules: dict) -> dict:
 def verdict(pr: dict, facts: dict, rules: dict | None = None) -> dict:
     """Would rung 3 merge this PR by itself? {"verdict": "auto" | "ask", "reasons": [...]}. `facts`: ticket_labels,
     regression_test (regression_test_check's result or None), main_green, checks_green, ramp_open,
-    merged_today (rung-3 auto-merges of this incident today), existing_top_level."""
+    merged_today (rung-3 auto-merges of this incident today), existing_top_level, author_ramp_open (the PR author's
+    own ramp, ADR 0069 rule 5; missing = closed)."""
     rules = rules or amp.load_rules()
     reasons = []
     labels = set(facts.get("ticket_labels") or ())
     if not {"watch", "regression"} <= labels:
         reasons.append("its ticket isn't a regression of a watched incident (needs `watch` and `regression`)")
     d = amp.decide(pr["repo"], pr["files"], regression_rules(rules), existing_top_level=facts.get("existing_top_level", ()),
-                   new_top_level_this_week=0, ramp_open=facts.get("ramp_open", False), author=pr.get("author"))
+                   new_top_level_this_week=0, ramp_open=facts.get("ramp_open", False), author=pr.get("author"),
+                   author_ramp_open=facts.get("author_ramp_open", False), author_ramp_streak=facts.get("author_ramp_streak"))
     if d["verdict"] == "ask":
         reasons += d["reasons"]
     rt = facts.get("regression_test")
@@ -284,12 +286,12 @@ def run(repo: str | None = None, path: Path = STATE_PATH, gh=None) -> list[dict]
     by_url = {r["pr"]["url"]: r for r in entries}
     seen = observe([{"number": r["pr"]["number"], "repo": repo, "url": r["pr"]["url"], "title": r["pr"]["title"],
                      "incident": incident_of(r["pr"]), "body": r["pr"].get("body") or "",
-                     "author": (r["pr"].get("author") or {}).get("login"),
+                     "author": (r["pr"].get("author") or {}).get("login") or "",   # unreadable author: "" fails closed
                      "files": [{"path": f["path"], "additions": f.get("additions", 0), "deletions": f.get("deletions", 0)}
                                for f in r["pr"].get("files", [])]} for r in entries],
-                   lambda p: {"ticket_labels": by_url[p["url"]]["labels"], "regression_test": by_url[p["url"]]["test"],
+                   lambda p: ams.author_facts({"ticket_labels": by_url[p["url"]]["labels"], "regression_test": by_url[p["url"]]["test"],
                               "main_green": main_green, "checks_green": _checks_green(by_url[p["url"]]["pr"].get("statusCheckRollup")),
-                              "ramp_open": ramp, "existing_top_level": tops}, path)
+                              "ramp_open": ramp, "existing_top_level": tops}, p, amp.load_rules()), path)
     with ams._Locked(path) as s3:
         for r in entries:
             s3["prs"][r["pr"]["url"]]["probe"] = r["probe"]

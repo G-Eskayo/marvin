@@ -4,7 +4,8 @@
 Until Gil switches auto-merge on, nothing merges by itself. Every hour (with the scanner, on the mini) each open PR gets
 the verdict auto-merge WOULD give it: the policy (auto_merge_policy.py), the project's trust ramp (trust_ramp.py) and
 a mutation score of at least 80 % (ADR 0063, #339; no score yet = wait). The first verdict a PR gets is kept, and what
-Gil then did with it (merged, closed, reverted) is recorded.
+Gil then did with it (merged, closed, reverted) is recorded. A PR by a ramp author (mac-mini-2012's bot, ADR 0069
+rule 5) also needs that author's own ramp open; each run records the author's closed PRs into it (#952).
 
 After SHADOW_DAYS the report says how many PRs it would have merged and lists every one Gil closed or reverted (a
 disagreement). The report reaches Gil in the session-start report, the morning brief and an MR Review banner.
@@ -31,6 +32,7 @@ import auto_merge_policy as amp  # noqa: E402
 STATE_PATH = Path.home() / ".claude" / "logs" / "auto-merge-shadow.json"
 SHADOW_DAYS = 3
 MIN_SCORE = 80
+OWNER = "G-Eskayo"          # whose merge or Approve counts as a clean approval for an author ramp
 _SCORE = re.compile(r"mutation\s+score[^0-9\n]{0,20}(\d{1,3})\s*%|\*\*score:\*\*\s*(\d{1,3})\s*%", re.I)
 
 
@@ -50,7 +52,8 @@ def verdict(pr: dict, facts: dict, rules: dict | None = None) -> dict:
     d = amp.decide(pr["repo"], pr["files"], rules or amp.load_rules(), existing_top_level=facts["existing_top_level"],
                    new_top_level_this_week=facts["new_top_level_this_week"], ramp_open=facts["ramp_open"],
                    render_check_passed=facts.get("render_check_passed", False), profile=facts.get("profile"),
-                   author=pr.get("author"))
+                   author=pr.get("author"), author_ramp_open=facts.get("author_ramp_open", False),
+                   author_ramp_streak=facts.get("author_ramp_streak"))
     reasons = list(d["reasons"]) if d["verdict"] == "ask" else []
     score = mutation_score(pr.get("body", ""))
     if score is None:
@@ -185,6 +188,69 @@ def pick_unscored(prs: list[dict], scored: dict) -> dict | None:
     return min(todo, key=lambda p: p["number"]) if todo else None
 
 
+# ── the bot's own trust ramp (ADR 0069 rule 5, #952) ────────────────────────
+
+def ramp_event(view: dict, owner: str = OWNER) -> str | None:
+    """A closed PR as an author-ramp event. Merged by the owner (the dashboard's Approve merges as him and leaves no
+    GitHub review) or merged with the owner's latest decisive review an APPROVED -> "approved-merge"; merged any other
+    way -> "manual-merge" (counts for nothing); closed unmerged -> "deny"; still open or unknown -> None."""
+    state = (view or {}).get("state")
+    if state == "CLOSED":
+        return "deny"
+    if state != "MERGED":
+        return None
+    me = owner.lower()
+    if ((view.get("mergedBy") or {}).get("login") or "").lower() == me:
+        return "approved-merge"
+    decisive = [r.get("state") for r in view.get("reviews") or []
+                if ((r.get("author") or {}).get("login") or "").lower() == me and r.get("state") in ("APPROVED", "CHANGES_REQUESTED")]
+    return "approved-merge" if decisive and decisive[-1] == "APPROVED" else "manual-merge"
+
+
+def _ramp_authors(rules: dict) -> list[str]:
+    a = rules.get("ramp_authors") if isinstance(rules, dict) else None
+    return [x for x in a if isinstance(x, str)] if isinstance(a, list) else []
+
+
+def author_facts(facts: dict, pr: dict, rules: dict, ramp_path: Path | None = None) -> dict:
+    """`facts` plus the PR author's ramp (open and streak); a copy, the shared facts aren't changed."""
+    import trust_ramp
+    path = ramp_path or trust_ramp.STATE_PATH
+    login = pr.get("author") or ""
+    if login.strip().lower() not in {a.lower() for a in _ramp_authors(rules)}:
+        return {**facts, "author_ramp_open": False, "author_ramp_streak": None}
+    login = login.strip()
+    return {**facts, "author_ramp_open": trust_ramp.author_is_open(login, path=path),
+            "author_ramp_streak": trust_ramp.author_streak(login, path=path)}
+
+
+def record_author_ramps(repo: str, rules: dict, gh=None, ramp_path: Path | None = None, limit: int = 50) -> list[tuple]:
+    """Record each ramp author's recently closed PRs in `repo` into its own ramp, oldest first (repeats count once, so
+    every hourly run can look at the same PRs again). A PR whose author isn't exactly that login is skipped, whatever
+    its labels. Best effort: GitHub or a corrupt ramp file never break the shadow run. Returns what was recorded."""
+    import trust_ramp
+    gh = gh or _gh
+    path = ramp_path or trust_ramp.STATE_PATH
+    done = []
+    for login in _ramp_authors(rules):
+        try:
+            prs = json.loads(gh(["pr", "list", "--repo", repo, "--state", "closed", "--author", login, "--limit",
+                                 str(limit), "--json", "number,state,author,mergedBy,reviews,closedAt"]))
+            prs = sorted((p for p in prs if isinstance(p, dict)), key=lambda p: (p.get("closedAt") or "", p.get("number") or 0))
+            for p in prs:
+                if ((p.get("author") or {}).get("login") or "").lower() != login.lower():
+                    continue
+                event = ramp_event(p)
+                if event is None:
+                    continue
+                trust_ramp.record_author(login, p["number"], event, path=path, repo=repo,
+                                         reason=f"{repo}#{p['number']} {event}")
+                done.append((login, p["number"], event))
+        except Exception as e:  # noqa: BLE001 -- try again next hour; never break the shadow run
+            print(f"auto-merge shadow: recording {login}'s trust ramp failed: {e}", file=sys.stderr)
+    return done
+
+
 # ── the hourly run (real GitHub and git; on the mini) ───────────────────────
 
 def _gh(args):
@@ -237,13 +303,15 @@ def run(repo: str = "G-Eskayo/marvin", path: Path = STATE_PATH) -> list[dict]:
     clone = Path.home() / ".agents"
     tops = {l for l in subprocess.run(["git", "ls-tree", "--name-only", "-d", "origin/main"], cwd=clone,
                                       capture_output=True, text=True).stdout.split()}
+    rules = amp.load_rules()
+    record_author_ramps(repo, rules)
     facts = {"existing_top_level": tops, "new_top_level_this_week": 0, "ramp_open": trust_ramp.is_open(repo),
              "render_check_passed": False}
     seen = observe([{"number": p["number"], "repo": repo, "url": p["url"], "title": p["title"], "body": p.get("body") or "",
-                     "author": (p.get("author") or {}).get("login"),
+                     "author": (p.get("author") or {}).get("login") or "",    # unreadable author: "" fails closed
                      "files": [{"path": f["path"], "additions": f.get("additions", 0), "deletions": f.get("deletions", 0),
                                 "status": "modified", "previous_path": None} for f in p.get("files", [])]} for p in prs],
-                   facts, path)
+                   lambda p: author_facts(facts, p, rules), path)
     st = _read(path) or {"prs": {}}
     open_urls = {p["url"] for p in prs}
     for url, e in st["prs"].items():
