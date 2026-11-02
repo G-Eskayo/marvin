@@ -1,5 +1,7 @@
 # Changelog
 
+- Merge gate: a test the PR doesn't touch that fails once sends a good PR back, silently (#892) ([#968](https://github.com/G-Eskayo/marvin/pull/968))
+
 - Main is red at f5b194d: fix forward ([#1008](https://github.com/G-Eskayo/marvin/pull/1008))
 
 - Main red: two tests hard-code the Mac's home folder (after #911) ([#986](https://github.com/G-Eskayo/marvin/pull/986))
