@@ -206,7 +206,7 @@ features:
     title: Dashboard app
     area: visibility
     status: released
-    summary: "MARVIN.app, a desktop mission control: Vitals, MR Review, Docs, Activity and more."
+    summary: "MARVIN.app, a desktop mission control: Health, MR Review, Docs, Activity and more."
     evidence: [dashboard/]
     adrs: ["0048"]
     verified_on: 2026-11-02
