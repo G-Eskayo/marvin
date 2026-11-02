@@ -4,6 +4,7 @@ import path from 'path'
 import { fileURLToPath } from 'url'
 import { enrichForOrder, mainStateFrom } from './merge_order.js'
 import { readRebaseStatus } from './rebase_status.js'
+import { engineRepo, owner } from '../electron/main/instance.js'
 
 // What the merge queue reads to decide (marvin#231), all from what MARVIN already records; nothing new is measured:
 //   - the repo's open PRs and open tickets (two gh calls per decision, only for a repo with something queued)
@@ -19,7 +20,6 @@ const ROOT = path.resolve(__dirname, '..', '..')
 const OWNER_DECISIONS = path.join(ROOT, 'lib', 'owner_decisions.py')
 const PROFILE_SCRIPT = path.join(ROOT, 'lib', 'project_profile.py')
 const VENV_PYTHON = path.join(ROOT, 'venv', 'bin', 'python')
-const MARVIN = 'G-Eskayo/marvin'
 
 const logs = () => path.join(os.homedir(), '.claude', 'logs')
 const readJson = (file, fallback) => { try { return JSON.parse(readFileSync(file, 'utf-8')) } catch { return fallback } }
@@ -79,7 +79,7 @@ export function ticketsByRepo(searchResults) {
   }
   return out
 }
-export function createFixTicketsCache({ exec, owners = () => ['G-Eskayo'], log = () => {} }) {
+export function createFixTicketsCache({ exec, owners = () => [owner()], log = () => {} }) {
   let byRepo = {}
   let inflight = null
   let dirty = false
@@ -105,7 +105,7 @@ export function createFixTicketsCache({ exec, owners = () => ['G-Eskayo'], log =
 
 // The base branch of a repo: marvin's is main; another project's comes from its profile (asked once).
 export function createBaseLookup({ exec, python = VENV_PYTHON, script = PROFILE_SCRIPT }) {
-  const known = new Map([[MARVIN, 'main']])
+  const known = new Map([[engineRepo(), 'main']])
   return async (repo) => {
     if (known.has(repo)) return known.get(repo)
     let base = 'main'
@@ -131,7 +131,7 @@ export function createQueueLoader({ exec, unbuilt, baseOf, health = readMainHeal
     const base = await baseOf(repo)
     return {
       openPrs: enrichForOrder(prs.filter((p) => !p.isCrossRepository).map((p) => ({ ...p, repo })), { repo, issues, unbuilt: unbuilt(), repairFailed: repairs(), rebaseStatus: rebase() }),
-      mainState: mainStateFrom({ issues, health: repo === MARVIN ? health() : null, base })
+      mainState: mainStateFrom({ issues, health: repo === engineRepo() ? health() : null, base })
     }
   }
 }

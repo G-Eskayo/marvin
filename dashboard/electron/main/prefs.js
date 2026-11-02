@@ -3,7 +3,7 @@ import { existsSync, readFileSync } from 'fs'
 // Small user preferences kept beside the app's other state (userData/prefs.json). Only known keys, only the
 // right types; anything else is ignored so a bad edit can't change behaviour by accident.
 export const DEFAULT_PREFS = {
-  // The native "Merge PR?" popup after clicking Approve & Merge. Off by default: the click is the decision, a
+  // The native "Merge PR?" popup after clicking Approve. Off by default: the click is the decision, a
   // second in-flight click is refused by merge_ops, and the merge gate retests before anything lands. Set
   // {"confirmMerge": true} in prefs.json to bring the popup back. (Deny/Drop always confirm: it can't be undone.)
   confirmMerge: false

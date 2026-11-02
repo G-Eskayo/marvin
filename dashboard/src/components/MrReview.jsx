@@ -4,7 +4,7 @@ import { cleanIpcError } from '../lib/ipcError.js'
 import { useEffect, useRef, useState } from 'react'
 import ProposalsSection from './ProposalsSection.jsx'
 import { toggleLabel } from '../lib/proposals_view.js'
-import { describePrState } from '../lib/prState.js'
+import { describePrState, queueLineFor } from '../lib/prState.js'
 import StageStrip from './StageStrip.jsx'
 import MrDetail from './MrDetail.jsx'
 import { useScrollPlace } from './ScrollPlaces.jsx'
@@ -360,7 +360,7 @@ export function ApproveDenyActions({ pr, onApproved, onDenied, inDetail = false 
               disabled={view.approve === 'disabled'}
               className="rounded-md bg-blue-600 px-4 py-1.5 text-sm font-medium text-white transition-colors hover:bg-blue-500 disabled:opacity-50"
             >
-              Approve &amp; Merge
+              Approve
             </button>
           )}
         </div>
@@ -516,7 +516,7 @@ function PrCard({ pr, parity, onOpenTicket, onApproved, onDenied, onSelect, wait
             #{pr.number} — {displayTitle(pr.title, parity?.ticket?.title)}{' '}
             {pr.repo !== 'G-Eskayo/marvin' && <span className="rounded bg-sky-950 px-1.5 py-0.5 font-sans text-[10px] font-normal text-sky-300">{pr.repo.split('/')[1]}</span>}
           </p>
-          <QueueLine entry={pr.mergeQueue} />
+          <QueueLine entry={queueLineFor(pr)} />
           {pr.hasSchema ? (
             <>
               {pr.evidence.subsystem && (

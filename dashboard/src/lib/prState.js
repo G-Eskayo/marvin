@@ -179,3 +179,23 @@ export function describePrState(pr, { status = 'idle', errorMessage = null, prog
   const notes = [ci.state === 'passing' ? 'GitHub checks passed' : null, rb?.state === 'clean' ? `still merges cleanly onto ${main} after #${rb.after} merged` : null, amNote].filter(Boolean)
   return base('ready', 'ready', 'Ready to merge', null, 'enabled', 'enabled', { note: notes.length ? notes.join(' · ') : null })
 }
+
+// marvin#231, owner decision on PR #987 ("Hide the line"): the queue line is not shown when the card's headline already
+// says the same thing ("checks failing: …" beside "GitHub checks failed"). Keyed by the card's kind; a queued card
+// always keeps its line, since only the line says its place.
+const SAID_BY_HEADLINE = {
+  'checks-failed': /^checks failing\b/,
+  'decisions-pending': /\bDecisions? (?:is|are) waiting for you$/,
+  'needs-options': /^asks you to choose without options$/,
+  conflict: /^conflicts with\b/,
+  'sent-back': /^sent back for rework$/,
+  stacked: /^waits for #\d+ \(it's built on it\)$/,
+  'wrong-base': /^targets\b/,
+  merging: /^merging now$/
+}
+export function queueLineFor(pr, opts = {}) {
+  const entry = pr?.mergeQueue
+  if (!entry?.reason) return null
+  const kind = describePrState(pr, opts).kind
+  return SAID_BY_HEADLINE[kind]?.test(entry.reason) ? null : entry
+}

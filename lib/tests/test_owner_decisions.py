@@ -139,7 +139,7 @@ class FakeGitHub:
 
     def node(self, p):
         return {"number": p["number"], "title": p["title"], "url": p["url"], "headRefName": p["headRefName"],
-                "repository": {"nameWithOwner": p["repo"]},
+                "body": p.get("body"), "repository": {"nameWithOwner": p["repo"]},
                 "commits": {"nodes": p["commit_nodes"] if "commit_nodes" in p else
                             [{"commit": {"committedDate": p["last_commit_at"]}}] if p["last_commit_at"] else []},
                 "comments": {"nodes": p["comments"]}}
@@ -392,3 +392,50 @@ def test_request_when_github_is_unreadable_says_so_and_files_nothing():
     gh = FakeGitHub([pr([decisions()])], fail={"api graphql"})
     assert od.request(REPO, 577, now=LATE, run=gh).startswith("skipped")
     assert gh.issues == []
+
+
+# ── owner decision on PR #987: answers that only pick what is built count as built (one rule with decisions.js) ──
+
+import pytest  # noqa: E402
+from pathlib import Path  # noqa: E402
+import decisions_check  # noqa: E402
+
+AS_BUILT = Path(__file__).resolve().parents[2] / "dashboard" / "test" / "fixtures" / "as_built"
+EXPECTED = json.loads((AS_BUILT / "expected.json").read_text())
+needs_node = pytest.mark.skipif(not decisions_check.find_node(), reason="node isn't installed")
+
+
+@needs_node
+@pytest.mark.parametrize("name", sorted(EXPECTED))
+def test_python_agrees_with_the_dashboard_on_the_same_bodies(name):
+    # dashboard/test/answers_as_built.test.js asserts the same expected.json against decisions.js directly.
+    assert decisions_check.as_built((AS_BUILT / name).read_text()) is EXPECTED[name]
+
+
+@needs_node
+def test_956_counts_as_built_and_981_with_a_note_still_waits_on_marvin():
+    def status(name):
+        p = {**pr([decisions()]), "body": (AS_BUILT / name).read_text()}
+        return od.pr_status(p, LATE, 4)
+    s956, s981 = status("pr956.md"), status("pr981.md")
+    assert s956["addressed_by"] == "as-built" and not s956["overdue"]
+    assert s981["addressed_by"] is None and s981["overdue"]
+
+
+def test_as_built_fails_closed_without_node():
+    assert decisions_check.as_built("anything", node=None) is False
+    assert decisions_check.as_built("", node="/bin/false") is False
+    assert decisions_check.as_built("x", node="/bin/false") is False
+
+
+def test_an_as_built_pr_files_no_follow_up_and_closes_an_open_one():
+    gh = FakeGitHub([{**pr([decisions()]), "body": "x"}])
+    od.sync([REPO], now=LATE, run=gh, grace=4)          # body not as built yet (stubbed below): one follow-up
+    assert len(gh.open_followups()) == 1
+    real = od._as_built
+    od._as_built = lambda body: True
+    try:
+        r = od.sync([REPO], now=LATE + timedelta(hours=1), run=gh, grace=4)
+    finally:
+        od._as_built = real
+    assert gh.open_followups() == [] and r["closed"]

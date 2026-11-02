@@ -60,7 +60,7 @@ query($q: String!, $f: String!, $after: String) {
   prs: search(query: $q, type: ISSUE, first: 100, after: $after) {
     pageInfo { hasNextPage endCursor }
     nodes { ... on PullRequest {
-      number title url headRefName
+      number title url headRefName body
       repository { nameWithOwner }
       commits(last: %d) { nodes { commit { committedDate authoredDate parents { totalCount } } } }
       comments(last: %d) { nodes { databaseId url createdAt body author { login } } }
@@ -138,7 +138,13 @@ def _login(c: dict) -> str:
     return str(((c.get("author") or {}).get("login")) or "").lower()
 
 
-def pr_status(pr: dict, now: datetime, grace: float, completed_comments: set[int] | frozenset = frozenset()) -> dict | None:
+def _as_built(body: str) -> bool:
+    import decisions_check
+    return decisions_check.as_built(body)
+
+
+def pr_status(pr: dict, now: datetime, grace: float, completed_comments: set[int] | frozenset = frozenset(),
+              as_built=None) -> dict | None:
     """Where this PR's latest owner Decisions comment stands, or None if it has none."""
     repo = pr.get("repo") or ""
     owner = repo.split("/")[0].lower()
@@ -166,6 +172,10 @@ def pr_status(pr: dict, now: datetime, grace: float, completed_comments: set[int
         by = "reply"
     elif latest.get("databaseId") in completed_comments:
         by = "follow-up"
+    elif pr.get("body") and (as_built or _as_built)(pr["body"]):
+        # Owner decision on PR #987 (2026-11-02): answers that only pick the built option, with no Note and no written
+        # answer, count as built: the PR can merge and MARVIN owes no reply (decisions.js answersAsBuilt has the rule).
+        by = "as-built"
     age = (now - since).total_seconds() / 3600
     return {"repo": repo, "number": pr.get("number"), "title": pr.get("title") or "", "url": pr.get("url") or "",
             "branch": pr.get("headRefName") or "", "comment_id": latest.get("databaseId"),
@@ -207,7 +217,7 @@ def fetch(repos, run=subprocess.run) -> dict | None:
                     continue
                 commits = (n.get("commits") or {}).get("nodes") or []
                 prs.append({"repo": n["repository"]["nameWithOwner"], "number": n["number"], "title": n["title"],
-                            "url": n["url"], "headRefName": n.get("headRefName"),
+                            "url": n["url"], "headRefName": n.get("headRefName"), "body": n.get("body") or "",
                             "last_commit_at": commits[-1]["commit"]["committedDate"] if commits else None,
                             "last_work_at": last_work_at(commits),
                             "comments": (n.get("comments") or {}).get("nodes") or []})
@@ -379,7 +389,7 @@ def sync(repos, now: datetime | None = None, run=subprocess.run, dry_run: bool =
             filed.append({"repo": s["repo"], "pr": s["number"], "result": _file(s, run, dry_run)})
     for (repo, pr), items in open_fu.items():
         s = by_pr.get((repo, pr))
-        if s and s["addressed_by"] == "reply":
+        if s and s["addressed_by"] in ("reply", "as-built"):
             why = f"PR #{pr} was addressed (a {s['addressed_by']} after the decisions)."
         elif (repo, pr) not in open_prs and data["complete"]:
             why = f"PR #{pr} is no longer open."

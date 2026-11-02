@@ -12,7 +12,7 @@ describe('readPrefs', () => {
     return { file, done: () => rmSync(dir, { recursive: true, force: true }) }
   }
 
-  it('merging asks for no extra confirmation by default: the Approve & Merge click is the decision', () => {
+  it('merging asks for no extra confirmation by default: the Approve click is the decision', () => {
     expect(DEFAULT_PREFS.confirmMerge).toBe(false)
   })
   it('a missing or unreadable file gives the defaults', () => {

@@ -10,7 +10,8 @@ import { createMergeOps } from '../electron/main/merge_ops.js'
 import { createApprovalLedger } from '../electron/main/approval_ledger.js'
 import { createApproveFlow } from '../electron/main/approve_flow.js'
 import { listPipelinePrs, queueLines } from '../electron/main/mr_review.js'
-import { QueueLine } from '../src/components/MrReview.jsx'
+import { QueueLine, ApproveDenyActions } from '../src/components/MrReview.jsx'
+import { queueLineFor } from '../src/lib/prState.js'
 
 // marvin#231, the dashboard's side: an Approve the merge Mac queues is neither a merge nor a refusal, and every card's
 // line comes from the same mergeOrder() the merge Mac runs, fed with the queue it serves at GET /merge-queue.
@@ -93,5 +94,43 @@ describe('each card\'s queue line', () => {
     expect(renderToStaticMarkup(<QueueLine entry={{ state: 'queued', tone: 'sky', reason: 'queued · 2nd · starts after #971' }} />)).toContain('text-sky-400')
     expect(renderToStaticMarkup(<QueueLine entry={{ state: 'ready', reason: null }} />)).toBe('')
     expect(renderToStaticMarkup(<QueueLine entry={null} />)).toBe('')
+  })
+})
+
+// Owner decision on PR #987, "Hide the line": no queue line when the card's headline already says it.
+describe('the queue line is hidden when the headline says the same', () => {
+  const failing = { state: 'failing', failing: ['Python tests'], pending: [], runs: [] }
+  const passing = { state: 'passing', failing: [], pending: [], runs: [] }
+  const card = (over) => ({ checks: passing, ...over })
+  const mq = (reason, extra = {}) => ({ queued: false, state: 'waiting', tone: 'amber', reason, ...extra })
+
+  it('"checks failing" beside "GitHub checks failed" is hidden', () => {
+    expect(queueLineFor(card({ checks: failing, mergeQueue: mq('checks failing: Python tests') }))).toBeNull()
+  })
+  it('open Decisions, a conflict, sent back, a stack and a merge running are each said once', () => {
+    expect(queueLineFor(card({ decisions: { present: true, questions: [], problems: [], pending: ['a', 'b'] }, mergeQueue: mq('2 Decisions are waiting for you') }))).toBeNull()
+    expect(queueLineFor(card({ conflicts: true, mergeQueue: mq('conflicts with main after #970 · MARVIN is fixing it') }))).toBeNull()
+    expect(queueLineFor(card({ sentBack: true, mergeQueue: mq('sent back for rework') }))).toBeNull()
+    expect(queueLineFor(card({ baseProblem: { base: 'b941', expected: 'main', parent: { number: 941 } }, mergeQueue: mq("waits for #941 (it's built on it)") }))).toBeNull()
+    expect(queueLineFor(card({ mergeQueue: mq('merging now', { queued: true, state: 'running', tone: 'sky' }) }))).toBeNull()
+  })
+  it('a line that adds something stays: unbuilt answers on a ready card, any queued place, main red', () => {
+    expect(queueLineFor(card({ mergeQueue: mq("your answers aren't built yet") })).reason).toBe("your answers aren't built yet")
+    expect(queueLineFor(card({ mergeQueue: mq('queued · 2nd · starts after #971', { queued: true, state: 'queued', tone: 'sky' }) })).reason).toMatch(/2nd/)
+    expect(queueLineFor(card({ mergeQueue: mq('main is red · waits for #986') })).reason).toMatch(/main is red/)
+    // A different reason on a failing card (the line ranks the PR's own blockers differently) is not a repeat.
+    expect(queueLineFor(card({ checks: failing, mergeQueue: mq("your answers aren't built yet") }))).not.toBeNull()
+    expect(queueLineFor(card({}))).toBeNull()
+  })
+})
+
+// Owner decision on PR #987: the button says "Approve" (it queues the merge; it no longer merges on the spot).
+describe('the Approve button', () => {
+  it('reads "Approve", never "Approve & Merge"', () => {
+    const pr = { number: 5, url: url(5), repo: REPO, canMerge: true, headRefOid: 's', checks: { state: 'passing', failing: [], pending: [], runs: [] } }
+    globalThis.window = { api: { mr: { mergeState: async () => null, onMergeEvent: () => () => {} } } }
+    const html = renderToStaticMarkup(<ApproveDenyActions pr={pr} onApproved={() => {}} onDenied={() => {}} />)
+    expect(html).toMatch(/>Approve<\/button>/)
+    expect(html).not.toMatch(/Merge</)
   })
 })

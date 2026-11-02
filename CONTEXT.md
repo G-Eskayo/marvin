@@ -1550,6 +1550,10 @@ Mac has no push channel. Gil applies the hooks on each Mac with `marvin_hooks.py
 - **Answers not built yet**: the owner answered a PR's Decisions, but no reply says they were acted on and no work
   commit came after them (merging main in doesn't count). It is MARVIN's move: the PR never merges like that, and
   approving it asks for the follow-up at once.
+- **Answers as built** (owner, 2026-11-02, PR #987): answers that only pick the option the PR says it built, with no Note
+  and no written answer, need no more work and no reply: the PR can merge. A question that marks no built option only
+  counts when its first option, marked Recommended, is the one picked.
+- **Queue line, once**: the line is left out when the card's headline already says the same thing.
 
 ## clarity-captions app-build check is now required (2026-10-05)
 

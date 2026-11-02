@@ -67,7 +67,7 @@ const approveFlow = createApproveFlow({
   ready: (machine, repo) => askReady(machine, repo),
   forget: (machine, prUrl) => askForget(machine, prUrl),
   push: (url, op) => pushMergeOp(url, op),
-  // The Approve & Merge click is the decision. The native popup is opt-in (prefs.json: confirmMerge) -- the
+  // The Approve click is the decision. The native popup is opt-in (prefs.json: confirmMerge) -- the
   // duplicate-start guard, the merge gate's retest and the base/order checks are what protect a stray click.
   confirm: async ({ number, url }) => {
     if (!readPrefs(join(app.getPath('userData'), 'prefs.json')).confirmMerge) return true

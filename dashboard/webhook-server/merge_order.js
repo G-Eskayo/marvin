@@ -1,5 +1,5 @@
 import { ciState } from './ci_status.js'
-import { summarizeDecisions, vagueness } from './decisions.js'
+import { summarizeDecisions, vagueness, answersAsBuilt } from './decisions.js'
 
 // The merge queue's order (marvin#231, decided with the owner 2026-10-30): for every open PR of one repo, whether it is
 // queued and where, or what it waits for, as one plain line. Pure: the webhook's runner and MR Review (both Macs) call
@@ -73,7 +73,8 @@ export function enrichForOrder(prs, { repo = null, issues = [], unbuilt = new Se
       ...p,
       repo: r,
       sentBack: p.sentBack ?? (ticket !== null && sentBackTickets.has(`${r}#${ticket}`)),
-      decisionsUnbuilt: unbuilt.has(p.url),
+      // Answers that only pick what is built need no more work (answersAsBuilt), whatever the merge server last read.
+      decisionsUnbuilt: unbuilt.has(p.url) && !answersAsBuilt(p.body || ''),
       conflict,
       conflictAfter: rbConflict && Number.isFinite(rb.after) ? rb.after : null,
       repairFailed: !!p.headRefOid && repairFailed?.[`${r}#${p.number}`] === p.headRefOid
