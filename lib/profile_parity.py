@@ -219,7 +219,7 @@ def _apply(rule: dict, facts: dict, where: str, text: str, add) -> None:
                     _context(text, m.start(), m.end()))
     elif kind == "title_near":
         # The title paired with an employer is the nearest title on each side of it, within `window` characters: a
-        # headline title followed by the real one ("AI ENGINEER Jr AI Engineer at Charter") pairs the real one.
+        # headline title followed by the real one ("DATA ENGINEER Jr Data Engineer at Acme") pairs the real one.
         near = re.compile(rule["near"], re.I)
         titles = list(re.finditer(rule["title"], text, re.I))
         allowed = {_norm_title(a) for a in rule["allowed"]}
