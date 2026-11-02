@@ -1030,10 +1030,10 @@ def test_only_pytest_basetemps_are_touched(tmp_path):
 
 
 def test_disposable_basetemp_pattern_matches(tmp_path):
-    """PYTEST_BASETEMP_RE matches disposable basetemp pattern pytest-ctl-<hex>."""
+    """PYTEST_BASETEMP_RE matches disposable basetemp pattern marvin-pytest-<hex>."""
     root = _pytest_root(tmp_path)
     # Create a disposable-style basetemp
-    d = root / "pytest-ctl-deadbeef"
+    d = root / "marvin-pytest-deadbeef"
     (d / "test_x0").mkdir(parents=True)
     (d / "test_x0" / "blob").write_bytes(b"x" * 2**20)
     os.utime(d / "test_x0", (time.time() - 10 * HOUR,) * 2)
@@ -1042,7 +1042,8 @@ def test_disposable_basetemp_pattern_matches(tmp_path):
 
     r = _trim(tmp_path)
     assert not d.exists(), "disposable basetemp should be removed"
-    assert sorted(r["removed"]) == ["pytest-2", "pytest-ctl-deadbeef"]
+    # pytest-2 is the newest folder here: the sweep always keeps the newest, so only the disposable one goes.
+    assert r["removed"] == ["marvin-pytest-deadbeef"] and (root / "pytest-2").exists()
 
 
 def test_non_matching_patterns_are_kept(tmp_path):

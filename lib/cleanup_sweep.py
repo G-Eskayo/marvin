@@ -80,7 +80,9 @@ GITHUB_REPO_RE = re.compile(r"github\.com[:/]([^/]+/[^/]+?)(?:\.git)?/?$")
 # folders (pytest_temp_roots); tests point it at a temp dir of their own (conftest).
 TMP_ROOTS: list[Path] | None = None
 PYTEST_TEMP_MIN_AGE_S = 3600
-PYTEST_BASETEMP_RE = re.compile(r"^pytest-(?:\d+|ctl-[0-9a-f]+)$")
+# A disposable basetemp (disposable_basetemp) must NOT start with "pytest-": every plain pytest session prunes that
+# prefix to its newest 3, and a name it can't number goes first, so a live run's folder was wiped mid-run.
+PYTEST_BASETEMP_RE = re.compile(r"^(?:pytest-\d+|marvin-pytest-[0-9a-f]+)$")
 
 # Every gh call below runs through gh_env (#866): launchd and ssh shells have a locked keychain, so plain gh answered
 # 401 and the sweep kept every worktree as "could not check GitHub".
@@ -295,7 +297,7 @@ def disposable_basetemp():
         owner_dir = roots[0] / f"pytest-of-{os.getenv('USER', 'user')}"
         owner_dir.mkdir(parents=True, exist_ok=True)
         hex_suffix = uuid.uuid4().hex[:8]
-        path = owner_dir / f"pytest-ctl-{hex_suffix}"
+        path = owner_dir / f"marvin-pytest-{hex_suffix}"
         path.mkdir(parents=True, exist_ok=True)
         yield ["--basetemp", str(path)]
     finally:
