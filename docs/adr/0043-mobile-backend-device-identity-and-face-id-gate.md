@@ -32,8 +32,8 @@ password/token (more friction and secret management, little gain over biometrics
 
 ## Amendment (2026-10-08): Gil's two Macs are allowlisted for development
 
-Gil chose to allowlist the MacBook (`c02f52gpq05ps-macbook-pro`) and the Mac Mini
-(`gils-mac-mini`) alongside the iPhone (`iphone181`), so the iOS simulator on either Mac can
+Gil chose to allowlist the MacBook and the Mac Mini (their Tailscale device names, kept in the private instance)
+alongside the iPhone, so the iOS simulator on either Mac can
 use the real backend while the app is being built and inspected. This deliberately relaxes the
 "laptop can't control MARVIN by accident" goal of user story 2 in PRD G-Eskayo/marvin#152.
 
