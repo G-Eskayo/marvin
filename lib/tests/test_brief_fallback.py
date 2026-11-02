@@ -52,8 +52,7 @@ class TestShouldRun:
         # Past deadline: use 10 AM local time (which is definitely past 8:30 + 1h grace)
         # Create a datetime in local timezone
         import time
-        local_tz = datetime.now().astimezone().tzinfo
-        now = datetime(2026, 10, 22, 10, 0, 0, tzinfo=local_tz)
+        now = datetime(2026, 10, 22, 10, 0, 0).astimezone()
         # Convert to UTC for the function call
         now_utc = now.astimezone(timezone.utc)
 
@@ -102,8 +101,7 @@ class TestShouldRun:
         local_path.write_text("(claude call failed: timeout)")
 
         # Use local timezone for the test
-        local_tz = datetime.now().astimezone().tzinfo
-        now = datetime(2026, 10, 22, 10, 0, 0, tzinfo=local_tz).astimezone(timezone.utc)
+        now = datetime(2026, 10, 22, 10, 0, 0).astimezone().astimezone(timezone.utc)
 
         decision = brief_fallback.should_run(
             device_id="macbook-pro-1",
@@ -119,8 +117,7 @@ class TestShouldRun:
         local_path.write_text("")
 
         # Use local timezone for the test
-        local_tz = datetime.now().astimezone().tzinfo
-        now = datetime(2026, 10, 22, 10, 0, 0, tzinfo=local_tz).astimezone(timezone.utc)
+        now = datetime(2026, 10, 22, 10, 0, 0).astimezone().astimezone(timezone.utc)
 
         decision = brief_fallback.should_run(
             device_id="macbook-pro-1",
@@ -142,8 +139,7 @@ class TestShouldRun:
     def test_clock_skew_never_compares_across_machines(self):
         """past_deadline uses only local clock, never remote clock."""
         # Simulate MacBook waking 6 hours late (use local time)
-        local_tz = datetime.now().astimezone().tzinfo
-        now = datetime(2026, 10, 22, 14, 30, 0, tzinfo=local_tz).astimezone(timezone.utc)
+        now = datetime(2026, 10, 22, 14, 30, 0).astimezone().astimezone(timezone.utc)
 
         result = brief_fallback.past_deadline(now, usual_hour=8, usual_minute=30)
         assert result is True  # Well past 8:30 + 1h grace = 9:30
@@ -191,8 +187,7 @@ class TestShouldRun:
         monkeypatch.setattr("brief_fallback.machine_profile.remote_devices", mock_remote_devices)
 
         # Use local timezone for the test
-        local_tz = datetime.now().astimezone().tzinfo
-        now = datetime(2026, 10, 22, 10, 0, 0, tzinfo=local_tz).astimezone(timezone.utc)
+        now = datetime(2026, 10, 22, 10, 0, 0).astimezone().astimezone(timezone.utc)
 
         # Should not crash, should return "should build"
         decision = brief_fallback.should_run(
@@ -328,8 +323,7 @@ class TestProduced:
         def run_mock_empty(cmd, *args, **kwargs):
             return subprocess.CompletedProcess(cmd, returncode=1, stdout="", stderr="")
 
-        local_tz = datetime.now().astimezone().tzinfo
-        now = datetime(2026, 10, 22, 10, 0, 0, tzinfo=local_tz).astimezone(timezone.utc)
+        now = datetime(2026, 10, 22, 10, 0, 0).astimezone().astimezone(timezone.utc)
 
         decision1 = brief_fallback.should_run(
             device_id="macbook-pro-1",
@@ -366,37 +360,32 @@ class TestPastDeadline:
 
     def test_before_deadline_hour(self):
         """Before the scheduled hour, deadline not passed."""
-        # Use local timezone for wall-clock comparisons
-        local_tz = datetime.now().astimezone().tzinfo
-        now = datetime(2026, 10, 22, 7, 30, 0, tzinfo=local_tz).astimezone(timezone.utc)
+        # A naive time .astimezone() is that date's own local offset; today's offset broke this when DST ended (2026-11-01)
+        now = datetime(2026, 10, 22, 7, 30, 0).astimezone().astimezone(timezone.utc)
         result = brief_fallback.past_deadline(now, usual_hour=8, usual_minute=30)
         assert result is False
 
     def test_at_usual_hour(self):
         """Exactly at usual hour, before grace: deadline not passed."""
-        local_tz = datetime.now().astimezone().tzinfo
-        now = datetime(2026, 10, 22, 8, 30, 0, tzinfo=local_tz).astimezone(timezone.utc)
+        now = datetime(2026, 10, 22, 8, 30, 0).astimezone().astimezone(timezone.utc)
         result = brief_fallback.past_deadline(now, usual_hour=8, usual_minute=30, grace_minutes=60)
         assert result is False
 
     def test_within_grace_period(self):
         """Within grace period after usual time: deadline not passed."""
-        local_tz = datetime.now().astimezone().tzinfo
-        now = datetime(2026, 10, 22, 9, 0, 0, tzinfo=local_tz).astimezone(timezone.utc)  # 30 min after 8:30
+        now = datetime(2026, 10, 22, 9, 0, 0).astimezone().astimezone(timezone.utc)  # 30 min after 8:30
         result = brief_fallback.past_deadline(now, usual_hour=8, usual_minute=30, grace_minutes=60)
         assert result is False
 
     def test_after_grace_period(self):
         """After grace period: deadline passed."""
-        local_tz = datetime.now().astimezone().tzinfo
-        now = datetime(2026, 10, 22, 9, 31, 0, tzinfo=local_tz).astimezone(timezone.utc)  # 61 min after 8:30
+        now = datetime(2026, 10, 22, 9, 31, 0).astimezone().astimezone(timezone.utc)  # 61 min after 8:30
         result = brief_fallback.past_deadline(now, usual_hour=8, usual_minute=30, grace_minutes=60)
         assert result is True
 
     def test_much_later_in_day(self):
         """Many hours later: definitely past deadline."""
-        local_tz = datetime.now().astimezone().tzinfo
-        now = datetime(2026, 10, 22, 15, 0, 0, tzinfo=local_tz).astimezone(timezone.utc)
+        now = datetime(2026, 10, 22, 15, 0, 0).astimezone().astimezone(timezone.utc)
         result = brief_fallback.past_deadline(now, usual_hour=8, usual_minute=30)
         assert result is True
 
@@ -498,8 +487,7 @@ class TestParameterization:
         local_path = tmp_path / "digest.md"
 
         # 5 AM — before custom 6 AM deadline
-        local_tz = datetime.now().astimezone().tzinfo
-        now = datetime(2026, 10, 22, 5, 0, 0, tzinfo=local_tz).astimezone(timezone.utc)
+        now = datetime(2026, 10, 22, 5, 0, 0).astimezone().astimezone(timezone.utc)
 
         def run_mock(*args, **kwargs):
             raise AssertionError("SSH should not be called before deadline")
@@ -516,8 +504,7 @@ class TestParameterization:
 
     def test_past_deadline_with_custom_grace(self):
         """past_deadline() respects custom grace_minutes parameter."""
-        local_tz = datetime.now().astimezone().tzinfo
-        now = datetime(2026, 10, 22, 9, 31, 0, tzinfo=local_tz).astimezone(timezone.utc)
+        now = datetime(2026, 10, 22, 9, 31, 0).astimezone().astimezone(timezone.utc)
 
         # With 60 min grace, 9:31 is past 8:30 + 60
         result1 = brief_fallback.past_deadline(now, usual_hour=8, usual_minute=30, grace_minutes=60)

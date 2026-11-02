@@ -246,6 +246,9 @@ def test_clarity_captions_notes_no_longer_say_the_app_cannot_be_built():
 
 
 @needs_instance
-def test_nourished_stays_off_and_has_a_real_verify_step():
+def test_nourished_has_a_real_verify_step_and_machines_when_dispatched():
+    """Gil turned nourished's builds on (2026-10-30, marvin-instance #7): what must hold is a required verify step,
+    and machines to build on whenever dispatch is on."""
     p = pp.load_profile("G-Eskayo/nourished", directory=REAL_PROFILES)
-    assert p["dispatch"] == "off" and p["verify"] and any(t["required"] for t in p["verify"])
+    assert p["verify"] and any(t["required"] for t in p["verify"])
+    assert p["dispatch"] == "off" or p["machines"]
