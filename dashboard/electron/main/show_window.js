@@ -273,7 +273,8 @@ export function createShowWindows({
     const item = entryOf(webContents)?.item
     if (!item) return null
     if (item.kind === 'link' || item.kind === 'html') return null
-    if (item.read.local) return readFileForView(item.read.local, item.label, item.size)
+    // The file's own name decides how it is drawn; a --label ("A screenshot from earlier") is only the title.
+    if (item.read.local) return readFileForView(item.read.local, path.basename(item.read.local), item.size)
     const buf = item.read.first?.ok ? item.read.first.body : null
     if (!buf) return { name: item.label, path: item.path, kind: 'other', reason: 'This file is gone from the branch' }
     return fileFromBuffer({ name: path.posix.basename(item.path), path: item.path, size: buf.length }, buf)

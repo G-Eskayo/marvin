@@ -178,6 +178,14 @@ describe('one window per project, reused', () => {
     expect(sessions[SHOW_PARTITION].scheme).toBe('marvin-mockup')
   })
 
+  it('a label is only the title: the file\'s own name decides how it is drawn (found live: a label hid an image)', async () => {
+    const png = put('agents/shot.png', Buffer.from('89504e470d0a1a0a0000000d49484452', 'hex'))
+    const { sw, windows } = make()
+    await sw.show({ kind: 'file', path: png, label: 'A screenshot from earlier' })
+    expect(sw.current(windows[0].webContents).label).toBe('A screenshot from earlier')
+    expect((await sw.read(windows[0].webContents)).kind).toBe('image')
+  })
+
   it('a huge file shows as a card, not a frozen window', async () => {
     const big = put('agents/huge.png', Buffer.alloc(16 * 1024 * 1024, 1))
     const { sw, windows } = make()
