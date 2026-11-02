@@ -1,7 +1,7 @@
 import { describe, it, expect } from 'vitest'
 import { createRebuildCheckTrigger, REBUILD_CHECK_ARGS } from '../webhook-server/rebuild_check.js'
 
-// #443: merges made on GitHub never reached the installed app, because only the dashboard's own Approve & Merge
+// #443: merges made on GitHub never reached the installed app, because only the dashboard's own Approve
 // triggered a rebuild. The change watch sees every merge on G-Eskayo/marvin within seconds; it now starts the rebuild
 // check (lib/dashboard_rebuild.py decides whether the app is actually behind, and never runs two builds at once).
 

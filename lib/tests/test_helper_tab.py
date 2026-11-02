@@ -15,6 +15,14 @@ sys.path.insert(0, str(LIB))
 import helper_tab as ht  # noqa: E402
 
 
+# The memory guard reads this Mac's real pressure. During a merge gate's full suite that is often "warn", so every
+# dispatch or launch here would wait and its test fail (#968 sent back, 2026-11-02). Tests run at normal pressure
+# unless one sets its own level.
+@pytest.fixture(autouse=True)
+def _normal_memory_pressure(monkeypatch):
+    monkeypatch.setenv("MARVIN_MEMORY_PRESSURE_LEVEL", "normal")
+
+
 def pane(window, tab, pane_id, tab_title="", title="zsh"):
     return {"window_id": window, "tab_id": tab, "pane_id": pane_id, "tab_title": tab_title, "title": title}
 

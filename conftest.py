@@ -71,6 +71,10 @@ def pytest_ignore_collect(collection_path, config):
 # controller decides once; xdist workers, the tests and anything they start inherit MARVIN_TEST_SLOT and pass through,
 # so no test ever queues on the machine's real slot. Inside the merge gate the slot is already held.
 _TEST_SLOT = None
+# The tests' own slot: a real folder in the test home, never under .cache, which make_test_home links to the real
+# ~/.cache. Under .cache, a test saw this Mac's real slot: while a real merge ran, the memory guard held every helper
+# launch and dispatch in the tests (#968 sent back and #1006 refused, 2026-11-02).
+_TEST_SLOT_DIR = TEST_HOME / ".marvin-test-slot"
 
 
 def pytest_configure(config):
@@ -79,7 +83,7 @@ def pytest_configure(config):
     if hasattr(config, "workerinput"):
         return
     if os.environ.get(test_slot.HELD_ENV):
-        os.environ[test_slot.DIR_ENV] = str(TEST_HOME / ".cache" / "marvin" / "test-slot")
+        os.environ[test_slot.DIR_ENV] = str(_TEST_SLOT_DIR)
         return
     n = getattr(config.option, "numprocesses", None)
     if test_slot.is_heavy(list(config.args), n not in (None, 0), cwd=config.invocation_params.dir):
@@ -89,7 +93,7 @@ def pytest_configure(config):
     else:
         os.environ[test_slot.HELD_ENV] = "pytest (small run, not queued)"
     # From here on the tests see a slot of their own: no test waits on, or reads, the machine's real merges and runs.
-    os.environ[test_slot.DIR_ENV] = str(TEST_HOME / ".cache" / "marvin" / "test-slot")
+    os.environ[test_slot.DIR_ENV] = str(_TEST_SLOT_DIR)
 
 
 def pytest_unconfigure(config):

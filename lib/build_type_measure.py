@@ -53,7 +53,28 @@ def _scope_root(touched_file: str) -> str:
     return parts[0]
 
 
-def test_command_for(worktree_path: Path, base_branch: str = "main") -> list[str]:
+def parallel_args(env: dict | None = None, have_xdist: bool | None = None, workers=None) -> list[str]:
+    """pytest-xdist workers for a build's test step, sized to free memory like the merge gate's (#940), or [] where
+    xdist is missing. Run serially, `pytest -q lib` outgrew the 1200 s evidence limit (it took 10-11 min on 10-22 and
+    timed out on every marvin build from 10-31 to 11-02, #995); CI and the gate already run the suite in parallel."""
+    import os
+    env = os.environ if env is None else env
+    if have_xdist is None:
+        import importlib.util
+        have_xdist = importlib.util.find_spec("xdist") is not None
+    if not have_xdist:
+        return []
+    n = env.get("MARVIN_TEST_WORKERS", "")
+    if not (n.isdigit() and int(n) > 0):
+        try:
+            import test_slot
+            n = str((workers or test_slot.workers)())
+        except Exception:  # noqa: BLE001 - an unreadable count still runs in parallel, never serially by accident
+            n = "auto"
+    return ["-n", n]
+
+
+def test_command_for(worktree_path: Path, base_branch: str = "main", parallel: list[str] | None = None) -> list[str]:
     """Which test command matches what this ticket's diff actually
     touches, scoped rather than always running the entire repo's tests --
     a real live-fire dispatch (G-Eskayo/marvin#21) found this the hard
@@ -65,6 +86,7 @@ def test_command_for(worktree_path: Path, base_branch: str = "main") -> list[str
     with capture_test_results's cwd=worktree_path-always signature --
     the dashboard case cd's internally via a wrapped shell command."""
     touched = _touched_files(worktree_path, base_branch)
+    par = parallel_args() if parallel is None else parallel
     if _touches_dashboard(touched):
         return ["bash", "-c", "cd dashboard && npx vitest run"]
 
@@ -74,8 +96,8 @@ def test_command_for(worktree_path: Path, base_branch: str = "main") -> list[str
         # Nothing changed, or nothing maps to a real code directory (e.g.
         # docs/adr/*.md-only) -- no scoped target to run, fall back to
         # the whole suite rather than silently running nothing.
-        return [VENV_PYTHON, "-m", "pytest", "-q"]
-    return [VENV_PYTHON, "-m", "pytest", "-q", *existing_roots]
+        return [VENV_PYTHON, "-m", "pytest", "-q", *par]
+    return [VENV_PYTHON, "-m", "pytest", "-q", *par, *existing_roots]
 
 
 def _ensure_dashboard_deps(worktree_path: Path) -> None:

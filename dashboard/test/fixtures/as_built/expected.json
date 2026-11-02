@@ -1,0 +1,13 @@
+{
+ "pr956.md": true,
+ "pr981.md": false,
+ "recommended-first.md": true,
+ "first-not-recommended.md": false,
+ "second-pick-no-mark.md": false,
+ "built-here-marks.md": true,
+ "not-the-built-one.md": false,
+ "note-on-built.md": false,
+ "text-answer.md": false,
+ "nothing-answered.md": false,
+ "no-decisions.md": false
+}

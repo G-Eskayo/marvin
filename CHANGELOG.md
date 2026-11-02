@@ -1,5 +1,13 @@
 # Changelog
 
+- Merge gate: a test the PR doesn't touch that fails once sends a good PR back, silently (#892) ([#968](https://github.com/G-Eskayo/marvin/pull/968))
+
+- Main is red at f5b194d: fix forward ([#1008](https://github.com/G-Eskayo/marvin/pull/1008))
+
+- Main red: two tests hard-code the Mac's home folder (after #911) ([#986](https://github.com/G-Eskayo/marvin/pull/986))
+
+- Main red: the identity rule fails on two docstrings that name the owner (after #926 and #936) ([#980](https://github.com/G-Eskayo/marvin/pull/980))
+
 - Portable scheduled jobs: launchd on the Macs, systemd timers on mac-mini-2012 (health-check, cleanup-sweep, usage-scan) ([#919](https://github.com/G-Eskayo/marvin/pull/919))
 
 - Linux box: 55 test failures from Mac-only paths, BSD stat, missing pytest-timeout, gh on PATH ([#918](https://github.com/G-Eskayo/marvin/pull/918))

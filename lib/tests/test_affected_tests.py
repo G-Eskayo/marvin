@@ -178,7 +178,9 @@ def test_with_a_base_pytest_is_told_which_files_to_collect(repo, tmp_path):
     assert set(Path(env["MARVIN_SELECTED_TESTS"]).read_text().split()) == RULES | {"lib/tests/test_alone.py"}
 
 
-def test_parallel_only_where_pytest_xdist_is_installed():
+def test_parallel_only_where_pytest_xdist_is_installed(monkeypatch):
+    # The merge gate passes its memory-sized count in MARVIN_TEST_WORKERS; this case is about no count given.
+    monkeypatch.delenv("MARVIN_TEST_WORKERS", raising=False)
     assert at.parallel_args(have_xdist=True) == ["-n", "auto"]
     assert at.parallel_args(have_xdist=False) == []
 

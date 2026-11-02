@@ -27,7 +27,7 @@ import { listTicketActivity, getTicketTimeline } from './activity.js'
 import { getDeviceStatuses } from './devices.js'
 import { getQueue, clearQueueCache } from './queue.js'
 import { getConcurrency, setConcurrency, scanNow } from './dispatch_concurrency.js'
-import { createMergeOps } from './merge_ops.js'
+import { createMergeOps, receiveMergeMessage } from './merge_ops.js'
 import { createApprovalLedger } from './approval_ledger.js'
 import { createApprovalRetry } from './approval_retry.js'
 import { createApproveFlow } from './approve_flow.js'
@@ -67,7 +67,7 @@ const approveFlow = createApproveFlow({
   ready: (machine, repo) => askReady(machine, repo),
   forget: (machine, prUrl) => askForget(machine, prUrl),
   push: (url, op) => pushMergeOp(url, op),
-  // The Approve & Merge click is the decision. The native popup is opt-in (prefs.json: confirmMerge) -- the
+  // The Approve click is the decision. The native popup is opt-in (prefs.json: confirmMerge) -- the
   // duplicate-start guard, the merge gate's retest and the base/order checks are what protect a stray click.
   confirm: async ({ number, url }) => {
     if (!readPrefs(join(app.getPath('userData'), 'prefs.json')).confirmMerge) return true
@@ -83,6 +83,12 @@ const approveFlow = createApproveFlow({
   },
   // The list must not keep showing a PR that just merged: it leaves at once, and GitHub confirms in the background.
   after: (url, result) => {
+    // marvin#231: queued on the merge server, nothing merged yet: the list is read again so the card shows its place.
+    if (result?.mergeQueued) {
+      githubChanged(`github:${repoFromPrUrl(url)}`)
+      mainWindow?.webContents.send('mr:refresh')
+      return
+    }
     if (result?.merged) mrActions.merged(url)
     else mrActions.reengaged(url)
     clearReworkCache()
@@ -104,7 +110,7 @@ const retryApprovals = (trigger) => { approvalRetry.run(trigger).catch((err) => 
 
 // A merge running here whose PR GitHub now calls merged was merged on GitHub by hand: end it as "Merged on GitHub"
 // (merge_ops.githubChanged). Asked only on a change trigger, once per merging op; nothing while no merge runs.
-const viewPrState = async (url) => JSON.parse((await execFileAsync('gh', ['pr', 'view', url, '--json', 'state'])).stdout)
+const viewPrState = async (url) => JSON.parse(await ghOut(['pr', 'view', url, '--json', 'state']))
 function checkMergedElsewhere(repo, only = null) {
   mergeOps.githubChanged(repo, viewPrState, Date.now(), only)
     .then((urls) => urls.forEach((u) => pushMergeOp(u, mergeOps.get(u))))
@@ -158,6 +164,7 @@ import { createMockupWindows } from './mockup_window.js'
 import { resolveLocalClone } from './docs_local.js'
 import { resolveServiceDefaults, resolveDeviceId, peerHosts, primaryDeviceId } from './device_identity.js'
 import { createHelpersReader } from './chat_helpers.js'
+import { isPullOnlyNode, createFeedSource, feedOnlyGh, readNetworkRegistry, assertActsHere as assertPullOnlyActs, canMergeHere, withReadOnlyReason } from './github_feed.js'
 
 // The pipeline's screenshot copy runs unattended beside the real dashboard: log, never show a modal (#384).
 if (isEvidenceCapture(process.env)) installCaptureGuard(process)
@@ -166,6 +173,15 @@ if (isEvidenceCapture(process.env)) installCaptureGuard(process)
 instrumentIpc(ipcMain)
 
 const execFileAsync = promisify(execFile)
+
+// marvin#954: a pull-only node (mac-mini-2012, ADR 0069) holds no GitHub credential. Its dashboard reads the open PRs
+// and boards from the Mini's feed (github_feed.js) and every other GitHub read or write here is refused in plain words,
+// so nothing on it can end in gh's login prompt. Decided once at startup: the registry changes rarely and a rebuild
+// relaunches the app.
+const pullOnly = isPullOnlyNode({ deviceId: resolveDeviceId(), registry: readNetworkRegistry() })
+const githubFeed = pullOnly ? createFeedSource() : null
+// Every `gh` this process runs, as its stdout.
+const ghOut = pullOnly ? feedOnlyGh : async (args, opts) => (await execFileAsync('gh', args, opts)).stdout
 
 adoptLoginShellPath()
 adoptSharedGhToken()
@@ -187,10 +203,7 @@ const MR_DENY_WEBHOOK_URL = process.env.MARVIN_MR_DENY_WEBHOOK_URL || `http://${
 // 0 = ephemeral (the evidence-capture copy); junk falls back to 7879.
 const DASHBOARD_REFRESH_PORT = parseRefreshPort(process.env.MARVIN_DASHBOARD_REFRESH_PORT)
 
-const ghListOpenPrs = (light) => async (repo) => {
-  const { stdout } = await execFileAsync('gh', prListArgs(repo, { light }))
-  return JSON.parse(stdout)
-}
+const ghListOpenPrs = (light) => async (repo) => JSON.parse(await ghOut(prListArgs(repo, { light })))
 
 // The dashboard's memory of GitHub (github_state.js, #318): every GitHub read below is answered from the last-known
 // state of its repo until the change watch says that repo changed, the person's own action needs fresh data, or a
@@ -220,6 +233,7 @@ function githubChanged(source) {
 // from memory unless that repo changed, so the status dot (every 2 min) and the MR list cost nothing while idle.
 // A full listing also answers a light one. `fresh` (a merge) re-reads every repo.
 async function fetchOpenPrs(light, fresh = false) {
+  if (githubFeed) return fetchOpenPrsFromMini(light)
   const perRepo = (repo) => {
     const full = () => githubState.get('prs', repo, () => ghListOpenPrs(false)(repo), { fresh })
     if (!light) return full()
@@ -250,12 +264,30 @@ async function fetchOpenPrs(light, fresh = false) {
   return prs
 }
 let prFetch = { errors: [], projects: 0, lastGoodAt: null }
+// The box (marvin#954): the same list, read from the Mini's feed copy. No GitHub call, nothing to cache or back off
+// from. A repo missing from the feed is listed as such; the Mini not answering is a status line, not this machine's
+// error, so it is logged once per change of wording instead of into the error log every 2 minutes.
+let lastFeedNote = null
+async function fetchOpenPrsFromMini(light) {
+  const repos = readRegistry().map((b) => b.repo)
+  const listed = await listOpenPrsAcrossRepos(repos, async (repo) => githubFeed.openPrs(repo, { light }), { listedAt: (repo) => githubFeed.readAt(repo) })
+  const source = githubFeed.status()
+  const note = [source.state, ...listed.errors.map((e) => e.message)].join(' | ')
+  if (note !== lastFeedNote) {
+    lastFeedNote = note
+    console.log(`[mr] ${source.text}${listed.errors.length ? ` Missing: ${listed.errors.map((e) => e.repo).join(', ')}` : ''}`)
+  }
+  const ok = !listed.errors.length && source.state === 'fresh'
+  prFetch = { errors: listed.errors, projects: repos.length, lastGoodAt: ok ? Date.now() : prFetch.lastGoodAt, source }
+  return listed.prs.map((p) => ({ ...p, checkedAt: p.listedAt || null }))
+}
 // Check watch (marvin#555, replacing #554's 90 s re-read): while a cached PR list shows checks running, ask GitHub about
 // each such commit's checks every 20 s with an ETag (a 304 is free). A real change re-reads just that repo's list and
 // tells an open MR Review to refresh. Reads only what is already in memory to decide what to watch. Started when the
 // app is ready.
 let checkWatch = null
 function startPrCheckWatch() {
+  if (pullOnly) return // the Mini watches the checks and its feed carries them (marvin#954)
   checkWatch = startCheckWatch({
     getHeads: () => githubState.peek('prs').flatMap(({ repo, value }) => pendingCheckHeads(repo, value)),
     probe: createCheckProbe(),
@@ -273,12 +305,12 @@ const listOpenPrs = ({ light = false, fresh = false } = {}) => fetchOpenPrs(ligh
 const reworkFromMemory = () => githubState.get('rework', null, () => { clearReworkCache(); return getReworkStatus() }, { safetyMs: 10 * 60_000, minIntervalMs: 5 * 60_000 })
 
 async function ghIssueView(issueNumber, repo = MARVIN_REPO) {
-  const { stdout } = await execFileAsync('gh', ['issue', 'view', String(issueNumber), '--repo', repo, '--json', 'number,title,body'])
-  return JSON.parse(stdout)
+  return JSON.parse(await ghOut(['issue', 'view', String(issueNumber), '--repo', repo, '--json', 'number,title,body']))
 }
 
 // Raw tickets + PRs per repo, shared by the board view and the relation index: from memory until that repo changes.
 function getBoardData(repo, gh) {
+  if (githubFeed) return Promise.resolve().then(() => githubFeed.board(repo))
   return githubState.get('board', repo, () => fetchBoardData(repo, gh))
 }
 
@@ -510,7 +542,7 @@ function registerActivityHandlers() {
 
   // Project boards: only repos in the registry are fetchable, so the renderer
   // can't make the main process shell out to gh for an arbitrary repo.
-  const ghJson = async (args) => (await execFileAsync('gh', args)).stdout
+  const ghJson = (args) => ghOut(args)
   const assertRegistered = (repo) => {
     if (!readRegistry().some((b) => b.repo === repo)) throw new Error(`No board registered for ${repo}`)
   }
@@ -606,7 +638,7 @@ function registerDocsHandlers() {
   // Relationships between tickets, PRs and docs, derived from their text (relations.js). Docs come from
   // local clones when there are any, else the GitHub index; the cache is dropped on the same triggers
   // that refresh the boards and docs.
-  const ghForRelations = async (args) => (await execFileAsync('gh', args, { maxBuffer: 50 * 1024 * 1024 })).stdout
+  const ghForRelations = (args) => ghOut(args, { maxBuffer: 50 * 1024 * 1024 })
   const relations = createRelationsService({
     getRepos: () => readRegistry().map((b) => b.repo),
     getBoardData: (repo) => getBoardData(repo, ghForRelations),
@@ -882,7 +914,7 @@ function registerMrReviewHandlers() {
   // the dashboard already caches (30s), so listing PRs costs no extra GitHub calls.
   const sentBackTickets = async (repos) => {
     const keys = new Set()
-    const gh = async (args) => (await execFileAsync('gh', args)).stdout
+    const gh = (args) => ghOut(args)
     for (const repo of repos) {
       try {
         const data = await getBoardData(repo, gh)
@@ -897,7 +929,7 @@ function registerMrReviewHandlers() {
   // probably a duplicate (#326).
   const closedTickets = async (repos) => {
     const keys = new Set()
-    const gh = async (args) => (await execFileAsync('gh', args)).stdout
+    const gh = (args) => ghOut(args)
     for (const repo of repos) {
       try {
         const data = await getBoardData(repo, gh)
@@ -918,7 +950,7 @@ function registerMrReviewHandlers() {
   // merge server's own record of merges and refused Approves ({fresh:true}).
   const mrHistory = createMrHistory({
     repos: () => readRegistry().map((b) => b.repo),
-    ghList: async (repo, since) => JSON.parse((await execFileAsync('gh', mergedPrArgs(repo, since))).stdout || '[]'),
+    ghList: async (repo, since) => JSON.parse((await ghOut(mergedPrArgs(repo, since))) || '[]'),
     webhookHistory: async () => {
       const res = await fetch(MR_WEBHOOK_URL.replace(/\/approve$/, '/merge-history'), { signal: AbortSignal.timeout(5000) })
       if (!res.ok) throw new Error(`merge server answered ${res.status}`)
@@ -934,7 +966,7 @@ function registerMrReviewHandlers() {
   ipcMain.handle('mr:historyDetail', async (_event, url) => {
     const repo = repoFromPrUrl(url)
     if (!repo) throw new Error('not a PR url')
-    const { stdout } = await execFileAsync('gh', ['pr', 'view', url, '--json', 'number,title,url,body,files,baseRefName,headRefName,headRefOid,mergeable,statusCheckRollup,state,mergedAt'])
+    const stdout = await ghOut(['pr', 'view', url, '--json', 'number,title,url,body,files,baseRefName,headRefName,headRefOid,mergeable,statusCheckRollup,state,mergedAt'])
     const raw = { ...JSON.parse(stdout), repo }
     const [pr] = await listPipelinePrs(async () => [raw], { canMerge: () => false, uiPathsFor: (r) => readUiPaths(r) })
     return { ...pr, readOnly: true, state: raw.state, mergedAt: raw.mergedAt || null }
@@ -951,10 +983,34 @@ function registerMrReviewHandlers() {
     const res = await fetch(MR_WEBHOOK_URL.replace(/\/approve$/, '/rebase-status'), { signal: AbortSignal.timeout(3000) })
     return res.ok ? res.json() : {}
   }
+  // marvin#231 follow-up: a card the queue says is merging, with no strip here (the app opened mid-merge, or this Mac
+  // was asleep for its events), reads where that merge is from the merge server once: GET /merge-progress. Run when
+  // the list is built (load, and each refresh trigger), never on a timer; one read per PR at a time.
+  const catchingUp = new Set()
+  function catchUpMerges(list) {
+    for (const pr of Array.isArray(list) ? list : []) {
+      if (pr?.mergeQueue?.state !== 'running' || catchingUp.has(pr.url)) continue
+      if (mergeOps.get(pr.url)?.state === 'merging') continue
+      catchingUp.add(pr.url)
+      fetch(`${MR_WEBHOOK_URL.replace(/\/approve$/, '/merge-progress')}?url=${encodeURIComponent(pr.url)}`, { signal: AbortSignal.timeout(3000) })
+        .then((res) => (res.ok ? res.json() : null))
+        .then((body) => { if (body?.merge?.progress) pushMergeOp(pr.url, mergeOps.adopt(pr.url, body.merge.progress)) })
+        .catch(() => { /* the next event or refresh catches it */ })
+        .finally(() => catchingUp.delete(pr.url))
+    }
+  }
+
+  // marvin#231: the merge queue lives with the merge server (the Mini); each card's line is worked out from it here.
+  const getMergeQueue = async () => {
+    const res = await fetch(MR_WEBHOOK_URL.replace(/\/approve$/, '/merge-queue'), { signal: AbortSignal.timeout(3000) })
+    return res.ok ? res.json() : null
+  }
+  // A repo's open tickets from the boards already in memory (main-red, incident, sent back): no extra GitHub read.
+  const boardIssuesFor = (repo) => (remembered('board').find((b) => b.repo === repo)?.value?.issues || []).filter((i) => i && i.state === 'OPEN')
   // Safety net for stacked PRs whose parent merged without the post-merge move (stack_retarget.js). Reads the PR list
   // already in memory; asks GitHub only about an orphaned PR, at most every 5 minutes each.
   const stackRetarget = createStackRetarget({
-    gh: async (args) => (await execFileAsync('gh', args)).stdout,
+    gh: (args) => ghOut(args),
     onMoved: (moved) => {
       for (const m of moved) {
         console.error(`[stack-retarget] moved PR #${m.number} (${m.repo}) onto main: its parent #${m.parent} had merged`)
@@ -980,23 +1036,28 @@ function registerMrReviewHandlers() {
     if (!prs.some((p) => p.url === url)) return null
     const rework = remembered('rework')[0]?.value
     const cards = await listPipelinePrs(async () => prs, {
-      canMerge: (repo) => canMergeFromDashboard(repo, readMergeableRepos()),
+      canMerge: (repo) => canMergeHere(pullOnly, canMergeFromDashboard(repo, readMergeableRepos())),
       sentBackTickets: keysFromBoards(sentBackKeys),
       closedTickets: keysFromBoards((repo, issues) => issues.filter((i) => i.state === 'CLOSED').map((i) => `${repo}#${i.number}`)),
       reworkStatus: rework ? async () => rework : null,
       rebaseStatus: getRebaseStatus,
       autoMergeShadow: getAutoMergeShadow,
-      uiPathsFor: (repo) => readUiPaths(repo)
+      uiPathsFor: (repo) => readUiPaths(repo),
+      mergeQueue: getMergeQueue,
+      issuesFor: boardIssuesFor
     })
     return cards.find((p) => p.url === url) || null
   }
   const mrList = coalesce(
-    () => listPipelinePrs(fixturePrs || listOpenPrs, { canMerge: (repo) => canMergeFromDashboard(repo, readMergeableRepos()), sentBackTickets, reworkStatus: reworkFromMemory, rebaseStatus: getRebaseStatus, closedTickets, autoMergeShadow: getAutoMergeShadow, uiPathsFor: (repo) => readUiPaths(repo) }),
+    () => listPipelinePrs(fixturePrs || listOpenPrs, { canMerge: (repo) => canMergeHere(pullOnly, canMergeFromDashboard(repo, readMergeableRepos())), sentBackTickets, reworkStatus: reworkFromMemory, rebaseStatus: getRebaseStatus, closedTickets, autoMergeShadow: getAutoMergeShadow, uiPathsFor: (repo) => readUiPaths(repo), mergeQueue: getMergeQueue, issuesFor: boardIssuesFor })
+      .then((prs) => withReadOnlyReason(prs, pullOnly)),
     () => `${githubState.localSeq()}:${githubState._genOf(null)}`
   )
-  ipcMain.handle('mr:list', () => {
-    if (!fixturePrs) listOpenPrs().then((prs) => stackRetarget.check(prs)).catch(() => {})
-    return mrList()
+  ipcMain.handle('mr:list', async () => {
+    if (!fixturePrs && !pullOnly) listOpenPrs().then((prs) => stackRetarget.check(prs)).catch(() => {})
+    const list = await mrList()
+    catchUpMerges(list)
+    return list
   })
 
   // Local-first actions (CONTEXT.md "Dashboard actions render their true result locally at once, and confirm in the
@@ -1053,9 +1114,13 @@ function registerMrReviewHandlers() {
     return fetchTicketContext(ticketRef, (n) => ghIssueView(n, repo))
   })
 
+  // marvin#954: the box (pull-only, ADR 0069) shows the Mini's list but never acts on it: no Approve, Deny or send-back
+  // from a machine that runs untrusted code, whatever the renderer sends.
+  const assertActsHere = () => assertPullOnlyActs(pullOnly)
   // marvin's gate is built in; another project needs its profile to opt in. Checked here from the PR url
   // itself, whatever the renderer claims, and again by the webhook (which is the real enforcement).
   const assertMergeable = (url) => {
+    assertActsHere()
     const repo = repoFromPrUrl(url)
     if (!repo || !canMergeFromDashboard(repo, readMergeableRepos())) {
       throw Object.assign(new Error(`Merging ${repo || 'this PR'} from the dashboard isn't set up: its project profile has not opted in (merge_from_dashboard). Review it on GitHub.`), { code: 'NO_MERGE_PROFILE' })
@@ -1093,6 +1158,7 @@ function registerMrReviewHandlers() {
 
   // "Too vague: needs options": ask the author to restate the questions as a Decisions section.
   ipcMain.handle('mr:sendBackForOptions', async (_event, { url, ticketNumber, reasons }) => {
+    assertActsHere()
     assertMergeable(url)
     const result = await sendBackForOptions({ prUrl: url, ticketNumber, reasons }, {
       exec: execFileAsync,
@@ -1104,6 +1170,7 @@ function registerMrReviewHandlers() {
 
   // The way out of a wrongly shown "sent back": see clearSentBackLabel (refuses while a rework is running).
   ipcMain.handle('mr:clearSentBack', async (_event, url) => {
+    assertActsHere()
     assertMergeable(url)
     const result = await clearSentBackLabel(url, execFileAsync)
     if (result.cleared) mrActions.cleared({ url, ticket: result.ticket })
@@ -1114,6 +1181,7 @@ function registerMrReviewHandlers() {
   // actions have real, visible side effects on GitHub (ADR 0025), and
   // "drop" specifically closes the PR and ticket with no undo.
   ipcMain.handle('mr:deny', async (_event, { number, url, ticketNumber, action, reasons, comment }) => {
+    assertActsHere()
     assertMergeable(url)
     const isDrop = action === 'drop'
     const { response } = await dialog.showMessageBox(mainWindow, {
@@ -1194,8 +1262,8 @@ app.whenReady().then(() => {
     }
   })
   if (supportWatcher(instance.support().role) === 'app') {
-    execFileAsync('gh', ['auth', 'token'])
-      .then(({ stdout }) => String(stdout).trim())
+    ghOut(['auth', 'token'])
+      .then((stdout) => String(stdout).trim())
       .catch(() => '')
       .then((token) => startAppSupportWatch({ repos: () => instance.support().repos, token, startChangeWatch, createGithubProbe }))
   }
@@ -1223,7 +1291,9 @@ app.whenReady().then(() => {
       } else if (topic === 'merge') {
         // A merge's stage event from the webhook on this Mac (marvin#568): local state only, never a GitHub read.
         const m = payload.merge
-        if (m && typeof m.url === 'string' && m.url.startsWith('https://github.com/')) pushMergeOp(m.url, mergeOps.event(m.url, m.event))
+        // marvin#231 follow-up: the same message relayed from the merge server on another Mac. Its progress so far is taken
+        // when it is ahead (it fills in events missed, lost or out of order); a message without one is the bare event.
+        if (m && typeof m.url === 'string' && m.url.startsWith('https://github.com/')) pushMergeOp(m.url, receiveMergeMessage(mergeOps, m))
       } else triggerHub.emit(topic, payload.source || 'ping')
     }
   }, { port: DASHBOARD_REFRESH_PORT, host: '127.0.0.1' })

@@ -174,7 +174,7 @@ def _plan_state_path(home: Path | None) -> Path:
 
 
 def mark_plan_limited(home: Path | None = None, now: datetime | None = None) -> None:
-    """A run on this Mac just hit the plan's usage limit (Gil, 2026-10-30: plan first, the credit only once it runs out)."""
+    """A run on this Mac just hit the plan's usage limit (the owner, 2026-10-30: plan first, the credit only once it runs out)."""
     path = _plan_state_path(home)
     path.parent.mkdir(parents=True, exist_ok=True)
     at = (now or datetime.now(timezone.utc)).strftime("%Y-%m-%dT%H:%M:%SZ")
