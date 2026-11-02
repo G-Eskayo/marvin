@@ -208,3 +208,26 @@ describe('the Now view (#862)', () => {
     expect(h).not.toMatch(/\bmin-w-\[\d|\bw-\[(?:9|1\d)\d\dpx\]/)
   })
 })
+
+describe('nextStep follows the pipeline\'s queue (#862, found on real data)', () => {
+  it('a ticket whose last run failed but is back in the ready queue is Up next, not Stuck', () => {
+    const t = ticket(7, ['ready-for-agent'], { column: 'blocked', reason: 'Pipeline failed at executing: boom' })
+    expect(ticketStep(t, { queued: new Map([[`${REPO}#7`, 1]]) })).toMatchObject({ section: 'next', verb: 'Next' })
+    expect(ticketStep(t, {}).section).toBe('stuck')
+  })
+  it('a PR with failing checks says why, not "sent back"', () => {
+    const p = pr(60, { checks: { state: 'failing', failing: ['ci'], pending: [] }, mergeQueue: { reason: 'checks failing: ci' } })
+    const h = render(feedOf({ prs: [p] }))
+    expect(h).toContain('checks failing: ci')
+    expect(h).not.toContain('sent back')
+  })
+})
+
+describe('a queue that lists a ticket twice (seen on real data, 2026-11-02)', () => {
+  it('shows it once, at its first place', () => {
+    const queue = [{ position: 1, repo: REPO, number: 3, title: 'T3' }, { position: 2, repo: REPO, number: 3, title: 'T3' }, { position: 3, repo: REPO, number: 4, title: 'T4' }]
+    const src = { tickets: [ticket(3, ['ready-for-agent'], { column: 'ready' })], queue, prs: [], proposals: [], running: [] }
+    const s = expectCoverage(src, NOW)
+    expect(s.next.map((i) => [i.number, i.step.verb])).toEqual([[3, 'Next'], [4, 'Ready']])
+  })
+})

@@ -76,6 +76,9 @@ export function ticketStep(t, ctx = {}) {
     if (moved != null && now - moved > MARVIN_STUCK_MS) return step('marvin', 'No movement', 'stuck', { stuckSince: moved })
     return step('marvin', 'Building', 'marvin', { phase: phaseOf(events) })
   }
+  // In the pipeline's ready queue (ticket_queue.py): it runs next, even after a failed run (the retry is the queue's).
+  const pos = ctx.queued?.get(key)
+  if (pos != null) return step('marvin', pos === 1 ? 'Next' : 'Ready', 'next')
   if (t.column === 'blocked') {
     if (/^Pipeline failed/.test(reason)) return step('marvin', 'Build failed', 'stuck', { stuckSince: lastAt(events) ?? ms(t.updatedAt) })
     if (/no activity for/.test(reason)) return step('marvin', 'No movement', 'stuck', { stuckSince: lastAt(events) ?? ms(t.updatedAt) })
@@ -89,10 +92,7 @@ export function ticketStep(t, ctx = {}) {
   }
   if (labels.has('needs-info')) return step('owner', 'Give info', 'yours')
   if (labels.has('ready-for-human')) return step('owner', 'Your task', 'yours')
-  if (labels.has('ready-for-agent')) {
-    const pos = ctx.queued?.get(key)
-    return step('marvin', pos === 1 ? 'Next' : 'Ready', 'next')
-  }
+  if (labels.has('ready-for-agent')) return step('marvin', 'Ready', 'next')
   return step('nobody', labels.has('needs-triage') ? 'Needs triage' : 'Not triaged', 'waiting')
 }
 
@@ -167,7 +167,12 @@ const sinceAsc = (a, b) => (a.since ?? Infinity) - (b.since ?? Infinity)
 export function buildNow(sources = {}, now = Date.now()) {
   const { prs = [], tickets = [], projects = [], running = [], queue = [], proposals = [], events = new Map() } = sources
   const live = new Map(running.map((r) => [keyOf(r.repo, r.number), r]))
-  const queued = new Map(queue.map((r) => [keyOf(r.repo, r.number), r.position]))
+  // The queue can list a ticket twice (a repo read twice); its place is its first.
+  const queued = new Map()
+  for (const r of queue) {
+    const k = keyOf(r.repo, r.number)
+    if (!queued.has(k) || r.position < queued.get(k)) queued.set(k, r.position)
+  }
   const ctx = { live, events, queued, now }
   const ticketByKey = new Map(tickets.map((t) => [keyOf(t.repo, t.number), t]))
   const items = []

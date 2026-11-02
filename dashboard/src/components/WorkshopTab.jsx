@@ -98,7 +98,13 @@ function Chip({ project }) {
   return <span className="mr-1.5 inline-block rounded border border-neutral-700 px-1.5 text-[11px] leading-4 text-neutral-300">{project}</span>
 }
 
-const clock = (ms) => (ms == null ? null : new Date(ms).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', hour12: false }))
+// "02:10" today, "Oct 8 02:10" before today.
+export function clock(ms, now = Date.now()) {
+  if (ms == null) return null
+  const d = new Date(ms)
+  const time = d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', hour12: false })
+  return d.toDateString() === new Date(now).toDateString() ? time : `${d.toLocaleDateString([], { month: 'short', day: 'numeric' })} ${time}`
+}
 
 // What follows the chip on the grey line, in the mock-up's order.
 export function metaFor(item, section, now = Date.now()) {
@@ -128,17 +134,18 @@ export function metaFor(item, section, now = Date.now()) {
   if (section === 'marvin') {
     const runs = pr?.checks?.runs
     if (item.step.verb === 'Checks running' && Array.isArray(runs) && runs.length) parts.push(`GitHub checks ${runs.filter((r) => r.state && r.state !== 'pending').length} of ${runs.length}`)
-    if (item.step.verb === 'Being fixed') parts.push('sent back, fix in progress')
-    if (pr?.mergeQueue?.reason && /queue|Merging/.test(item.step.verb)) parts.push(pr.mergeQueue.reason)
+    if (pr?.sentBack) parts.push(item.worker ? 'sent back, fix in progress' : 'sent back')
+    else if (pr?.mergeQueue?.reason && item.step.verb !== 'Checks running') parts.push(pr.mergeQueue.reason)
     if (item.worker) parts.push(item.worker)
     const ran = durationText(item.startedAt, now)
     if (ran) parts.push(ran)
   }
   if (section === 'stuck') {
     if (item.worker) parts.push(`held on ${item.worker}`)
-    parts.push(item.step.verb.toLowerCase())
-    const since = clock(item.step.stuckSince)
-    if (since && /movement|failed/.test(item.step.verb)) parts.push(`no movement since ${since}`)
+    const since = clock(item.step.stuckSince, now)
+    if (item.step.verb === 'No movement') parts.push(since ? `no movement since ${since}` : 'no movement')
+    else if (item.step.verb === 'Build failed') parts.push(since ? `build failed ${since}` : 'build failed')
+    else parts.push(item.step.verb.toLowerCase())
   }
   return parts
 }
