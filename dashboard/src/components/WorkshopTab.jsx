@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { buildNow, durationText, stripFor } from '../lib/next_step.js'
-import { NOW_TOPICS, loadSaved, readEvents, readSources, save } from '../lib/workshop_feed.js'
+import { NOW_TOPICS, SHOWN_ROWS, loadSaved, readEvents, patchSectionState, readSectionState, readSources, save, shownRows, writeSectionState } from '../lib/workshop_feed.js'
 
 // Workshop (ADR 0080, #862): the merge of Activity and MR Review. Only its Now view is built; Projects, Shipped and
 // Proposals point at today's screens until #864. Built to the approved mock-up (marvin-instance
@@ -74,15 +74,32 @@ export function WorkshopControl({ onPick }) {
   )
 }
 
-function Section({ title, aside, children, testid }) {
+// A section whose header opens and closes it (owner, PR #1030).
+function Section({ id, title, aside, children, testid, ui }) {
+  const collapsed = !!ui.state[id]?.collapsed
   return (
-    <section className="mt-6" data-testid={testid}>
-      <div className="mb-2 flex flex-wrap items-baseline justify-between gap-x-4 gap-y-1">
-        <h2 className="text-xs font-semibold uppercase tracking-[0.12em] text-neutral-400">{title}</h2>
+    <section className="mt-6" data-testid={testid} data-collapsed={collapsed ? 'yes' : 'no'}>
+      <button onClick={() => ui.set(id, { collapsed: !collapsed })} aria-expanded={!collapsed}
+        className="mb-2 flex w-full flex-wrap items-baseline justify-between gap-x-4 gap-y-1 text-left">
+        <h2 className="text-xs font-semibold uppercase tracking-[0.12em] text-neutral-400">
+          <span className="mr-1.5 inline-block w-2 text-neutral-500">{collapsed ? '▸' : '▾'}</span>{title}
+        </h2>
         <span className="text-xs font-medium text-neutral-500">{aside}</span>
-      </div>
-      {children}
+      </button>
+      {!collapsed && children}
     </section>
+  )
+}
+
+// More than SHOWN_ROWS rows: the first ten, then "▸ Show all N"; once shown, "Show fewer".
+function ShowAll({ id, list, ui }) {
+  if (list.length <= SHOWN_ROWS) return null
+  const all = !!ui.state[id]?.all
+  return (
+    <button onClick={() => ui.set(id, { all: !all })} data-testid="show-all"
+      className="w-full px-4 py-3 text-left text-sm text-neutral-400 hover:text-neutral-200">
+      {all ? '▾ Show fewer' : `▸ Show all ${list.length}`}
+    </button>
   )
 }
 
@@ -90,7 +107,7 @@ const Box = ({ tone, children }) => (
   <div className={`divide-y overflow-hidden rounded-lg border ${tone === 'stuck' ? 'divide-red-900/40 border-red-900/60 bg-red-950/40' : 'divide-neutral-800 border-neutral-800 bg-neutral-900/70'}`}>{children}</div>
 )
 
-const VERB_TONE = { stuck: 'text-red-400', yours: 'text-amber-400', marvin: 'text-sky-400', next: 'text-neutral-300' }
+const VERB_TONE = { stuck: 'text-red-400', yours: 'text-amber-400', marvin: 'text-sky-400', next: 'text-neutral-300', waiting: 'text-neutral-400' }
 const BAR = { passed: 'bg-emerald-700', running: 'bg-sky-400', failed: 'bg-red-500', stalled: 'bg-amber-500', 'needs-rebase': 'bg-amber-500', skipped: 'bg-neutral-700', pending: 'bg-neutral-800' }
 
 function Chip({ project }) {
@@ -114,6 +131,12 @@ export function clock(ms, now = Date.now()) {
 export function metaFor(item, section, now = Date.now()) {
   const parts = []
   const pr = item.pr
+  if (section === 'waiting') {
+    parts.push(`#${item.number}`)
+    if (item.priority) parts.push(item.priority)
+    if (item.ticket?.reason) parts.push(item.ticket.reason)
+    return parts
+  }
   if (section === 'next') {
     parts.push(`#${item.number}`)
     if (item.priority) parts.push(item.priority)
@@ -175,7 +198,7 @@ function rightLabel(item, section, now) {
 function Row({ item, section, onOpen, now }) {
   const strip = section === 'marvin' ? stripFor(item, now) : []
   return (
-    <button onClick={() => onOpen(item)} data-testid="now-row" data-section={section}
+    <button onClick={() => onOpen(item)} data-testid="now-row" data-section={section} data-key={item.key}
       className="flex w-full min-w-0 flex-col gap-2 px-4 py-3 text-left hover:bg-white/[0.03] lg:flex-row lg:items-center lg:gap-0">
       <span className={`shrink-0 text-sm font-semibold lg:w-[164px] ${VERB_TONE[section]}`}>{leftLabel(item, section, now)}</span>
       <span className="flex w-full min-w-0 flex-1 items-center gap-4 lg:w-auto">
@@ -201,8 +224,20 @@ function Empty({ children }) {
   return <p className="px-4 py-3 text-sm text-neutral-500">{children}</p>
 }
 
-export function WorkshopNow({ feed, onOpen, now = Date.now() }) {
-  const [moreOpen, setMoreOpen] = useState(false)
+const storageOf = () => {
+  try { return globalThis.localStorage } catch { return null }
+}
+
+export function WorkshopNow({ feed, onOpen, now = Date.now(), store = storageOf() }) {
+  const [sectionState, setSectionState] = useState(() => readSectionState(store))
+  const ui = {
+    state: sectionState,
+    set: (id, patch) => setSectionState((s) => {
+      const next = patchSectionState(s, id, patch)
+      writeSectionState(store, next)
+      return next
+    })
+  }
   const data = feed.now
   const stale = feed.failed?.length > 0
   if (!data) {
@@ -210,9 +245,17 @@ export function WorkshopNow({ feed, onOpen, now = Date.now() }) {
       ? <p className="mt-6 text-sm text-red-400">Can’t reach GitHub ({feed.failed.join(', ')}), and nothing is saved from an earlier read yet.</p>
       : <p className="mt-6 text-sm text-neutral-500">Loading…</p>
   }
-  const { stuck, yours, marvin, next } = data.sections
+  const { stuck, yours, marvin, next, waiting } = data.sections
   const asOf = feed.at ? new Date(feed.at).toLocaleString([], { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit', hour12: false }) : null
   const rows = (list, section) => list.map((item) => <Row key={item.key} item={item} section={section} onOpen={onOpen} now={now} />)
+  const long = (list, section) => (
+    <>
+      {rows(shownRows(list, !!sectionState[section]?.all), section)}
+      <ShowAll id={section} list={list} ui={ui} />
+    </>
+  )
+  const nextOpen = !!sectionState.next?.all
+  const waitingOpen = sectionState.waiting ? !sectionState.waiting.collapsed : false
   return (
     <div>
       {stale && (
@@ -221,27 +264,39 @@ export function WorkshopNow({ feed, onOpen, now = Date.now() }) {
         </p>
       )}
       {stuck.length > 0 && (
-        <Section title="Stuck" aside="nobody’s move, or over its limit (I5)" testid="now-stuck">
-          <Box tone="stuck">{rows(stuck, 'stuck')}</Box>
+        <Section id="stuck" ui={ui} title="Stuck" aside="nobody’s move, or over its limit (I5)" testid="now-stuck">
+          <Box tone="stuck">{long(stuck, 'stuck')}</Box>
         </Section>
       )}
-      <Section title="Your move" aside={`priority, then oldest wait · ${yours.length}`} testid="now-yours">
-        <Box>{yours.length ? rows(yours, 'yours') : <Empty>{stale ? 'Nothing waiting on you in the last known list.' : 'Nothing waiting on you.'}</Empty>}</Box>
+      <Section id="yours" ui={ui} title="Your move" aside={`priority, then oldest wait · ${yours.length}`} testid="now-yours">
+        <Box>{yours.length ? long(yours, 'yours') : <Empty>{stale ? 'Nothing waiting on you in the last known list.' : 'Nothing waiting on you.'}</Empty>}</Box>
       </Section>
-      <Section title="MARVIN is on it" aside={`all ${marvin.length} · everything in motion`} testid="now-marvin">
-        <Box>{marvin.length ? rows(marvin, 'marvin') : <Empty>Nothing in motion.</Empty>}</Box>
+      <Section id="marvin" ui={ui} title="MARVIN is on it" aside={`all ${marvin.length} · everything in motion`} testid="now-marvin">
+        <Box>{marvin.length ? long(marvin, 'marvin') : <Empty>Nothing in motion.</Empty>}</Box>
       </Section>
-      <Section title="Up next" aside="the pipeline’s queue" testid="now-next">
+      <Section id="next" ui={ui} title="Up next" aside="the pipeline’s queue" testid="now-next">
         <Box>
           {next.length === 0 && <Empty>Nothing ready.</Empty>}
-          {rows(moreOpen ? next : next.slice(0, 1), 'next')}
+          {rows(nextOpen ? next : next.slice(0, 1), 'next')}
           {next.length > 1 && (
-            <button onClick={() => setMoreOpen(!moreOpen)} className="w-full px-4 py-3 text-left text-sm text-neutral-400 hover:text-neutral-200">
-              {moreOpen ? '▾ fewer' : `▸ ${next.length - 1} more ready`}
+            <button onClick={() => ui.set('next', { all: !nextOpen })} className="w-full px-4 py-3 text-left text-sm text-neutral-400 hover:text-neutral-200">
+              {nextOpen ? '▾ Show fewer' : `▸ ${next.length - 1} more ready`}
             </button>
           )}
         </Box>
       </Section>
+      {waiting.length > 0 && (
+        // Held, blocked and untriaged: nobody's move yet, so one closed line (owner, PR #1030).
+        <section className="mt-4" data-testid="now-waiting" data-collapsed={waitingOpen ? 'no' : 'yes'}>
+          <Box>
+            <button onClick={() => ui.set('waiting', { collapsed: waitingOpen })} aria-expanded={waitingOpen}
+              className="w-full px-4 py-3 text-left text-sm text-neutral-400 hover:text-neutral-200">
+              {waitingOpen ? '▾' : '▸'} {waiting.length} waiting on something else
+            </button>
+            {waitingOpen && long(waiting, 'waiting')}
+          </Box>
+        </section>
+      )}
       <p className="mt-3 text-xs text-neutral-500">Machines, helpers’ health and the parallel toggle: Health.</p>
     </div>
   )

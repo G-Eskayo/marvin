@@ -249,3 +249,118 @@ describe('a PR\'s own blockers in the merge queue\'s order (seen on real data)',
     expect(h).toMatch(/class="flex w-full min-w-0 flex-1 items-center gap-4 lg:w-auto"/)
   })
 })
+
+// PR #1030, the owner's answers: show them all, but collapsable; a waiting line; workers by their display names.
+import { readSectionState, writeSectionState, patchSectionState, shownRows, SHOWN_ROWS, SECTION_STATE_KEY } from '../src/lib/workshop_feed.js'
+import { machineNames } from '../electron/main/machine_names.js'
+
+const memStore = (init = {}) => {
+  const mem = new Map(Object.entries(init))
+  return { mem, getItem: (k) => mem.get(k) ?? null, setItem: (k, v) => mem.set(k, v) }
+}
+const storeWith = (state) => memStore({ [SECTION_STATE_KEY]: JSON.stringify({ at: 1, value: state }) })
+const renderWith = (feed, store) => renderToStaticMarkup(<WorkshopNow feed={feed} onOpen={() => {}} now={NOW} store={store} />)
+const keysIn = (h) => [...h.matchAll(/data-key="([^"]*)"/g)].map((m) => m[1].replace(/&amp;/g, '&'))
+const many = (n, labels = ['needs-info']) => Array.from({ length: n }, (_, i) => ticket(i + 1, labels))
+
+describe('long sections collapse (owner, PR #1030)', () => {
+  it('more than 10 rows: the first 10, then "▸ Show all N"; shown in full, then "Show fewer"', () => {
+    const feed = feedOf({ tickets: many(25) })
+    const h = renderWith(feed, memStore())
+    expect(keysIn(h)).toHaveLength(SHOWN_ROWS)
+    expect(h).toContain('▸ Show all 25')
+    const all = renderWith(feed, storeWith({ yours: { all: true } }))
+    expect(keysIn(all)).toHaveLength(25)
+    expect(all).toContain('Show fewer')
+    expect(all).not.toContain('Show all 25')
+  })
+
+  it('exactly 10 rows: no "Show all" row; 11 rows: one', () => {
+    expect(renderWith(feedOf({ tickets: many(10) }), memStore())).not.toContain('data-testid="show-all"')
+    expect(renderWith(feedOf({ tickets: many(11) }), memStore())).toContain('▸ Show all 11')
+  })
+
+  it('every header collapses its section, and the header and count stay', () => {
+    const h = renderWith(feedOf(snapshot()), storeWith({ stuck: { collapsed: true }, yours: { collapsed: true }, marvin: { collapsed: true }, next: { collapsed: true } }))
+    expect(keysIn(h)).toEqual([])
+    for (const id of ['stuck', 'yours', 'marvin', 'next']) expect(h).toMatch(new RegExp(`data-testid="now-${id}" data-collapsed="yes"`))
+    expect(h).toContain('aria-expanded="false"')
+    expect(h).toMatch(/priority, then oldest wait · \d+/)
+  })
+
+  it('the state is remembered per viewer, and junk or throwing storage falls back to open', () => {
+    const store = memStore()
+    let st = patchSectionState({}, 'yours', { collapsed: true })
+    st = patchSectionState(st, 'yours', { all: true })
+    writeSectionState(store, st)
+    expect(readSectionState(store)).toEqual({ yours: { collapsed: true, all: true } })
+    expect(readSectionState(storeWith(['nope']))).toEqual({})
+    expect(readSectionState(storeWith({ yours: 'x', stuck: { collapsed: 'yes' } }))).toEqual({ stuck: { collapsed: false, all: false } })
+    const throwing = { getItem: () => { throw new Error('denied') }, setItem: () => { throw new Error('full') } }
+    expect(readSectionState(throwing)).toEqual({})
+    expect(() => writeSectionState(throwing, st)).not.toThrow()
+    expect(() => renderWith(feedOf(snapshot()), throwing)).not.toThrow()
+    expect(shownRows([1, 2, 3], false)).toEqual([1, 2, 3])
+  })
+})
+
+describe('the waiting line (owner, PR #1030)', () => {
+  it('one closed "▸ N waiting on something else" line at the bottom, expanding to held, blocked and untriaged items', () => {
+    const src = snapshot()
+    const { sections } = buildNow(src, NOW)
+    const closed = renderWith(feedOf(src), memStore())
+    expect(closed).toContain(`▸ ${sections.waiting.length} waiting on something else`)
+    expect(closed.indexOf('now-waiting')).toBeGreaterThan(closed.indexOf('now-next'))
+    expect(keysIn(closed).some((k) => sections.waiting.some((w) => w.key === k))).toBe(false)
+    const open = renderWith(feedOf(src), storeWith({ waiting: { collapsed: false } }))
+    for (const w of sections.waiting) expect(keysIn(open)).toContain(w.key)
+    expect(open).toMatch(/>On hold</)
+    expect(open).toContain('Blocked by #1, still open')
+  })
+
+  it('nothing waiting: no line', () => {
+    expect(renderWith(feedOf({ tickets: many(2) }), memStore())).not.toContain('now-waiting')
+  })
+
+  it('every open ticket, PR and proposal is on the page exactly once with every section opened', () => {
+    const src = snapshot()
+    const { items } = buildNow(src, NOW)
+    const open = { all: true, collapsed: false }
+    const h = renderWith(feedOf(src), storeWith({ stuck: open, yours: open, marvin: open, next: open, waiting: open }))
+    const keys = keysIn(h)
+    expect(keys.length).toBe(items.length)
+    expect(new Set(keys).size).toBe(keys.length)
+    // ...and every ticket a PR row carries is carried by exactly one row on the page.
+    const carried = items.filter((i) => keys.includes(i.key)).flatMap((i) => (i.type === 'ticket' ? [i.key] : i.covers))
+    for (const t of src.tickets) expect(carried.filter((k) => k === `${t.repo}#${t.number}`)).toHaveLength(1)
+  })
+})
+
+describe('worker names (owner, PR #1030)', () => {
+  it('the registry\'s display name, else the merge screens\' name for the id, else the raw id', () => {
+    expect(machineNames({ 'mac-mini-1': {}, 'macbook-pro-1': { name: 'Laptop' }, 'box-7': {}, x: { display_name: '  Studio  ' }, y: { display: 'Den' }, z: { name: '' } }))
+      .toEqual({ 'mac-mini-1': 'Mac mini', 'macbook-pro-1': 'Laptop', 'box-7': 'box-7', x: 'Studio', y: 'Den', z: 'z' })
+    expect(machineNames(null)).toEqual({})
+    expect(machineNames('junk')).toEqual({})
+  })
+
+  it('an in-motion row names its worker by display name, and an unknown machine by its id', () => {
+    const src = { ...snapshot(), machines: { 'builder-1': 'Build box' } }
+    expect(buildNow(src, NOW).items.find((i) => i.key === `${REPO}#5`).worker).toBe('Build box')
+    expect(render(feedOf(src))).toMatch(/Build box · 18 min/)
+    expect(buildNow({ ...snapshot(), machines: { other: 'X' } }, NOW).items.find((i) => i.key === `${REPO}#5`).worker).toBe('builder-1')
+    expect(buildNow({ ...snapshot(), machines: ['junk'] }, NOW).items.find((i) => i.key === `${REPO}#5`).worker).toBe('builder-1')
+  })
+
+  it('the feed carries the names from the main process, and keeps the last ones when that read fails', async () => {
+    const ok = (v) => () => Promise.resolve(v)
+    const api = { mr: { list: ok([]) }, activity: { openTickets: ok({ tickets: [], projects: [], machines: { a: 'A' } }) }, queue: { list: ok({ queue: [], running: [] }) }, proposals: { list: ok({ ok: true, proposals: [] }) } }
+    const first = await readSources(api)
+    expect(first.value.machines).toEqual({ a: 'A' })
+    const down = { ...api, activity: { openTickets: () => Promise.reject(new Error('offline')) } }
+    expect((await readSources(down, first.value)).value.machines).toEqual({ a: 'A' })
+    const store = memStore()
+    save(store, first.value, new Map(), NOW)
+    expect(loadSaved(store).value.machines).toEqual({ a: 'A' })
+  })
+})

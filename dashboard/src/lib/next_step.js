@@ -168,6 +168,12 @@ const sinceAsc = (a, b) => (a.since ?? Infinity) - (b.since ?? Infinity)
 // Every open ticket is one item, unless an open PR closes it: then the PR's item carries it (`covers`).
 export function buildNow(sources = {}, now = Date.now()) {
   const { prs = [], tickets = [], projects = [], running = [], queue = [], proposals = [], events = new Map() } = sources
+  // The worker as the owner reads it: the registry's display name (machine_names.js), else the raw id.
+  const names = sources.machines && typeof sources.machines === 'object' ? sources.machines : {}
+  const workerOf = (key) => {
+    const m = live.get(key)?.machine
+    return m ? (typeof names[m] === 'string' && names[m]) || m : null
+  }
   const live = new Map(running.map((r) => [keyOf(r.repo, r.number), r]))
   // The queue can list a ticket twice (a repo read twice); its place is its first.
   const queued = new Map()
@@ -186,7 +192,7 @@ export function buildNow(sources = {}, now = Date.now()) {
     if (ticket) covered.add(ticketKey)
     const item = { type: 'pr', key: pr.key || keyOf(pr.repo, pr.number), repo: pr.repo, number: pr.number, title: pr.title, url: pr.url, pr,
       ticketNumber: pr.ticketRef ?? null, covers: ticket ? [ticketKey] : [], priority: priorityOf(ticket?.labels), since: ms(pr.createdAt),
-      worker: ticketKey ? live.get(ticketKey)?.machine || null : null, events: ticketKey ? events.get(ticketKey) || [] : [] }
+      worker: ticketKey ? workerOf(ticketKey) : null, events: ticketKey ? events.get(ticketKey) || [] : [] }
     items.push(item)
   }
   // Tickets a board pairs with an open PR (closes it) that MR Review's list didn't pair by its body.
@@ -202,7 +208,7 @@ export function buildNow(sources = {}, now = Date.now()) {
       continue
     }
     items.push({ type: 'ticket', key, repo: t.repo, number: t.number, title: t.title, url: t.url, ticket: t, covers: [key],
-      priority: priorityOf(t.labels), since: ms(t.createdAt), worker: live.get(key)?.machine || null, events: events.get(key) || [],
+      priority: priorityOf(t.labels), since: ms(t.createdAt), worker: workerOf(key), events: events.get(key) || [],
       position: queued.get(key) ?? null })
   }
   // A ticket running or queued that the boards didn't list (a project whose board failed to load): still shown.
@@ -211,7 +217,7 @@ export function buildNow(sources = {}, now = Date.now()) {
     if (covered.has(key) || items.some((i) => i.type === 'ticket' && i.key === key)) continue
     const ticket = { repo: r.repo, number: r.number, title: r.title, labels: [live.has(key) ? `claimed:${r.machine}` : 'ready-for-agent', ...(r.priority ? [r.priority] : [])], createdAt: r.createdAt || null, column: live.has(key) ? 'progress' : 'ready' }
     items.push({ type: 'ticket', key, repo: r.repo, number: r.number, title: r.title, url: null, ticket, covers: [key], priority: priorityOf(ticket.labels),
-      since: ms(r.createdAt), worker: live.get(key)?.machine || null, events: events.get(key) || [], position: queued.get(key) ?? null })
+      since: ms(r.createdAt), worker: workerOf(key), events: events.get(key) || [], position: queued.get(key) ?? null })
   }
   for (const p of proposals) {
     items.push({ type: 'proposal', key: `proposal:${p.id}`, repo: null, number: null, title: p.title, proposal: p, covers: [],

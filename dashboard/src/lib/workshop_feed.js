@@ -10,7 +10,7 @@ export const NOW_TOPICS = new Set(['activity', 'agents', 'board', 'mr', 'proposa
 // In-motion rows read their ticket's stage events; bounded so a flood of claims can't fan out into hundreds of reads.
 const MAX_TIMELINES = 40
 
-const EMPTY = { prs: [], tickets: [], projects: [], running: [], queue: [], proposals: [] }
+const EMPTY = { prs: [], tickets: [], projects: [], running: [], queue: [], proposals: [], machines: {} }
 
 // One read of every source. Returns { value, failed: [names] }; value keeps `prev` for each failed source.
 export async function readSources(api, prev = EMPTY) {
@@ -27,6 +27,7 @@ export async function readSources(api, prev = EMPTY) {
   if (open.status === 'fulfilled' && Array.isArray(open.value?.tickets)) {
     value.tickets = open.value.tickets
     value.projects = Array.isArray(open.value.projects) ? open.value.projects : value.projects
+    value.machines = open.value.machines && typeof open.value.machines === 'object' && !Array.isArray(open.value.machines) ? open.value.machines : value.machines
   } else failed.push('tickets')
   if (queue.status === 'fulfilled' && queue.value && !queue.value.error) {
     value.running = queue.value.running || []
@@ -62,10 +63,33 @@ export function loadSaved(storage) {
   const { events = [], ...value } = saved.value
   let map
   try { map = new Map(Array.isArray(events) ? events : []) } catch { map = new Map() }
-  const clean = Object.fromEntries(Object.entries(EMPTY).map(([k, d]) => [k, Array.isArray(value[k]) ? value[k] : d]))
+  const clean = Object.fromEntries(Object.entries(EMPTY).map(([k, d]) => [k, Array.isArray(d) ? (Array.isArray(value[k]) ? value[k] : d) : (value[k] && typeof value[k] === 'object' && !Array.isArray(value[k]) ? value[k] : d)]))
   return { value: clean, events: map, at: saved.at }
 }
 
 export function save(storage, value, events = new Map(), now = Date.now()) {
   writeSaved(storage, SAVED_KEY, { ...value, prs: (value.prs || []).map(slimPr), events: [...events] }, now)
+}
+
+// Each section's open/closed state and whether it shows every row, per viewer (owner, PR #1030: "for long lists make
+// them collapsable so not to overwhelm the length of the page"). Storage may be missing or throwing.
+export const SECTION_STATE_KEY = 'workshop.now.sections'
+export const SHOWN_ROWS = 10
+export function readSectionState(storage) {
+  const v = readSaved(storage, SECTION_STATE_KEY)?.value
+  if (!v || typeof v !== 'object' || Array.isArray(v)) return {}
+  const out = {}
+  for (const [k, s] of Object.entries(v)) if (s && typeof s === 'object') out[k] = { collapsed: s.collapsed === true, all: s.all === true }
+  return out
+}
+export function writeSectionState(storage, state) {
+  writeSaved(storage, SECTION_STATE_KEY, state)
+}
+// The rows a section shows: all of them when asked, else the first SHOWN_ROWS.
+export function shownRows(list, all) {
+  return all || list.length <= SHOWN_ROWS ? list : list.slice(0, SHOWN_ROWS)
+}
+// One click's change to the saved state: the header flips `collapsed`, "Show all"/"Show fewer" flips `all`.
+export function patchSectionState(state, id, patch) {
+  return { ...state, [id]: { collapsed: false, all: false, ...state?.[id], ...patch } }
 }
