@@ -47,41 +47,11 @@ const n = SITE.name;
 
     <h2>What I've measured</h2>
     <p>
-      From <a href={blob('bench/SCORECARD.md')}>the bench</a>: the same questions asked of plain Claude Code (clean), a
-      trimmed setup (lean) and {n}. Scorecard last updated 5 Sep 2026. These are small runs, so read them as direction,
-      not proof at scale.
+      {n} runs <a href={blob('bench/SCORECARD.md')}>a bench</a> against plain Claude Code on the same model, with
+      known answers. A result only goes on this page when it holds across a set of tasks. Results from a single task,
+      like memory recall or routing simple questions to a smaller model, stay in the bench write-up with their scope,
+      because one task doesn't show they generalise.
     </p>
-
-    <h3>It knows things plain Claude Code can't</h3>
-    <p>
-      Asked what goes wrong when {n}'s scripts run outside their own Python environment, only {n} answered correctly.
-      The answer lives in its memory, not in any file. The cost difference was near zero (18,418 vs 18,998 tokens).
-    </p>
-
-    <h3>It finds things with half the tokens</h3>
-    <div class="m-table-wrap">
-      <table>
-        <thead><tr><th>Setup</th><th>Tokens</th><th>Tool calls</th><th>Correct</th></tr></thead>
-        <tbody>
-          <tr><td>Plain Claude Code</td><td>95,682</td><td>6</td><td>yes</td></tr>
-          <tr><td>Lean</td><td>66,762</td><td>4</td><td>yes</td></tr>
-          <tr><td>{n}</td><td><strong>45,905</strong></td><td><strong>2</strong></td><td>yes</td></tr>
-        </tbody>
-      </table>
-    </div>
-    <p>All three got there. {n} used 52% fewer tokens and a third of the tool calls, because it knew where to look.</p>
-
-    <h3>Recall doesn't need the expensive model</h3>
-    <div class="m-table-wrap">
-      <table>
-        <thead><tr><th>Option</th><th>Cost per recall task</th><th>Quality</th></tr></thead>
-        <tbody>
-          <tr><td>A local 14B model with {n}'s retrieval</td><td>$0.00</td><td>Right meaning, judged</td></tr>
-          <tr><td>Claude Haiku with {n}</td><td>about $0.02</td><td>Exact phrase</td></tr>
-          <tr><td>Claude Sonnet with {n}</td><td>about $0.05</td><td>Both</td></tr>
-        </tbody>
-      </table>
-    </div>
 
     <h3>I measured my own tools, and dropped one</h3>
     <p>
