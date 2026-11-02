@@ -1,5 +1,7 @@
 # Changelog
 
+- Main is red at f5b194d: fix forward ([#1008](https://github.com/G-Eskayo/marvin/pull/1008))
+
 - Main red: two tests hard-code the Mac's home folder (after #911) ([#986](https://github.com/G-Eskayo/marvin/pull/986))
 
 - Main red: the identity rule fails on two docstrings that name the owner (after #926 and #936) ([#980](https://github.com/G-Eskayo/marvin/pull/980))
