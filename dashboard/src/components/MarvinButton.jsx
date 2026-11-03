@@ -11,7 +11,8 @@ export default function MarvinButton({ open = (request) => window.api.marvin.ope
     setState({ busy: true, message: null, error: false })
     const result = await open(withTicket ? { ticket: ticket.trim() } : {})
     if (result?.ok) {
-      setState({ busy: false, message: `Opened in ${result.dir}`, error: false })
+      // marvin#1063: a ticket whose chat is already open gets that chat brought forward, not a second one
+      setState({ busy: false, message: result.focused ? 'That ticket\u2019s chat was already open, so it\u2019s in front now' : `Opened in ${result.dir}`, error: false })
       setPanel(false)
       setTicket('')
     } else {
