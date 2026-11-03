@@ -161,6 +161,12 @@ one job, starting with the history store.
 - **Thread**: the single continuous MARVIN conversation on the phone, shared by Chat and Voice
   (a spoken exchange shows up as text in the same Thread). Proactive messages from MARVIN land
   here too. There is one Thread, not a list of conversations.
+- **Chat tab**: a person's interactive MARVIN session running in a WezTerm pane on a Mac (marvin#1060, PRD #1058).
+  Recorded by its SessionStart hook in the live session list, keyed by (Mac, WezTerm GUI socket, pane) and checked
+  against the pane's tty; the pane owns the record, so /clear or a resume only updates its Claude session id. It is
+  alive while WezTerm still lists the pane with that tty and its claude process runs; nothing ages it out. Helper
+  tabs and one-off `claude -p` runs are not chat tabs. _Avoid_: calling it a "Chat" (the phone's typed surface) or a
+  "Session" (the phone backend's rotations, or the Claude Code session id it carries).
 - **Session** (in the MARVIN Mobile sense): one underlying Claude Code session behind a stretch of
   the Thread. The backend rotates to a fresh Session on topic shift or length, carrying a short
   summary forward; Gil sees one Thread, never the rotations. Every Session is a normal Claude

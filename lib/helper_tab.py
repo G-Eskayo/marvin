@@ -89,7 +89,8 @@ def run_helper(group: str, title: str, command: list[str], on_exit: str | None =
     jobs_dir = Path(os.environ["HELPER_TAB_JOBS_DIR"]) if os.environ.get("HELPER_TAB_JOBS_DIR") else None
     rc = 1
     try:
-        env = {**os.environ, "MARVIN_DOWNLOAD_CACHE": str(download_cache.cache_dir())}
+        env = {**os.environ, "MARVIN_DOWNLOAD_CACHE": str(download_cache.cache_dir()),
+               "MARVIN_HELPER_TAB": "1"}  # a helper is never recorded as a chat tab (marvin#1060)
         with job_events.job_run(job_name(group, title), f"{group}: {title}", jobs_dir) as run:
             rc = subprocess.run(command, env=env).returncode
             if rc:
