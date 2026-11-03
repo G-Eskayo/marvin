@@ -88,6 +88,16 @@ def test_install_moves_hooks_to_user_settings_and_sets_one_memory(tmp_path):
     assert (tmp_path / "settings.local.json.pre-marvin-hooks").exists()  # backup, never lose anything
 
 
+def test_install_wires_the_plan_usage_status_line_and_keeps_an_existing_one(tmp_path):
+    user, local = tmp_path / "settings.json", tmp_path / "settings.local.json"
+    _write(user, {"statusLine": {"type": "command", "command": "echo mine", "padding": 1}})
+    mh.install(user, local, memory_dir=tmp_path / "m")
+    sl = json.loads(user.read_text())["statusLine"]
+    assert "lib/plan_usage.py statusline -- /bin/sh -c 'echo mine'" in sl["command"] and sl["padding"] == 1
+    names = {Path(r["path"]).name: r["triggers"] for r in mh.wired_scripts([user])}
+    assert names["plan_usage.py"] == ["statusLine"]  # auto_fix's never-touch list sees it
+
+
 def test_install_is_idempotent(tmp_path):
     user, local = tmp_path / "settings.json", tmp_path / "settings.local.json"
     _write(user, {})

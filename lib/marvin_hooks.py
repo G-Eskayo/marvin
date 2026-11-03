@@ -157,9 +157,16 @@ def wired_scripts(paths=(USER_SETTINGS, LOCAL_SETTINGS)) -> list[dict]:
     found: dict[str, dict] = {}
     for path in paths:
         try:
-            hooks = json.loads(Path(path).read_text(encoding="utf-8")).get("hooks", {})
+            settings = json.loads(Path(path).read_text(encoding="utf-8"))
+            hooks = settings.get("hooks", {})
         except (OSError, ValueError, AttributeError):
             continue
+        status = settings.get("statusLine")  # the status line runs a script too (plan_usage, #872)
+        if isinstance(status, dict) and status.get("type") == "command":
+            for script in _scripts_in(status.get("command") or ""):
+                triggers = found.setdefault(script, {"path": script, "triggers": []})["triggers"]
+                if "statusLine" not in triggers:
+                    triggers.append("statusLine")
         for event, entries in hooks.items() if isinstance(hooks, dict) else ():
             for entry in entries if isinstance(entries, list) else ():
                 if not isinstance(entry, dict):
@@ -190,6 +197,8 @@ def install(user_path: Path = USER_SETTINGS, local_path: Path = LOCAL_SETTINGS,
     user = _load(user_path)
     user["hooks"] = settings_hooks()
     user["autoMemoryDirectory"] = _portable_memory(memory_dir)
+    import plan_usage  # the status line records the plan's 5-hour and weekly meters, wrapping any existing one (#872)
+    user["statusLine"] = plan_usage.statusline_setting(user.get("statusLine"))
     _save(user_path, user)
     local = _load(local_path)
     if "hooks" in local:
