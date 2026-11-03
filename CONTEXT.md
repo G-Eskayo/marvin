@@ -492,6 +492,13 @@ ever been closed unmerged. Gil approves almost everything; the wait is the cost.
   or run it on the API credit; at the hard line a big task needs Gil's yes. Nothing is cut off mid-task.
 - **Pace** (of a budget that expires, like the API credit or the weekly plan limit): projected spend to the reset
   date. Under pace, queued work is pulled forward; over pace, it is slowed, so the budget lands near its limit.
+- **Plan reading**: one row of the Claude plan's own meters (5-hour and weekly used %, and when each resets), as
+  Claude Code reports them, in `~/.claude/logs/plan-usage.jsonl` (`lib/plan_usage.py`). A row is written only when a
+  meter changes. No reading means "not enough data", never 0%.
+- **Unused window** (of the 5-hour limit): five whole hours this week when no 5-hour window was running, so a
+  window's worth of the plan could have been used and wasn't. A **nearly unused** window ran but peaked under 10%.
+  When 5-hour windows hit the limit while the week is projected to end under 100%, the 5-hour limit is the
+  **binding limit**: it is costing weekly allowance.
 - **Plan first** (billing, Gil 2026-10-30): every build runs on the Claude plan while it has room, however many run
   at once. A run that hits the plan's usage limit retries at once on the API credit, and that Mac stays on the credit
   for an hour before trying the plan again (`dispatch_concurrency.plan_limited`). A spent credit falls back to waiting

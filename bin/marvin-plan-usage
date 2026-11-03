@@ -1,0 +1,4 @@
+#!/bin/bash
+# marvin-plan-usage: the Claude plan's weekly use and pace, and its 5-hour windows (hit, nearly unused, none running),
+# across both Macs (marvin#872). JSON by default; --text for a person. See lib/plan_usage.py.
+exec "$HOME/.agents/venv/bin/python" "$HOME/.agents/lib/plan_usage.py" summary "$@"
