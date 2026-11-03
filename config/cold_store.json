@@ -1,0 +1,5 @@
+{
+  "_doc": "MARVIN's cold store (lib/cold_store.py, bin/marvin-cold). host is a registry id from ~/.claude/marvin-network.json; its ssh name comes from the registry. root is relative to that machine's home. Placement by role (storage plan section 5): the 2012 holds cold data.",
+  "host": "mac-mini-2012",
+  "root": "marvin-cold"
+}

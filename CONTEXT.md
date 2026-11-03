@@ -2044,3 +2044,17 @@ another way.
   that merged and flags tests run on another OS.
 _Avoid_: "failed" for an approval that waits for memory; "idle" meaning the owner is away (here it means the machine
 runs no merge or test of its own and its memory is normal).
+
+## Cold store (built 2026-11-03, marvin#1081)
+
+- **Cold store**: big folders nobody is using, kept on the **cold host** (`config/cold_store.json`, today
+  mac-mini-2012) instead of a Mac. This is placement by role (storage plan section 5), not striping. `lib/cold_store.py`,
+  `bin/marvin-cold`.
+- **Parked**: a folder whose bytes live in the cold store. Its old path holds a **marker** instead (`PARKED.txt` for
+  people, `.marvin-cold.json` for code). The parking Mac keeps the trusted manifest (`var/cold-store/<name>.json`).
+  Bytes coming back from the 2012, which runs untrusted code, are checked against that manifest. Secret and state
+  folders are never parked.
+- **Ensure**: what a caller runs before it reads a folder that may be parked (`marvin-cold ensure PATH [--part SUB]`).
+  When the data is here it returns at once with no network. When the folder is parked it fetches the data back
+  (locked, space-checked, verified) and returns. A path inside a parked folder fetches only that part. This is the
+  trigger: nothing polls.
