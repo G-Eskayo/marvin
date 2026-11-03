@@ -27,7 +27,7 @@ def world(tmp_path, monkeypatch):
     outbox = home / ".claude" / "outbox"
     outbox.mkdir(parents=True)
     agents = home / ".agents"
-    portfolio = home / "Developer" / "portfolio-website-updater"
+    portfolio = home / "Developer" / "portfolio-site"  # neutral name: the real default lives only in project_catalog._PORTFOLIO_DEFAULT
     for d in (agents / "instance" / "docs" / "plans", portfolio / "docs"):
         d.mkdir(parents=True)
     # tmp_path itself is under /private/var/folders (a temp root): the "home" must not look like temp to the checks.
