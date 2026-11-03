@@ -32,9 +32,13 @@ class WeztermError(RuntimeError):
     """WezTerm couldn't be found, didn't answer in time, or refused a call."""
 
 
-def find_binary(env: dict | None = None, candidates: Iterable[Path] = CANDIDATES,
-                which: Callable[[str], str | None] = shutil.which) -> str:
+def find_binary(env: dict | None = None, candidates: Iterable[Path] | None = None,
+                which: Callable[[str], str | None] | None = None, strict: bool = True) -> str:
+    """The wezterm binary. strict=False never raises: on a machine without WezTerm (a CI runner) it names the usual
+    Homebrew path, so a Wezterm can still be made and a real call fails then, with a clear WeztermError."""
     env = os.environ if env is None else env
+    candidates = CANDIDATES if candidates is None else candidates     # read at call time, so tests can patch them
+    which = which or shutil.which
     for key in ("MARVIN_WEZTERM", "HELPER_TAB_WEZTERM"):
         if env.get(key) and Path(env[key]).exists():
             return env[key]
@@ -44,6 +48,8 @@ def find_binary(env: dict | None = None, candidates: Iterable[Path] = CANDIDATES
     found = which("wezterm")
     if found:
         return found
+    if not strict:
+        return str(list(candidates)[-1]) if list(candidates) else "/opt/homebrew/bin/wezterm"
     raise WeztermError("WezTerm isn't installed on this Mac (looked in ~/.local/bin, /Applications and Homebrew)")
 
 
@@ -123,7 +129,7 @@ class Wezterm:
 
     def __init__(self, binary: str | None = None, socket: str | None = None, run: Callable | None = None,
                  timeout: float = TIMEOUT_S, start: Callable[[list[str]], None] | None = None):
-        self.binary = binary or find_binary()
+        self.binary = binary or find_binary(strict=False)
         self.socket, self._run, self.timeout, self._start_fn = socket, run, timeout, start
 
     def run(self, *a, **k):
