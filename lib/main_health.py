@@ -80,8 +80,10 @@ def _run_suite_in_slot() -> tuple[bool, list[str], str]:
     try:
         subprocess.run(["git", "worktree", "add", "-q", "--detach", tmp, "origin/main"], cwd=REPO_DIR, check=True, capture_output=True, timeout=120)
         # Niced: a background backstop must not starve the merge gate or Gil's own work (marvin#457).
-        p = subprocess.run(["nice", "-n", "10", str(VENV_PY), "-m", "pytest", "lib/tests", "-q", "-p", "no:cacheprovider",
-                            *parallel_args()], cwd=tmp, capture_output=True, text=True, timeout=1800)
+        import cleanup_sweep
+        with cleanup_sweep.disposable_basetemp() as basetemp_args:
+            p = subprocess.run(["nice", "-n", "10", str(VENV_PY), "-m", "pytest", "lib/tests", "-q", "-p", "no:cacheprovider",
+                                *parallel_args(), *basetemp_args], cwd=tmp, capture_output=True, text=True, timeout=1800)
         last = [l for l in p.stdout.strip().splitlines() if l.strip()][-1:] or [""]
         return p.returncode == 0, failed_ids(p.stdout), last[0].strip(" =")
     finally:

@@ -169,7 +169,7 @@ try {
   await sleep(4000)
 
   // 1. short of memory, the MacBook on battery: waits on the Mini
-  await card(801).locator('button', { hasText: 'Approve & Merge' }).click()
+  await card(801).locator('button', { hasText: /^Approve$/ }).click()
   await sleep(3000)
   await shot(801, 'waiting-for-memory')
   check((await card(801).innerText()).includes('Approved: waiting for memory on the Mac mini'), 'card 801 says waiting for memory on the Mac mini')
@@ -190,7 +190,7 @@ try {
   // 3. short of memory again; this time the MacBook is fit (and on macOS 27)
   level = 'warn'
   bookFit = { ready: true, why: [], machine: 'macbook-pro-1', os: 'macOS 27.0' }
-  await card(802).locator('button', { hasText: 'Approve & Merge' }).click()
+  await card(802).locator('button', { hasText: /^Approve$/ }).click()
   await sleep(2500)
   await shot(802, 'merging-on-the-macbook')
   check((await card(802).innerText()).includes("The Mac mini's memory is under pressure, merging on this MacBook Pro instead."), 'card 802 says it is merging on this MacBook Pro instead')

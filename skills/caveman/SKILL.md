@@ -1,9 +1,11 @@
 ---
 name: caveman
 description: >
-  Ultra-compressed communication mode. Cuts output tokens ~73% (verified:
-  bench Run 16, N=3, judge-confirmed zero correctness loss — see
-  ~/.agents/bench/RESULTS.md) by dropping filler, articles, and
+  Ultra-compressed communication mode. Cut output tokens 72.8% on one
+  verbose explain answer in bench Run 16 (Sonnet, July 2026, N=3); in
+  Run 31 (Opus 5.5, Nov 2026, N=3) it cut 11% on an already-short explain
+  answer and 39% on a coding task's output, with no quality loss either
+  time — see ~/.agents/bench/RESULTS.md. Works by dropping filler, articles, and
   pleasantries while keeping full technical accuracy. Must be explicitly
   triggered per-request (opt-in only, not session-wide) — an earlier
   always-on configuration appeared to backfire but that test was later

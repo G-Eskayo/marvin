@@ -22,6 +22,8 @@ def no_real_simulators(monkeypatch):
     """No test may list or delete this Mac's real simulators; simulator tests inject their own."""
     monkeypatch.setattr(cs, "_default_list_simulators", lambda: [])
     monkeypatch.setattr(cs, "_default_delete_simulator", lambda sim: pytest.fail(f"tried to delete a real simulator: {sim}"))
+    # Xcode's device-type list too: reading it runs `xcrun simctl list devicetypes`, which timed out on CI's runner.
+    monkeypatch.setattr(cs, "_default_stock_names", lambda: {"iPhone 17 Pro", "iPhone 17"})
 
 
 NOW = datetime(2026, 8, 19, 12, 0, 0, tzinfo=timezone.utc)
@@ -311,6 +313,24 @@ def test_run_daily_sweep_writes_log(log_path, tmp_path):
 
 
 def test_run_daily_sweep_logs_nothing_removed_when_all_clean(log_path):
+    cs.run_daily_sweep(list_claimed_open_issues=lambda: [], list_worktrees=lambda: [], now=NOW)
+    assert "nothing" in log_path.read_text().lower()
+
+
+def test_no_test_runs_the_real_simctl_even_for_the_device_type_list(monkeypatch, log_path):
+    """CI's macOS runner timed out on a real `xcrun simctl list devicetypes` (60 s) inside the all-clean sweep test,
+    failing #1011 and #969: the autouse fixture faked the simulator list but not Xcode's device-type list."""
+    import shutil as _shutil
+    import subprocess as _sp
+    real_run, real_which = _sp.run, _shutil.which
+
+    def no_simctl(cmd, *a, **kw):
+        if list(cmd[:2]) == ["xcrun", "simctl"]:
+            pytest.fail(f"a test ran the real simctl: {cmd}")
+        return real_run(cmd, *a, **kw)
+
+    monkeypatch.setattr(_sp, "run", no_simctl)
+    monkeypatch.setattr(_shutil, "which", lambda n, *a, **kw: "/usr/bin/xcrun" if n == "xcrun" else real_which(n, *a, **kw))
     cs.run_daily_sweep(list_claimed_open_issues=lambda: [], list_worktrees=lambda: [], now=NOW)
     assert "nothing" in log_path.read_text().lower()
 
@@ -1027,6 +1047,39 @@ def test_only_pytest_basetemps_are_touched(tmp_path):
         os.utime(p, (time.time() - 50 * HOUR,) * 2)
     _trim(tmp_path)
     assert other.exists() and stray.exists()
+
+
+def test_disposable_basetemp_pattern_matches(tmp_path):
+    """PYTEST_BASETEMP_RE matches disposable basetemp pattern marvin-pytest-<hex>."""
+    root = _pytest_root(tmp_path)
+    # Create a disposable-style basetemp
+    d = root / "marvin-pytest-deadbeef"
+    (d / "test_x0").mkdir(parents=True)
+    (d / "test_x0" / "blob").write_bytes(b"x" * 2**20)
+    os.utime(d / "test_x0", (time.time() - 10 * HOUR,) * 2)
+    os.utime(d, (time.time() - 10 * HOUR,) * 2)
+    _basetemp(root, 2, hours_old=0.1)
+
+    r = _trim(tmp_path)
+    assert not d.exists(), "disposable basetemp should be removed"
+    # pytest-2 is the newest folder here: the sweep always keeps the newest, so only the disposable one goes.
+    assert r["removed"] == ["marvin-pytest-deadbeef"] and (root / "pytest-2").exists()
+
+
+def test_non_matching_patterns_are_kept(tmp_path):
+    """Folders that don't match the basetemp pattern are left alone."""
+    root = _pytest_root(tmp_path)
+    # Create a folder with pytest-like name that doesn't match
+    other = root / "pytest-current"
+    other.mkdir()
+    (other / "test").mkdir()
+    os.utime(other, (time.time() - 50 * HOUR,) * 2)
+
+    _basetemp(root, 1, hours_old=0.1)
+    r = _trim(tmp_path)
+
+    assert other.exists(), "pytest-current symlink target pattern should not be removed"
+    assert "pytest-current" not in r["removed"]
 
 
 def test_no_pytest_folder_is_nothing_to_do(tmp_path):

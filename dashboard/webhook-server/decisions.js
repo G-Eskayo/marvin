@@ -117,6 +117,41 @@ export function pendingDecisions(parsed) {
   return parsed.questions.filter((q) => q.required && !isAnswered(q)).map((q) => q.id)
 }
 
+// The option a PR says it built: "(built here)", "(Recommended, built here)", "(built)" or "as built", any case.
+export const BUILT_MARK = /\((?:recommended,\s*)?built(?:\s+here)?\)|\bas built\b/i
+
+// Answers that need no more work (owner decision on PR #987, 2026-11-02: "It counts as built and can merge, with no reply
+// from MARVIN needed"). True only when the description has a Decisions section, at least one question is answered, and
+// every answered question is answered with what is already built:
+//   - a question whose options mark the built one: every ticked option is a built-marked one;
+//   - a question with no built mark at all (conservative): exactly one tick, on the FIRST option, and that option says
+//     "Recommended"; any other pick needs work;
+//   - any Note, or any written (text) answer, needs work, whatever was ticked.
+// Unanswered optional questions don't count either way. Anything else is false: MARVIN's commit or addressed reply is
+// still needed. lib/owner_decisions.py asks this same function (decisions_cli.js), so the two never disagree.
+export function answersAsBuilt(body) {
+  const parsed = parseDecisions(body)
+  if (!parsed.present || parsed.problems.length) return false
+  let answered = 0
+  for (const q of parsed.questions) {
+    const ticked = q.options.filter((o) => o.checked)
+    const has = !!(q.note && q.note.trim()) || !!(q.answer && q.answer.trim())
+    if (q.kind === 'text') {
+      if (has) return false
+      continue
+    }
+    if (q.note && q.note.trim()) return false
+    if (!ticked.length) continue
+    answered++
+    if (q.options.some((o) => BUILT_MARK.test(o.label))) {
+      if (!ticked.every((o) => BUILT_MARK.test(o.label))) return false
+    } else if (!(ticked.length === 1 && ticked[0] === q.options[0] && /recommended/i.test(ticked[0].label))) {
+      return false
+    }
+  }
+  return answered > 0
+}
+
 // What the card needs: null when the description has no decisions section.
 export function summarizeDecisions(body) {
   const parsed = parseDecisions(body)

@@ -26,8 +26,11 @@ def parse_stream(stdout: str) -> dict:
 
     tool_uses = []
     result_event: dict = {}
+    model_used = None
     for ev in events:
-        if ev.get("type") == "assistant":
+        if ev.get("type") == "system" and ev.get("subtype") == "init":
+            model_used = ev.get("model")
+        elif ev.get("type") == "assistant":
             for block in ev.get("message", {}).get("content", []):
                 if block.get("type") == "tool_use":
                     tool_uses.append(block.get("name"))
@@ -42,6 +45,7 @@ def parse_stream(stdout: str) -> dict:
 
     return {
         "is_error": result_event.get("is_error"),
+        "model_used": model_used,
         "result_text": result_event.get("result", ""),
         "num_turns": result_event.get("num_turns", 0),
         "duration_ms": result_event.get("duration_ms", 0),

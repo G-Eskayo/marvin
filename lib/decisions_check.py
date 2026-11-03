@@ -96,6 +96,20 @@ def refusal(body: str, node: str | None | bool = True, cli: Path = CLI, say=lamb
     return None
 
 
+def as_built(body: str, node: str | None | bool = True, cli: Path = CLI) -> bool:
+    """True when the body's answered Decisions only pick what is already built, with no Note and no written answer
+    (decisions.js answersAsBuilt; owner decision on PR #987, 2026-11-02). The same parser through node, so the merge
+    queue and lib/owner_decisions.py agree. Fails CLOSED (False): unsure means MARVIN still has to act."""
+    node = find_node() if node is True else node
+    if not node or not body:
+        return False
+    try:
+        p = subprocess.run([node, str(cli)], input=body, capture_output=True, text=True, timeout=20)
+        return p.returncode == 0 and json.loads(p.stdout).get("asBuilt") is True
+    except Exception:  # noqa: BLE001
+        return False
+
+
 def gate(argv, say, log, env=os.environ, read_file=None) -> int | None:
     """What bin/gh calls: 1 (refused, said why) or None (go on). `log(entry)` records overrides and refusals."""
     call = body_call(argv)

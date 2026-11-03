@@ -1,4 +1,5 @@
 import { describe, it, expect, vi } from 'vitest'
+import { readFileSync } from 'fs'
 import { createRelationsService } from '../electron/main/relations_service.js'
 
 const issue = (n, over = {}) => ({ number: n, title: `T${n}`, state: 'OPEN', labels: [], body: '', url: `u${n}`, createdAt: '2026-10-01T00:00:00Z', ...over })
@@ -164,5 +165,78 @@ describe('parity recheck does not re-read GitHub on every call (#318 follow-up)'
     const { s, rechecks } = standing()
     await s.parity()
     expect(rechecks[0]).toEqual(['G-Eskayo/marvin'])
+  })
+})
+
+describe('a PR names its ticket as Closes or Part of, in any repo (marvin#1004)', () => {
+  const pr = (n, body, over = {}) => ({ number: n, title: `PR ${n}`, url: `p${n}`, state: 'OPEN', isDraft: false, body, files: [], ...over })
+  const multi = (byRepo) => make({ getRepos: () => Object.keys(byRepo), getBoardData: async (repo) => byRepo[repo] })
+
+  it('a "Part of" PR satisfies parity, and its ticket is in review', async () => {
+    const p = await make({ getBoardData: async () => ({ issues: [issue(2)], prs: [pr(7, 'Mock-up. Part of #2')] }) }).parity()
+    expect(p.prs[0]).toMatchObject({ status: 'ok', ticket: { number: 2, column: 'review', relation: 'part of' } })
+    expect(p.ok).toBe(true)
+  })
+
+  it('"for #2" is still no ticket, and the message says how to name one', async () => {
+    const p = await make({ getBoardData: async () => ({ issues: [issue(2)], prs: [pr(7, 'Mock-up for #2')] }) }).parity()
+    expect(p.prs[0].status).toBe('no-ticket')
+    expect(p.problems[0]).toMatch(/Closes #N.*Part of #N/)
+  })
+
+  it('a PR in another repo that closes a ticket puts that ticket in review, with no problem reported', async () => {
+    const p = await multi({
+      'G-Eskayo/marvin': { issues: [issue(623)], prs: [] },
+      'G-Eskayo/marvin-instance': { issues: [], prs: [pr(6, 'Closes G-Eskayo/marvin#623')] }
+    }).parity()
+    expect(p.prs[0]).toMatchObject({ repo: 'G-Eskayo/marvin-instance', status: 'ok', ticket: { repo: 'G-Eskayo/marvin', number: 623, column: 'review' } })
+    expect(p.ok).toBe(true)
+  })
+
+  it('a ticket in review whose only PR is in another repo is not "In review but has no open PR"', async () => {
+    const p = await multi({
+      'G-Eskayo/marvin': { issues: [issue(949)], prs: [] },
+      'G-Eskayo/marvin-instance': { issues: [], prs: [pr(9, 'Merge after G-Eskayo/marvin#951. Part of G-Eskayo/marvin#949.')] }
+    }).parity()
+    expect(p.reviewWithoutPr).toEqual([])
+    expect(p.ok).toBe(true)
+  })
+
+  it('a ticket named second by a PR (Closes #1, Part of #2) still counts as having an open PR', async () => {
+    const p = await make({ getBoardData: async () => ({ issues: [issue(1), issue(2)], prs: [pr(7, 'Closes #1\nPart of #2')] }) }).parity()
+    expect(p.prs[0].ticket.number).toBe(1)
+    expect(p.reviewWithoutPr).toEqual([])
+    expect(p.ok).toBe(true)
+  })
+
+  it('the relation index has a part-of edge that is not a closes edge', async () => {
+    const s = make({ getBoardData: async () => ({ issues: [issue(2)], prs: [pr(7, 'Part of #2')] }) })
+    expect((await s.forPr('G-Eskayo/marvin', 7)).tickets).toEqual([expect.objectContaining({ number: 2, relation: 'part of' })])
+    expect((await s.forTicket('G-Eskayo/marvin', 2)).prs).toEqual([expect.objectContaining({ number: 7, relation: 'worked on in' })])
+  })
+
+  it('a bare #N in another repo\'s PR is that repo\'s ticket, so no false link to marvin #2', async () => {
+    const p = await multi({
+      'G-Eskayo/marvin': { issues: [issue(2)], prs: [] },
+      'G-Eskayo/clarity-captions': { issues: [], prs: [pr(7, 'Part of #2')] }
+    }).parity()
+    expect(p.prs[0].status).toBe('no-ticket') // clarity #2 isn't loaded here
+    expect((await multi({ 'G-Eskayo/marvin': { issues: [issue(2)], prs: [] }, 'G-Eskayo/clarity-captions': { issues: [], prs: [pr(7, 'Part of #2')] } }).forTicket('G-Eskayo/marvin', 2)).prs).toEqual([])
+  })
+
+  it('the six PRs the parity check flagged on 2026-11-02, plus marvin-instance #6, come back clean (recorded fixture)', async () => {
+    const { repos } = JSON.parse(readFileSync(new URL('./fixtures/parity_part_of_prs.json', import.meta.url), 'utf-8'))
+    const p = await multi(repos).parity()
+    expect(p.problems).toEqual([])
+    const by = Object.fromEntries(p.prs.map((r) => [r.key, `${r.status} ${r.ticket?.repo}#${r.ticket?.number} ${r.ticket?.column}`]))
+    expect(by).toEqual({
+      'G-Eskayo/clarity-captions#258': 'ok G-Eskayo/clarity-captions#235 review',
+      'G-Eskayo/clarity-captions#255': 'ok G-Eskayo/clarity-captions#246 review',
+      'G-Eskayo/clarity-captions#231': 'ok G-Eskayo/clarity-captions#213 review',
+      'G-Eskayo/marvin-instance#11': 'sent-back G-Eskayo/marvin#957 blocked',
+      'G-Eskayo/marvin-instance#9': 'ok G-Eskayo/marvin#949 review',
+      'G-Eskayo/marvin-instance#5': 'ok G-Eskayo/marvin#623 review',
+      'G-Eskayo/marvin-instance#6': 'ok G-Eskayo/marvin#623 review'
+    })
   })
 })

@@ -155,11 +155,13 @@ def _tests_for(source_path: str, cwd: str, changed_tests: list[str]) -> list[str
 def _run_tests(cwd: str, tests: list[str], timeout: int) -> str:
     """'pass' | 'fail' | 'timeout' — with MARVIN's own Python (the one running this), never a bare `python`."""
     env = {**os.environ, "PYTHONDONTWRITEBYTECODE": "1", "MARVIN_MERGE_GATE": "1"}
-    try:
-        p = subprocess.run([sys.executable, "-m", "pytest", "-x", "-q", "-p", "no:cacheprovider", *tests],
-                           cwd=cwd, capture_output=True, timeout=timeout, env=env)
-    except subprocess.TimeoutExpired:
-        return "timeout"
+    import cleanup_sweep
+    with cleanup_sweep.disposable_basetemp() as basetemp_args:
+        try:
+            p = subprocess.run([sys.executable, "-m", "pytest", "-x", "-q", "-p", "no:cacheprovider", *tests, *basetemp_args],
+                               cwd=cwd, capture_output=True, timeout=timeout, env=env)
+        except subprocess.TimeoutExpired:
+            return "timeout"
     return "pass" if p.returncode == 0 else "fail"
 
 

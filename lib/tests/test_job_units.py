@@ -17,7 +17,8 @@ import job_units as ju
 
 REPO = Path(__file__).resolve().parents[2]
 JOBS = ("health-check", "cleanup-sweep", "usage-scan")
-MAC_HOME = "/Users/gileskayo"
+# The home folder the repo's plists were written for (what the Macs install): read from one, never written here.
+MAC_HOME = plistlib.loads((REPO / "config" / "launchd" / "com.marvin.cleanup-sweep.plist").read_bytes())["EnvironmentVariables"]["HOME"]
 BOX_HOME = "/home/marvin"
 
 

@@ -47,13 +47,13 @@ def _commit_change(worktree, relative_path, content):
 
 def test_command_for_picks_vitest_for_a_dashboard_change(repo_with_worktree):
     _commit_change(repo_with_worktree, "dashboard/src/App.jsx", "// change\n")
-    command = btm.test_command_for(repo_with_worktree)
+    command = btm.test_command_for(repo_with_worktree, parallel=[])
     assert "vitest" in " ".join(command)
 
 
 def test_command_for_scopes_pytest_to_the_touched_top_level_directory(repo_with_worktree):
     _commit_change(repo_with_worktree, "lib/some_module.py", "# change\n")
-    command = btm.test_command_for(repo_with_worktree)
+    command = btm.test_command_for(repo_with_worktree, parallel=[])
     assert command == [btm.VENV_PYTHON, "-m", "pytest", "-q", "lib"]
 
 
@@ -61,19 +61,19 @@ def test_command_for_scopes_skills_to_two_path_components_not_all_of_skills(repo
     # G-Eskayo/marvin#21 found this the hard way: scoping only to "skills"
     # would still pull in every other skill's tests, not only this one's.
     _commit_change(repo_with_worktree, "skills/paper-dive/scripts/paper_graph.py", "# change\n")
-    command = btm.test_command_for(repo_with_worktree)
+    command = btm.test_command_for(repo_with_worktree, parallel=[])
     assert command == [btm.VENV_PYTHON, "-m", "pytest", "-q", "skills/paper-dive"]
 
 
 def test_command_for_scopes_to_multiple_roots_when_several_areas_touched(repo_with_worktree):
     _commit_change(repo_with_worktree, "lib/some_module.py", "# change\n")
     _commit_change(repo_with_worktree, "bench/some_bench_file.py", "# change\n")
-    command = btm.test_command_for(repo_with_worktree)
+    command = btm.test_command_for(repo_with_worktree, parallel=[])
     assert command == [btm.VENV_PYTHON, "-m", "pytest", "-q", "bench", "lib"]
 
 
 def test_command_for_falls_back_to_whole_repo_when_nothing_changed(repo_with_worktree):
-    command = btm.test_command_for(repo_with_worktree)
+    command = btm.test_command_for(repo_with_worktree, parallel=[])
     assert command == [btm.VENV_PYTHON, "-m", "pytest", "-q"]
 
 
@@ -81,15 +81,41 @@ def test_command_for_falls_back_to_whole_repo_when_touched_paths_have_no_real_di
     # e.g. a docs-only change under a path that doesn't exist as a real
     # code directory in the worktree -- no scoped target to run.
     _commit_change(repo_with_worktree, "CONTEXT.md", "docs change\n")
-    command = btm.test_command_for(repo_with_worktree)
+    command = btm.test_command_for(repo_with_worktree, parallel=[])
     assert command == [btm.VENV_PYTHON, "-m", "pytest", "-q"]
 
 
 def test_command_for_picks_vitest_when_both_dashboard_and_backend_changed(repo_with_worktree):
     _commit_change(repo_with_worktree, "lib/some_module.py", "# change\n")
     _commit_change(repo_with_worktree, "dashboard/src/App.jsx", "// change\n")
-    command = btm.test_command_for(repo_with_worktree)
+    command = btm.test_command_for(repo_with_worktree, parallel=[])
     assert "vitest" in " ".join(command)
+
+
+def test_command_for_runs_python_tests_in_parallel_by_default(repo_with_worktree, monkeypatch):
+    """#995: run serially, `pytest -q lib` outgrew the 1200 s limit and every marvin build timed out (#995)."""
+    monkeypatch.setattr(btm, "parallel_args", lambda: ["-n", "5"])
+    _commit_change(repo_with_worktree, "lib/some_module.py", "# change\n")
+    assert btm.test_command_for(repo_with_worktree) == [btm.VENV_PYTHON, "-m", "pytest", "-q", "-n", "5", "lib"]
+    assert btm.test_command_for(repo_with_worktree, base_branch="main")[4:6] == ["-n", "5"]
+
+
+def test_the_dashboard_command_is_unchanged_by_the_python_workers(repo_with_worktree, monkeypatch):
+    monkeypatch.setattr(btm, "parallel_args", lambda: ["-n", "5"])
+    _commit_change(repo_with_worktree, "dashboard/src/App.jsx", "// change\n")
+    assert "-n" not in btm.test_command_for(repo_with_worktree)
+
+
+def test_parallel_args_follow_the_gates_count_then_free_memory_and_never_go_serial_by_accident():
+    assert btm.parallel_args({"MARVIN_TEST_WORKERS": "3"}, True) == ["-n", "3"]
+    assert btm.parallel_args({}, True, workers=lambda: 4) == ["-n", "4"]
+    for junk in ("0", "-1", "x", " 2"):
+        assert btm.parallel_args({"MARVIN_TEST_WORKERS": junk}, True, workers=lambda: 2) == ["-n", "2"]
+
+    def broken():
+        raise OSError("no vm_stat")
+    assert btm.parallel_args({}, True, workers=broken) == ["-n", "auto"]
+    assert btm.parallel_args({"MARVIN_TEST_WORKERS": "3"}, False) == []
 
 
 # ── measure() (injected capture_test_results via monkeypatch) ──────────────
