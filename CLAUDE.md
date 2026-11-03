@@ -20,6 +20,10 @@ See `docs/agents/decisions-format.md`.
 
 Single-context: `CONTEXT.md` + `docs/adr/` at the repo root. See `docs/agents/domain.md`.
 
+### Showing Gil things
+
+Anything a reply asks Gil to look at (screenshots, mock-ups, PR images, pages, plans) goes through `marvin-show`, which opens it in that project's MARVIN window. Never a file card or a temp path. See `docs/agents/showing-things.md`.
+
 ## Codebase questions: grep first, graphify for structure
 
 Measured on 30 real questions with known answers (`bench/retrieval_eval.py`, marvin#705, `bench/RESULTS.md`): grep put the answer in the top 5 for 67% of questions, `graphify query` 38%; on multi-hop questions grep 3 of 4, graphify 0 of 4.

@@ -1,0 +1,27 @@
+{
+  "about": "One rule, two parsers: dashboard/electron/main/ticket_refs.js and lib/pr_ticket_check.py both run every case here (marvin#1004). prRepo is the repo the PR is in; refs come back as owner/repo#N with their relation.",
+  "cases": [
+    { "name": "closes, bare", "prRepo": "o/r", "body": "Closes #12", "refs": [["o/r#12", "closes"]] },
+    { "name": "fixes and resolves, any case", "prRepo": "o/r", "body": "fixes #3\nRESOLVES #4", "refs": [["o/r#3", "closes"], ["o/r#4", "closes"]] },
+    { "name": "GitHub's other closing words", "prRepo": "o/r", "body": "Closed #1. fixed #2, resolved #3, close #4, fix #5, resolve #6", "refs": [["o/r#1", "closes"], ["o/r#2", "closes"], ["o/r#3", "closes"], ["o/r#4", "closes"], ["o/r#5", "closes"], ["o/r#6", "closes"]] },
+    { "name": "closes, colon", "prRepo": "o/r", "body": "Closes: #7", "refs": [["o/r#7", "closes"]] },
+    { "name": "closes another repo", "prRepo": "G-Eskayo/marvin-instance", "body": "Closes G-Eskayo/marvin#623", "refs": [["G-Eskayo/marvin#623", "closes"]] },
+    { "name": "closes by URL", "prRepo": "o/r", "body": "Closes https://github.com/G-Eskayo/marvin/issues/623", "refs": [["G-Eskayo/marvin#623", "closes"]] },
+    { "name": "part of, bare", "prRepo": "o/r", "body": "Part of #235", "refs": [["o/r#235", "part-of"]] },
+    { "name": "part of another repo, mid-sentence", "prRepo": "G-Eskayo/clarity-captions", "body": "This mock-up is part of G-Eskayo/marvin#949.", "refs": [["G-Eskayo/marvin#949", "part-of"]] },
+    { "name": "part of, a list", "prRepo": "o/r", "body": "Part of #1, #2 and o/x#3", "refs": [["o/r#1", "part-of"], ["o/r#2", "part-of"], ["o/x#3", "part-of"]] },
+    { "name": "part of by URL", "prRepo": "o/r", "body": "Part of https://github.com/o/x/issues/9", "refs": [["o/x#9", "part-of"]] },
+    { "name": "both forms", "prRepo": "o/r", "body": "Closes #5\nPart of #4", "refs": [["o/r#5", "closes"], ["o/r#4", "part-of"]] },
+    { "name": "closes wins over part of for the same ticket", "prRepo": "o/r", "body": "Part of #5\nCloses #5", "refs": [["o/r#5", "closes"]] },
+    { "name": "same ticket named twice once", "prRepo": "o/r", "body": "Closes #5. Closes o/r#5", "refs": [["o/r#5", "closes"]] },
+    { "name": "for #N is not a link", "prRepo": "o/r", "body": "Mock-up for #235", "refs": [] },
+    { "name": "a bare mention is not a link", "prRepo": "o/r", "body": "See #12 and o/x#3", "refs": [] },
+    { "name": "no ticket at all", "prRepo": "o/r", "body": "just a change", "refs": [] },
+    { "name": "empty body", "prRepo": "o/r", "body": "", "refs": [] },
+    { "name": "inside a code fence it does not count", "prRepo": "o/r", "body": "```\nCloses #5\n```\nPart of `#6`", "refs": [] },
+    { "name": "a closing word glued to text is not a keyword", "prRepo": "o/r", "body": "Encloses #5, prefixes #6, depart of #7", "refs": [] },
+    { "name": "part of needs the ref right after it", "prRepo": "o/r", "body": "part of the #5 rewrite", "refs": [] },
+    { "name": "a ref glued to more text is not a ref", "prRepo": "o/r", "body": "Closes #5abc, Part of #6-x", "refs": [] },
+    { "name": "pipeline template body", "prRepo": "G-Eskayo/marvin", "body": "## Summary\nDoes the thing.\n\nCloses #1004\n\n## Dev Environment Evidence\nN/A", "refs": [["G-Eskayo/marvin#1004", "closes"]] }
+  ]
+}

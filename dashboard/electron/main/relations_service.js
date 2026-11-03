@@ -3,6 +3,8 @@ import { buildBoard } from './board.js'
 import { rankNeedsYou } from './needs_you.js'
 
 const RECHECK_MS = 5 * 60_000
+// The relations by which an open PR names its ticket (relations.js OUT_WORD): it closes it, or is a step towards it.
+const LINKED = new Set(['closes', 'part of'])
 
 // Feeds relations.js real data (every board's tickets and PRs, every project's docs) and keeps the
 // result for a minute; invalidated by the same triggers that refresh the boards and docs.
@@ -15,26 +17,35 @@ export function createRelationsService({ getRepos, getBoardData, getDocs, getPro
     const prs = []
     const columns = new Map()
     const cards = new Map()
+    const loaded = []
     await Promise.all(
       getRepos().map(async (repo) => {
         try {
           const data = await getBoardData(repo)
+          loaded.push({ repo, data })
           for (const i of data.issues) tickets.push({ ...i, repo })
           for (const p of data.prs) prs.push({ ...p, repo })
-          // The same inputs the board view uses (pipeline stages, live dispatch), so a ticket is in the
-          // same column here as on screen -- the whole point of the parity check.
-          const board = buildBoard({ repo, issues: data.issues, prs: data.prs, eventsByNumber: getStages(repo) || {}, liveNumbers: getLive(repo) })
-          for (const c of board.columns) {
-            for (const card of [...c.cards, ...(c.archive || [])]) {
-              columns.set(`${repo}#${card.number}`, c.id)
-              cards.set(`${repo}#${card.number}`, { repo, number: card.number, title: card.title, column: c.id, reason: card.reason, owner: card.owner, prs: card.prs })
-            }
-          }
         } catch {
           // one project's outage must not hide every other project's relations
         }
       })
     )
+    // Columns once every project's PRs are in: a PR in one repo can close, or be part of, a ticket in another
+    // (marvin#1004). The same inputs the board view uses (pipeline stages, live dispatch, every project's PRs), so a
+    // ticket is in the same column here as on screen -- the whole point of the parity check.
+    for (const { repo, data } of loaded) {
+      try {
+        const board = buildBoard({ repo, issues: data.issues, prs, eventsByNumber: getStages(repo) || {}, liveNumbers: getLive(repo) })
+        for (const c of board.columns) {
+          for (const card of [...c.cards, ...(c.archive || [])]) {
+            columns.set(`${repo}#${card.number}`, c.id)
+            cards.set(`${repo}#${card.number}`, { repo, number: card.number, title: card.title, column: c.id, reason: card.reason, owner: card.owner, prs: card.prs })
+          }
+        }
+      } catch {
+        // one project's bad data must not hide every other project's relations
+      }
+    }
     const docs = await getDocs().catch(() => [])
     return { at: now(), index: buildRelationIndex({ tickets, prs, docs, projects: getProjects() }), columns, cards, prs, tickets }
   }
@@ -66,20 +77,24 @@ export function createRelationsService({ getRepos, getBoardData, getDocs, getPro
     // and every ticket filed under "In review" checked against an open PR.
     parity: async () => {
       const compute = (b) => {
+      // A PR is linked to a ticket by "Closes #n" or "Part of #n", in its own repo or another (marvin#1004).
+      const linkedTickets = (p) => b.index.forPr(p.repo, p.number).tickets.filter((x) => LINKED.has(x.relation))
       const rows = b.prs.map((p) => {
-        const t = b.index.forPr(p.repo, p.number).tickets.find((x) => x.relation === 'closes')
+        const links = linkedTickets(p)
+        const t = links.find((x) => x.relation === 'closes') || links[0]
         const card = t && b.cards.get(`${t.repo}#${t.number}`)
         let status = 'no-ticket'
         if (card) status = card.column === 'review' ? 'ok' : card.column === 'blocked' && /sent back/i.test(card.reason) ? 'sent-back' : 'elsewhere'
         return {
           repo: p.repo, number: p.number, title: p.title, url: p.url, key: `${p.repo}#${p.number}`, status,
-          ticket: card ? { repo: card.repo, number: card.number, title: card.title, column: card.column, reason: card.reason } : null
+          ticket: card ? { repo: card.repo, number: card.number, title: card.title, column: card.column, reason: card.reason, relation: t.relation } : null
         }
       })
-      const withPr = new Set(rows.filter((r) => r.ticket).map((r) => `${r.ticket.repo}#${r.ticket.number}`))
+      // Every ticket some open PR names counts as having one, not only each PR's first ticket.
+      const withPr = new Set(b.prs.filter((p) => !p.state || p.state === 'OPEN').flatMap((p) => linkedTickets(p).map((t) => `${t.repo}#${t.number}`)))
       const reviewWithoutPr = [...b.cards.values()].filter((c) => c.column === 'review' && !withPr.has(`${c.repo}#${c.number}`))
       const problems = [
-        ...rows.filter((r) => r.status === 'no-ticket').map((r) => `PR #${r.number} (${r.repo.split('/')[1]}) closes no ticket, so no board has a card for it`),
+        ...rows.filter((r) => r.status === 'no-ticket').map((r) => `PR #${r.number} (${r.repo.split('/')[1]}) names no ticket ("Closes #N" or "Part of #N"), so no board has a card for it`),
         ...rows.filter((r) => r.status === 'elsewhere').map((r) => `PR #${r.number} is open but its ticket #${r.ticket.number} is filed under ${r.ticket.column}`),
         ...reviewWithoutPr.map((c) => `Ticket #${c.number} (${c.repo.split('/')[1]}) is filed under In review but has no open PR`)
       ]
@@ -125,6 +140,24 @@ export function createRelationsService({ getRepos, getBoardData, getDocs, getPro
         if (m) adrs[Number(m[1])] = d.path
       }
       return { project, repo: p?.repo || null, adrs }
+    },
+    // Every open ticket across the registered projects, slim, with the column and reason its board gives it, and the
+    // catalog ids, for the Workshop's Now view (next_step.js, #862). Same cached build as the boards: no extra GitHub call.
+    openTickets: async () => {
+      const b = await ready()
+      const tickets = b.tickets
+        .filter((t) => t.state === 'OPEN')
+        .map((t) => {
+          const card = b.cards.get(`${t.repo}#${t.number}`)
+          return {
+            repo: t.repo, number: t.number, title: t.title, url: t.url || null,
+            labels: (t.labels || []).map((l) => l?.name || l).filter(Boolean),
+            createdAt: t.createdAt || null, updatedAt: t.updatedAt || null,
+            column: card?.column || null, reason: card?.reason || null,
+            prs: (card?.prs || []).map((p) => p.number)
+          }
+        })
+      return { at: b.at, tickets, projects: getProjects() }
     },
     // What is waiting on you, ranked by impact: unblocks descending, priority ascending, age descending
     needsYou: async () => {

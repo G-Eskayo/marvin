@@ -809,7 +809,8 @@ its ticketing system creates shows up there with drill-down status. Boards live 
   killer-sudoku.
 - **Columns (derived by one pure function, `dashboard/electron/main/board.js`, first match wins):**
   1. **Done** — issue closed.
-  2. **In review / testing** — an open PR closes the ticket (PR body `Closes #n`), or the last
+  2. **In review / testing** — an open PR **names** the ticket (PR body `Closes #n` or `Part of #n`, from this
+     repo or any other onboarded project's: see **Names its ticket** below), or the last
      pipeline stage is verifying/gate/merging. Card shows the PR link and whether the PR carries
      Dev Environment Evidence; clicking the PR opens it in the MR Review tab.
   3. **Blocked** — label `blocked`; or `Blocked by #n` in the body with #n still open; or the
@@ -835,6 +836,17 @@ its ticketing system creates shows up there with drill-down status. Boards live 
   rebuilt and relaunched by the 30-min code-sync cycle (`dashboard_rebuild.py`): a change settles for
   15 min, and a running app is rebuilt once it is >=1h behind (was 2h / 24h, which made a new feature
   take up to a day to show). Trade-off accepted: the relaunch drops unsaved in-tab edits (Portfolio).
+
+- **Names its ticket (2026-11-02, marvin#1004).** An open PR names its ticket as `Closes #n` (it finishes the ticket;
+  GitHub closes it on merge) or `Part of #n` (a step: a mock-up, a stacked slice, a plan, docs; the ticket stays open).
+  Either form takes `owner/repo#n` or the issue URL. The relation index has them as two relations, `closes` and
+  `part-of` ("part of" / "worked on in" in the Related panel); a bare mention or "for #n" is only `mentions`. Both put
+  the ticket's card In review and satisfy the parity check. PRs are matched across repos: every board gets every
+  onboarded project's open PRs (read once per project, the same cached board data the relation index uses), so a
+  marvin-instance PR that closes a marvin ticket moves that card. One parser per language,
+  `dashboard/electron/main/ticket_refs.js` and `lib/pr_ticket_check.py`, both run
+  `dashboard/test/fixtures/pr_ticket_refs_cases.json`. `bin/gh` refuses a PR body that names no ticket
+  (`PR_NAMES_NO_TICKET`; override `MARVIN_NO_TICKET="<reason>"`). The rule: `docs/agents/issue-tracker.md`.
 
 ### Triggers over polling (decided 2026-10-03)
 
@@ -1027,7 +1039,7 @@ nothing connected them. "Where things are" was only the tidy agent's file-filing
   not another button")**: `electron/main/relations.js` reads every ticket and PR body, every doc, and each
   PR's changed files, and derives edges: ticket->ticket (blocked by / mentions), ticket->doc ("ADR 0033"
   resolves to that project's `docs/adr/0033-*.md`, also `CONTEXT.md`/`README.md` and explicit paths),
-  PR->ticket (closes / mentions), PR->doc (changes / mentions), doc->ticket (`#12`, `owner/repo#12`),
+  PR->ticket (closes / part of / mentions), PR->doc (changes / mentions), doc->ticket (`#12`, `owner/repo#12`),
   doc->doc. Edit a doc or a ticket and its relations change with it; nothing to sync. Code fences and
   inline code are ignored. Surfaces: `#12` and `ADR 0033` inside a doc or ticket body are clickable
   (linkify, `dash://` links that stay in the app); a **Related** panel on every doc, ticket and MR lists
@@ -1528,9 +1540,35 @@ Mac has no push channel. Gil applies the hooks on each Mac with `marvin_hooks.py
 
 ## Merge order and the sent-back loop (2026-10-05)
 
-- **Order:** a PR waits on every OLDER open PR in its repo that shares a changed file (`dashboard/electron/main/pr_order.js`). Derived from the PRs' file lists each time; the MR list shows it, Approve & Merge is disabled with the reason, and `mr:approve` re-checks it in the main process so a stale screen cannot skip it. Deny stays available.
+- **Order:** ~~a PR waits on every OLDER open PR in its repo that shares a changed file; Approve is disabled with the reason.~~ Replaced 2026-10-30 by the **merge queue** (below, marvin#231): Approve is no longer refused for order; the queue decides each PR's turn.
 - **Merge state survives navigation:** `merge_ops.js` holds each PR's merging / re-engaged / error state in the main process.
 - **Sent-back loop (closed, Gil chose the in-place option):** a `needs-reengagement` ticket is re-dispatched even though its first attempt's PR/branch/rescue ref exist (the existing-work guard exempts those, but not commits already on the base branch). The executor rebuilds `pipeline/<ref>` from the current main, `mr_raiser` pushes with `--force-with-lease` (pipeline branches only; the old work is kept under `refs/rescue/`), and an already-open PR is updated and commented instead of duplicated. Opening the PR clears `needs-reengagement`. After 3 claims a ticket is left for a person (`MAX_REENGAGE_ATTEMPTS`).
+
+## Merge queue (decided with Gil 2026-10-30, marvin#231)
+
+- **Merge queue**: one per repo, kept by the merge server, so the desktop and the phone approve into the same one.
+  Approving a PR puts it in the queue instead of merging it on the spot; the queue merges its PRs one at a time, each
+  rebased onto the main of its turn and retested, with no further clicks. Approving a PR already queued keeps its place;
+  new commits on a queued PR keep its place too, and the new commit is what gets tested. A PR that fails leaves the
+  queue with its reason; one that conflicts stays queued while MARVIN resolves the conflict.
+- **Merge order**: the queue's order, worked out by MARVIN, never listed by the owner. A stacked PR goes after the PR it
+  is built on; then the order approved. While main is red, only a PR that fixes main goes.
+- **Main-red fix**: a PR that closes the ticket saying main is red (or an incident ticket). It jumps the queue; every
+  other PR waits for it.
+- **Queue line**: the one line under a PR's title in MR Review saying where it stands: its place ("queued · 2nd · starts
+  after #971") or what it waits for ("waits for #936 (it's built on it)", "main is red · waits for #986", "checks
+  failing: …", "conflicts with main after #970 · MARVIN is fixing it"). A PR's own blockers are said before what it
+  waits for, since they need doing whatever merges first. Written so the next-step view (#860) can read it.
+- **Answers not built yet**: the owner answered a PR's Decisions, but no reply says they were acted on and no work
+  commit came after them (merging main in doesn't count). It is MARVIN's move: the PR never merges like that, and
+  approving it asks for the follow-up at once.
+- **Answers as built** (owner, 2026-11-02, PR #987): answers that only pick the option the PR says it built, with no Note
+  and no written answer, need no more work and no reply: the PR can merge. A question that marks no built option only
+  counts when its first option, marked Recommended, is the one picked.
+- **Queue line, once**: the line is left out when the card's headline already says the same thing.
+- **One card, both states** (owner, 2026-11-02): a queued PR's card reads "Approved: in the merge queue" with its queue
+  line; when its turn comes the same card becomes the merge pipeline (the stage strip), on every Mac, whichever device
+  approved it, and a Mac that opens mid-merge catches up to where the merge is.
 
 ## clarity-captions app-build check is now required (2026-10-05)
 
@@ -1911,8 +1949,10 @@ MARVIN-as-OS north star).
   except the Macs' code sync. The box's only scheduled job is the **mirror** (pull-only code sync,
   every 10 minutes). Its health is checked from the Macs, which already reach every registered device; Mac-only checks
   skip it. Everything else arrives as dispatched work.
-- **Bot PRs** (built 2026-10-16): PRs by MARVIN-bot-gil always wait for Gil, which is stricter than the 5-PR ramp.
-  A per-author streak can replace that later.
+- **Bot PRs** (built 2026-10-16, ramp 2026-10-30, #952): PRs by MARVIN-bot-gil wait for Gil until the bot's own
+  **author ramp** opens: 5 clean approvals in a row (`ramp_authors` in config/auto_merge.json, `trust_ramp.record_author`).
+  A deny, revert or break resets it to 0; the project's ramp must also be open. Trust is by author only: the `from-box`
+  label (#951) is information and changes no verdict.
 - **Open in this design** (as of 2026-10-16): the box's GitHub identity; sudo scope; Claude Code sign-in on Linux.
 
 ## One "needs a person" state, bot comments don't reset strikes, one plan per run (2026-10-22, #605)

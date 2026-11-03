@@ -22,7 +22,7 @@ So today's failure was **a hang from memory exhaustion**, which looks exactly li
 more facts found while checking, each of which changes the design:
 
 1. **The Mini is on Wi-Fi.** `en0` (Ethernet) is `inactive`; the default route is `en1` (Wi-Fi), 192.168.0.41.
-2. **The backup path is dead.** `gils-mac-mini-lan` jumps through the 2012 Linux mini, and that machine has been offline
+2. **The backup path is dead.** The Mini's LAN ssh alias jumps through the 2012 Linux mini, and that machine has been offline
    for 22 hours (Tailscale: `offline, last seen 22h ago`; no ARP reply on 192.168.0.15). Nobody noticed.
 3. **A FileVault screen can be unlocked over SSH.** `man fdesetup` (macOS 26.5.1), section *REMOTE UNLOCKING VIA SSH*:
    "when Remote Login is enabled, it is possible to perform password authentication using SSH even in this situation.

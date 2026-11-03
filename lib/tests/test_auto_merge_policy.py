@@ -9,6 +9,8 @@ import json
 import sys
 from pathlib import Path
 
+import pytest
+
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 import auto_merge_policy as amp  # noqa: E402
@@ -186,7 +188,7 @@ def test_deleted_lines_count_toward_the_size_limit():
     assert decide([f("lib/x.py", add=900, rem=600)])["verdict"] == "auto"
 
 
-# --- PRs from mac-mini-2012's bot account (ADR 0069 rule 5): always wait for Gil ---
+# --- PRs from mac-mini-2012's bot account (ADR 0069 rule 5): wait for Gil until its own trust ramp opens (#952) ---
 
 def test_a_bot_pr_waits_even_when_it_only_touches_owned_areas():
     d = amp.decide(MARVIN, [f("lib/new_helper.py")], RULES, existing_top_level=TOP, new_top_level_this_week=0,
@@ -206,5 +208,80 @@ def test_a_human_pr_is_unaffected_by_the_bot_rule():
     assert d["verdict"] == "auto"
 
 
-def test_the_shipped_rules_name_the_bot():
-    assert "marvin-bot-gil" in [a.lower() for a in RULES.get("always_ask_authors", [])]
+def test_the_shipped_rules_put_the_bot_on_a_ramp_not_always_ask():
+    assert "marvin-bot-gil" in [a.lower() for a in RULES.get("ramp_authors", [])]
+    assert "marvin-bot-gil" not in [a.lower() for a in RULES.get("always_ask_authors", [])]
+
+
+def bot(author="MARVIN-bot-gil", rules=None, files=None, **kw):
+    kw.setdefault("ramp_open", True)
+    return amp.decide(MARVIN, files or [f("lib/new_helper.py")], rules or RULES, existing_top_level=TOP,
+                      new_top_level_this_week=0, author=author, **kw)
+
+
+def test_a_bot_pr_auto_merges_once_its_author_ramp_is_open():
+    assert bot(author_ramp_open=True)["verdict"] == "auto"
+    assert bot(author="marvin-BOT-GIL", author_ramp_open=True)["verdict"] == "auto"
+
+
+def test_a_bot_pr_with_its_ramp_closed_or_unknown_asks_and_says_why():
+    for kw in ({}, {"author_ramp_open": False}, {"author_ramp_open": None}, {"author_ramp_open": "yes"},
+               {"author_ramp_open": 1}):
+        d = bot(**kw)
+        assert d["verdict"] == "ask", kw
+        assert any("mac-mini-2012" in r and "5 clean approvals" in r for r in d["reasons"]), d["reasons"]
+
+
+def test_the_reason_carries_the_count_when_given():
+    d = bot(author_ramp_open=False, author_ramp_streak=3)
+    assert any("3 of 5" in r for r in d["reasons"]), d["reasons"]
+
+
+def test_an_open_author_ramp_does_not_override_anything_else():
+    assert bot(author_ramp_open=True, files=[f("lib/trust_ramp.py")])["verdict"] == "ask"
+    assert bot(author_ramp_open=True, files=[f("requirements.txt")])["verdict"] == "ask"
+    other = amp.decide("G-Eskayo/clarity", [f("src/a.py")], RULES, existing_top_level={"src"}, new_top_level_this_week=0,
+                       ramp_open=False, profile={"auto_merge": {"core": []}}, author="MARVIN-bot-gil", author_ramp_open=True)
+    assert other["verdict"] == "ask"                    # the project's own ramp still has to be open: both must pass
+    assert amp.decide("G-Eskayo/clarity", [f("src/a.py")], RULES, existing_top_level={"src"}, new_top_level_this_week=0,
+                      ramp_open=True, profile={"auto_merge": {"core": []}}, author="MARVIN-bot-gil",
+                      author_ramp_open=True)["verdict"] == "auto"
+
+
+def test_trust_is_by_author_only_a_from_box_label_changes_nothing():
+    """The label is information: the policy takes no labels at all, so a label can't buy or cost trust."""
+    import inspect
+    params = set(inspect.signature(amp.decide).parameters)
+    assert not {p for p in params if "label" in p}, params
+    assert bot(author="G-Eskayo")["verdict"] == "auto" and bot()["verdict"] == "ask"
+
+
+def test_an_old_config_with_always_ask_authors_still_always_asks_even_with_an_open_ramp():
+    old = {k: v for k, v in RULES.items() if k != "ramp_authors"}
+    old["always_ask_authors"] = ["MARVIN-bot-gil"]
+    d = bot(rules=old, author_ramp_open=True)
+    assert d["verdict"] == "ask" and any("mac-mini-2012" in r for r in d["reasons"])
+    both = {**RULES, "always_ask_authors": ["marvin-bot-gil"]}
+    assert bot(rules=both, author_ramp_open=True)["verdict"] == "ask"
+
+
+def test_an_unknown_author_asks_when_ramp_authors_exist():
+    """A caller that knows the PR but not its author passes "" (fail closed); None means the caller has no author idea."""
+    d = bot(author="")
+    assert d["verdict"] == "ask" and any("author" in r for r in d["reasons"])
+
+
+@pytest.mark.parametrize("bad", ["MARVIN-bot-gil", {"MARVIN-bot-gil": 1}, [1, "MARVIN-bot-gil"], None, 5])
+def test_a_malformed_author_list_asks_for_everything(tmp_path, bad):
+    for key in ("ramp_authors", "always_ask_authors"):
+        rules = {**RULES, key: bad}
+        p = tmp_path / "rules.json"
+        p.write_text(json.dumps(rules))
+        assert amp.load_rules(p).get("ask_all"), (key, bad)
+        assert bot(rules=rules, author="G-Eskayo", author_ramp_open=True)["verdict"] == "ask", (key, bad)
+        assert bot(rules=rules, author_ramp_open=True)["verdict"] == "ask", (key, bad)
+
+
+def test_a_look_alike_bot_login_is_not_the_bot_but_whitespace_around_it_is():
+    assert bot(author=" MARVIN-bot-gil ")["verdict"] == "ask"
+    assert bot(author="MARVIN-bot-gi1")["verdict"] == "auto"   # a different account; only its own reviews could trust it

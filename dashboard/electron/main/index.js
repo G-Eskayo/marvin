@@ -1,4 +1,4 @@
-import { app, BrowserWindow, ipcMain, dialog, session, shell, protocol, net, nativeImage, Notification, powerMonitor } from 'electron'
+import { app, BrowserWindow, ipcMain, dialog, session, shell, protocol, net, nativeImage, Notification, powerMonitor, WebContentsView, screen } from 'electron'
 import { pathToFileURL } from 'url'
 import { instrumentIpc } from './timing.js'
 import { installDevSiteCors } from './dev_site_cors.js'
@@ -27,7 +27,7 @@ import { listTicketActivity, getTicketTimeline } from './activity.js'
 import { getDeviceStatuses } from './devices.js'
 import { getQueue, clearQueueCache } from './queue.js'
 import { getConcurrency, setConcurrency, scanNow } from './dispatch_concurrency.js'
-import { createMergeOps } from './merge_ops.js'
+import { createMergeOps, receiveMergeMessage } from './merge_ops.js'
 import { createApprovalLedger } from './approval_ledger.js'
 import { createApprovalRetry } from './approval_retry.js'
 import { createApproveFlow } from './approve_flow.js'
@@ -67,7 +67,7 @@ const approveFlow = createApproveFlow({
   ready: (machine, repo) => askReady(machine, repo),
   forget: (machine, prUrl) => askForget(machine, prUrl),
   push: (url, op) => pushMergeOp(url, op),
-  // The Approve & Merge click is the decision. The native popup is opt-in (prefs.json: confirmMerge) -- the
+  // The Approve click is the decision. The native popup is opt-in (prefs.json: confirmMerge) -- the
   // duplicate-start guard, the merge gate's retest and the base/order checks are what protect a stray click.
   confirm: async ({ number, url }) => {
     if (!readPrefs(join(app.getPath('userData'), 'prefs.json')).confirmMerge) return true
@@ -83,6 +83,12 @@ const approveFlow = createApproveFlow({
   },
   // The list must not keep showing a PR that just merged: it leaves at once, and GitHub confirms in the background.
   after: (url, result) => {
+    // marvin#231: queued on the merge server, nothing merged yet: the list is read again so the card shows its place.
+    if (result?.mergeQueued) {
+      githubChanged(`github:${repoFromPrUrl(url)}`)
+      mainWindow?.webContents.send('mr:refresh')
+      return
+    }
     if (result?.merged) mrActions.merged(url)
     else mrActions.reengaged(url)
     clearReworkCache()
@@ -104,14 +110,15 @@ const retryApprovals = (trigger) => { approvalRetry.run(trigger).catch((err) => 
 
 // A merge running here whose PR GitHub now calls merged was merged on GitHub by hand: end it as "Merged on GitHub"
 // (merge_ops.githubChanged). Asked only on a change trigger, once per merging op; nothing while no merge runs.
-const viewPrState = async (url) => JSON.parse((await execFileAsync('gh', ['pr', 'view', url, '--json', 'state'])).stdout)
+const viewPrState = async (url) => JSON.parse(await ghOut(['pr', 'view', url, '--json', 'state']))
 function checkMergedElsewhere(repo, only = null) {
   mergeOps.githubChanged(repo, viewPrState, Date.now(), only)
     .then((urls) => urls.forEach((u) => pushMergeOp(u, mergeOps.get(u))))
     .catch(() => {})
 }
-import { readRegistry, loadBoard, fetchBoardData, fetchCompletedData, withProjectStatus, defaultStagesFor, defaultLiveNumbers, getEvidence, clearCrossProjectCache, REGISTRY_PATH } from './boards.js'
+import { readRegistry, loadBoard, prsOfProjects, fetchBoardData, fetchCompletedData, withProjectStatus, defaultStagesFor, defaultLiveNumbers, getEvidence, clearCrossProjectCache, REGISTRY_PATH } from './boards.js'
 import { createRelationsService } from './relations_service.js'
+import { machineNames } from './machine_names.js'
 import { summarizeBoard, buildCompleted } from './board.js'
 import { createTriggerHub, createReconciler, refetchesGithub } from './triggers.js'
 import { createMrHistory, mergedPrArgs, readSavedMerged } from './mr_history.js'
@@ -155,9 +162,14 @@ import { postTicketInput } from './ticket_input.js'
 import { createImageLoader, mediaFileFor } from './pr_images.js'
 import { createMockupSource, MOCKUP_SCHEME } from './mockups.js'
 import { createMockupWindows } from './mockup_window.js'
+import { createShowWindows } from './show_window.js'
+import { allowedRoots } from './show.js'
+import { createBoundsStore } from './show_bounds.js'
+import { readFileForView, fileFromBuffer } from './outbox.js'
 import { resolveLocalClone } from './docs_local.js'
 import { resolveServiceDefaults, resolveDeviceId, peerHosts, primaryDeviceId } from './device_identity.js'
 import { createHelpersReader } from './chat_helpers.js'
+import { isPullOnlyNode, createFeedSource, feedOnlyGh, readNetworkRegistry, assertActsHere as assertPullOnlyActs, canMergeHere, withReadOnlyReason } from './github_feed.js'
 
 // The pipeline's screenshot copy runs unattended beside the real dashboard: log, never show a modal (#384).
 if (isEvidenceCapture(process.env)) installCaptureGuard(process)
@@ -166,6 +178,15 @@ if (isEvidenceCapture(process.env)) installCaptureGuard(process)
 instrumentIpc(ipcMain)
 
 const execFileAsync = promisify(execFile)
+
+// marvin#954: a pull-only node (mac-mini-2012, ADR 0069) holds no GitHub credential. Its dashboard reads the open PRs
+// and boards from the Mini's feed (github_feed.js) and every other GitHub read or write here is refused in plain words,
+// so nothing on it can end in gh's login prompt. Decided once at startup: the registry changes rarely and a rebuild
+// relaunches the app.
+const pullOnly = isPullOnlyNode({ deviceId: resolveDeviceId(), registry: readNetworkRegistry() })
+const githubFeed = pullOnly ? createFeedSource() : null
+// Every `gh` this process runs, as its stdout.
+const ghOut = pullOnly ? feedOnlyGh : async (args, opts) => (await execFileAsync('gh', args, opts)).stdout
 
 adoptLoginShellPath()
 adoptSharedGhToken()
@@ -187,10 +208,7 @@ const MR_DENY_WEBHOOK_URL = process.env.MARVIN_MR_DENY_WEBHOOK_URL || `http://${
 // 0 = ephemeral (the evidence-capture copy); junk falls back to 7879.
 const DASHBOARD_REFRESH_PORT = parseRefreshPort(process.env.MARVIN_DASHBOARD_REFRESH_PORT)
 
-const ghListOpenPrs = (light) => async (repo) => {
-  const { stdout } = await execFileAsync('gh', prListArgs(repo, { light }))
-  return JSON.parse(stdout)
-}
+const ghListOpenPrs = (light) => async (repo) => JSON.parse(await ghOut(prListArgs(repo, { light })))
 
 // The dashboard's memory of GitHub (github_state.js, #318): every GitHub read below is answered from the last-known
 // state of its repo until the change watch says that repo changed, the person's own action needs fresh data, or a
@@ -220,6 +238,7 @@ function githubChanged(source) {
 // from memory unless that repo changed, so the status dot (every 2 min) and the MR list cost nothing while idle.
 // A full listing also answers a light one. `fresh` (a merge) re-reads every repo.
 async function fetchOpenPrs(light, fresh = false) {
+  if (githubFeed) return fetchOpenPrsFromMini(light)
   const perRepo = (repo) => {
     const full = () => githubState.get('prs', repo, () => ghListOpenPrs(false)(repo), { fresh })
     if (!light) return full()
@@ -250,12 +269,30 @@ async function fetchOpenPrs(light, fresh = false) {
   return prs
 }
 let prFetch = { errors: [], projects: 0, lastGoodAt: null }
+// The box (marvin#954): the same list, read from the Mini's feed copy. No GitHub call, nothing to cache or back off
+// from. A repo missing from the feed is listed as such; the Mini not answering is a status line, not this machine's
+// error, so it is logged once per change of wording instead of into the error log every 2 minutes.
+let lastFeedNote = null
+async function fetchOpenPrsFromMini(light) {
+  const repos = readRegistry().map((b) => b.repo)
+  const listed = await listOpenPrsAcrossRepos(repos, async (repo) => githubFeed.openPrs(repo, { light }), { listedAt: (repo) => githubFeed.readAt(repo) })
+  const source = githubFeed.status()
+  const note = [source.state, ...listed.errors.map((e) => e.message)].join(' | ')
+  if (note !== lastFeedNote) {
+    lastFeedNote = note
+    console.log(`[mr] ${source.text}${listed.errors.length ? ` Missing: ${listed.errors.map((e) => e.repo).join(', ')}` : ''}`)
+  }
+  const ok = !listed.errors.length && source.state === 'fresh'
+  prFetch = { errors: listed.errors, projects: repos.length, lastGoodAt: ok ? Date.now() : prFetch.lastGoodAt, source }
+  return listed.prs.map((p) => ({ ...p, checkedAt: p.listedAt || null }))
+}
 // Check watch (marvin#555, replacing #554's 90 s re-read): while a cached PR list shows checks running, ask GitHub about
 // each such commit's checks every 20 s with an ETag (a 304 is free). A real change re-reads just that repo's list and
 // tells an open MR Review to refresh. Reads only what is already in memory to decide what to watch. Started when the
 // app is ready.
 let checkWatch = null
 function startPrCheckWatch() {
+  if (pullOnly) return // the Mini watches the checks and its feed carries them (marvin#954)
   checkWatch = startCheckWatch({
     getHeads: () => githubState.peek('prs').flatMap(({ repo, value }) => pendingCheckHeads(repo, value)),
     probe: createCheckProbe(),
@@ -273,12 +310,12 @@ const listOpenPrs = ({ light = false, fresh = false } = {}) => fetchOpenPrs(ligh
 const reworkFromMemory = () => githubState.get('rework', null, () => { clearReworkCache(); return getReworkStatus() }, { safetyMs: 10 * 60_000, minIntervalMs: 5 * 60_000 })
 
 async function ghIssueView(issueNumber, repo = MARVIN_REPO) {
-  const { stdout } = await execFileAsync('gh', ['issue', 'view', String(issueNumber), '--repo', repo, '--json', 'number,title,body'])
-  return JSON.parse(stdout)
+  return JSON.parse(await ghOut(['issue', 'view', String(issueNumber), '--repo', repo, '--json', 'number,title,body']))
 }
 
 // Raw tickets + PRs per repo, shared by the board view and the relation index: from memory until that repo changes.
 function getBoardData(repo, gh) {
+  if (githubFeed) return Promise.resolve().then(() => githubFeed.board(repo))
   return githubState.get('board', repo, () => fetchBoardData(repo, gh))
 }
 
@@ -304,6 +341,21 @@ const boardDigest = (board) =>
 process.env['ELECTRON_DISABLE_SECURITY_WARNINGS'] = 'true'
 
 let mainWindow = null
+// The Docs tab's outbox matcher (deliverables.js), shared with `marvin show` so its windows and the Docs tab agree.
+let showDeliverables = null
+
+const preloadPath = () => {
+  // electron-vite outputs .cjs when package.json has "type":"module"
+  const cjs = join(__dirname, '../preload/index.cjs')
+  return existsSync(cjs) ? cjs : join(__dirname, '../preload/index.js')
+}
+
+// The app's page, in the main window or a `marvin show` window (#715: hash show=<project>).
+function loadAppPage(win, hash = '') {
+  const devUrl = process.env['ELECTRON_RENDERER_URL']
+  if (devUrl) win.loadURL(hash ? `${devUrl}#${hash}` : devUrl)
+  else win.loadFile(join(__dirname, '../../out/renderer/index.html'), hash ? { hash } : undefined)
+}
 
 function createWindow() {
   mainWindow = new BrowserWindow({
@@ -317,11 +369,7 @@ function createWindow() {
     vibrancy: 'under-window',
     show: false,
     webPreferences: {
-      preload: (() => {
-        // electron-vite outputs .cjs when package.json has "type":"module"
-        const cjs = join(__dirname, '../preload/index.cjs')
-        return existsSync(cjs) ? cjs : join(__dirname, '../preload/index.js')
-      })(),
+      preload: preloadPath(),
       nodeIntegration: false,
       contextIsolation: true,
       sandbox: false
@@ -330,6 +378,12 @@ function createWindow() {
 
   mainWindow.on('ready-to-show', () => {
     mainWindow.show()
+  })
+  // Closed while the app keeps running (macOS; a `marvin show` window still open, #715): every later
+  // `mainWindow?.webContents.send` must find no window, not a destroyed one ("Object has been destroyed").
+  const created = mainWindow
+  created.on('closed', () => {
+    if (mainWindow === created) mainWindow = null
   })
   // Links that would open a new window go to Chrome, where Gil is signed in (external_links.js).
   mainWindow.webContents.setWindowOpenHandler(windowOpenHandler((url) => openLink(url, { openExternal: shell.openExternal })))
@@ -510,20 +564,31 @@ function registerActivityHandlers() {
 
   // Project boards: only repos in the registry are fetchable, so the renderer
   // can't make the main process shell out to gh for an arbitrary repo.
-  const ghJson = async (args) => (await execFileAsync('gh', args)).stdout
+  const ghJson = (args) => ghOut(args)
   const assertRegistered = (repo) => {
     if (!readRegistry().some((b) => b.repo === repo)) throw new Error(`No board registered for ${repo}`)
+  }
+  // A ticket's PR can be in any project's repo (marvin#1004): every board also gets the other projects' open PRs,
+  // from the same cached board data the relation index reads, so this costs no extra GitHub calls once warm.
+  const boardInputs = async (repo) => {
+    const registryRepos = readRegistry()
+    const [data, evidence, otherPrs] = await Promise.all([
+      getBoardData(repo, ghJson),
+      getEvidence(repo),
+      prsOfProjects(registryRepos.map((b) => b.repo), (r) => getBoardData(r, ghJson), repo)
+    ])
+    return { gh: ghJson, registryRepos, data, evidence, otherPrs }
   }
   ipcMain.handle('boards:list', () => withProjectStatus(readRegistry(), readCatalog({ deviceId: deviceId() })))
   ipcMain.handle('boards:load', async (_event, repo, source = 'poll') => {
     assertRegistered(repo)
-    const board = await loadBoard(repo, { gh: ghJson, registryRepos: readRegistry(), data: await getBoardData(repo, ghJson), evidence: await getEvidence(repo) })
+    const board = await loadBoard(repo, await boardInputs(repo))
     reconciler.observe('activity', repo, boardDigest(board), source)
     return board
   })
   ipcMain.handle('boards:summary', async (_event, repo) => {
     assertRegistered(repo)
-    return summarizeBoard(await loadBoard(repo, { gh: ghJson, registryRepos: readRegistry(), data: await getBoardData(repo, ghJson), evidence: await getEvidence(repo) }))
+    return summarizeBoard(await loadBoard(repo, await boardInputs(repo)))
   })
   // Completed work (all closed tickets + the PRs that closed them): from memory until that repo changes.
   ipcMain.handle('boards:completed', async (_event, repo) => {
@@ -578,14 +643,14 @@ function registerDocsHandlers() {
       docsIndexer.localChanged()
     }
   })
-  const deliverables = createDeliverables({
+  const deliverables = (showDeliverables = createDeliverables({
     pdfText,
     getContext: () => {
       const projects = readCatalog({ deviceId: deviceId() })?.projects || []
       docsTextCache = docsTextCache || docsTextFor(projects, { saved: savedDocs })
       return { projects, overrides: readOverrides(), maxNumber: maxNumbers(githubState.peek('board')), docsText: docsTextCache }
     }
-  })
+  }))
   // #611: clean local clones are fast-forwarded in the background so the search sees what is on GitHub; a clone with
   // work in it is left alone and searched from its saved GitHub copy (clone_freshen.js, docs_service.js localDocs).
   const freshener = createCloneFreshener({ exec: execFileAsync })
@@ -606,7 +671,7 @@ function registerDocsHandlers() {
   // Relationships between tickets, PRs and docs, derived from their text (relations.js). Docs come from
   // local clones when there are any, else the GitHub index; the cache is dropped on the same triggers
   // that refresh the boards and docs.
-  const ghForRelations = async (args) => (await execFileAsync('gh', args, { maxBuffer: 50 * 1024 * 1024 })).stdout
+  const ghForRelations = (args) => ghOut(args, { maxBuffer: 50 * 1024 * 1024 })
   const relations = createRelationsService({
     getRepos: () => readRegistry().map((b) => b.repo),
     getBoardData: (repo) => getBoardData(repo, ghForRelations),
@@ -639,6 +704,8 @@ function registerDocsHandlers() {
   ipcMain.handle('mr:parity', () => relations.parity())
   ipcMain.handle('activity:overview', () => relations.overview())
   ipcMain.handle('activity:needsYou', () => relations.needsYou())
+  // Workshop ▸ Now (#862): with each machine's display name for the worker on an in-motion row.
+  ipcMain.handle('activity:openTickets', async () => ({ ...(await relations.openTickets()), machines: machineNames() }))
   // Activity ▸ Projects (marvin#625's progress strip): built from memory and local files only, no GitHub call. Merges
   // are the Merged view's saved list plus the merge server's own record (local HTTP), deduped by URL.
   const progress = createProjectProgress({
@@ -882,7 +949,7 @@ function registerMrReviewHandlers() {
   // the dashboard already caches (30s), so listing PRs costs no extra GitHub calls.
   const sentBackTickets = async (repos) => {
     const keys = new Set()
-    const gh = async (args) => (await execFileAsync('gh', args)).stdout
+    const gh = (args) => ghOut(args)
     for (const repo of repos) {
       try {
         const data = await getBoardData(repo, gh)
@@ -897,7 +964,7 @@ function registerMrReviewHandlers() {
   // probably a duplicate (#326).
   const closedTickets = async (repos) => {
     const keys = new Set()
-    const gh = async (args) => (await execFileAsync('gh', args)).stdout
+    const gh = (args) => ghOut(args)
     for (const repo of repos) {
       try {
         const data = await getBoardData(repo, gh)
@@ -918,7 +985,7 @@ function registerMrReviewHandlers() {
   // merge server's own record of merges and refused Approves ({fresh:true}).
   const mrHistory = createMrHistory({
     repos: () => readRegistry().map((b) => b.repo),
-    ghList: async (repo, since) => JSON.parse((await execFileAsync('gh', mergedPrArgs(repo, since))).stdout || '[]'),
+    ghList: async (repo, since) => JSON.parse((await ghOut(mergedPrArgs(repo, since))) || '[]'),
     webhookHistory: async () => {
       const res = await fetch(MR_WEBHOOK_URL.replace(/\/approve$/, '/merge-history'), { signal: AbortSignal.timeout(5000) })
       if (!res.ok) throw new Error(`merge server answered ${res.status}`)
@@ -934,7 +1001,7 @@ function registerMrReviewHandlers() {
   ipcMain.handle('mr:historyDetail', async (_event, url) => {
     const repo = repoFromPrUrl(url)
     if (!repo) throw new Error('not a PR url')
-    const { stdout } = await execFileAsync('gh', ['pr', 'view', url, '--json', 'number,title,url,body,files,baseRefName,headRefName,headRefOid,mergeable,statusCheckRollup,state,mergedAt'])
+    const stdout = await ghOut(['pr', 'view', url, '--json', 'number,title,url,body,files,baseRefName,headRefName,headRefOid,mergeable,statusCheckRollup,state,mergedAt'])
     const raw = { ...JSON.parse(stdout), repo }
     const [pr] = await listPipelinePrs(async () => [raw], { canMerge: () => false, uiPathsFor: (r) => readUiPaths(r) })
     return { ...pr, readOnly: true, state: raw.state, mergedAt: raw.mergedAt || null }
@@ -951,10 +1018,34 @@ function registerMrReviewHandlers() {
     const res = await fetch(MR_WEBHOOK_URL.replace(/\/approve$/, '/rebase-status'), { signal: AbortSignal.timeout(3000) })
     return res.ok ? res.json() : {}
   }
+  // marvin#231 follow-up: a card the queue says is merging, with no strip here (the app opened mid-merge, or this Mac
+  // was asleep for its events), reads where that merge is from the merge server once: GET /merge-progress. Run when
+  // the list is built (load, and each refresh trigger), never on a timer; one read per PR at a time.
+  const catchingUp = new Set()
+  function catchUpMerges(list) {
+    for (const pr of Array.isArray(list) ? list : []) {
+      if (pr?.mergeQueue?.state !== 'running' || catchingUp.has(pr.url)) continue
+      if (mergeOps.get(pr.url)?.state === 'merging') continue
+      catchingUp.add(pr.url)
+      fetch(`${MR_WEBHOOK_URL.replace(/\/approve$/, '/merge-progress')}?url=${encodeURIComponent(pr.url)}`, { signal: AbortSignal.timeout(3000) })
+        .then((res) => (res.ok ? res.json() : null))
+        .then((body) => { if (body?.merge?.progress) pushMergeOp(pr.url, mergeOps.adopt(pr.url, body.merge.progress)) })
+        .catch(() => { /* the next event or refresh catches it */ })
+        .finally(() => catchingUp.delete(pr.url))
+    }
+  }
+
+  // marvin#231: the merge queue lives with the merge server (the Mini); each card's line is worked out from it here.
+  const getMergeQueue = async () => {
+    const res = await fetch(MR_WEBHOOK_URL.replace(/\/approve$/, '/merge-queue'), { signal: AbortSignal.timeout(3000) })
+    return res.ok ? res.json() : null
+  }
+  // A repo's open tickets from the boards already in memory (main-red, incident, sent back): no extra GitHub read.
+  const boardIssuesFor = (repo) => (remembered('board').find((b) => b.repo === repo)?.value?.issues || []).filter((i) => i && i.state === 'OPEN')
   // Safety net for stacked PRs whose parent merged without the post-merge move (stack_retarget.js). Reads the PR list
   // already in memory; asks GitHub only about an orphaned PR, at most every 5 minutes each.
   const stackRetarget = createStackRetarget({
-    gh: async (args) => (await execFileAsync('gh', args)).stdout,
+    gh: (args) => ghOut(args),
     onMoved: (moved) => {
       for (const m of moved) {
         console.error(`[stack-retarget] moved PR #${m.number} (${m.repo}) onto main: its parent #${m.parent} had merged`)
@@ -980,23 +1071,28 @@ function registerMrReviewHandlers() {
     if (!prs.some((p) => p.url === url)) return null
     const rework = remembered('rework')[0]?.value
     const cards = await listPipelinePrs(async () => prs, {
-      canMerge: (repo) => canMergeFromDashboard(repo, readMergeableRepos()),
+      canMerge: (repo) => canMergeHere(pullOnly, canMergeFromDashboard(repo, readMergeableRepos())),
       sentBackTickets: keysFromBoards(sentBackKeys),
       closedTickets: keysFromBoards((repo, issues) => issues.filter((i) => i.state === 'CLOSED').map((i) => `${repo}#${i.number}`)),
       reworkStatus: rework ? async () => rework : null,
       rebaseStatus: getRebaseStatus,
       autoMergeShadow: getAutoMergeShadow,
-      uiPathsFor: (repo) => readUiPaths(repo)
+      uiPathsFor: (repo) => readUiPaths(repo),
+      mergeQueue: getMergeQueue,
+      issuesFor: boardIssuesFor
     })
     return cards.find((p) => p.url === url) || null
   }
   const mrList = coalesce(
-    () => listPipelinePrs(fixturePrs || listOpenPrs, { canMerge: (repo) => canMergeFromDashboard(repo, readMergeableRepos()), sentBackTickets, reworkStatus: reworkFromMemory, rebaseStatus: getRebaseStatus, closedTickets, autoMergeShadow: getAutoMergeShadow, uiPathsFor: (repo) => readUiPaths(repo) }),
+    () => listPipelinePrs(fixturePrs || listOpenPrs, { canMerge: (repo) => canMergeHere(pullOnly, canMergeFromDashboard(repo, readMergeableRepos())), sentBackTickets, reworkStatus: reworkFromMemory, rebaseStatus: getRebaseStatus, closedTickets, autoMergeShadow: getAutoMergeShadow, uiPathsFor: (repo) => readUiPaths(repo), mergeQueue: getMergeQueue, issuesFor: boardIssuesFor })
+      .then((prs) => withReadOnlyReason(prs, pullOnly)),
     () => `${githubState.localSeq()}:${githubState._genOf(null)}`
   )
-  ipcMain.handle('mr:list', () => {
-    if (!fixturePrs) listOpenPrs().then((prs) => stackRetarget.check(prs)).catch(() => {})
-    return mrList()
+  ipcMain.handle('mr:list', async () => {
+    if (!fixturePrs && !pullOnly) listOpenPrs().then((prs) => stackRetarget.check(prs)).catch(() => {})
+    const list = await mrList()
+    catchUpMerges(list)
+    return list
   })
 
   // Local-first actions (CONTEXT.md "Dashboard actions render their true result locally at once, and confirm in the
@@ -1053,9 +1149,13 @@ function registerMrReviewHandlers() {
     return fetchTicketContext(ticketRef, (n) => ghIssueView(n, repo))
   })
 
+  // marvin#954: the box (pull-only, ADR 0069) shows the Mini's list but never acts on it: no Approve, Deny or send-back
+  // from a machine that runs untrusted code, whatever the renderer sends.
+  const assertActsHere = () => assertPullOnlyActs(pullOnly)
   // marvin's gate is built in; another project needs its profile to opt in. Checked here from the PR url
   // itself, whatever the renderer claims, and again by the webhook (which is the real enforcement).
   const assertMergeable = (url) => {
+    assertActsHere()
     const repo = repoFromPrUrl(url)
     if (!repo || !canMergeFromDashboard(repo, readMergeableRepos())) {
       throw Object.assign(new Error(`Merging ${repo || 'this PR'} from the dashboard isn't set up: its project profile has not opted in (merge_from_dashboard). Review it on GitHub.`), { code: 'NO_MERGE_PROFILE' })
@@ -1093,6 +1193,7 @@ function registerMrReviewHandlers() {
 
   // "Too vague: needs options": ask the author to restate the questions as a Decisions section.
   ipcMain.handle('mr:sendBackForOptions', async (_event, { url, ticketNumber, reasons }) => {
+    assertActsHere()
     assertMergeable(url)
     const result = await sendBackForOptions({ prUrl: url, ticketNumber, reasons }, {
       exec: execFileAsync,
@@ -1104,6 +1205,7 @@ function registerMrReviewHandlers() {
 
   // The way out of a wrongly shown "sent back": see clearSentBackLabel (refuses while a rework is running).
   ipcMain.handle('mr:clearSentBack', async (_event, url) => {
+    assertActsHere()
     assertMergeable(url)
     const result = await clearSentBackLabel(url, execFileAsync)
     if (result.cleared) mrActions.cleared({ url, ticket: result.ticket })
@@ -1114,6 +1216,7 @@ function registerMrReviewHandlers() {
   // actions have real, visible side effects on GitHub (ADR 0025), and
   // "drop" specifically closes the PR and ticket with no undo.
   ipcMain.handle('mr:deny', async (_event, { number, url, ticketNumber, action, reasons, comment }) => {
+    assertActsHere()
     assertMergeable(url)
     const isDrop = action === 'drop'
     const { response } = await dialog.showMessageBox(mainWindow, {
@@ -1136,6 +1239,69 @@ function registerMrReviewHandlers() {
     mrActions.denied({ url, ticketNumber, action })
     return { done: true, cancelled: false }
   })
+}
+
+// `marvin show` (G-Eskayo/marvin#715): a session asks for one item; it opens in that project's own window (show_window.js),
+// reached through the local refresh server's POST /show. lib/marvin_show.py is the CLI.
+function registerShowHandlers() {
+  const projects = () => readCatalog({ deviceId: deviceId() })?.projects || []
+  const showWindows = createShowWindows({
+    BrowserWindow,
+    session,
+    preload: preloadPath(),
+    loadPage: loadAppPage,
+    roots: () => allowedRoots({ projects: projects() }),
+    context: () => ({
+      projects: projects(),
+      outboxRoot: outboxRoot(),
+      view: (() => { try { return showDeliverables?.view() } catch { return null } })(),
+      matchOutboxName: (name) => { try { return showDeliverables?.matchTop(name) } catch { return null } }
+    }),
+    source: createMockupSource({ exec: execFileAsync, resolveClone: (name) => resolveLocalClone(name) }),
+    prHead: async (repo, number) => {
+      const pr = JSON.parse(await ghOut(['pr', 'view', String(number), '--repo', repo, '--json', 'headRefOid,headRefName']))
+      return pr?.headRefOid ? { sha: pr.headRefOid, ref: pr.headRefName } : null
+    },
+    readFileForView,
+    fileFromBuffer,
+    focusApp: () => app.focus({ steal: true }),
+    devOrigin: process.env['ELECTRON_RENDERER_URL'] || null,
+    // Owner's answers on PR #1029: a web address renders in the window, and a new window opens where the last one
+    // was moved to.
+    WebContentsView,
+    bounds: createBoundsStore(join(app.getPath('userData'), 'show-window-bounds.json')),
+    screenAreas: () => screen.getAllDisplays().map((d) => d.workArea)
+  })
+  ipcMain.handle('show:current', (event) => showWindows.current(event.sender))
+  ipcMain.handle('show:read', (event) => showWindows.read(event.sender))
+  ipcMain.handle('show:image', (event, src) => showWindows.image(event.sender, src))
+  ipcMain.handle('show:webBounds', (event, rect) => showWindows.setWebBounds(event.sender, rect))
+  ipcMain.handle('show:openLink', (_event, url) => openLink(String(url || ''), { openExternal: shell.openExternal }))
+  // "Open in Docs": the main window comes forward on the Docs tab at this item (an outbox file as its deliverable, a
+  // clone file as its doc, anything else at its project).
+  ipcMain.handle('show:openInDocs', (event) => {
+    const item = showWindows.itemOf(event.sender)
+    if (!item) return { ok: false }
+    const target = { projectId: item.project.id }
+    const local = item.read?.local
+    const ob = outboxRoot()
+    if (local && local.startsWith(ob + '/')) target.outboxPath = local.slice(ob.length + 1)
+    else if (local) {
+      const p = projects().find((x) => x.id === item.project.id)
+      const clone = (p?.localPaths || []).filter((lp) => local.startsWith(lp + '/')).sort((a, b) => b.length - a.length)[0]
+      if (clone) target.path = local.slice(clone.length + 1)
+    } else if (item.pr) target.path = item.path
+    if (!mainWindow || mainWindow.isDestroyed()) createWindow()
+    const win = mainWindow
+    if (win.isMinimized()) win.restore()
+    win.show()
+    win.focus()
+    const send = () => { if (!win.isDestroyed()) win.webContents.send('show:openInDocs', target) }
+    if (win.webContents.isLoading()) win.webContents.once('did-finish-load', send)
+    else send()
+    return { ok: true }
+  })
+  return showWindows
 }
 
 // PR recordings (screen recordings in PR descriptions) are cached by the main process and streamed to the PR detail's
@@ -1162,6 +1328,7 @@ app.whenReady().then(() => {
   registerInstanceHandlers()
   registerDocsHandlers()
   registerActivityHandlers()
+  const showWindows = registerShowHandlers()
   createWindow()
 
   // Local state: watch where it's stored, so every writer (Python, Node, any chat) is covered.
@@ -1194,8 +1361,8 @@ app.whenReady().then(() => {
     }
   })
   if (supportWatcher(instance.support().role) === 'app') {
-    execFileAsync('gh', ['auth', 'token'])
-      .then(({ stdout }) => String(stdout).trim())
+    ghOut(['auth', 'token'])
+      .then((stdout) => String(stdout).trim())
       .catch(() => '')
       .then((token) => startAppSupportWatch({ repos: () => instance.support().repos, token, startChangeWatch, createGithubProbe }))
   }
@@ -1223,13 +1390,16 @@ app.whenReady().then(() => {
       } else if (topic === 'merge') {
         // A merge's stage event from the webhook on this Mac (marvin#568): local state only, never a GitHub read.
         const m = payload.merge
-        if (m && typeof m.url === 'string' && m.url.startsWith('https://github.com/')) pushMergeOp(m.url, mergeOps.event(m.url, m.event))
+        // marvin#231 follow-up: the same message relayed from the merge server on another Mac. Its progress so far is taken
+        // when it is ahead (it fills in events missed, lost or out of order); a message without one is the bare event.
+        if (m && typeof m.url === 'string' && m.url.startsWith('https://github.com/')) pushMergeOp(m.url, receiveMergeMessage(mergeOps, m))
       } else triggerHub.emit(topic, payload.source || 'ping')
     }
-  }, { port: DASHBOARD_REFRESH_PORT, host: '127.0.0.1' })
+  }, { port: DASHBOARD_REFRESH_PORT, host: '127.0.0.1', onShow: (body) => showWindows.show(body) })
 
   app.on('activate', () => {
-    if (BrowserWindow.getAllWindows().length === 0) createWindow()
+    // The Dock icon brings the dashboard back even while `marvin show` windows are open (#715).
+    if (!mainWindow || mainWindow.isDestroyed()) createWindow()
   })
 
   // marvin#762: saved approvals are retried on events, never on a timer: the dashboard starting, this Mac waking, and

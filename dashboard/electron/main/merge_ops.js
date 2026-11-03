@@ -1,8 +1,8 @@
 import { emptyProgress, applyMergeEvent, opForHead, closeRunning } from '../../src/lib/merge_progress.js'
 import { repoFromPrUrl } from './mr_repos.js'
 
-// What each PR's Approve & Merge is doing right now, held in the main process so it survives the
-// renderer unmounting (navigating away used to reset the button to "Approve & Merge" mid-merge).
+// What each PR's Approve is doing right now, held in the main process so it survives the
+// renderer unmounting (navigating away used to reset the button to "Approve" mid-merge).
 // Failures and re-engagements are kept until the next attempt so the message is still there on return -- but only for
 // the commit they happened on: once the PR has a newer head, the old failure no longer describes it (Gil, 2026-10-21).
 //
@@ -54,6 +54,26 @@ export function createMergeOps({ maxMergingMs = 45 * 60_000 } = {}) {
       if (ev.interrupted) next = { state: 'interrupted', reason: INTERRUPTED_REASON, head: o.head ?? null, progress: closeRunning(progress, 'failed', 'interrupted: the webhook restarted', now), at: now }
       else if (o.adopted && progress.outcome === 'merged') next = { state: 'merged', head: o.head ?? null, progress, at: now }
       else if (o.adopted && progress.outcome === 'failed') next = { state: 'error', reason: progress.stages[ev.stage]?.detail || 'The merge failed.', head: o.head ?? null, progress, at: now }
+      ops.set(url, next)
+      return next
+    },
+    // marvin#231 follow-up: a merge's whole progress so far, from the merge server (relayed with each event, or read once
+    // from GET /merge-progress when the app opens mid-merge). It catches the card up when events were missed, lost or
+    // arrived out of order: taken only when it is ahead of what this Mac has for the same attempt, or is a newer attempt
+    // than a finished one. Returns the op when it changed (push it), else null.
+    adopt(url, snap, now = Date.now()) {
+      if (!snap || typeof snap !== 'object' || !snap.stages || typeof snap.stages !== 'object' || !Number.isFinite(snap.seq)) return null
+      const o = live(url, now)
+      const mine = o?.progress
+      if (mine && snap.id && mine.id === snap.id && (mine.seq || 0) >= snap.seq) return null
+      if (o && o.state !== 'merging' && mine?.id && mine.id === snap.id) return null // a straggler of a finished attempt
+      const base = { head: o?.head ?? null, progress: snap, at: now }
+      let next
+      if (snap.outcome === 'merged') next = { state: 'merged', ...base }
+      else if (snap.outcome === 'failed') {
+        const failed = Object.values(snap.stages).find((x) => x?.state === 'failed')
+        next = { state: 'error', reason: failed?.detail || 'The merge failed.', ...base }
+      } else next = { state: 'merging', since: o?.since ?? now, head: o?.head ?? null, progress: snap, lastEventAt: now, adopted: o?.state === 'merging' ? !!o.adopted : true }
       ops.set(url, next)
       return next
     },
@@ -138,4 +158,10 @@ export function createMergeOps({ maxMergingMs = 45 * 60_000 } = {}) {
       return changed
     }
   }
+}
+
+// One 'merge' message ({url, event, progress?}) from the merge server, this Mac's or another's (marvin#231 follow-up):
+// the progress, when it is ahead of what is here, else the event. Returns the op to push, or null.
+export function receiveMergeMessage(ops, m, now = Date.now()) {
+  return (m?.progress ? ops.adopt(m.url, m.progress, now) : null) || ops.event(m.url, m.event, now)
 }

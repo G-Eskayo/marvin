@@ -181,7 +181,7 @@ def architecture():
     s.box(30, 770, 380, 80, ["MARVIN Mobile (iPhone)", "talks to the mini over Tailscale — building"], "plan", 14)
     s.box(440, 770, 360, 80, ["gileskayo.me", "map auto-publishes; pages: you promote"], "warn", 14)
     s.box(830, 770, 380, 80, ["Linux box / third node", "more capacity — planned"], "plan", 14)
-    s.text(620, 900, "Tailscale connects the Macs (ssh gils-mac-mini). The laptop sleeps; the mini doesn't.", 14, "#4b5563")
+    s.text(620, 900, "Tailscale connects the Macs over ssh. The laptop sleeps; the mini doesn't.", 14, "#4b5563")
     s.save("marvin-architecture.svg")
 
 
