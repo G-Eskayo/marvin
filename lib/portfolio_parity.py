@@ -81,6 +81,39 @@ def dev_site_drift(dev_html: Path, base: str = pe.BASE, fetch=_fetch) -> list[st
     return drift
 
 
+# What styles the pages, under wp-content: a change here after a capture changes how every element looks (marvin#1047).
+STYLE_DIRS = ("other-projects", "brand", "mu-plugins", "themes", "fonts", "longform")
+
+
+def restyled_since_capture(element: dict, dev_html: Path, dirs=STYLE_DIRS) -> list[str]:
+    """One line naming the newest styling file the dev site's folder changed AFTER this element was captured, or [].
+
+    Found 2026-11-03: the dev site served an in-progress redesign deployed after the capture. It served the synced folder,
+    so dev_site_drift said nothing and parity listed a dozen differences with no cause. Cost: one stat per file in dirs."""
+    from datetime import datetime, timezone
+    try:
+        captured = datetime.fromisoformat(str(element.get("captured_at") or "").replace("Z", "+00:00"))
+    except ValueError:
+        return []
+    if captured.tzinfo is None:
+        captured = captured.replace(tzinfo=timezone.utc)
+    newest = None
+    for d in dirs:
+        root = Path(dev_html) / "wp-content" / d
+        if not root.is_dir():
+            continue
+        for f in root.rglob("*"):
+            if f.is_file() and (newest is None or f.stat().st_mtime > newest[0]):
+                newest = (f.stat().st_mtime, f)
+    if newest is None or newest[0] <= captured.timestamp():
+        return []
+    rel = newest[1].relative_to(Path(dev_html)).as_posix()
+    at = datetime.fromtimestamp(newest[0], timezone.utc).strftime("%Y-%m-%d %H:%M UTC")
+    return [f"the dev site was restyled after this element was captured ({captured:%Y-%m-%d %H:%M} UTC; newest: {rel} at "
+            f"{at}): it may be serving another design or branch. Put the dev site back on the portfolio repo's main, or "
+            f"re-capture the elements from the design it now serves"]
+
+
 def compare(element: dict, instance: dict) -> list[str]:
     """Differences between the captured element and a measured preview (empty = they match)."""
     diffs = []
@@ -152,7 +185,7 @@ def verify(element_id: str = "project-card", base: str = pe.BASE, project: Path 
     diffs += font_diffs
     if diffs:      # say WHY first when the site itself is serving stale files
         import portfolio_apply as pa
-        diffs = dev_site_drift(pa.DEV_HTML, base) + diffs
+        diffs = (dev_site_drift(pa.DEV_HTML, base) or restyled_since_capture(element, pa.DEV_HTML)) + diffs
     return {"ok": not diffs, "element": element_id, "differences": diffs}
 
 
