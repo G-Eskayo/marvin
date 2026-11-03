@@ -251,3 +251,7 @@ def test_a_real_scan_running_on_this_mac_never_reaches_the_tests():
     assert not str(tp.SCAN_LOCK_PATH).startswith(str(Path.home() / ".claude"))
     with tp._scan_lock() as acquired:
         assert acquired
+
+
+def test_live_runs_and_claims_on_this_mac_never_reach_the_tests():
+    assert tp._local_slots_used() == 0 and tp._inflight_by_repo(["G-Eskayo/marvin"]) == {}

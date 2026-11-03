@@ -134,6 +134,10 @@ def _isolate_board_registry(tmp_path_factory, monkeypatch):
     monkeypatch.setattr(ticket_pipeline, "_local_busy", lambda: False)  # the real machine may be mid-ticket
     # the real machine may be mid-scan: its lock made main() skip in tests and main-health go red (2026-11-03)
     monkeypatch.setattr(ticket_pipeline, "SCAN_LOCK_PATH", tmp_path_factory.mktemp("scan") / "scan.lock")
+    # ...and so may its live ticket runs and GitHub's claims: counted for real, they filled the per-project limit and
+    # a test's one ticket was never dispatched (2026-11-03, the Mini building four answer tickets)
+    monkeypatch.setattr(ticket_pipeline, "_local_slots_used", lambda: 0)
+    monkeypatch.setattr(ticket_pipeline, "_inflight_by_repo", lambda repos: {})
     monkeypatch.setattr(ticket_pipeline, "_run_ticket_agents", lambda step, summary: None)  # no real gh calls
 
 
