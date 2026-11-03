@@ -1,5 +1,7 @@
 # Changelog
 
+- Contrast checker: every MARVIN colour pair measured against the accessibility rule ([#1091](https://github.com/G-Eskayo/marvin/pull/1091))
+
 - Main red on the Mini: pipeline handover tests read live claims and runs ([#1089](https://github.com/G-Eskayo/marvin/pull/1089))
 
 - Profile parity: one facts file and one check across the site, resume, GitHub, LinkedIn and the product sites ([#1039](https://github.com/G-Eskayo/marvin/pull/1039))
