@@ -64,7 +64,10 @@ now (no one is watching live), substitute a real screenshot -- actually
 launch the app, actually capture it (e.g. \`npm run dev\` + \`osascript\` to
 bring the window forward + macOS \`screencapture\`) -- saved somewhere
 durable, and note in your PR/report that it's substituting for the live
-review.
+review. Anything you want the owner to look at goes through
+\`~/.agents/bin/marvin-show <file>\` (it copies a temp file into the
+outbox and opens it in that project's MARVIN window), never a file card
+or a temp path (docs/agents/showing-things.md).
 
 Before opening a PR, check for open PRs or branches that might conflict
 with or duplicate this work (\`gh pr list --repo ${REPO} --state open\`) --

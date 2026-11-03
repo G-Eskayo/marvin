@@ -66,8 +66,10 @@ export default function App() {
     const load = () => window.api.support?.state().then((s) => setSupport({ role: s.role, badge: s.badge })).catch(() => {})
     load()
     const offFocus = window.api.support?.onFocus?.((target) => navigate('support', target)) || (() => {})
+    // `marvin show` windows' "Open in Docs" (#715): this window comes forward on the Docs tab at that item.
+    const offShow = window.api.show?.onOpenInDocs?.((target) => navigate('docs', target)) || (() => {})
     const offTrigger = window.api.triggers.on((t) => t.topic === 'support' && load())
-    return () => { offFocus(); offTrigger() }
+    return () => { offFocus(); offShow(); offTrigger() }
   }, [])
 
   // Docs speed budget (#570): pdf.js and the markdown renderer are warmed once, when the app is idle after boot.

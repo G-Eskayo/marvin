@@ -1,4 +1,4 @@
-import { app, BrowserWindow, ipcMain, dialog, session, shell, protocol, net, nativeImage, Notification, powerMonitor } from 'electron'
+import { app, BrowserWindow, ipcMain, dialog, session, shell, protocol, net, nativeImage, Notification, powerMonitor, WebContentsView, screen } from 'electron'
 import { pathToFileURL } from 'url'
 import { instrumentIpc } from './timing.js'
 import { installDevSiteCors } from './dev_site_cors.js'
@@ -162,6 +162,10 @@ import { postTicketInput } from './ticket_input.js'
 import { createImageLoader, mediaFileFor } from './pr_images.js'
 import { createMockupSource, MOCKUP_SCHEME } from './mockups.js'
 import { createMockupWindows } from './mockup_window.js'
+import { createShowWindows } from './show_window.js'
+import { allowedRoots } from './show.js'
+import { createBoundsStore } from './show_bounds.js'
+import { readFileForView, fileFromBuffer } from './outbox.js'
 import { resolveLocalClone } from './docs_local.js'
 import { resolveServiceDefaults, resolveDeviceId, peerHosts, primaryDeviceId } from './device_identity.js'
 import { createHelpersReader } from './chat_helpers.js'
@@ -337,6 +341,21 @@ const boardDigest = (board) =>
 process.env['ELECTRON_DISABLE_SECURITY_WARNINGS'] = 'true'
 
 let mainWindow = null
+// The Docs tab's outbox matcher (deliverables.js), shared with `marvin show` so its windows and the Docs tab agree.
+let showDeliverables = null
+
+const preloadPath = () => {
+  // electron-vite outputs .cjs when package.json has "type":"module"
+  const cjs = join(__dirname, '../preload/index.cjs')
+  return existsSync(cjs) ? cjs : join(__dirname, '../preload/index.js')
+}
+
+// The app's page, in the main window or a `marvin show` window (#715: hash show=<project>).
+function loadAppPage(win, hash = '') {
+  const devUrl = process.env['ELECTRON_RENDERER_URL']
+  if (devUrl) win.loadURL(hash ? `${devUrl}#${hash}` : devUrl)
+  else win.loadFile(join(__dirname, '../../out/renderer/index.html'), hash ? { hash } : undefined)
+}
 
 function createWindow() {
   mainWindow = new BrowserWindow({
@@ -350,11 +369,7 @@ function createWindow() {
     vibrancy: 'under-window',
     show: false,
     webPreferences: {
-      preload: (() => {
-        // electron-vite outputs .cjs when package.json has "type":"module"
-        const cjs = join(__dirname, '../preload/index.cjs')
-        return existsSync(cjs) ? cjs : join(__dirname, '../preload/index.js')
-      })(),
+      preload: preloadPath(),
       nodeIntegration: false,
       contextIsolation: true,
       sandbox: false
@@ -363,6 +378,12 @@ function createWindow() {
 
   mainWindow.on('ready-to-show', () => {
     mainWindow.show()
+  })
+  // Closed while the app keeps running (macOS; a `marvin show` window still open, #715): every later
+  // `mainWindow?.webContents.send` must find no window, not a destroyed one ("Object has been destroyed").
+  const created = mainWindow
+  created.on('closed', () => {
+    if (mainWindow === created) mainWindow = null
   })
   // Links that would open a new window go to Chrome, where Gil is signed in (external_links.js).
   mainWindow.webContents.setWindowOpenHandler(windowOpenHandler((url) => openLink(url, { openExternal: shell.openExternal })))
@@ -622,14 +643,14 @@ function registerDocsHandlers() {
       docsIndexer.localChanged()
     }
   })
-  const deliverables = createDeliverables({
+  const deliverables = (showDeliverables = createDeliverables({
     pdfText,
     getContext: () => {
       const projects = readCatalog({ deviceId: deviceId() })?.projects || []
       docsTextCache = docsTextCache || docsTextFor(projects, { saved: savedDocs })
       return { projects, overrides: readOverrides(), maxNumber: maxNumbers(githubState.peek('board')), docsText: docsTextCache }
     }
-  })
+  }))
   // #611: clean local clones are fast-forwarded in the background so the search sees what is on GitHub; a clone with
   // work in it is left alone and searched from its saved GitHub copy (clone_freshen.js, docs_service.js localDocs).
   const freshener = createCloneFreshener({ exec: execFileAsync })
@@ -1220,6 +1241,69 @@ function registerMrReviewHandlers() {
   })
 }
 
+// `marvin show` (G-Eskayo/marvin#715): a session asks for one item; it opens in that project's own window (show_window.js),
+// reached through the local refresh server's POST /show. lib/marvin_show.py is the CLI.
+function registerShowHandlers() {
+  const projects = () => readCatalog({ deviceId: deviceId() })?.projects || []
+  const showWindows = createShowWindows({
+    BrowserWindow,
+    session,
+    preload: preloadPath(),
+    loadPage: loadAppPage,
+    roots: () => allowedRoots({ projects: projects() }),
+    context: () => ({
+      projects: projects(),
+      outboxRoot: outboxRoot(),
+      view: (() => { try { return showDeliverables?.view() } catch { return null } })(),
+      matchOutboxName: (name) => { try { return showDeliverables?.matchTop(name) } catch { return null } }
+    }),
+    source: createMockupSource({ exec: execFileAsync, resolveClone: (name) => resolveLocalClone(name) }),
+    prHead: async (repo, number) => {
+      const pr = JSON.parse(await ghOut(['pr', 'view', String(number), '--repo', repo, '--json', 'headRefOid,headRefName']))
+      return pr?.headRefOid ? { sha: pr.headRefOid, ref: pr.headRefName } : null
+    },
+    readFileForView,
+    fileFromBuffer,
+    focusApp: () => app.focus({ steal: true }),
+    devOrigin: process.env['ELECTRON_RENDERER_URL'] || null,
+    // Owner's answers on PR #1029: a web address renders in the window, and a new window opens where the last one
+    // was moved to.
+    WebContentsView,
+    bounds: createBoundsStore(join(app.getPath('userData'), 'show-window-bounds.json')),
+    screenAreas: () => screen.getAllDisplays().map((d) => d.workArea)
+  })
+  ipcMain.handle('show:current', (event) => showWindows.current(event.sender))
+  ipcMain.handle('show:read', (event) => showWindows.read(event.sender))
+  ipcMain.handle('show:image', (event, src) => showWindows.image(event.sender, src))
+  ipcMain.handle('show:webBounds', (event, rect) => showWindows.setWebBounds(event.sender, rect))
+  ipcMain.handle('show:openLink', (_event, url) => openLink(String(url || ''), { openExternal: shell.openExternal }))
+  // "Open in Docs": the main window comes forward on the Docs tab at this item (an outbox file as its deliverable, a
+  // clone file as its doc, anything else at its project).
+  ipcMain.handle('show:openInDocs', (event) => {
+    const item = showWindows.itemOf(event.sender)
+    if (!item) return { ok: false }
+    const target = { projectId: item.project.id }
+    const local = item.read?.local
+    const ob = outboxRoot()
+    if (local && local.startsWith(ob + '/')) target.outboxPath = local.slice(ob.length + 1)
+    else if (local) {
+      const p = projects().find((x) => x.id === item.project.id)
+      const clone = (p?.localPaths || []).filter((lp) => local.startsWith(lp + '/')).sort((a, b) => b.length - a.length)[0]
+      if (clone) target.path = local.slice(clone.length + 1)
+    } else if (item.pr) target.path = item.path
+    if (!mainWindow || mainWindow.isDestroyed()) createWindow()
+    const win = mainWindow
+    if (win.isMinimized()) win.restore()
+    win.show()
+    win.focus()
+    const send = () => { if (!win.isDestroyed()) win.webContents.send('show:openInDocs', target) }
+    if (win.webContents.isLoading()) win.webContents.once('did-finish-load', send)
+    else send()
+    return { ok: true }
+  })
+  return showWindows
+}
+
 // PR recordings (screen recordings in PR descriptions) are cached by the main process and streamed to the PR detail's
 // <video> players from here, with byte ranges so they can seek. Only ids of files already in the cache are served.
 const prMediaDir = () => join(app.getPath('userData'), 'pr-image-cache')
@@ -1244,6 +1328,7 @@ app.whenReady().then(() => {
   registerInstanceHandlers()
   registerDocsHandlers()
   registerActivityHandlers()
+  const showWindows = registerShowHandlers()
   createWindow()
 
   // Local state: watch where it's stored, so every writer (Python, Node, any chat) is covered.
@@ -1310,10 +1395,11 @@ app.whenReady().then(() => {
         if (m && typeof m.url === 'string' && m.url.startsWith('https://github.com/')) pushMergeOp(m.url, receiveMergeMessage(mergeOps, m))
       } else triggerHub.emit(topic, payload.source || 'ping')
     }
-  }, { port: DASHBOARD_REFRESH_PORT, host: '127.0.0.1' })
+  }, { port: DASHBOARD_REFRESH_PORT, host: '127.0.0.1', onShow: (body) => showWindows.show(body) })
 
   app.on('activate', () => {
-    if (BrowserWindow.getAllWindows().length === 0) createWindow()
+    // The Dock icon brings the dashboard back even while `marvin show` windows are open (#715).
+    if (!mainWindow || mainWindow.isDestroyed()) createWindow()
   })
 
   // marvin#762: saved approvals are retried on events, never on a timer: the dashboard starting, this Mac waking, and

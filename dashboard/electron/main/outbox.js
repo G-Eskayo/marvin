@@ -66,20 +66,33 @@ function statFile(relPath) {
 
 export function readOutboxFile(relPath) {
   const { fullPath, size } = statFile(relPath)
-  const name = path.basename(relPath)
-  const { kind, label } = fileKind(name)
-  const base = { name, path: relPath, label, size }
-  const card = (reason) => ({ ...base, kind: 'other', reason })
+  return readFileForView(fullPath, relPath, size)
+}
 
+// Any file the dashboard shows, read the same way the Docs tab reads an outbox file (marvin show, #715, uses it for
+// files in a project's clone). The caller has already decided the path may be shown.
+export function readFileForView(fullPath, displayPath, size) {
+  const name = path.basename(displayPath)
+  const { kind } = fileKind(name)
   const cap = kind === 'image' ? MAX_IMAGE_BYTES : kind === 'pdf' ? MAX_PDF_BYTES : MAX_TEXT_BYTES
-  if (size > cap) return card(`Too large to show here (${mb(size)}; the limit is ${mb(cap)}).`)
-
+  if (size > cap) return { name, path: displayPath, label: fileKind(name).label, size, kind: 'other', reason: `Too large to show here (${mb(size)}; the limit is ${mb(cap)}).` }
   let buf
   try {
     buf = readFileSync(fullPath)
   } catch (err) {
-    return card(`This file can't be read (${err.code === 'EACCES' || err.code === 'EPERM' ? 'permission denied' : err.code || err.message}).`)
+    return { name, path: displayPath, label: fileKind(name).label, size, kind: 'other', reason: `This file can't be read (${err.code === 'EACCES' || err.code === 'EPERM' ? 'permission denied' : err.code === 'ENOENT' ? 'it is gone' : err.code || err.message}).` }
   }
+  return fileFromBuffer({ name, path: displayPath, size: buf.length }, buf)
+}
+
+// Bytes already in hand (a local file, or a file read from a PR's commit) as the object FileView draws.
+export function fileFromBuffer({ name, path: displayPath, size }, buf) {
+  const { kind, label } = fileKind(name)
+  const base = { name, path: displayPath, label, size }
+  const card = (reason) => ({ ...base, kind: 'other', reason })
+
+  const cap = kind === 'image' ? MAX_IMAGE_BYTES : kind === 'pdf' ? MAX_PDF_BYTES : MAX_TEXT_BYTES
+  if (buf.length > cap) return card(`Too large to show here (${mb(buf.length)}; the limit is ${mb(cap)}).`)
 
   if (kind === 'image') {
     const mime = imageMime(buf, name)
