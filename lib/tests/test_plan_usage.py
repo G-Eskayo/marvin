@@ -250,6 +250,22 @@ def test_latest_reading_wins_across_machines():
     assert pu.summarize(rs, now=now)["week"]["used_percentage"] == 55.0
 
 
+def test_an_idle_session_re_sending_an_old_weekly_number_never_lowers_the_week():
+    # Seen live 2026-11-03: an idle session on the Mini re-sent 64% after the MacBook had read 73% in the same week.
+    # Within one week the meter only rises, so the highest reading for that reset is the week's number.
+    now = WEEK_START + WEEK // 2
+    rs = [row(now - 900, "mac-a", five=32, r5=now + H, seven=73), row(now - 60, "mac-b", seven=64)]
+    w = pu.summarize(rs, now=now)["week"]
+    assert w["used_percentage"] == 73.0
+    assert w["reading_age_min"] == 15  # the age of the reading used, not of the idle one
+
+
+def test_a_new_week_starts_from_its_own_readings_not_last_weeks_peak():
+    now = R7 + H  # an hour into the next week
+    rs = [row(R7 - H, seven=97), row(now - 60, seven=2, r7=R7 + WEEK)]
+    assert pu.summarize(rs, now=now)["week"]["used_percentage"] == 2.0
+
+
 def test_an_old_reading_is_flagged_stale_not_hidden():
     now = WEEK_START + WEEK // 2
     s = pu.summarize([row(now - 8 * H, five=10, r5=now - 3 * H, seven=40)], now=now)

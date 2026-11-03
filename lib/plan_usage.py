@@ -250,10 +250,14 @@ def _clean(rows) -> list[tuple[float, str, dict | None, dict | None, list]]:
 
 
 def _week(clean, now: float) -> dict:
+    """The current week's meter. Within one week it only rises, so the highest reading for the latest reset wins:
+    an idle session re-sends the number it last saw, which may be older than another Mac's (seen 2026-11-03). O(n)."""
     latest = next((c for c in reversed(clean) if c[3] is not None), None)
     if latest is None or latest[3]["resets_at"] <= now:
         return {"status": "not_enough_data"}
-    t, _, _, seven, hits = latest
+    resets_now = latest[3]["resets_at"]
+    same_week = [c for c in clean if c[3] is not None and c[3]["resets_at"] == resets_now]
+    t, _, _, seven, hits = max(same_week, key=lambda c: (c[3]["used_percentage"], c[0]))
     pct, resets = seven["used_percentage"], seven["resets_at"]
     start = resets - WEEK
     elapsed_s = min(max(now - start, 0), WEEK)
