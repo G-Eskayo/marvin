@@ -430,7 +430,7 @@ const PARITY_STYLE = {
 const COLUMN_NAME = { backlog: 'Backlog', ready: 'Ready', blocked: 'Blocked', progress: 'In progress', review: 'In review', done: 'Done' }
 
 // The PR's ticket and where it sits on the project's board: the one-to-one between this list and the boards.
-function TicketLine({ row, onOpenTicket }) {
+export function TicketLine({ row, onOpenTicket }) {
   if (!row) return null
   const t = row.ticket
   return (
@@ -444,10 +444,10 @@ function TicketLine({ row, onOpenTicket }) {
           className="truncate text-left text-neutral-400 hover:text-white"
           title="Open this ticket on its board"
         >
-          closes <span className="font-mono text-neutral-500">#{t.number}</span> {t.title} →
+          {t.relation === 'part of' ? 'part of' : 'closes'} <span className="font-mono text-neutral-500">#{t.number}</span> {t.title} →
         </button>
       ) : (
-        <span className="text-neutral-500">closes no ticket</span>
+        <span className="text-neutral-500">names no ticket</span>
       )}
       <span className={`rounded px-1.5 py-0.5 text-[10px] ${PARITY_STYLE[row.status]}`}>
         {row.status === 'ok' && 'board: In review ✓'}

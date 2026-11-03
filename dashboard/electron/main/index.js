@@ -116,7 +116,7 @@ function checkMergedElsewhere(repo, only = null) {
     .then((urls) => urls.forEach((u) => pushMergeOp(u, mergeOps.get(u))))
     .catch(() => {})
 }
-import { readRegistry, loadBoard, fetchBoardData, fetchCompletedData, withProjectStatus, defaultStagesFor, defaultLiveNumbers, getEvidence, clearCrossProjectCache, REGISTRY_PATH } from './boards.js'
+import { readRegistry, loadBoard, prsOfProjects, fetchBoardData, fetchCompletedData, withProjectStatus, defaultStagesFor, defaultLiveNumbers, getEvidence, clearCrossProjectCache, REGISTRY_PATH } from './boards.js'
 import { createRelationsService } from './relations_service.js'
 import { machineNames } from './machine_names.js'
 import { summarizeBoard, buildCompleted } from './board.js'
@@ -547,16 +547,27 @@ function registerActivityHandlers() {
   const assertRegistered = (repo) => {
     if (!readRegistry().some((b) => b.repo === repo)) throw new Error(`No board registered for ${repo}`)
   }
+  // A ticket's PR can be in any project's repo (marvin#1004): every board also gets the other projects' open PRs,
+  // from the same cached board data the relation index reads, so this costs no extra GitHub calls once warm.
+  const boardInputs = async (repo) => {
+    const registryRepos = readRegistry()
+    const [data, evidence, otherPrs] = await Promise.all([
+      getBoardData(repo, ghJson),
+      getEvidence(repo),
+      prsOfProjects(registryRepos.map((b) => b.repo), (r) => getBoardData(r, ghJson), repo)
+    ])
+    return { gh: ghJson, registryRepos, data, evidence, otherPrs }
+  }
   ipcMain.handle('boards:list', () => withProjectStatus(readRegistry(), readCatalog({ deviceId: deviceId() })))
   ipcMain.handle('boards:load', async (_event, repo, source = 'poll') => {
     assertRegistered(repo)
-    const board = await loadBoard(repo, { gh: ghJson, registryRepos: readRegistry(), data: await getBoardData(repo, ghJson), evidence: await getEvidence(repo) })
+    const board = await loadBoard(repo, await boardInputs(repo))
     reconciler.observe('activity', repo, boardDigest(board), source)
     return board
   })
   ipcMain.handle('boards:summary', async (_event, repo) => {
     assertRegistered(repo)
-    return summarizeBoard(await loadBoard(repo, { gh: ghJson, registryRepos: readRegistry(), data: await getBoardData(repo, ghJson), evidence: await getEvidence(repo) }))
+    return summarizeBoard(await loadBoard(repo, await boardInputs(repo)))
   })
   // Completed work (all closed tickets + the PRs that closed them): from memory until that repo changes.
   ipcMain.handle('boards:completed', async (_event, repo) => {

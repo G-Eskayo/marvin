@@ -5,11 +5,7 @@
 
 // ── extraction ──────────────────────────────────────────────────────────────
 
-const stripCode = (text) =>
-  String(text || '')
-    .replace(/```[\s\S]*?```/g, ' ')
-    .replace(/~~~[\s\S]*?~~~/g, ' ')
-    .replace(/`[^`\n]*`/g, ' ')
+import { stripCode, prTicketRefs } from './ticket_refs.js'
 
 export function extractRefs(text) {
   const clean = stripCode(text)
@@ -37,12 +33,6 @@ function blockedByNumbers(body) {
   for (const m of text.matchAll(/\bBlocked by\s+(?:[\w.-]+\/[\w.-]+)?#(\d+)/gi)) out.add(Number(m[1]))
   const sec = text.match(/##\s*Blocked by\s*\n([\s\S]*?)(?=\n##\s|$)/i)
   if (sec) for (const m of sec[1].matchAll(/#(\d+)/g)) out.add(Number(m[1]))
-  return out
-}
-
-function closesNumbers(body) {
-  const out = new Set()
-  for (const m of stripCode(body).matchAll(/\b(?:Closes|Fixes|Resolves)\s+(?:([\w.-]+\/[\w.-]+))?#(\d+)/gi)) out.add(`${m[1] || ''}#${m[2]}`)
   return out
 }
 
@@ -98,10 +88,9 @@ export function buildRelationIndex({ tickets = [], prs = [], docs = [], projects
   for (const p of prs) {
     const me = P(tk(p.repo, p.number))
     const project = projectByRepo[p.repo]
-    for (const c of closesNumbers(p.body)) {
-      const [repo, n] = c.split('#')
-      add(me, T(tk(repo || p.repo, n)), 'closes')
-    }
+    // "Closes #n" finishes the ticket, "Part of #n" is a step towards it (ticket_refs.js, marvin#1004); either
+    // may name a ticket in another repo.
+    for (const r of prTicketRefs(p.body, p.repo)) add(me, T(tk(r.repo, r.number)), r.relation)
     const refs = extractRefs(`${p.title}\n${p.body}`)
     for (const r of refs.tickets) add(me, T(tk(r.repo || p.repo, r.number)), 'mentions')
     if (project) {
@@ -136,8 +125,8 @@ export function buildRelationIndex({ tickets = [], prs = [], docs = [], projects
     return { project: n?.project || key.split('/')[0], path: n?.path || key.slice(key.indexOf('/') + 1), label: n?.label || key }
   }
   const INFO = { t: infoT, p: infoP, d: infoD }
-  const OUT_WORD = { 'blocked-by': 'blocked by', mentions: 'mentions', closes: 'closes', changes: 'changes' }
-  const IN_WORD = { 'blocked-by': 'blocks', mentions: 'mentioned in', closes: 'closed by', changes: 'changed by' }
+  const OUT_WORD = { 'blocked-by': 'blocked by', mentions: 'mentions', closes: 'closes', 'part-of': 'part of', changes: 'changes' }
+  const IN_WORD = { 'blocked-by': 'blocks', mentions: 'mentioned in', closes: 'closed by', 'part-of': 'worked on in', changes: 'changed by' }
 
   function around(type, key) {
     const out = { docs: [], tickets: [], prs: [] }

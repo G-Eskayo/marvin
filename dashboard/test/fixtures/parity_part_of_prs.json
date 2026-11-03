@@ -1,0 +1,218 @@
+{
+ "about": "Recorded 2026-11-02 from GitHub for marvin#1004: the seven open PRs the parity check flagged (after their bodies were edited to \"Part of #N\"), and the tickets they name. Only the fields the board reads. Bodies are cut to the lines that name tickets (and Blocked by lines); marvin-instance is private, so its titles are replaced.",
+ "repos": {
+  "G-Eskayo/clarity-captions": {
+   "issues": [
+    {
+     "body": "",
+     "closedAt": null,
+     "createdAt": "2026-10-30T08:25:20Z",
+     "labels": [
+      {
+       "name": "needs-info"
+      },
+      {
+       "name": "claimed:macbook-pro"
+      },
+      {
+       "name": "priority:p1"
+      }
+     ],
+     "number": 235,
+     "state": "OPEN",
+     "stateReason": "",
+     "title": "[W] Website for 1.1: features not devices (keep the pills), a device list, iPad and Mac buttons, prices explained, Versions 1.1 and 1.2",
+     "updatedAt": "2026-11-02T16:35:49Z",
+     "url": "https://github.com/G-Eskayo/clarity-captions/issues/235"
+    },
+    {
+     "body": "",
+     "closedAt": null,
+     "createdAt": "2026-10-30T16:48:56Z",
+     "labels": [
+      {
+       "name": "ready-for-agent"
+      },
+      {
+       "name": "priority:p3"
+      },
+      {
+       "name": "feature:look"
+      },
+      {
+       "name": "feature:translation"
+      }
+     ],
+     "number": 246,
+     "state": "OPEN",
+     "stateReason": "",
+     "title": "[V] A cleaner translated caption: 2\u20133 mock-up options (translation, original, marks)",
+     "updatedAt": "2026-10-30T18:59:24Z",
+     "url": "https://github.com/G-Eskayo/clarity-captions/issues/246"
+    },
+    {
+     "body": "- #209: the Mac doesn't build on main until the language files are in the Mac target\n- #176: the Mac's own App Store record and its $1.99 purchase",
+     "closedAt": null,
+     "createdAt": "2026-10-29T19:29:41Z",
+     "labels": [
+      {
+       "name": "needs-info"
+      },
+      {
+       "name": "priority:p0"
+      },
+      {
+       "name": "claimed:mac-mini"
+      },
+      {
+       "name": "feature:translation"
+      },
+      {
+       "name": "feature:mac"
+      }
+     ],
+     "number": 213,
+     "state": "OPEN",
+     "stateReason": "",
+     "title": "Mac: Live Translation on calls (FaceTime, phone, Zoom, Teams)",
+     "updatedAt": "2026-10-30T07:29:17Z",
+     "url": "https://github.com/G-Eskayo/clarity-captions/issues/213"
+    }
+   ],
+   "prs": [
+    {
+     "body": "Part of #235\n\n(rest of the body left out of the fixture)",
+     "isDraft": false,
+     "number": 258,
+     "state": "OPEN",
+     "title": "Website for 1.1 (mock-up): feature pills, device list, per-feature buttons, Versions 1.1 and 1.2 (#235)",
+     "url": "https://github.com/G-Eskayo/clarity-captions/pull/258"
+    },
+    {
+     "body": "Part of #246\n\n(rest of the body left out of the fixture)",
+     "isDraft": true,
+     "number": 255,
+     "state": "OPEN",
+     "title": "Mock-up #246: a cleaner translated caption, three options on iPhone, iPad face to face and Mac (Decisions)",
+     "url": "https://github.com/G-Eskayo/clarity-captions/pull/255"
+    },
+    {
+     "body": "Part of #213\n\n(rest of the body left out of the fixture)",
+     "isDraft": true,
+     "number": 231,
+     "state": "OPEN",
+     "title": "Mac Live Translation on calls and in the room: mock-ups and the core rules, for look approval (#213)",
+     "url": "https://github.com/G-Eskayo/clarity-captions/pull/231"
+    }
+   ]
+  },
+  "G-Eskayo/marvin-instance": {
+   "issues": [],
+   "prs": [
+    {
+     "body": "Part of G-Eskayo/marvin#957\n\n(rest of the body left out of the fixture)",
+     "isDraft": false,
+     "number": 11,
+     "state": "OPEN",
+     "title": "marvin-instance PR 11",
+     "url": "https://github.com/G-Eskayo/marvin-instance/pull/11"
+    },
+    {
+     "body": "Merge this after G-Eskayo/marvin#951 (otherwise it has no effect). Even with it merged, a ticket also needs the `linux-ok` label and must not mention anything macOS. Part of G-Eskayo/marvin#949.\n\n(rest of the body left out of the fixture)",
+     "isDraft": false,
+     "number": 9,
+     "state": "OPEN",
+     "title": "marvin-instance PR 9",
+     "url": "https://github.com/G-Eskayo/marvin-instance/pull/9"
+    },
+    {
+     "body": "Part of G-Eskayo/marvin#623\n\n(rest of the body left out of the fixture)",
+     "isDraft": false,
+     "number": 5,
+     "state": "OPEN",
+     "title": "marvin-instance PR 5",
+     "url": "https://github.com/G-Eskayo/marvin-instance/pull/5"
+    },
+    {
+     "body": "Closes G-Eskayo/marvin#623\n\n(rest of the body left out of the fixture)",
+     "isDraft": false,
+     "number": 6,
+     "state": "OPEN",
+     "title": "marvin-instance PR 6",
+     "url": "https://github.com/G-Eskayo/marvin-instance/pull/6"
+    }
+   ]
+  },
+  "G-Eskayo/marvin": {
+   "issues": [
+    {
+     "body": "",
+     "closedAt": null,
+     "createdAt": "2026-10-30T18:18:57Z",
+     "labels": [
+      {
+       "name": "bug"
+      },
+      {
+       "name": "needs-reengagement"
+      },
+      {
+       "name": "project:marvin"
+      },
+      {
+       "name": "priority:p1"
+      }
+     ],
+     "number": 957,
+     "state": "OPEN",
+     "stateReason": "",
+     "title": "Merge gate: a test the PR doesn't touch that fails once sends a good PR back, silently (#892)",
+     "updatedAt": "2026-11-02T17:09:53Z",
+     "url": "https://github.com/G-Eskayo/marvin/issues/957"
+    },
+    {
+     "body": "",
+     "closedAt": null,
+     "createdAt": "2026-10-30T17:56:11Z",
+     "labels": [
+      {
+       "name": "project:marvin"
+      },
+      {
+       "name": "priority:p3"
+      }
+     ],
+     "number": 949,
+     "state": "OPEN",
+     "stateReason": "",
+     "title": "Box ticket builds: Linux-safe tickets built in disposable VMs on mac-mini-2012",
+     "updatedAt": "2026-10-30T18:18:31Z",
+     "url": "https://github.com/G-Eskayo/marvin/issues/949"
+    },
+    {
+     "body": "",
+     "closedAt": null,
+     "createdAt": "2026-10-23T15:32:51Z",
+     "labels": [
+      {
+       "name": "needs-info"
+      },
+      {
+       "name": "project:marvin"
+      },
+      {
+       "name": "priority:p2"
+      }
+     ],
+     "number": 623,
+     "state": "OPEN",
+     "stateReason": "",
+     "title": "Calibrate the Linux box (mac-mini-2012) against both Macs before giving it real jobs",
+     "updatedAt": "2026-10-30T15:58:11Z",
+     "url": "https://github.com/G-Eskayo/marvin/issues/623"
+    }
+   ],
+   "prs": []
+  }
+ }
+}
