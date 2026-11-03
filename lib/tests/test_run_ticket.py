@@ -1123,6 +1123,69 @@ def test_the_park_comment_is_marked_as_a_hand_off(monkeypatch):
         assert rt.ticket_policy.HANDOFF_MARKER in body
 
 
+# ── build / settle split (marvin #951: a box build runs build() in its VM, the Mac runs settle()) ──────────────────
+
+def test_settle_releases_the_named_claim_not_this_machines(monkeypatch):
+    released = []
+    monkeypatch.setattr(rt, "_release", lambda n, label, *a, **kw: released.append(label))
+    monkeypatch.setattr(rt, "_comment_failure", lambda *a, **k: None)
+    monkeypatch.setattr(rt, "_trigger_redispatch", lambda: None)
+    monkeypatch.setattr(rt, "_consecutive_failure_streak", lambda *a, **k: 0)
+    monkeypatch.setattr(rt.failure_breaker, "record_failure", lambda *a, **k: None)
+    monkeypatch.setattr(rt.machine_profile, "registry_id", lambda: "mac-mini-1")
+    rt.settle(20, {"raised": False, "pr_url": None, "reason": "nope"}, [], run_id="r1", claim_label="mac-mini-2012")
+    assert released == ["mac-mini-2012"]
+
+
+def test_settle_parks_with_the_named_claim(monkeypatch):
+    edits = []
+    monkeypatch.setattr(rt.subprocess, "run", lambda cmd, **k: edits.append(cmd))
+    monkeypatch.setattr(rt, "_trigger_redispatch", lambda: None)
+    monkeypatch.setattr(rt, "_consecutive_failure_streak", lambda *a, **k: 2)
+    monkeypatch.setattr(rt.failure_breaker, "record_failure", lambda *a, **k: None)
+    monkeypatch.setattr(rt.machine_profile, "registry_id", lambda: "mac-mini-1")
+    rt.settle(20, {"raised": False, "pr_url": None, "reason": "nope"}, ["x"], claim_label="mac-mini-2012")
+    assert any("claimed:mac-mini-2012" in c for c in edits) and not any("claimed:mac-mini" in c for c in edits)
+
+
+def test_build_only_prints_one_parseable_line_and_does_no_bookkeeping(monkeypatch, capsys):
+    import json
+    did = []
+    monkeypatch.setattr(rt, "build", lambda n, repo=rt.REPO: ({"raised": False, "pr_url": None, "reason": "r" * 5000,
+                                                               "timed_out": True, "worktree": object()}, ["f"] * 80))
+    for name in ("settle", "_release_claim", "_comment_failure", "_trigger_redispatch"):
+        monkeypatch.setattr(rt, name, lambda *a, _n=name, **k: did.append(_n))
+    monkeypatch.setattr(rt.sys, "argv", ["run_ticket.py", "--build-only", "G-Eskayo/marvin#20"])
+    with pytest.raises(SystemExit) as e:
+        rt.main()
+    assert e.value.code == 0 and did == []
+    lines = [l for l in capsys.readouterr().out.splitlines() if l.startswith(rt.BUILD_OUTCOME_PREFIX)]
+    data = json.loads(lines[-1][len(rt.BUILD_OUTCOME_PREFIX):])
+    assert data["timed_out"] and len(data["reason"]) <= 2000 and data["reason"].endswith("r" * 50) and len(data["findings"]) == 50 and "worktree" not in data
+
+
+@pytest.mark.parametrize("argv", [["--build-only"], ["--build-only", "1", "2"], ["--build-only", "nope"]])
+def test_build_only_with_bad_arguments_exits_1(monkeypatch, argv):
+    monkeypatch.setattr(rt.sys, "argv", ["run_ticket.py", *argv])
+    with pytest.raises(SystemExit) as e:
+        rt.main()
+    assert e.value.code == 1
+
+
+def test_run_is_still_build_then_settle(monkeypatch):
+    seen = []
+    monkeypatch.setattr(rt, "build", lambda n, repo=rt.REPO: ({"raised": True, "pr_url": "u", "reason": None}, []))
+    monkeypatch.setattr(rt, "settle", lambda n, o, f, **k: seen.append((n, o, k)) or o)
+    monkeypatch.setenv("MARVIN_RUN_ID", "rid")
+    rt.run(20)
+    assert seen == [(20, {"raised": True, "pr_url": "u", "reason": None}, {"repo": rt.REPO, "run_id": "rid"})]
+
+
+def test_a_long_reason_keeps_its_end_where_the_cause_is():
+    line = rt.build_only_line({"raised": False, "reason": "Command [huge prompt " + "x" * 9000 + "] timed out after 900 seconds"}, [])
+    assert line.rstrip().endswith('"findings": []}') and "timed out after 900 seconds" in line and "Command [huge" in line
+
+
 # ── #881: every outcome that isn't a success feeds the cross-ticket breaker ─────────────────────────────────────────
 # 2026-10-29/30: 20 builds on 11 tickets timed out at 1200 s in a row and nothing stopped them, because the timed_out
 # branch skipped failure_breaker.record_failure. Classifying an outcome decides whose strike it is and how it is retried,
