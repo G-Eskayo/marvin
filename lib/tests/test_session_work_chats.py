@@ -259,3 +259,119 @@ def test_the_start_hook_is_wired_for_interactive_sessions_only():
 def test_helper_tabs_mark_their_command_so_it_is_never_a_chat():
     import helper_tab
     assert '"MARVIN_HELPER_TAB": "1"' in Path(helper_tab.__file__).read_text()
+
+
+# ── state (marvin#1061) ─────────────────────────────────────────────────────────────────────
+
+def _registered(store):
+    sw.handle("start", {"session_id": "s1", "cwd": "/w"})
+    return lambda: next(iter(json.loads(store.read_text())["chats"].values()))
+
+
+def test_a_new_chat_is_your_turn(store):
+    rec = _registered(store)
+    assert rec()["state"] == "your-turn"
+
+
+def test_a_prompt_means_working_and_stop_means_your_turn(store):
+    rec = _registered(store)
+    sw.handle("prompt", {"session_id": "s1", "prompt": "go"})
+    assert rec()["state"] == "working"
+    sw.handle("stop", {"session_id": "s1"})
+    assert rec()["state"] == "your-turn"
+
+
+def test_a_permission_prompt_means_waiting_on_you_until_the_tool_runs(store):
+    rec = _registered(store)
+    sw.handle("prompt", {"session_id": "s1", "prompt": "go"})
+    sw.handle("notify", {"session_id": "s1", "message": "Claude needs your permission to use Bash"})
+    assert rec()["state"] == "waiting" and rec()["waiting_for"] == "permission"
+    sw.handle("tool", {"session_id": "s1", "tool_name": "Bash"})
+    assert rec()["state"] == "working" and rec().get("waiting_for") is None
+
+
+def test_a_denied_permission_ends_in_your_turn_when_claude_stops(store):
+    rec = _registered(store)
+    sw.handle("notify", {"session_id": "s1", "message": "Claude needs your permission to use Edit"})
+    sw.handle("stop", {"session_id": "s1"})
+    assert rec()["state"] == "your-turn"
+
+
+def test_the_idle_reminder_does_not_escalate_anything(store):
+    rec = _registered(store)
+    sw.handle("stop", {"session_id": "s1"})
+    sw.handle("notify", {"session_id": "s1", "message": "Claude is waiting for your input"})
+    assert rec()["state"] == "your-turn"
+
+
+def test_a_question_to_you_is_waiting_on_you(store):
+    rec = _registered(store)
+    sw.handle("prompt", {"session_id": "s1", "prompt": "go"})
+    sw.handle("ask", {"session_id": "s1", "tool_name": "AskUserQuestion"})
+    assert rec()["state"] == "waiting" and rec()["waiting_for"] == "question"
+    sw.handle("tool", {"session_id": "s1", "tool_name": "AskUserQuestion"})
+    assert rec()["state"] == "working"
+
+
+def test_a_tool_finishing_while_working_writes_nothing(store):
+    _registered(store)
+    sw.handle("prompt", {"session_id": "s1", "prompt": "go"})
+    before = store.stat().st_mtime_ns
+    sw.handle("tool", {"session_id": "s1", "tool_name": "Read"})
+    assert store.stat().st_mtime_ns == before        # the cheap path: no lock, no write on every tool call
+
+
+def test_clear_does_not_mark_the_tab_done(store):
+    rec = _registered(store)
+    sw.handle("end", {"session_id": "s1", "reason": "clear"})
+    assert rec()["state"] != "done"
+
+
+def test_a_real_end_marks_done(store):
+    rec = _registered(store)
+    sw.handle("end", {"session_id": "s1", "reason": "prompt_input_exit"})
+    assert rec()["state"] == "done"
+
+
+def test_events_from_a_pane_with_no_chat_record_create_nothing(store, monkeypatch):
+    monkeypatch.setenv("WEZTERM_PANE", "99")
+    for kind in ("stop", "notify", "ask", "tool", "end"):
+        sw.handle(kind, {"session_id": "s9", "message": "Claude needs your permission to use Bash"})
+    assert "chats" not in json.loads(store.read_text() if store.exists() else "{}") or \
+        json.loads(store.read_text())["chats"] == {}
+
+
+def test_events_outside_wezterm_are_ignored(store, monkeypatch):
+    _registered(store)
+    monkeypatch.delenv("WEZTERM_PANE")
+    assert sw.handle("stop", {"session_id": "s1"}) is None
+
+
+def test_state_events_never_print_and_never_escape(store, monkeypatch):
+    _registered(store)
+    monkeypatch.setattr(sw, "_Locked", lambda: 1 / 0)
+    for kind in ("stop", "notify", "ask", "tool", "end"):
+        assert sw.handle(kind, {"session_id": "s1", "message": "x"}) is None
+
+
+def test_out_of_order_events_settle_on_the_last_one(store):
+    rec = _registered(store)
+    for kind in ("stop", "prompt", "stop", "stop", "prompt"):
+        sw.handle(kind, {"session_id": "s1", "prompt": "x"})
+    assert rec()["state"] == "working"
+
+
+def test_the_live_list_carries_the_state(store, monkeypatch):
+    _registered(store)
+    sw.handle("prompt", {"session_id": "s1", "prompt": "go"})
+    with sw._Locked() as st:
+        out = sw.live_chats(st, panes={SOCK: _panes((16, "ttys004"))}, alive=lambda *a: True)
+    assert out[0]["state"] == "working"
+
+
+def test_each_state_event_is_wired_once_for_interactive_sessions():
+    import marvin_hooks
+    wired = {(h.event, h.command[-1], h.matcher) for h in marvin_hooks.HOOKS if "session_work.py" in " ".join(h.command)}
+    for need in [("Stop", "stop", None), ("Notification", "notify", None), ("PreToolUse", "ask", "AskUserQuestion"),
+                 ("PostToolUse", "tool", None), ("SessionEnd", "end", None)]:
+        assert need in wired
