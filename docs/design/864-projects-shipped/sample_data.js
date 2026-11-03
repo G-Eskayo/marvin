@@ -135,7 +135,7 @@
   // A few more days, so the bars and the pages have something to show.
   const fill = [[2, 6], [3, 4], [5, 3], [6, 5], [9, 2], [10, 4], [11, 3], [12, 6], [13, 1]]
   for (const [day, n] of fill) {
-    for (let i = 0; i < n; i++) history.push({ kind: 'merged', number: 900 - day * 10 - i, project: i % 3 ? 'marvin' : 'clarity-captions', title: i % 3 ? 'Health check reads its own reason, fix and age' : 'Captions keep their place when the app comes back', by: i % 2 ? 'auto' : 'you', ago: day * 24 * 60 + 120 + i * 40, live: i % 3 ? { pulled: ['MacBook', 'Mini'] } : { state: 'live', build: '1.0.9 (8)' } })
+    for (let i = 0; i < n; i++) history.push({ kind: 'merged', number: 900 - day * 10 - i, project: i % 3 ? 'marvin' : 'clarity-captions', title: i % 3 ? 'Health check reads its own reason, fix and age' : 'Captions keep their place when the app comes back', by: i % 2 ? 'auto' : 'you', ago: day * 24 * 60 + 120 + i * 40, live: i % 3 ? { pulled: ['MacBook', 'Mini'] } : { state: 'live', build: '1.1.0 (11)' } })
   }
   // The merge the "A merge arrives" button plays in (it was the first "Approve" in Projects).
   const arriving = { kind: 'merged', number: 1049, project: 'marvin', title: 'Main red fix: checks of outside state are named in Health, not main red', by: 'you', ago: 0, live: { pulled: [] }, shipping: true }
