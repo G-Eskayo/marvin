@@ -24,7 +24,9 @@ import real_home_guard  # noqa: E402  (pure: reads no HOME-derived constants)
 import pytest  # noqa: E402
 
 # Tests declare the tools they need (@pytest.mark.requires_tool("rg")); a missing one is infra, not a red test (#826).
-pytest_plugins = ["tool_requirements"]
+# Tests that check state outside the code say so (@pytest.mark.outside_state("..."), marvin#1047): main-health names
+# their failures instead of calling main red.
+pytest_plugins = ["tool_requirements", "outside_state"]
 
 REAL_HOME = real_home_guard.real_home()
 

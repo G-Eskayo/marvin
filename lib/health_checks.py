@@ -564,6 +564,13 @@ def check_main_health(path: Path | None = None, now: datetime | None = None) -> 
         return _result(cid, label, "red", f"main @ {d.get('sha', '?')} is failing: {names}. Merges are refused until it is fixed", value=len(d.get("failed", [])))
     if when is None or (now - when).total_seconds() > MAIN_HEALTH_STALE_HOURS * 3600:
         return _result(cid, label, "yellow", f"last check ({d.get('sha', '?')}) is more than a day old")
+    outside = d.get("outside") or []
+    if outside:     # marvin#1047: main's code passes; state outside it (another repo, a local service) has moved
+        from collections import Counter
+        by_what = Counter(o.get("what", "?") for o in outside)
+        named = "; ".join(f"{w} ({n})" for w, n in by_what.items())
+        return _result(cid, label, "yellow", f"main @ {d.get('sha', '?')}: its code passes, but {len(outside)} check(s) "
+                       f"of state outside it fail: {named}. Merges are not held for these", value=len(outside))
     return _result(cid, label, "green", f"main @ {d.get('sha', '?')}: {d.get('summary', 'passing')}")
 
 
