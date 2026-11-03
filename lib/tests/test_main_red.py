@@ -137,6 +137,20 @@ def test_the_main_red_ticket_is_dispatched_before_older_p0_bugs():
     assert min([older, red], key=tp._order_key)["number"] == 2
 
 
+
+def test_answers_to_build_go_right_after_main_red_ahead_of_p0s():
+    # Seen 2026-11-03: nine "Act on owner decisions" tickets sat behind 117 ready ones while the merge queue held their PRs.
+    p0 = _ticket(1, ["priority:p0", "bug", "ready-for-agent"], "2026-09-01T00:00:00Z")
+    answers = _ticket(2, ["ready-for-agent", "owner-decisions"], "2026-11-03T00:00:00Z")
+    red = _ticket(3, ["priority:p2", "ready-for-agent", mr.LABEL], "2026-11-03T01:00:00Z")
+    assert [t["number"] for t in sorted([p0, answers, red], key=tp._order_key)] == [3, 2, 1]
+
+
+def test_answer_tickets_keep_their_own_priority_order_among_themselves():
+    low = _ticket(1, ["priority:p3", "ready-for-agent", "owner-decisions"], "2026-09-01T00:00:00Z")
+    high = _ticket(2, ["priority:p1", "ready-for-agent", "owner-decisions"], "2026-11-03T00:00:00Z")
+    assert min([low, high], key=tp._order_key)["number"] == 2
+
 # ── CI wiring ───────────────────────────────────────────────────────────────
 
 def test_ci_reports_main_after_every_push_to_it_with_every_checks_result():
