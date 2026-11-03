@@ -84,6 +84,9 @@ HOOKS: list[Hook] = [
     Hook("UserPromptSubmit", (*_py("lib/session_work.py"), "hook", "prompt"), _ALL),
     Hook("PostToolUse", (*_py("lib/session_work.py"), "hook", "post"), _ALL, _EDITS),
     Hook("PreToolUse", (*_py("lib/session_work.py"), "hook", "pre"), _INTERACTIVE, _EDITS),
+    # A person's chat in a WezTerm tab records which tab it is (marvin#1060, PRD #1058), so the dashboard and the
+    # other slices can name, find and focus it. Silent, capped at 5 s, and it never fails a session.
+    Hook("SessionStart", (*_py("lib/session_work.py"), "hook", "start"), _INTERACTIVE, None, 5),
     # Helpers a chat starts with the Agent tool get a run log the Activity tab shows (#612). A person's chats only:
     # the pipeline's own subagents are already its run. Capped at 5 s here and 3 s inside the script.
     *(Hook(event, (*_py("lib/chat_helpers.py"), "hook", step), _INTERACTIVE, matcher, 5) for event, matcher, step in (
