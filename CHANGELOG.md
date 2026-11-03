@@ -1,5 +1,7 @@
 # Changelog
 
+- Main red on the Mini: portfolio dev-site drift (brand redesign) fails main-health; outside-state checks should be named, not block merges ([#1049](https://github.com/G-Eskayo/marvin/pull/1049))
+
 - Main red on the Mini: a marvin show test hard-codes the portfolio folder the catalog guard reserves ([#1048](https://github.com/G-Eskayo/marvin/pull/1048))
 
 - Merge gate: a test the PR doesn't touch that fails once sends a good PR back, silently (#892) ([#968](https://github.com/G-Eskayo/marvin/pull/968))
