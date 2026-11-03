@@ -8,6 +8,7 @@ import pytest
 import cleanup_sweep
 import marvin_launcher as ml
 import marvin_session as ms
+import wezterm_cli as wz
 
 AGENTS = Path(__file__).resolve().parents[2]
 
@@ -64,13 +65,13 @@ def test_spawns_into_the_running_wezterm_and_falls_back_to_starting_it(tmp_path)
 
     def run(cmd, **kw):
         calls.append(cmd)
-        return subprocess.CompletedProcess(cmd, 1 if cmd[1:3] == ["cli", "spawn"] else 0, "", "no mux")
+        return subprocess.CompletedProcess(cmd, 1 if wz.subcommand(cmd) == "spawn" else 0, "", "no mux")
 
     started = []
     ms.open_in_wezterm(tmp_path, wezterm="/x/wezterm", run=run, start=lambda cmd: started.append(cmd),
                        state_file=tmp_path / "window.json", identity=lambda run: None)
-    spawn = next(c for c in calls if c[1:3] == ["cli", "spawn"])
-    assert spawn[:4] == ["/x/wezterm", "cli", "spawn", "--new-window"]
+    spawn = next(c for c in calls if wz.subcommand(c) == "spawn")
+    assert spawn[:5] == ["/x/wezterm", "cli", "--no-auto-start", "spawn", "--new-window"]  # never a hidden mux (#1059)
     assert started and started[0][:2] == ["/x/wezterm", "start"]
 
 
@@ -84,10 +85,12 @@ class FakeWezTerm:
         self.spawns = []
 
     def __call__(self, cmd, **kw):
-        if cmd[1:3] == ["cli", "list"]:
+        if cmd[0] == "/bin/ps":  # the GUI lookup (marvin#1059): this fake Mac's ps shows no GUI, so no socket is named
+            return subprocess.CompletedProcess(cmd, 0, "", "")
+        if wz.subcommand(cmd) == "list":
             rows = [{"window_id": w, "pane_id": p} for w, panes in self.windows.items() for p in panes]
             return subprocess.CompletedProcess(cmd, 0, json.dumps(rows), "")
-        if cmd[1:3] == ["cli", "spawn"]:
+        if wz.subcommand(cmd) == "spawn":
             self.spawns.append(cmd)
             if self.fail_spawn:
                 return subprocess.CompletedProcess(cmd, 1, "", "no mux")
@@ -152,7 +155,7 @@ def test_a_window_that_vanishes_between_check_and_spawn_still_gets_a_session(tmp
     real_call = wez.__call__
 
     def racing(cmd, **kw):
-        if cmd[1:3] == ["cli", "spawn"] and "--window-id" in cmd:
+        if wz.subcommand(cmd) == "spawn" and "--window-id" in cmd:
             wez.windows.pop(0, None)  # closed just now
         return real_call(cmd, **kw)
 
