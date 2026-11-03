@@ -207,10 +207,25 @@ def test_a_whole_suite_pytest_waits_for_the_slot_and_one_file_does_not(slot_dir)
     whole = subprocess.Popen([sys.executable, "-m", "pytest", "-q", "-p", "no:cacheprovider", "--co", "lib/tests",
                               "-k", "no_test_has_this_name"], cwd=root, env=_env(slot_dir),
                              stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
-    time.sleep(2)
-    assert whole.poll() is None   # waiting
+    # Wait for the run to say it is waiting, however long it takes to start (#1003: on GitHub's runner pytest took
+    # over 2 s to reach the slot, so a fixed 2 s sleep let the slot go before it ever asked and the test failed).
+    said, deadline = "", time.monotonic() + 60
+    while "waiting for someone else's suite" not in said and time.monotonic() < deadline:
+        line = whole.stderr.readline()
+        if not line:
+            break
+        said += line
+    assert "waiting for someone else's suite" in said, said
+    assert whole.poll() is None   # still waiting while the slot is held
     hold.stdin.close()
     hold.wait(5)
     out, err = whole.communicate(timeout=60)
-    assert "waiting for someone else's suite" in err
-    assert whole.returncode in (0, 5), out + err   # 5 = nothing selected
+    assert whole.returncode in (0, 5), out + said + err   # 5 = nothing selected
+
+
+def test_the_tests_slot_is_not_this_machines_real_one():
+    """#1006: the test home links ~/.cache to the real one, so a slot under it was this Mac's real slot, and a real
+    merge running here held tests that launch helpers or dispatch. The tests' slot must be its own real folder."""
+    d = Path(os.environ[ts.DIR_ENV])
+    assert d.resolve() != Path(ts.DEFAULT_DIR).resolve()
+    assert not any(p.is_symlink() for p in [d, *d.parents] if p != p.parent and str(p).startswith(str(Path.home())))

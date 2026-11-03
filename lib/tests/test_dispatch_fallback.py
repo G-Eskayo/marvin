@@ -370,3 +370,33 @@ def test_stdin_really_reaches_a_local_command_and_never_touches_disk(tmp_path, m
     r = td._run_local(script, "sync", 30, stdin="secret questions")
     assert r.ok and r.output.strip() == "SECRET QUESTIONS"
     assert not any("secret" in p.read_text(errors="ignore") for p in tmp_path.rglob("*") if p.is_file())
+
+
+def test_the_cleanup_is_armed_before_the_task_record_is_written():
+    """#992: main went red because a SIGTERM landed after the record was written but before the trap was set, so the
+    record stayed and the machine looked busy for ever. The trap must come first, in every kind of wrapper."""
+    for need in (None, "test"):
+        script = td._build_wrapper_script("true", "abc12345", "label", "box", need=need)
+        trap_at = script.index("trap '")
+        assert trap_at < script.index("printf '%s, \"pid\"")
+        assert trap_at < script.index("DISPATCH_STATE_EOF")
+
+
+def test_the_wrapper_cleans_up_when_terminated_at_once(tmp_path):
+    """The narrowest window: SIGTERM as soon as the record appears, many times over. Before #992's fix this left the
+    record behind now and then (and once a 30 s wait); every run must now clean up."""
+    for i in range(10):
+        home = tmp_path / str(i)
+        script = td._build_wrapper_script("sleep 30", "abc12345", "label", "box")
+        f = home / "w.sh"
+        home.mkdir()
+        f.write_text(script)
+        p = subprocess.Popen(["/bin/bash", str(f)], env={"HOME": str(home), "PATH": "/usr/bin:/bin"}, start_new_session=True)
+        record = home / ".claude" / "dispatch" / "tasks" / "abc12345.json"
+        for _ in range(400):
+            if record.exists():
+                break
+            time.sleep(0.005)
+        os.killpg(p.pid, 15)
+        p.wait(timeout=10)
+        assert not record.exists(), f"run {i} left its record"

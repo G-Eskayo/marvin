@@ -250,3 +250,17 @@ def test_a_corrupt_state_is_never_overwritten(tmp_path):
 
 def test_no_report_line_until_there_is_a_rung3_pr(tmp_path):
     assert amr.report(tmp_path / "none.json")["line"] is None
+
+
+# ── a rung-3 fix written by mac-mini-2012's bot still needs the bot's own ramp (ADR 0069 rule 5, #952) ────────────
+
+def test_a_bot_written_regression_fix_waits_until_the_bots_ramp_is_open():
+    bot = {**_pr(), "author": "MARVIN-bot-gil"}
+    assert amr.verdict(bot, _facts(), RULES)["verdict"] == "ask"
+    assert amr.verdict(bot, _facts(author_ramp_open=False), RULES)["verdict"] == "ask"
+    assert amr.verdict(bot, _facts(author_ramp_open=True), RULES)["verdict"] == "auto"
+    assert amr.verdict({**_pr(), "author": "G-Eskayo"}, _facts(), RULES)["verdict"] == "auto"
+
+
+def test_a_regression_fix_whose_author_is_unknown_waits():
+    assert amr.verdict({**_pr(), "author": ""}, _facts(author_ramp_open=True), RULES)["verdict"] == "ask"

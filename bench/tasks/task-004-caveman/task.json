@@ -2,7 +2,11 @@
   "id": "task-004-caveman",
   "type": "qa",
   "prompt_file": "prompt.md",
-  "cwd": "~",
+  "cwd": "tmp",
   "timeout": 120,
-  "note": "Behavioral task, no correctness rubric. MARVIN's CLAUDE.md enforces 'caveman mode' (drop articles/filler). Signal = output_tokens: marvin should be materially terser than clean for the same question. Tests whether a style optimization actually changes output economics."
+  "note": "Behavioral task, no correctness rubric. MARVIN's CLAUDE.md enforces 'caveman mode' (drop articles/filler). Signal = output_tokens: marvin should be materially terser than clean for the same question. Tests whether a style optimization actually changes output economics. expect[] added for marvin#645 (same ground truth Run 16 judged against), so the judge grades content. cwd changed from '~' to 'tmp' for marvin#645 (Run 31): with cwd '~' the clean profile loaded MARVIN's CLAUDE.md, hooks and (for ~/.agents) the repo's skills as project files, so clean was not plain Claude Code.",
+  "expect": [
+    "context window",
+    "token"
+  ]
 }

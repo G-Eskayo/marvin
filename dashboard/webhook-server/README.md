@@ -1,6 +1,6 @@
 # MR-approval webhook contract
 
-`G-Eskayo/marvin#11`'s dashboard-side "Approve & Merge" button POSTs here.
+`G-Eskayo/marvin#11`'s dashboard-side "Approve" button POSTs here.
 `G-Eskayo/marvin#11` is explicit that the exact n8n node topology is
 separate downstream design/build work — this directory is a real, working
 reference implementation of the contract that topology needs to satisfy,

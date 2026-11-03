@@ -109,8 +109,14 @@ def _core_files() -> set[Path]:
 
 # ── seams (tests replace these) ───────────────────────────────────────────────────────────────────────────────────
 
+# The batch's items come from the improvement queue, not tickets, so its PR names none; bin/gh's "a PR names its
+# ticket" rule (lib/pr_ticket_check.py, marvin#1004) lets it through with this reason, logged.
+NO_TICKET_REASON = "daily auto-fix batch: its items come from the improvement queue, not tickets"
+
+
 def _gh(args: list[str]) -> subprocess.CompletedProcess:
-    return subprocess.run([str(GH), *args], capture_output=True, text=True, timeout=120)
+    env = {**os.environ, "MARVIN_NO_TICKET": NO_TICKET_REASON}
+    return subprocess.run([str(GH), *args], capture_output=True, text=True, timeout=120, env=env)
 
 
 def _default_launch_fixer(prompt: str, cwd: Path) -> None:

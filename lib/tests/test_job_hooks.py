@@ -188,10 +188,12 @@ def test_the_launcher_is_this_hosts_config_script():
 
 def test_the_wrapper_runs_start_after_its_task_record_and_stop_after_removing_it():
     script = td._build_wrapper_script("true", "abc", "label", "mac-mini-2012")
-    record_at = script.index("dispatch/tasks\"/abc.json")
+    # #992: the cleanup trap is armed first, then the record is written, then the start hook runs.
+    trap_at = script.index("trap '")
+    record_at = script.index("printf '%s, \"pid\"")
     start_at = script.index("job_hooks.py\" start")
-    trap = script[script.index("trap '"):]
-    assert record_at < start_at < script.index("trap '")
+    trap = script[trap_at:]
+    assert trap_at < record_at < start_at
     assert trap.index("rm -f") < trap.index("job_hooks.py\" stop") < trap.index("' EXIT")
 
 

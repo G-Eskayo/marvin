@@ -1,7 +1,7 @@
 // Evidence capture for marvin#568 (merge progress on MR Review cards): drives the built app against a sandbox HOME, a
 // fixed PR list (MARVIN_MR_FIXTURE) and a stand-in merge webhook that speaks the real streamed protocol
 // (webhook-server/merge_progress.js approveResponder), so the real UI receives real stage events. Never the real store,
-// webhook or GitHub. One PR per state; each card is clicked (Approve & Merge), fed its events, and shot.
+// webhook or GitHub. One PR per state; each card is clicked (Approve), fed its events, and shot.
 // Usage: HOME=<sandbox> node merge_progress_evidence.mjs <out-dir>
 import { chromium } from 'playwright-core'
 import { spawn } from 'node:child_process'
@@ -106,7 +106,7 @@ try {
   await page.locator('button', { hasText: 'MR Review' }).first().click()
   await sleep(4000)
   for (const n of Object.keys(SCENARIOS)) {
-    await card(n).locator('button', { hasText: 'Approve & Merge' }).click()
+    await card(n).locator('button', { hasText: /^Approve$/ }).click()
     await sleep(700)
   }
   await sleep(2500)

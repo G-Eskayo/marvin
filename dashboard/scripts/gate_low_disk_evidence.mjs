@@ -86,7 +86,7 @@ try {
       await page.locator('button', { hasText: 'MR Review' }).first().click()
       await sleep(4000)
       const c = page.locator('[role=button]', { hasText: '#600 — ' }).first()
-      await c.locator('button', { hasText: 'Approve & Merge' }).click()
+      await c.locator('button', { hasText: /^Approve$/ }).click()
       await sleep(2500)
       const open = c.locator('[data-check-progress] button').first()
       if (await open.count()) await open.click()

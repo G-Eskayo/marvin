@@ -22,6 +22,17 @@
   (`skills/to-issues/SKILL.md` template). That includes the quick ones an agent files for itself in the middle of a
   session, which skip the rest of the template. It steers the build, so keep it to the three lines. A `bug` still
   needs its outcome check (`docs/agents/triage-labels.md`).
+- **A PR names its ticket** (Gil, 2026-11-02, marvin#1004): every PR body says which ticket it is for, in one of two
+  ways, on a line of its own:
+  - `Closes #N` (or Fixes/Resolves): the PR finishes the ticket. GitHub closes the ticket when the PR merges.
+  - `Part of #N`: the PR is a step towards the ticket: a mock-up, a stacked slice, a plan, docs. The ticket stays open.
+
+  Write `owner/repo#N` (or paste the issue's URL) for a ticket in another repo, e.g. a private instance PR for a public
+  engine ticket: `Closes G-Eskayo/marvin#623`. Either way the ticket's board card shows **In review** with the PR on it,
+  and the dashboard's parity check is satisfied. "for #N" or a bare "#N" links nothing. `bin/gh` refuses
+  `pr create` and `pr edit --body*` in a repo with a MARVIN board when the body names no ticket either way
+  (`PR_NAMES_NO_TICKET`, `lib/pr_ticket_check.py`); `MARVIN_NO_TICKET="<reason>"` lets one call through, logged, for a
+  PR that truly has no ticket.
 - Never force-push, close, or delete issues without explicit user confirmation — these skills
   only create/comment/label by default.
 

@@ -395,7 +395,15 @@ export function createDeliverables({ getContext, cachePath = null, pdfText = nul
     docsCache = new WeakMap()
   }
 
-  return { view, refresh, searchDocs, invalidateSearch }
+  // One top-level outbox name matched now, with the same context refresh() uses (marvin show, #715: an item copied
+  // into the outbox a moment ago opens in its project's window before the next refresh has matched it).
+  function matchTop(name) {
+    const input = getContext()
+    const saved = load()
+    return matchName(buildContext({ ...input, maxNumber: { ...(saved?.maxNumber || {}), ...(input.maxNumber || {}) } }), String(name))
+  }
+
+  return { view, refresh, searchDocs, invalidateSearch, matchTop }
 }
 
 // What the docs search indexes for deliverables (design §3): one section of path words for every file (so images,

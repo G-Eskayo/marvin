@@ -78,7 +78,8 @@ describe('tierOf: needs you, then running, then waiting on other PRs, then stuck
   it('a ticket already closed needs you (close the PR)', () => expect(tierOf(pr(1, { ticketClosed: true, ticketRef: 3 }))).toBe('needs-you'))
   it('a vague ask needs you (send it back for options)', () => expect(tierOf(pr(1, { vague: { reasons: ['A or B?'] } }))).toBe('needs-you'))
   it('running checks are running', () => expect(tierOf(pr(1, { checks: { state: 'pending', failing: [], pending: ['test'] } }))).toBe('running'))
-  it('merge order is waiting', () => expect(tierOf(pr(2, { waitingOn: [{ number: 1, shared: ['a'] }] }))).toBe('waiting'))
+  it('in the merge queue is waiting (marvin#231)', () => expect(tierOf(pr(2, { mergeQueue: { queued: true, state: 'queued', reason: 'queued · 2nd · starts after #1' } }))).toBe('waiting'))
+  it('sharing files with an older PR no longer holds it: ready, so it needs you', () => expect(tierOf(pr(2, { waitingOn: [{ number: 1, shared: ['a'] }] }))).toBe('needs-you'))
   it('stacked is waiting', () => expect(tierOf(pr(2, { baseProblem: { base: 'x', expected: 'main', parent: { number: 1 } } }))).toBe('waiting'))
   it('a conflict is stuck', () => expect(tierOf(pr(1, { conflicts: true }))).toBe('stuck'))
   it('failing checks are stuck', () => expect(tierOf(pr(1, { checks: { state: 'failing', failing: ['t'], pending: [] } }))).toBe('stuck'))
@@ -96,7 +97,7 @@ describe('sortPrs: tier, then what kind inside it, then oldest first (the merge 
   it('puts the tiers in order', () => {
     const draft = pr(1, { isDraft: true })
     const stuck = pr(2, { conflicts: true })
-    const waiting = pr(3, { waitingOn: [{ number: 2, shared: ['a'] }] })
+    const waiting = pr(3, { mergeQueue: { queued: true, state: 'waiting', reason: "waits for #2 (it's built on it)" } })
     const running = pr(4, { checks: { state: 'pending', failing: [], pending: ['t'] } })
     const ready = pr(5)
     expect(sortPrs([draft, stuck, waiting, running, ready]).map((p) => p.number)).toEqual([5, 4, 3, 2, 1])

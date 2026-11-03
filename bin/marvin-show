@@ -1,0 +1,4 @@
+#!/bin/bash
+# marvin-show: show Gil one thing in its project's MARVIN window, never a file card or a temp path (marvin#715).
+# See lib/marvin_show.py.
+exec "$HOME/.agents/venv/bin/python" "$HOME/.agents/lib/marvin_show.py" "$@"
