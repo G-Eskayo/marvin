@@ -126,6 +126,24 @@ export function createRelationsService({ getRepos, getBoardData, getDocs, getPro
       }
       return { project, repo: p?.repo || null, adrs }
     },
+    // Every open ticket across the registered projects, slim, with the column and reason its board gives it, and the
+    // catalog ids, for the Workshop's Now view (next_step.js, #862). Same cached build as the boards: no extra GitHub call.
+    openTickets: async () => {
+      const b = await ready()
+      const tickets = b.tickets
+        .filter((t) => t.state === 'OPEN')
+        .map((t) => {
+          const card = b.cards.get(`${t.repo}#${t.number}`)
+          return {
+            repo: t.repo, number: t.number, title: t.title, url: t.url || null,
+            labels: (t.labels || []).map((l) => l?.name || l).filter(Boolean),
+            createdAt: t.createdAt || null, updatedAt: t.updatedAt || null,
+            column: card?.column || null, reason: card?.reason || null,
+            prs: (card?.prs || []).map((p) => p.number)
+          }
+        })
+      return { at: b.at, tickets, projects: getProjects() }
+    },
     // What is waiting on you, ranked by impact: unblocks descending, priority ascending, age descending
     needsYou: async () => {
       const b = await ready()

@@ -12,6 +12,7 @@ import MarvinButton from '@components/MarvinButton.jsx'
 import ActivityHover from '@components/ActivityHover.jsx'
 import SupportTab from '@components/SupportTab.jsx'
 import ItButton from '@components/ItButton.jsx'
+import WorkshopTab, { useWorkshopNow } from '@components/WorkshopTab.jsx'
 import { visibleTabs } from './lib/tabs.js'
 import { ScrollArea, useScrollArea } from '@components/ScrollPlaces.jsx'
 
@@ -53,6 +54,9 @@ export default function App() {
   const [reviewStatus, setReviewStatus] = useState(null)
   const [healthOverall, setHealthOverall] = useState(null)
   const [support, setSupport] = useState({ role: null, badge: 0 })
+  // Workshop ▸ Now (#862): read on triggers, here so the tab's count shows from any tab.
+  const workshop = useWorkshopNow()
+  const yourMove = workshop.now?.count ?? 0
   // Each tab, and each list or item inside it, opens where it was last left, or at its top (#755).
   const main = useScrollArea('main', activeTab)
 
@@ -138,6 +142,9 @@ export default function App() {
               >
                 {dot && <span className={`h-2 w-2 shrink-0 rounded-full ${dotColorMap[dot]}`} />}
                 {tab.label}
+                {tab.id === 'workshop' && yourMove > 0 && (
+                  <span className="rounded-full bg-amber-500 px-1.5 text-xs font-semibold text-black" title="Your move">{yourMove}</span>
+                )}
                 {tab.id === 'support' && support.badge > 0 && (
                   <span className="rounded-full bg-red-600 px-1.5 text-xs font-semibold text-white">{support.badge}</span>
                 )}
@@ -163,6 +170,8 @@ export default function App() {
             <HealthDashboard nav={nav} />
           ) : activeTab === 'docs' ? (
             <DocsExplorer nav={nav} onOpenBoard={(repo) => navigate('activity', { repo })} onOpenTicket={(repo, number) => navigate('activity', { repo, ticketNumber: number })} onOpenPr={(repo, number) => navigate('mr-review', { prKey: `${repo}#${number}` })} />
+          ) : activeTab === 'workshop' ? (
+            <WorkshopTab feed={workshop} navigate={navigate} />
           ) : activeTab === 'support' ? (
             <SupportTab nav={nav} />
           ) : activeTab === 'portfolio' ? (

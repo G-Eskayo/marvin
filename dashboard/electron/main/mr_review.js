@@ -370,6 +370,8 @@ export async function listPipelinePrs(listOpenPrs, { canMerge = canMergeFromDash
       url: pr.url,
       repo: pr.repo || MARVIN_REPO,
       key: prKey(pr.repo || MARVIN_REPO, pr.number),
+      // When it was opened: the Workshop's Now view orders the owner's moves by oldest wait (#862).
+      createdAt: pr.createdAt || null,
       canMerge: canMerge(pr.repo || MARVIN_REPO),
       conflicts: pr.mergeable === 'CONFLICTING',
       rebase: rebased[pr.url] || null,

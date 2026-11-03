@@ -118,6 +118,7 @@ function checkMergedElsewhere(repo, only = null) {
 }
 import { readRegistry, loadBoard, fetchBoardData, fetchCompletedData, withProjectStatus, defaultStagesFor, defaultLiveNumbers, getEvidence, clearCrossProjectCache, REGISTRY_PATH } from './boards.js'
 import { createRelationsService } from './relations_service.js'
+import { machineNames } from './machine_names.js'
 import { summarizeBoard, buildCompleted } from './board.js'
 import { createTriggerHub, createReconciler, refetchesGithub } from './triggers.js'
 import { createMrHistory, mergedPrArgs, readSavedMerged } from './mr_history.js'
@@ -671,6 +672,8 @@ function registerDocsHandlers() {
   ipcMain.handle('mr:parity', () => relations.parity())
   ipcMain.handle('activity:overview', () => relations.overview())
   ipcMain.handle('activity:needsYou', () => relations.needsYou())
+  // Workshop ▸ Now (#862): with each machine's display name for the worker on an in-motion row.
+  ipcMain.handle('activity:openTickets', async () => ({ ...(await relations.openTickets()), machines: machineNames() }))
   // Activity ▸ Projects (marvin#625's progress strip): built from memory and local files only, no GitHub call. Merges
   // are the Merged view's saved list plus the merge server's own record (local HTTP), deduped by URL.
   const progress = createProjectProgress({
