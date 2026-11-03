@@ -1,0 +1,326 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Plan usage and the throttle switch: mock-up (marvin#872)</title>
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<!-- Mock-up only (marvin#872): the real dashboard is untouched until the owner signs off. Every word on the card comes
+     from usage_toggle.js (describeThrottle), tested in dashboard/test/usage_toggle_proto.test.js, so flipping the switch
+     here runs the tested rule. No server, no build, no network: it opens in MARVIN's mock-up window.
+     Pick a scene and a place with the dashed buttons at the top, or link one: index.html#scene=soft&place=vitals&open=1 -->
+<style>
+  @font-face { font-family: 'Saira Condensed'; font-weight: 600; src: url(fonts/saira-condensed-latin-600-normal.woff2) format('woff2'); }
+  @font-face { font-family: 'Share Tech Mono'; font-weight: 400; src: url(fonts/share-tech-mono-latin-400-normal.woff2) format('woff2'); }
+  * { box-sizing: border-box; }
+  /* Celestial-navigation tokens (#428, the same values as dashboard/src/components/show_window.css). */
+  :root {
+    color-scheme: dark;
+    --bg: #05040A; --green: #54ff8a; --amber: #f0b32a; --line: #7a5a14; --orange: #ff6a1f; --red: #ff3b2f;
+    --dim: #6b551f; --moon: #cfd6e6; --panel: #ffffff05; --well: #ffffff09; --mute: #8a8fa0;
+    --display: 'Saira Condensed', 'Arial Narrow', sans-serif;
+    --mono: 'Share Tech Mono', ui-monospace, Menlo, monospace;
+  }
+  body { margin: 0; background: var(--bg); color: var(--moon); font: 14px/1.45 var(--mono); }
+  button { font: inherit; color: inherit; }
+
+  /* The mock-up's own controls: dashed, so they never read as dashboard UI. */
+  .mockbar { display: flex; flex-wrap: wrap; gap: 8px 16px; align-items: center; padding: 10px 16px; border-bottom: 1px dashed #3a3f4f; font-size: 12px; color: var(--mute); }
+  .mockbar .grp { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; }
+  .mockbar button { border: 1px dashed #3a3f4f; background: transparent; color: var(--mute); border-radius: 4px; padding: 3px 8px; cursor: pointer; }
+  .mockbar button[aria-pressed=true] { border-style: solid; border-color: var(--moon); color: var(--moon); }
+  .mockbar .tag { margin-left: auto; letter-spacing: 2px; text-transform: uppercase; }
+  .caption { margin: 0; padding: 8px 16px; border-bottom: 1px dashed #3a3f4f; color: var(--mute); font-size: 12px; }
+  .caption b { color: var(--moon); font-weight: 400; }
+
+  /* App header: the HUD strip with diamond nodes on its edge. */
+  .hud { position: relative; display: flex; flex-wrap: wrap; align-items: center; gap: 4px 6px; padding: 10px 16px; border-bottom: 1px solid var(--line);
+         background: repeating-linear-gradient(to bottom, #ffffff07 0 1px, #0000 1px 3px), var(--bg); }
+  .hud::before, .hud::after { content: ''; position: absolute; bottom: -4px; width: 7px; height: 7px; background: var(--bg); border: 1px solid var(--line); transform: rotate(45deg); }
+  .hud::before { left: 10px; } .hud::after { right: 10px; }
+  .brand { font: 600 13px/1 var(--display); letter-spacing: 4px; color: var(--orange); margin-right: 14px; }
+  .tab { font: 600 13px/1 var(--display); letter-spacing: 2px; text-transform: uppercase; color: var(--dim); padding: 7px 10px; border: 1px solid transparent; border-radius: 2px; }
+  .tab.on { color: var(--amber); border-color: var(--line); }
+  .badge { display: inline-block; margin-left: 6px; padding: 1px 5px; border-radius: 2px; background: var(--amber); color: var(--bg); font-size: 11px; letter-spacing: 0; }
+  .tbadge { margin-left: auto; font: 600 11px/1 var(--display); letter-spacing: 2px; text-transform: uppercase; border: 1px solid; border-radius: 2px; padding: 4px 7px; }
+
+  main { max-width: 1100px; padding: 18px 16px 40px; }
+  .sub { display: inline-flex; flex-wrap: wrap; gap: 2px; border: 1px solid var(--line); border-radius: 2px; padding: 3px; }
+  .sub span { padding: 5px 11px; font-size: 13px; color: var(--dim); }
+  .sub span.on { color: var(--amber); background: var(--well); }
+  h2.sec { display: flex; justify-content: space-between; flex-wrap: wrap; gap: 4px 12px; margin: 22px 0 8px; font: 600 12px/1.2 var(--display); letter-spacing: 3px; text-transform: uppercase; color: var(--amber); }
+  h2.sec small { font: 12px var(--mono); letter-spacing: 0; text-transform: none; color: var(--dim); }
+
+  /* The throttle card: level 1 is one row with the one switch; level 2 opens under it. */
+  .card { margin-top: 16px; border: 1px solid var(--line); border-radius: 2px; background: var(--panel); }
+  .row1 { display: flex; flex-wrap: wrap; align-items: center; gap: 10px 16px; padding: 12px 14px; }
+  .sw { position: relative; flex: none; width: 58px; height: 30px; border-radius: 15px; border: 1px solid var(--line); background: #0d0c14; cursor: pointer; padding: 0; transition: border-color .15s, box-shadow .15s; }
+  .sw::after { content: ''; position: absolute; top: 3px; left: 3px; width: 22px; height: 22px; border-radius: 50%; background: var(--dim); transition: left .18s, background .18s; }
+  .sw[aria-checked=true] { border-color: var(--green); box-shadow: 0 0 10px #54ff8a40; }
+  .sw[aria-checked=true]::after { left: 31px; background: var(--green); }
+  .sw:focus-visible { outline: 1px solid var(--amber); outline-offset: 3px; }
+  .name { font: 600 14px/1 var(--display); letter-spacing: 3px; text-transform: uppercase; color: var(--amber); }
+  .name small { display: block; margin-top: 4px; font: 11px var(--mono); letter-spacing: 1px; color: var(--dim); text-transform: none; }
+  .head { flex: 1 1 260px; min-width: 0; }
+  .head .h { font-size: 14px; }
+  .head .flip { margin-top: 3px; font-size: 12px; color: var(--mute); }
+  .minis { display: flex; gap: 14px; align-items: center; }
+  .mini { width: 96px; font-size: 11px; color: var(--mute); }
+  .mini .bar { height: 4px; margin-top: 4px; background: #ffffff12; position: relative; }
+  .mini .bar i { position: absolute; left: 0; top: 0; bottom: 0; }
+  .more { flex: none; background: none; border: 1px solid var(--line); border-radius: 2px; padding: 6px 10px; font-size: 11px; letter-spacing: 1px; text-transform: uppercase; color: var(--amber); cursor: pointer; }
+  .more:hover { color: var(--green); border-color: var(--green); }
+
+  .lvl2 { border-top: 1px solid var(--line); padding: 14px; display: grid; grid-template-columns: minmax(0, 1.25fr) minmax(0, 1fr); gap: 18px 22px; }
+  .lvl2 h3 { margin: 0 0 8px; font: 600 12px/1.2 var(--display); letter-spacing: 3px; text-transform: uppercase; color: var(--amber); }
+  .meter { margin-bottom: 16px; }
+  .meter .top { display: flex; justify-content: space-between; flex-wrap: wrap; gap: 2px 10px; font-size: 13px; }
+  .meter .top span:last-child { color: var(--mute); font-size: 12px; }
+  .track { position: relative; height: 10px; margin: 6px 0 24px; background: #ffffff10; border: 1px solid #ffffff14; }
+  .track .fill { position: absolute; left: 0; top: 0; bottom: 0; }
+  .track .tick { position: absolute; top: -4px; bottom: -4px; width: 1px; background: var(--moon); opacity: .55; }
+  .track .tick.soft { background: var(--amber); opacity: .9; }
+  .track .tick.hard { background: var(--red); opacity: .9; }
+  .lines { position: absolute; right: 0; top: 14px; font-size: 10px; color: var(--mute); white-space: nowrap; }
+  .lines .s { color: var(--amber); } .lines .h { color: var(--red); }
+  .track .pace { position: absolute; top: -5px; width: 9px; height: 9px; margin-left: -5px; transform: rotate(45deg); border: 1px solid var(--moon); background: var(--bg); }
+  .nodata { padding: 8px 10px; border: 1px dashed var(--line); color: var(--mute); font-size: 12px; margin: 6px 0 14px; }
+  .strip { display: flex; gap: 2px; align-items: flex-end; height: 36px; margin: 6px 0 4px; }
+  .strip i { flex: 1 1 0; min-width: 3px; background: var(--amber); opacity: .8; }
+  .strip i.hit { background: var(--red); opacity: 1; }
+  .strip i.unused { background: var(--dim); opacity: .6; min-height: 2px; }
+  .legend { display: flex; flex-wrap: wrap; gap: 4px 14px; font-size: 11px; color: var(--mute); }
+  .legend span::before { content: ''; display: inline-block; width: 8px; height: 8px; margin-right: 5px; vertical-align: -1px; background: var(--c); }
+  .wsum { margin-top: 6px; font-size: 12px; color: var(--moon); }
+  ul.lst { margin: 0 0 14px; padding: 0; list-style: none; font-size: 13px; }
+  ul.lst li { position: relative; padding: 3px 0 3px 16px; }
+  ul.lst li::before { content: ''; position: absolute; left: 2px; top: 10px; width: 5px; height: 5px; transform: rotate(45deg); border: 1px solid var(--c, var(--amber)); }
+  ul.guard li { color: var(--mute); }
+  ul.guard li::before { --c: var(--green); }
+  .src { font-size: 11px; color: var(--dim); }
+
+  /* Context rows (today's Now feed and Vitals), dimmed so the new card is what you look at. */
+  .ctx { opacity: .45; }
+  .box { border: 1px solid #ffffff14; border-radius: 2px; }
+  .r { display: flex; justify-content: space-between; gap: 12px; padding: 11px 14px; border-top: 1px solid #ffffff10; font-size: 13px; }
+  .r:first-child { border-top: 0; }
+  .r .v { display: block; font-size: 12px; margin-bottom: 3px; }
+  .r .m { color: var(--mute); font-size: 11px; }
+  .verdict { display: flex; flex-wrap: wrap; gap: 6px 18px; align-items: baseline; padding: 12px 14px; border: 1px solid var(--line); background: var(--panel); font-size: 13px; }
+  .verdict b { font: 600 15px/1 var(--display); letter-spacing: 3px; text-transform: uppercase; color: var(--green); font-weight: 600; }
+  .sky { position: relative; min-height: 160px; margin-top: 14px; border: 1px solid #ffffff10;
+         background: radial-gradient(1px 1px at 12% 30%, #cfd6e6aa, #0000), radial-gradient(1px 1px at 40% 70%, #cfd6e688, #0000), radial-gradient(1.5px 1.5px at 66% 22%, #54ff8a99, #0000),
+                     radial-gradient(1px 1px at 82% 58%, #cfd6e699, #0000), radial-gradient(1px 1px at 25% 82%, #cfd6e666, #0000), var(--bg); }
+  .sky p { position: absolute; left: 14px; bottom: 10px; margin: 0; font-size: 11px; color: var(--dim); letter-spacing: 1px; }
+  .link { color: var(--amber); text-decoration: underline; text-underline-offset: 3px; }
+  .foot { margin-top: 12px; font-size: 12px; color: var(--mute); }
+  .stamp { padding: 0 16px 14px; font-size: 10px; letter-spacing: 2px; color: var(--dim); text-align: right; }
+
+  @media (max-width: 900px) {
+    .lvl2 { grid-template-columns: minmax(0, 1fr); }
+    .minis { order: 5; flex: 1 1 100%; }
+    .mini { flex: 1 1 0; width: auto; }
+  }
+  @media (max-width: 480px) {
+    .tab { padding: 6px 6px; letter-spacing: 1px; }
+    .tbadge { margin-left: 0; }
+  }
+  @media (prefers-reduced-motion: reduce) { .sw::after { transition: none; } }
+</style>
+</head>
+<body>
+<div class="mockbar">
+  <div class="grp" id="scenes" aria-label="Scene"></div>
+  <div class="grp" id="places" aria-label="Where it lives"></div>
+  <span class="tag">Mock-up · sample data</span>
+</div>
+<p class="caption" id="caption"></p>
+
+<header class="hud">
+  <span class="brand">MARVIN</span>
+  <span class="tab" data-tab="vitals">Vitals</span>
+  <span class="tab" data-tab="workshop">Workshop<span class="badge">5</span></span>
+  <span class="tab">Docs</span>
+  <span class="tab">Portfolio</span>
+  <span class="tbadge" id="tbadge" hidden></span>
+</header>
+
+<main id="main"></main>
+<div class="stamp">MOCK-UP · SAMPLE DATA</div>
+
+<script src="usage_toggle.js"></script>
+<script>
+(function () {
+  'use strict'
+  const { describeThrottle } = window.UsageToggle
+
+  // A fixed "now" so the screenshots read the same every time: Tue 3 Nov, 14:00 local.
+  const NOW = new Date(2026, 10, 3, 14, 0).getTime()
+  const H = 3600_000
+  const iso = (ms) => new Date(ms).toISOString()
+
+  // A week of 5-hour windows, shaped like the recorder's (#872 slice 1). Peaks are the window's highest used %.
+  const PEAKS = [62, 100, 88, 3, 0, 71, 95, 40, 6, 100, 83, 54, 0, 77, 91, 66, 12, 4, 86, 97, 58, 30]
+  const windows = (peaks) => peaks.map((p, i) => {
+    const start = NOW - (peaks.length - i) * 7.5 * H
+    return { start: iso(start), end: iso(start + 5 * H), peak_pct: p, hit_limit: p >= 100 }
+  })
+  const reading = (five, week, pace, extra = {}) => ({
+    recorded_at: iso(NOW - 2 * 60_000),
+    five_hour: { used_pct: five, resets_at: iso(NOW + 2 * H + 10 * 60_000) },
+    seven_day: { used_pct: week, resets_at: iso(NOW + 2 * 24 * H + 9 * H) },
+    windows: windows(PEAKS), weekly_pace: pace, ...extra
+  })
+  const BUILD = (t) => ({ title: t, kind: 'build' })
+  const FIX = (t) => ({ title: t, kind: 'fix' })
+  const RUN = [BUILD('Vitals foundation: every check carries its reason'), BUILD('Disk triggers after a merge'), FIX('Repair: main is red after #1029')]
+
+  const SCENES = {
+    clear: { label: 'On, clear', on: true, usage: reading(42, 58, 93), running: RUN,
+      say: 'Switch <b>on</b>, plenty of room: full power, nothing holds it. Flip the switch to see what off does.' },
+    soft: { label: 'Soft line', on: true, usage: reading(91, 64, 97), running: RUN,
+      say: 'The 5-hour window passes <b>90%</b>: background pauses first and builds move to a cheaper model. Still on, nothing for you to do.' },
+    warn: { label: 'Near 95%', on: true, usage: reading(96, 71, 104), running: RUN,
+      say: '<b>96%</b>, and the week is over pace: your sessions ask before big work, and queued work slows.' },
+    hard: { label: 'Hard line', on: true, usage: reading(99, 74, 104), running: RUN,
+      say: 'At <b>99%</b> nothing new starts. The two builds finish, the repair still runs. Flipping the switch changes nothing until the reset, and it says so.' },
+    off: { label: 'Off', on: false, usage: reading(42, 58, 93), running: [RUN[0]],
+      say: 'Switch <b>off</b>: one ticket at a time per Mac. The lines and guards still apply.' },
+    nodata: { label: 'Not enough data', on: true, usage: null, running: [RUN[0]],
+      say: 'The recorder has <b>no reading yet</b> (a new install, or before #872 slice 1 lands): it says so, never 0%, and holds to one per Mac.' },
+    stale: { label: 'Stale reading', on: true, usage: { ...reading(92, 63, 97), recorded_at: iso(NOW - 3 * H) }, lastStep: 'soft', running: RUN,
+      say: 'The last reading is <b>3 hours old</b>: it keeps the last known step (soft line) instead of guessing.' }
+  }
+  const PLACES = { workshop: 'Workshop (main option)', vitals: 'Vitals (alternative)' }
+
+  const params = new URLSearchParams(location.hash.slice(1))
+  const state = { scene: SCENES[params.get('scene')] ? params.get('scene') : 'clear', place: PLACES[params.get('place')] ? params.get('place') : 'workshop', open: params.get('open') === '1' }
+  state.on = SCENES[state.scene].on
+
+  const COLOR = { clear: 'var(--green)', soft: 'var(--amber)', warn: 'var(--orange)', hard: 'var(--red)', unknown: 'var(--mute)' }
+  const STEP_TAG = { soft: 'Throttled · soft line', warn: 'Throttled · asks before big work', hard: 'Throttled · hard line', unknown: 'Throttle · unknown' }
+  const esc = (s) => String(s).replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]))
+  const pctColor = (p) => (p == null ? 'var(--mute)' : p >= 99 ? 'var(--red)' : p >= 95 ? 'var(--orange)' : p >= 90 ? 'var(--amber)' : 'var(--green)')
+
+  function mini(label, b) {
+    const w = b.pct == null ? 0 : Math.min(100, b.pct)
+    return `<div class="mini">${label} <span style="color:${pctColor(b.pct)}">${b.pct == null ? '—' : Math.round(b.pct) + '%'}</span>
+      <div class="bar"><i style="width:${w}%;background:${pctColor(b.pct)}"></i></div></div>`
+  }
+
+  function meter(title, b, pace, projected) {
+    if (b.pct == null) return `<div class="meter"><div class="top"><span>${title}</span></div><div class="nodata">${esc(b.text)}</div></div>`
+    const paceWord = { under: 'under pace', on: 'on pace', over: 'over pace', unknown: 'pace unknown' }[pace]
+    return `<div class="meter">
+      <div class="top"><span>${title} · <span style="color:${pctColor(b.pct)}">${Math.round(b.pct)}%</span></span><span>${esc(b.text.replace(/^\d+% · /, ''))}${pace ? ` · ${paceWord}` : ''}</span></div>
+      <div class="track" role="img" aria-label="${title} ${Math.round(b.pct)} percent used">
+        <div class="fill" style="width:${Math.min(100, b.pct)}%;background:${pctColor(b.pct)}"></div>
+        <span class="tick soft" style="left:90%"></span>
+        <span class="tick hard" style="left:99%"></span>
+        <span class="lines"><span class="s">▏soft 90</span> · <span class="h">▏hard 99</span></span>
+        ${projected != null ? `<span class="pace" style="left:${Math.min(100, projected)}%" title="projected at reset: ${projected}%"></span>` : ''}
+      </div></div>`
+  }
+
+  function level2(v, usage) {
+    const ws = (usage && usage.windows) || []
+    const strip = ws.length
+      ? `<div class="strip" aria-label="Last ${ws.length} five-hour windows">${ws.map((w) => `<i class="${w.hit_limit ? 'hit' : w.peak_pct < 10 ? 'unused' : ''}" style="height:${Math.max(6, w.peak_pct)}%" title="peak ${w.peak_pct}%"></i>`).join('')}</div>
+         <div class="legend"><span style="--c:var(--amber)">used</span><span style="--c:var(--red)">hit the limit</span><span style="--c:var(--dim)">left unused</span></div>
+         <div class="wsum">${esc(v.windows.text)}</div>`
+      : `<div class="nodata">${esc(v.windows.text)}: the windows show once the recorder has a week of them.</div>`
+    const projected = usage && typeof usage.weekly_pace === 'number' ? usage.weekly_pace : null
+    return `<div class="lvl2" id="lvl2">
+      <div>
+        <h3>Plan usage${v.reading === 'stale' ? ' · <span style="color:var(--mute)">last known, 3 h old</span>' : ''}</h3>
+        <div style="${v.reading === 'stale' ? 'opacity:.5' : ''}">
+        ${meter('5-hour window', v.five)}
+        ${meter('Week', v.week, v.week.pct == null ? null : v.pace, projected)}
+        </div>
+        <h3>The last 7 days, window by window</h3>
+        ${strip}
+        <p class="src">From ~/.claude/logs/plan-usage.jsonl${v.reading === 'fresh' ? ' · read 2 min ago' : v.reading === 'stale' ? ' · last reading 3 h ago' : ' · no reading yet'}.${projected != null ? ' The diamond is where the week lands at this pace.' : ''}</p>
+      </div>
+      <div>
+        <h3>What it’s doing now</h3>
+        <ul class="lst" style="--c:${COLOR[v.step]}">${v.doing.map((d) => `<li>${esc(d)}</li>`).join('')}</ul>
+        <h3>Always on, either way</h3>
+        <ul class="lst guard">${v.guardrails.map((d) => `<li>${esc(d)}</li>`).join('')}</ul>
+      </div>
+    </div>`
+  }
+
+  function card(v, usage) {
+    return `<section class="card" data-testid="throttle-card">
+      <div class="row1">
+        <button class="sw" id="sw" role="switch" aria-checked="${state.on}" aria-label="Auto throttle"></button>
+        <div class="name">Auto throttle<small>${state.on ? 'on' : 'off'}</small></div>
+        <div class="head">
+          <div class="h" style="color:${COLOR[v.step]}">${esc(v.headline)}</div>
+          <div class="flip">${esc(v.flip)}</div>
+        </div>
+        <div class="minis" style="${v.reading === 'stale' ? 'opacity:.5' : ''}">${mini('5H', v.five)}${mini('WEEK', v.week)}</div>
+        <button class="more" id="more" aria-expanded="${state.open}">${state.open ? 'Details ▾' : 'Details ▸'}</button>
+      </div>
+      ${state.open ? level2(v, usage) : ''}
+    </section>`
+  }
+
+  function workshop(v, usage) {
+    return `<div class="sub"><span class="on">Now</span><span>Projects</span><span>Shipped</span><span>Proposals</span></div>
+      ${card(v, usage)}
+      <div class="ctx">
+        <h2 class="sec">Your move <small>priority, then oldest wait · 5</small></h2>
+        <div class="box">
+          <div class="r"><div><span class="v" style="color:var(--amber)">Answer 3 decisions</span>Plan usage and the throttle switch<div class="m">marvin · PR · mock-up</div></div><span class="m">waiting 2 min</span></div>
+          <div class="r"><div><span class="v" style="color:var(--amber)">Approve</span>Smallest install, language packs<div class="m">seal-speak · p1 · checks passed</div></div><span class="m">waiting 3 h</span></div>
+        </div>
+        <h2 class="sec">MARVIN is on it <small>all ${SCENES[state.scene].running.length} · everything in motion</small></h2>
+        <div class="box">${SCENES[state.scene].running.map((r) => `<div class="r"><div><span class="v" style="color:var(--orange)">${r.kind === 'fix' ? 'Being fixed' : 'Building'}</span>${esc(r.title)}<div class="m">marvin · helper tab</div></div><span class="m">${r.kind}</span></div>`).join('')}</div>
+      </div>
+      <p class="foot">Machines and helpers’ health: Vitals. The old Parallel tickets box (Activity) goes: this switch replaces it.</p>`
+  }
+
+  function vitals(v, usage) {
+    const flow = v.step === 'clear' ? 'every budget under its line' : v.step === 'unknown' ? 'plan reading unknown' : `${v.heldBy} · ${v.step} line`
+    return `<div class="verdict"><b>Healthy</b><span>Independence 34%</span><span>Flow: <span style="color:${COLOR[v.step]}">${esc(flow)}</span></span><span class="m" style="color:var(--mute)">verdict 2 min old</span></div>
+      <h2 class="sec">Flow · budgets <small>used up to just before the line</small></h2>
+      <section class="card" data-testid="plan-usage-card">
+        <div class="row1"><div class="name">Claude plan<small>${esc(v.headline)}</small></div><div class="head"></div><div class="minis">${mini('5H', v.five)}${mini('WEEK', v.week)}</div>
+          <button class="more" id="more" aria-expanded="${state.open}">${state.open ? 'Details ▾' : 'Details ▸'}</button></div>
+        ${state.open ? level2(v, usage) : ''}
+      </section>
+      <div class="ctx">
+        <div class="box" style="margin-top:8px">
+          <div class="r"><div>API credit<div class="m">$41 of $100 · resets Dec 1 · under pace</div></div><span class="m">one tap</span></div>
+          <div class="r"><div>GitHub hourly calls<div class="m">38% used · resets 14:47</div></div><span class="m">auto</span></div>
+        </div>
+      </div>
+      <p class="foot">The switch stays in Workshop: <span class="link">Workshop ▸ Now ▸ Auto throttle (${state.on ? 'on' : 'off'})</span>. Vitals only shows the budgets.</p>
+      <div class="sky ctx"><p>THE LIVE MAP SITS BEHIND VITALS</p></div>`
+  }
+
+  function render() {
+    const sc = SCENES[state.scene]
+    const v = describeThrottle({ usage: sc.usage, on: state.on, running: sc.running, queued: 5, slots: { max: 4 }, guards: { min_disk_gb: 15, min_github_budget_pct: 20 }, lastStep: sc.lastStep || null, now: NOW })
+    document.getElementById('scenes').innerHTML = 'Scene: ' + Object.entries(SCENES).map(([id, s]) => `<button data-scene="${id}" aria-pressed="${id === state.scene}">${s.label}</button>`).join('')
+    document.getElementById('places').innerHTML = 'Where: ' + Object.entries(PLACES).map(([id, l]) => `<button data-place="${id}" aria-pressed="${id === state.place}">${l}</button>`).join('')
+    document.getElementById('caption').innerHTML = sc.say
+    document.querySelectorAll('.tab[data-tab]').forEach((t) => t.classList.toggle('on', t.dataset.tab === state.place))
+    // The #905 throttle badge, in the header while throttled, so a slowdown never looks like a bug.
+    const tb = document.getElementById('tbadge')
+    const tag = STEP_TAG[v.step]
+    tb.hidden = !tag
+    if (tag) { tb.textContent = tag; tb.style.color = COLOR[v.step]; tb.style.borderColor = COLOR[v.step] }
+    document.getElementById('main').innerHTML = state.place === 'workshop' ? workshop(v, sc.usage) : vitals(v, sc.usage)
+    const sw = document.getElementById('sw')
+    if (sw) sw.onclick = () => { state.on = !state.on; render() }
+    document.getElementById('more').onclick = () => { state.open = !state.open; render() }
+    document.querySelectorAll('[data-scene]').forEach((b) => (b.onclick = () => { state.scene = b.dataset.scene; state.on = SCENES[state.scene].on; render() }))
+    document.querySelectorAll('[data-place]').forEach((b) => (b.onclick = () => { state.place = b.dataset.place; render() }))
+    window.__ready = true
+  }
+  render()
+})()
+</script>
+</body>
+</html>
