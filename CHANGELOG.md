@@ -1,5 +1,7 @@
 # Changelog
 
+- Chat records: each MARVIN chat tab recorded in the existing session store, with a read-only `marvin chats list` ([#1084](https://github.com/G-Eskayo/marvin/pull/1084))
+
 - WezTerm wrapper: one place for every wezterm cli call, aimed at the right WezTerm when two run ([#1082](https://github.com/G-Eskayo/marvin/pull/1082))
 
 - Contrast checker: every MARVIN colour pair measured against the accessibility rule ([#1091](https://github.com/G-Eskayo/marvin/pull/1091))
