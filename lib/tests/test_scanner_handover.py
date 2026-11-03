@@ -107,6 +107,10 @@ class Mac:
         mp.setattr(tp, "_unclaimed_ready_tickets", lambda repo=None: [{"number": 7, "title": "t", "createdAt": "z", "labels": []}])
         mp.setattr(tp, "_select_for_profile", lambda *a, **k: (self.device, {}))
         mp.setattr(tp, "_retry_not_before", lambda *a, **k: None)
+        # this Mac's live ticket runs and GitHub's real claims: counted for real they filled the per-project limit, so
+        # the one ticket here was never dispatched (2026-11-03, the Mini building four answer tickets)
+        mp.setattr(tp, "_local_slots_used", lambda: 0)
+        mp.setattr(tp, "_inflight_by_repo", lambda repos: {})
         mp.setattr(tp, "_claim", lambda n, *a, **k: True)
         mp.setattr(tp, "dispatch", lambda *a, **k: self.dispatched.append(7) or SimpleNamespace(ok=True, error=""))
         mp.setattr(sys, "argv", ["ticket_pipeline.py"])
@@ -253,5 +257,8 @@ def test_a_real_scan_running_on_this_mac_never_reaches_the_tests():
         assert acquired
 
 
-def test_live_runs_and_claims_on_this_mac_never_reach_the_tests():
+def test_live_runs_and_claims_on_this_mac_never_reach_the_handover_scans(monkeypatch, tmp_path):
+    mini = Mac(monkeypatch, tmp_path, PRIMARY, CURRENT)
+    mini.run()
     assert tp._local_slots_used() == 0 and tp._inflight_by_repo(["G-Eskayo/marvin"]) == {}
+    assert mini.dispatched == [7]
