@@ -34,7 +34,7 @@ fixed "$1.39 per ticket". The disk and GitHub guards it obeys are invisible.
 ## Open it
 
 Inside MARVIN: the PR's **Try the mock-up** button (MR Review, #938), or `marvin-show
-docs/design/872-usage-toggle/index.html --pr <N>`. Scenes and places link: `index.html#scene=hard&place=vitals&open=1`.
+docs/design/872-usage-toggle/index.html --pr 1041`. Scenes and places link: `index.html#scene=hard&place=vitals&open=1`.
 
 | Scene | What it shows |
 |---|---|
