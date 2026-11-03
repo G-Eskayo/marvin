@@ -39,7 +39,7 @@ comment on #864: do the Projects mock-up together with #1028's design).
 ## Open it
 
 Inside MARVIN: the PR's **Try the mock-up** button (#938), or
-`marvin-show docs/design/864-projects-shipped/index.html --pr <this PR>`. The dashed buttons at the top pick a view and
+`marvin-show docs/design/864-projects-shipped/index.html --pr 1052`. The dashed buttons at the top pick a view and
 each Decision's options. Link a state with the hash: `index.html#view=projects&words=935&lanes=groups`,
 `#view=shipped&ship=today`, `#view=gone`.
 
