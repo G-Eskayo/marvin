@@ -22,6 +22,8 @@ def no_real_simulators(monkeypatch):
     """No test may list or delete this Mac's real simulators; simulator tests inject their own."""
     monkeypatch.setattr(cs, "_default_list_simulators", lambda: [])
     monkeypatch.setattr(cs, "_default_delete_simulator", lambda sim: pytest.fail(f"tried to delete a real simulator: {sim}"))
+    # Xcode's device-type list too: reading it runs `xcrun simctl list devicetypes`, which timed out on CI's runner.
+    monkeypatch.setattr(cs, "_default_stock_names", lambda: {"iPhone 17 Pro", "iPhone 17"})
 
 
 NOW = datetime(2026, 8, 19, 12, 0, 0, tzinfo=timezone.utc)
@@ -311,6 +313,24 @@ def test_run_daily_sweep_writes_log(log_path, tmp_path):
 
 
 def test_run_daily_sweep_logs_nothing_removed_when_all_clean(log_path):
+    cs.run_daily_sweep(list_claimed_open_issues=lambda: [], list_worktrees=lambda: [], now=NOW)
+    assert "nothing" in log_path.read_text().lower()
+
+
+def test_no_test_runs_the_real_simctl_even_for_the_device_type_list(monkeypatch, log_path):
+    """CI's macOS runner timed out on a real `xcrun simctl list devicetypes` (60 s) inside the all-clean sweep test,
+    failing #1011 and #969: the autouse fixture faked the simulator list but not Xcode's device-type list."""
+    import shutil as _shutil
+    import subprocess as _sp
+    real_run, real_which = _sp.run, _shutil.which
+
+    def no_simctl(cmd, *a, **kw):
+        if list(cmd[:2]) == ["xcrun", "simctl"]:
+            pytest.fail(f"a test ran the real simctl: {cmd}")
+        return real_run(cmd, *a, **kw)
+
+    monkeypatch.setattr(_sp, "run", no_simctl)
+    monkeypatch.setattr(_shutil, "which", lambda n, *a, **kw: "/usr/bin/xcrun" if n == "xcrun" else real_which(n, *a, **kw))
     cs.run_daily_sweep(list_claimed_open_issues=lambda: [], list_worktrees=lambda: [], now=NOW)
     assert "nothing" in log_path.read_text().lower()
 
