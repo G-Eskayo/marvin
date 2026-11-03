@@ -272,3 +272,17 @@ def test_no_other_code_calls_wezterm_cli_directly():
             if re.search(r"""(WEZTERM|wezterm)\b[^\n]*["']cli["']""", line) and "wezterm_cli" not in line:
                 offenders.append(f"{f.name}:{n}: {line.strip()}")
     assert offenders == []
+
+
+def test_a_wrapper_can_be_made_where_wezterm_isnt_installed_and_a_call_then_fails_clearly(monkeypatch):
+    """GitHub's runners have no WezTerm (the first CI run of #1082): making a Wezterm must not raise."""
+    monkeypatch.setattr(wz, "CANDIDATES", (Path("/nonexistent/wezterm"),))
+    monkeypatch.setattr(wz.shutil, "which", lambda n: None)
+    monkeypatch.delenv("MARVIN_WEZTERM", raising=False)
+    monkeypatch.delenv("HELPER_TAB_WEZTERM", raising=False)
+    w = wz.Wezterm(socket="/s")
+    assert w.binary == "/nonexistent/wezterm"
+    with pytest.raises(wz.WeztermError):
+        w.list()
+    with pytest.raises(wz.WeztermError):
+        wz.find_binary()
