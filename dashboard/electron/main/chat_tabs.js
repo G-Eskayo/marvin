@@ -85,6 +85,7 @@ export function sanitize(c, here) {
   const state = unknown ? 'unknown' : STATES.has(c.state) ? c.state : 'unknown'
   const live = here && !unknown
   return {
+    id: typeof c.id === 'string' && /^[0-9a-f]{16}$/.test(c.id) ? c.id : null,
     mac: str(c.mac, 60), pane: c.pane, ticket: Number.isInteger(c.ticket) ? c.ticket : null, repo: str(c.repo, 120),
     branch: str(c.branch, 200), cwd: str(c.cwd, 400), title: str(c.title, 120) || '', state,
     waitingFor: c.waiting_for === 'permission' || c.waiting_for === 'question' ? c.waiting_for : null,
@@ -115,5 +116,33 @@ export function createChatsReader({ listLocal = () => listLocalChats(), peers = 
       return value
     }))
     return { macs: [here, ...others] }
+  }
+}
+
+// Sending into a chat (marvin#1067): only the main dashboard window may ask, only for a chat on this Mac the list
+// says can take it, and lib/chat_send.py re-checks everything (idle by its hooks and its title, no prompt on screen)
+// at the moment it types. The text goes over stdin, never a command line.
+const CHAT_SEND = path.join(homedir(), '.agents', 'lib', 'chat_send.py')
+
+export function createChatSender({ isMainWindow, readChats, run = execFile } = {}) {
+  return async function sendToChat(sender, request) {
+    if (!isMainWindow(sender)) return { ok: false, why: 'only the main dashboard window can send to a chat' }
+    const id = request && typeof request.id === 'string' ? request.id : null
+    const text = request && typeof request.text === 'string' ? request.text : null
+    if (!id || text === null) return { ok: false, why: 'a send needs a chat id and text' }
+    const { macs } = await readChats()
+    const chat = macs.filter((m) => m.here).flatMap((m) => m.chats).find((c) => c.id === id)
+    if (!chat) return { ok: false, why: 'that chat isn\'t open on this Mac' }
+    if (!chat.canSend) return { ok: false, why: 'that chat can\'t take a message right now' }
+    return new Promise((resolve) => {
+      const child = run(PY, [CHAT_SEND, 'send'], { timeout: 15000, maxBuffer: MAX_BYTES }, (err, stdout) => {
+        try {
+          resolve(JSON.parse(String(stdout).trim().split('\n').pop()))
+        } catch {
+          resolve({ ok: false, why: String(err?.message || 'the sender gave no answer').slice(0, 200) })
+        }
+      })
+      child?.stdin?.end(JSON.stringify({ id, text }))
+    })
   }
 }

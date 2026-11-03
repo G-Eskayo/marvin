@@ -169,7 +169,7 @@ import { readFileForView, fileFromBuffer } from './outbox.js'
 import { resolveLocalClone } from './docs_local.js'
 import { resolveServiceDefaults, resolveDeviceId, peerHosts, primaryDeviceId } from './device_identity.js'
 import { createHelpersReader } from './chat_helpers.js'
-import { createChatsReader } from './chat_tabs.js'
+import { createChatsReader, createChatSender } from './chat_tabs.js'
 import { isPullOnlyNode, createFeedSource, feedOnlyGh, readNetworkRegistry, assertActsHere as assertPullOnlyActs, canMergeHere, withReadOnlyReason } from './github_feed.js'
 
 // The pipeline's screenshot copy runs unattended beside the real dashboard: log, never show a modal (#384).
@@ -425,6 +425,9 @@ function registerSessionHandlers() {
   let chatPeers = null
   const readChats = createChatsReader({ peers: () => (chatPeers ||= peerHosts()) })
   ipcMain.handle('marvin:listChats', () => readChats())
+  // marvin#1067: only the main window may send, never a show window or anything over HTTP
+  const sendToChat = createChatSender({ isMainWindow: (wc) => !!mainWindow && wc === mainWindow.webContents, readChats })
+  ipcMain.handle('marvin:sendToChat', (event, request) => sendToChat(event.sender, request))
   // Support link (ADR 0073). Every action is checked against this install's own support repos in support.js.
   ipcMain.handle('support:config', () => instance.support())
   ipcMain.handle('support:state', () => {

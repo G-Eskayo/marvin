@@ -113,3 +113,48 @@ describe('fetchChatsFrom (the real HTTP read)', () => {
     bad.close(); err.close()
   })
 })
+
+describe('sending into a chat (marvin#1067)', async () => {
+  const { createChatSender } = await import('../electron/main/chat_tabs.js')
+  const MAIN = { id: 'main' }
+  const SHOW = { id: 'show-window' }
+  const ID = 'a'.repeat(16)
+  const macs = (over = {}) => async () => ({ macs: [
+    { id: 'this-mac', here: true, status: 'ok', chats: [{ id: ID, pane: 16, canSend: true, ...over }] },
+    { id: 'mini', here: false, status: 'ok', chats: [{ id: 'b'.repeat(16), pane: 3, canSend: false }] }
+  ] })
+  const fakeRun = (answer, seen) => (cmd, args, opts, cb) => {
+    const child = { stdin: { end: (s) => { seen.stdin = s; seen.args = args; setTimeout(() => cb(null, answer), 0) } } }
+    return child
+  }
+
+  it('the main window can send to a chat on this Mac; the text travels on stdin, not the command line', async () => {
+    const seen = {}
+    const send = createChatSender({ isMainWindow: (s) => s === MAIN, readChats: macs(), run: fakeRun('{"ok": true}', seen) })
+    expect(await send(MAIN, { id: ID, text: 'Yes, everywhere' })).toEqual({ ok: true })
+    expect(JSON.parse(seen.stdin)).toEqual({ id: ID, text: 'Yes, everywhere' })
+    expect(seen.args.join(' ')).not.toContain('everywhere')
+  })
+
+  it('any other window is refused before anything runs', async () => {
+    const send = createChatSender({ isMainWindow: (s) => s === MAIN, readChats: macs(), run: () => { throw new Error('must not run') } })
+    expect((await send(SHOW, { id: ID, text: 'y' })).ok).toBe(false)
+  })
+
+  it('the other Mac, an unknown id and a chat that can\'t take it are refused', async () => {
+    const send = createChatSender({ isMainWindow: () => true, readChats: macs({ canSend: false }), run: () => { throw new Error('must not run') } })
+    expect((await send(MAIN, { id: 'b'.repeat(16), text: 'y' })).ok).toBe(false)
+    expect((await send(MAIN, { id: 'nope', text: 'y' })).ok).toBe(false)
+    expect((await send(MAIN, { id: ID, text: 'y' })).ok).toBe(false)
+  })
+
+  it('malformed requests are refused', async () => {
+    const send = createChatSender({ isMainWindow: () => true, readChats: macs(), run: () => { throw new Error('must not run') } })
+    for (const r of [null, {}, { id: ID }, { id: 5, text: 'x' }, { id: ID, text: 7 }]) expect((await send(MAIN, r)).ok).toBe(false)
+  })
+
+  it('a sender that dies or answers garbage is a refusal, not a crash', async () => {
+    const send = createChatSender({ isMainWindow: () => true, readChats: macs(), run: fakeRun('garbage', {}) })
+    expect((await send(MAIN, { id: ID, text: 'x' })).ok).toBe(false)
+  })
+})
