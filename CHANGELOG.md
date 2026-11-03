@@ -1,5 +1,7 @@
 # Changelog
 
+- Profile parity: one facts file and one check across the site, resume, GitHub, LinkedIn and the product sites ([#1039](https://github.com/G-Eskayo/marvin/pull/1039))
+
 - Main red on the Mini: portfolio dev-site drift (brand redesign) fails main-health; outside-state checks should be named, not block merges ([#1049](https://github.com/G-Eskayo/marvin/pull/1049))
 
 - Main red on the Mini: a marvin show test hard-codes the portfolio folder the catalog guard reserves ([#1048](https://github.com/G-Eskayo/marvin/pull/1048))
