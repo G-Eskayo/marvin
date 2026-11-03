@@ -97,7 +97,7 @@ def test_helpers_in_two_windows_converge_on_the_one_with_most_helpers():
 
 def _fake_env(tmp_path):
     fake = tmp_path / "wezterm"
-    fake.write_text(f'#!/bin/sh\nprintf "%s" "$5" > {tmp_path}/title\n')
+    fake.write_text(f'#!/bin/sh\nfor a; do last=$a; done\nprintf "%s" "$last" > {tmp_path}/title\n')  # the title is the last argument
     fake.chmod(0o755)
     return {"WEZTERM_PANE": "7", "PATH": "/usr/bin:/bin", "HOME": str(tmp_path), "HELPER_TAB_WEZTERM": str(fake),
             "HELPER_TAB_QUIET": "1", "HELPER_TAB_JOBS_DIR": str(tmp_path / "jobs")}

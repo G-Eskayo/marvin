@@ -35,6 +35,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 from marvin_launcher import KIND_ENV  # noqa: E402
 from sandbox_orchestration import WORKTREES_ROOT  # noqa: E402
 import proposals  # noqa: E402
+import wezterm_cli  # noqa: E402  every wezterm cli call goes through it (marvin#1059)
 
 HOME = Path.home()
 WEZTERM_CANDIDATES = (HOME / ".local/bin/wezterm", Path("/Applications/WezTerm.app/Contents/MacOS/wezterm"),
@@ -97,42 +98,25 @@ def shell_script(directory: Path, prompt_file: Path | None = None) -> str:
 
 
 def find_wezterm() -> str:
-    for candidate in WEZTERM_CANDIDATES:
-        if candidate.exists():
-            return str(candidate)
-    found = shutil.which("wezterm")
-    if found:
-        return found
-    raise SessionError("WezTerm isn't installed on this Mac (looked in ~/.local/bin, /Applications and Homebrew)")
-
-
-def _start_detached(cmd: list[str]) -> None:
-    subprocess.Popen(cmd, stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
-                     start_new_session=True)
+    try:
+        return wezterm_cli.find_binary(candidates=WEZTERM_CANDIDATES, which=shutil.which)
+    except wezterm_cli.WeztermError as exc:
+        raise SessionError(str(exc)) from exc
 
 
 def gui_identity(run: Callable = subprocess.run) -> str | None:
-    """The running WezTerm GUI as "pid start-time", which changes whenever WezTerm restarts; None if not found."""
-    try:
-        out = run(["/bin/ps", "-axo", "pid=,lstart=,comm="], capture_output=True, text=True, timeout=10)
-    except (OSError, subprocess.TimeoutExpired):
-        return None
-    if out.returncode != 0:
-        return None
-    for line in out.stdout.splitlines():
-        fields = line.split()
-        if len(fields) >= 7 and fields[-1].endswith("/wezterm-gui"):
-            return " ".join(fields[:6])
-    return None
+    """The WezTerm GUI sessions open in, as "pid start-time" (changes whenever WezTerm restarts); None if none runs.
+    The same GUI wezterm_cli.main_gui picks, so the identity and the socket calls go to always agree."""
+    gui = wezterm_cli.main_gui(run=run)
+    return gui.identity if gui else None
 
 
-def _windows(wezterm: str, run: Callable) -> dict[int, int]:
-    """pane id -> window id for every pane in the running WezTerm (empty if it can't be asked)."""
+def _windows(wez: "wezterm_cli.Wezterm") -> dict[int, int]:
+    """pane id -> window id for every pane in that WezTerm (empty if it can't be asked)."""
     try:
-        out = run([wezterm, "cli", "list", "--format", "json"], capture_output=True, text=True, timeout=15)
-        rows = json.loads(out.stdout) if out.returncode == 0 else []
+        rows = wez.list() or []
         return {int(r["pane_id"]): int(r["window_id"]) for r in rows}
-    except (OSError, subprocess.TimeoutExpired, ValueError, TypeError, KeyError):
+    except (wezterm_cli.WeztermError, ValueError, TypeError, KeyError):
         return {}
 
 
@@ -150,42 +134,41 @@ def _saved_window(state_file: Path, gui: str | None, live: set[int]) -> int | No
     return window
 
 
-def _spawn(wezterm: str, where: list[str], directory: Path, program: list[str], run: Callable):
-    return run([wezterm, "cli", "spawn", *where, "--cwd", str(directory), "--", *program],
-               capture_output=True, text=True, timeout=15)
+def _try_spawn(wez: "wezterm_cli.Wezterm", directory: Path, program: list[str], **where) -> int | None:
+    try:
+        return wez.spawn(directory, program, **where)
+    except wezterm_cli.WeztermError:
+        return None
 
 
 def open_in_wezterm(directory: Path, wezterm: str | None = None, run: Callable = subprocess.run,
-                    start: Callable[[list[str]], None] = _start_detached, state_file: Path = WINDOW_STATE,
+                    start: Callable[[list[str]], None] | None = None, state_file: Path = WINDOW_STATE,
                     identity: Callable[[Callable], str | None] = gui_identity, prompt_file: Path | None = None) -> None:
     """A new tab in the window an earlier press opened if it's still open, else a new window in the running
-    WezTerm; if its mux isn't reachable, start WezTerm with the session."""
-    wezterm = wezterm or find_wezterm()
+    WezTerm; if no WezTerm GUI answers, start WezTerm with the session (never a hidden mux server: marvin#1059)."""
+    wez = wezterm_cli.Wezterm.for_gui(wezterm_cli.main_gui(run=run), binary=wezterm or find_wezterm(), run=run,
+                                      start=start)
     program = ["/bin/zsh", "-c", shell_script(directory, prompt_file)]
     state_file.parent.mkdir(parents=True, exist_ok=True)
     with open(state_file.with_suffix(".lock"), "w") as lock:
         fcntl.flock(lock, fcntl.LOCK_EX)  # two quick presses must not both decide "no window yet"
         gui = identity(run)
-        window = _saved_window(state_file, gui, set(_windows(wezterm, run).values()))
-        spawned = _spawn(wezterm, ["--window-id", str(window)], directory, program, run) if window is not None \
-            else None
-        if spawned is None or spawned.returncode != 0:  # no window yet, or it closed since we looked
-            spawned = _spawn(wezterm, ["--new-window"], directory, program, run)
-        if spawned.returncode == 0:
-            _remember(state_file, gui, spawned.stdout, wezterm, run)
+        window = _saved_window(state_file, gui, set(_windows(wez).values()))
+        pane = _try_spawn(wez, directory, program, window_id=window) if window is not None else None
+        if pane is None:  # no window yet, or it closed since we looked
+            pane = _try_spawn(wez, directory, program, new_window=True)
+        if pane is not None:
+            _remember(state_file, gui, pane, wez)
             return
         state_file.unlink(missing_ok=True)  # a freshly started WezTerm has none of the old windows
     try:
-        start([wezterm, "start", "--cwd", str(directory), "--", *program])
-    except OSError as exc:
+        wez.start(directory, program)
+    except wezterm_cli.WeztermError as exc:
         raise SessionError(f"WezTerm isn't running and couldn't be started: {exc}") from exc
 
 
-def _remember(state_file: Path, gui: str | None, spawn_stdout: str, wezterm: str, run: Callable) -> None:
-    try:
-        window = _windows(wezterm, run).get(int(spawn_stdout.strip()))
-    except ValueError:
-        window = None
+def _remember(state_file: Path, gui: str | None, pane: int, wez: "wezterm_cli.Wezterm") -> None:
+    window = _windows(wez).get(pane)
     if gui is None or window is None:
         state_file.unlink(missing_ok=True)
         return
