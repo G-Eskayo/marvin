@@ -3,6 +3,8 @@ import path from 'path'
 import { readFile } from 'fs/promises'
 import { MOCKUP_SCHEME, MOCKUP_CSP, mimeFor, resolveMockupPath, mockupRequestAllowed } from './mockups.js'
 import { parseShowRequest, checkShowPath, projectFor, viewKind } from './show.js'
+import { pickShowBounds } from './show_bounds.js'
+import { createWebPane, installWebSession, isLocalHost, isWebAddress, SHOW_WEB_PARTITION } from './show_web.js'
 
 // The `marvin show` windows (G-Eskayo/marvin#715): one small MARVIN window per project, reused. A later show for the
 // same project replaces what that window shows and brings it to the front; another project gets its own window.
@@ -10,6 +12,8 @@ import { parseShowRequest, checkShowPath, projectFor, viewKind } from './show.js
 // protocol with the same CSP, on this window's own session, and drawn in an <iframe sandbox="allow-scripts"> so it
 // stays clickable but has an opaque origin: no window.api, no parent DOM, no network, no pop-ups, no navigation away.
 // Everything else (images, PDFs, markdown, text) is drawn by the Docs viewer (FileView), as in the Docs tab.
+// A web address loads in its own isolated view below the header (show_web.js), with "Open in browser" kept in the
+// header and the link card as the fallback. A new window opens where Gil last moved one (show_bounds.js).
 // Electron is injected so the rules are tested without launching the app.
 
 export const SHOW_PARTITION = 'marvin-show'
@@ -80,12 +84,19 @@ export function createShowWindows({
   newId = () => randomBytes(12).toString('hex'),
   partition = SHOW_PARTITION,
   devOrigin = null,
-  backgroundColor = '#0f1117',
-  checkPath = checkShowPath
+  backgroundColor = '#05040A', // --bg of the celestial-navigation tokens (#428), as ShowWindow.jsx
+  checkPath = checkShowPath,
+  WebContentsView = null, // Electron's; without it a web address is only the link card
+  webPartition = SHOW_WEB_PARTITION,
+  bounds = null, // show_bounds.js createBoundsStore: the last moved show window's place
+  screenAreas = () => [] // the screens' work areas, so a saved place on an unplugged screen isn't used
 }) {
   const byProject = new Map() // project id -> { win, item, frameId }
   const frames = new Map() // frame id -> { read(file) }, the one HTML page each window shows
   let ses = null
+  let webSes = null
+  // Local addresses (localhost, the LAN) a shown page may reach: only hosts Gil himself asked to show.
+  const localHosts = new Set()
   const csp = showFrameCsp(devOrigin)
   const notFound = (text, status = 404) => new Response(text, { status, headers: { 'content-type': 'text/plain; charset=utf-8', 'content-security-policy': csp } })
 
@@ -109,6 +120,50 @@ export function createShowWindows({
       installShowSession(ses, handle, { devOrigin })
     }
     return ses
+  }
+
+  function ensureWebSession() {
+    if (!webSes) {
+      webSes = session.fromPartition(webPartition)
+      installWebSession(webSes, localHosts)
+    }
+    return webSes
+  }
+
+  function closeWeb(entry) {
+    if (entry?.web) {
+      entry.web.close()
+      entry.web = null
+    }
+  }
+
+  // A web address: its page in the window, its state kept on the item so a reloaded window page finds it.
+  function openWeb(entry, item) {
+    closeWeb(entry)
+    if (!WebContentsView || !isWebAddress(item.url)) return
+    try {
+      const u = new URL(item.url)
+      if (isLocalHost(u.hostname)) localHosts.add(u.host.toLowerCase())
+    } catch {
+      return
+    }
+    item.web = { state: 'loading', url: item.url }
+    // The pane reports its first state while it is being made, before `pane` is set.
+    let pane = null
+    pane = createWebPane({
+      WebContentsView,
+      win: entry.win,
+      url: item.url,
+      partition: webPartition,
+      getSession: ensureWebSession,
+      onState: (st) => {
+        if (entry.item !== item || (pane && entry.web !== pane)) return
+        item.web = st
+        if (entry.ready && alive(entry)) entry.win.webContents.send('show:web', st)
+      }
+    })
+    entry.web = pane
+    if (entry.webBounds) pane.setBounds(entry.webBounds)
   }
 
   // A local page's folder, read under its real directory only (resolveMockupPath keeps it inside `dir`). A symlink
@@ -171,9 +226,12 @@ export function createShowWindows({
 
   function makeWindow(project) {
     ensureSession()
+    let areas = []
+    try { areas = screenAreas() || [] } catch { areas = [] }
+    const place = pickShowBounds(bounds?.load?.() ?? null, areas)
     const win = new BrowserWindow({
-      width: 920,
-      height: 760,
+      ...place,
+      ...('x' in place ? {} : { center: true }),
       minWidth: 420,
       minHeight: 360,
       title: `MARVIN · ${project.name}`,
@@ -204,13 +262,21 @@ export function createShowWindows({
       if (!mockupRequestAllowed(event?.url)) event.preventDefault?.()
     })
     wc.on('will-attach-webview', (event) => event.preventDefault())
-    const entry = { win, item: null, frameId: null, ready: false }
+    const entry = { win, item: null, frameId: null, ready: false, web: null, webBounds: null }
+    // Moved or resized by Gil: the next new window opens here, at this size ("moved" and "resized" fire once,
+    // when the drag ends).
+    const remember = () => {
+      if (!win.isDestroyed?.() && bounds?.save) bounds.save(win.getBounds())
+    }
+    win.on('moved', remember)
+    win.on('resized', remember)
     win.once('ready-to-show', () => {
       entry.ready = true
       win.show()
       win.focus?.()
     })
     win.on('closed', () => {
+      closeWeb(entry)
       if (entry.frameId) frames.delete(entry.frameId)
       if (byProject.get(project.id) === entry) byProject.delete(project.id)
     })
@@ -239,6 +305,7 @@ export function createShowWindows({
       entry.frameId = id
       item.frameUrl = `${MOCKUP_SCHEME}://${id}/${encodeURIComponent(frames.get(id).page)}`
     }
+    closeWeb(entry)
     entry.item = item
     // Closed while this show was being resolved (or a moment before): open it again rather than lose the item.
     if (!alive(entry)) {
@@ -247,6 +314,7 @@ export function createShowWindows({
       reused = false
     }
     const win = entry.win
+    if (item.kind === 'link') openWeb(entry, item)
     if (entry.ready) win.webContents.send('show:item', publicItem(item))
     if (win.isMinimized?.()) win.restore()
     if (entry.ready) win.show()
@@ -280,6 +348,14 @@ export function createShowWindows({
     return fileFromBuffer({ name: path.posix.basename(item.path), path: item.path, size: buf.length }, buf)
   }
 
+  // The window's page says where the web page goes (the area under its header), in window coordinates.
+  function setWebBounds(webContents, rect) {
+    const entry = entryOf(webContents)
+    if (!entry) return null
+    entry.webBounds = rect && typeof rect === 'object' ? { x: rect.x, y: rect.y, width: rect.width, height: rect.height } : null
+    return entry.web && entry.webBounds ? entry.web.setBounds(entry.webBounds) : null
+  }
+
   function itemOf(webContents) {
     return entryOf(webContents)?.item || null
   }
@@ -311,5 +387,5 @@ export function createShowWindows({
     return f.kind === 'image' ? { ok: true, dataUrl: f.dataUrl } : no(f.reason || 'not an image')
   }
 
-  return { show, current, read, image, itemOf, handle, _byProject: byProject, _frames: frames }
+  return { show, current, read, image, itemOf, setWebBounds, handle, _byProject: byProject, _frames: frames }
 }

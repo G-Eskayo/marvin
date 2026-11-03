@@ -8,6 +8,8 @@ import path from 'path'
 import { createShowWindows, installShowSession, showRequestOk, showFrameCsp, SHOW_PARTITION } from '../electron/main/show_window.js'
 import { readFileForView, fileFromBuffer } from '../electron/main/outbox.js'
 import { checkShowPath } from '../electron/main/show.js'
+import { SHOW_WEB_PARTITION } from '../electron/main/show_web.js'
+import { createBoundsStore } from '../electron/main/show_bounds.js'
 
 let root
 beforeEach(() => { root = realpathSync(mkdtempSync(path.join(tmpdir(), 'show-win-'))) })
@@ -282,10 +284,182 @@ describe('PR files', () => {
     expect(windows.length + gone.windows.length).toBe(0)
   })
 
-  it('a web address is a link card in the named project\'s window', async () => {
+  it('a web address is a link card in the named project\'s window when this Mac can\'t draw pages', async () => {
     const { sw, windows } = make()
     const r = await sw.show({ kind: 'url', url: 'https://example.com/', project: 'seal' })
     expect(r).toMatchObject({ ok: true, project: 'seal', kind: 'link' })
     expect(await sw.read(windows[0].webContents)).toBeNull()
+  })
+})
+
+// Owner's answers on PR #1029: a web address renders in the window (with the link card as the fallback), and a new
+// window opens with the size and place of the last one Gil moved.
+function fakeWebView() {
+  const views = []
+  class WebContentsView {
+    constructor(opts) {
+      this.opts = opts
+      this.webContents = new EventEmitter()
+      this.webContents.loadURL = vi.fn(() => Promise.resolve())
+      this.webContents.close = vi.fn()
+      this.webContents.setWindowOpenHandler = () => {}
+      this.setBounds = vi.fn()
+      views.push(this)
+    }
+  }
+  return { WebContentsView, views }
+}
+const withWeb = (extra = {}) => {
+  const v = fakeWebView()
+  const m = make({ WebContentsView: v.WebContentsView, ...extra })
+  for (const w of m.windows) w.contentView = { addChildView: vi.fn(), removeChildView: vi.fn() }
+  return { ...m, views: v.views }
+}
+// fakeElectron's windows get a contentView and bounds here (only these tests need them).
+function decorate(win, b = { x: 0, y: 25, width: 920, height: 760 }) {
+  win.contentView = win.contentView || { children: new Set(), addChildView: vi.fn(function (v) { this.children.add(v) }), removeChildView: vi.fn(function (v) { this.children.delete(v) }) }
+  win.bounds = win.bounds || b
+  win.getBounds = () => win.bounds
+  win.getContentBounds = () => ({ x: 0, y: 0, width: win.bounds.width, height: win.bounds.height })
+  return win
+}
+
+describe('a web address renders in the window', () => {
+  it('loads the page in its own view under the header, sends its state, and the window page lays it out', async () => {
+    const { sw, windows, views, sessions } = withWeb()
+    const r = await sw.show({ kind: 'url', url: 'https://example.com/a', project: 'seal' })
+    expect(r).toMatchObject({ ok: true, kind: 'link', project: 'seal' })
+    const w = decorate(windows[0])
+    expect(views).toHaveLength(1)
+    expect(views[0].opts.webPreferences.partition).toBe(SHOW_WEB_PARTITION)
+    expect(sessions[SHOW_WEB_PARTITION].filter).toBeTypeOf('function') // its own rules, not the app window's
+    expect(sw.current(w.webContents).web).toEqual({ state: 'loading', url: 'https://example.com/a' })
+    w.ready()
+    sw.setWebBounds(w.webContents, { x: 0, y: 52, width: 920, height: 708 })
+    views[0].webContents.emit('dom-ready')
+    expect(w.contentView.children.has(views[0])).toBe(true)
+    expect(views[0].setBounds).toHaveBeenLastCalledWith({ x: 0, y: 52, width: 920, height: 708 })
+    expect(w.webContents.send).toHaveBeenLastCalledWith('show:web', { state: 'loaded', url: 'https://example.com/a' })
+  })
+
+  it('a page that fails falls back to the card, said to the window page', async () => {
+    const { sw, windows, views } = withWeb()
+    await sw.show({ kind: 'url', url: 'https://down.example/' })
+    const w = decorate(windows[0])
+    w.ready()
+    views[0].webContents.emit('did-fail-load', {}, -105, 'ERR_NAME_NOT_RESOLVED', 'https://down.example/', true)
+    expect(sw.current(w.webContents).web).toMatchObject({ state: 'failed', reason: expect.stringMatching(/ERR_NAME_NOT_RESOLVED/) })
+    expect(w.webContents.send).toHaveBeenLastCalledWith('show:web', expect.objectContaining({ state: 'failed' }))
+  })
+
+  it('the next item replaces the page: the old view is closed and its late events are ignored', async () => {
+    const a = put('agents/a.md', '# A')
+    const { sw, windows, views } = withWeb()
+    await sw.show({ kind: 'url', url: 'https://example.com/a', project: 'marvin' })
+    const w = decorate(windows[0])
+    w.ready()
+    views[0].webContents.emit('dom-ready')
+    expect(w.contentView.children.has(views[0])).toBe(true)
+    await sw.show({ kind: 'file', path: a })
+    expect(windows).toHaveLength(1)
+    expect(views[0].webContents.close).toHaveBeenCalled()
+    expect(w.contentView.children.size).toBe(0)
+    const sends = w.webContents.send.mock.calls.length
+    views[0].webContents.emit('did-fail-load', {}, -106, 'x', 'https://example.com/a', true)
+    expect(w.webContents.send.mock.calls.length).toBe(sends)
+    expect(sw.current(w.webContents).kind).toBe('markdown')
+    // a second address gets a fresh view
+    await sw.show({ kind: 'url', url: 'https://example.com/b', project: 'marvin' })
+    expect(views).toHaveLength(2)
+  })
+
+  it('closing the window closes its page', async () => {
+    const { sw, windows, views } = withWeb()
+    await sw.show({ kind: 'url', url: 'https://example.com/a' })
+    decorate(windows[0]).close()
+    expect(views[0].webContents.close).toHaveBeenCalled()
+  })
+
+  it('a local dev server Gil asked to see may be reached by its page; nothing else local', async () => {
+    const { sw, sessions } = withWeb()
+    await sw.show({ kind: 'url', url: 'http://localhost:5173/' })
+    const cb = vi.fn()
+    sessions[SHOW_WEB_PARTITION].filter({ url: 'http://localhost:5173/src/main.jsx' }, cb)
+    sessions[SHOW_WEB_PARTITION].filter({ url: 'http://127.0.0.1:7879/show' }, cb)
+    expect(cb.mock.calls).toEqual([[{ cancel: false }], [{ cancel: true }]])
+  })
+
+  it('bounds from a window that isn\'t a show window are ignored', async () => {
+    const { sw } = withWeb()
+    expect(sw.setWebBounds(new EventEmitter(), { x: 0, y: 0, width: 10, height: 10 })).toBeNull()
+  })
+})
+
+describe('a new window opens where the last one was moved', () => {
+  let file
+  beforeEach(() => { file = path.join(root, 'state', 'show-window-bounds.json') })
+  const areas = () => [{ x: 0, y: 25, width: 1512, height: 920 }]
+
+  it('first window: the default size, centred; then moved: the next project\'s window opens there', async () => {
+    const a = put('agents/a.md', 'A')
+    const s = put('cc/s.md', 'S')
+    const bounds = createBoundsStore(file)
+    const { sw, windows } = make({ bounds, screenAreas: areas })
+    await sw.show({ kind: 'file', path: a })
+    expect(windows[0].opts).toMatchObject({ width: 920, height: 760, center: true })
+    expect(windows[0].opts.x).toBeUndefined()
+    const w = decorate(windows[0], { x: 700, y: 60, width: 800, height: 850 })
+    w.emit('moved')
+    await sw.show({ kind: 'file', path: s })
+    expect(windows[1].opts).toMatchObject({ x: 700, y: 60, width: 800, height: 850 })
+    expect(windows[1].opts.center).toBeUndefined()
+  })
+
+  it('a resize counts too, and the latest of several windows wins; it survives a restart (the file)', async () => {
+    const a = put('agents/a.md', 'A')
+    const s = put('cc/s.md', 'S')
+    const { sw, windows } = make({ bounds: createBoundsStore(file), screenAreas: areas })
+    await sw.show({ kind: 'file', path: a })
+    await sw.show({ kind: 'file', path: s })
+    decorate(windows[0], { x: 10, y: 30, width: 600, height: 500 }).emit('moved')
+    decorate(windows[1], { x: 400, y: 100, width: 1000, height: 700 }).emit('resized')
+    const again = make({ bounds: createBoundsStore(file), screenAreas: areas })
+    await again.sw.show({ kind: 'file', path: a })
+    expect(again.windows[0].opts).toMatchObject({ x: 400, y: 100, width: 1000, height: 700 })
+  })
+
+  it('a saved place on a screen that is gone opens at the default instead; a broken screen list too', async () => {
+    const a = put('agents/a.md', 'A')
+    const bounds = createBoundsStore(file)
+    bounds.save({ x: 3000, y: 100, width: 1000, height: 900 })
+    const { sw, windows } = make({ bounds, screenAreas: areas })
+    await sw.show({ kind: 'file', path: a })
+    expect(windows[0].opts).toMatchObject({ width: 920, height: 760, center: true })
+    const broken = make({ bounds, screenAreas: () => { throw new Error('no screen yet') } })
+    await broken.sw.show({ kind: 'file', path: a })
+    expect(broken.windows[0].opts).toMatchObject({ width: 920, height: 760, center: true })
+  })
+
+  it('a reused window stays where it is (only a new window takes the saved place)', async () => {
+    const a = put('agents/a.md', 'A')
+    const b = put('agents/b.md', 'B')
+    const bounds = { load: vi.fn(() => null), save: vi.fn() }
+    const { sw, windows } = make({ bounds, screenAreas: areas })
+    await sw.show({ kind: 'file', path: a })
+    windows[0].ready()
+    await sw.show({ kind: 'file', path: b })
+    expect(windows).toHaveLength(1)
+    expect(bounds.load).toHaveBeenCalledTimes(1)
+  })
+
+  it('a move after the window was destroyed saves nothing', async () => {
+    const a = put('agents/a.md', 'A')
+    const bounds = { load: () => null, save: vi.fn() }
+    const { sw, windows } = make({ bounds, screenAreas: areas })
+    await sw.show({ kind: 'file', path: a })
+    const w = decorate(windows[0])
+    w.destroyed = true
+    w.emit('moved')
+    expect(bounds.save).not.toHaveBeenCalled()
   })
 })

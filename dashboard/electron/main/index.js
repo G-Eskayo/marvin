@@ -1,4 +1,4 @@
-import { app, BrowserWindow, ipcMain, dialog, session, shell, protocol, net, nativeImage, Notification, powerMonitor } from 'electron'
+import { app, BrowserWindow, ipcMain, dialog, session, shell, protocol, net, nativeImage, Notification, powerMonitor, WebContentsView, screen } from 'electron'
 import { pathToFileURL } from 'url'
 import { instrumentIpc } from './timing.js'
 import { installDevSiteCors } from './dev_site_cors.js'
@@ -163,6 +163,7 @@ import { createMockupSource, MOCKUP_SCHEME } from './mockups.js'
 import { createMockupWindows } from './mockup_window.js'
 import { createShowWindows } from './show_window.js'
 import { allowedRoots } from './show.js'
+import { createBoundsStore } from './show_bounds.js'
 import { readFileForView, fileFromBuffer } from './outbox.js'
 import { resolveLocalClone } from './docs_local.js'
 import { resolveServiceDefaults, resolveDeviceId, peerHosts, primaryDeviceId } from './device_identity.js'
@@ -1250,11 +1251,17 @@ function registerShowHandlers() {
     readFileForView,
     fileFromBuffer,
     focusApp: () => app.focus({ steal: true }),
-    devOrigin: process.env['ELECTRON_RENDERER_URL'] || null
+    devOrigin: process.env['ELECTRON_RENDERER_URL'] || null,
+    // Owner's answers on PR #1029: a web address renders in the window, and a new window opens where the last one
+    // was moved to.
+    WebContentsView,
+    bounds: createBoundsStore(join(app.getPath('userData'), 'show-window-bounds.json')),
+    screenAreas: () => screen.getAllDisplays().map((d) => d.workArea)
   })
   ipcMain.handle('show:current', (event) => showWindows.current(event.sender))
   ipcMain.handle('show:read', (event) => showWindows.read(event.sender))
   ipcMain.handle('show:image', (event, src) => showWindows.image(event.sender, src))
+  ipcMain.handle('show:webBounds', (event, rect) => showWindows.setWebBounds(event.sender, rect))
   ipcMain.handle('show:openLink', (_event, url) => openLink(String(url || ''), { openExternal: shell.openExternal }))
   // "Open in Docs": the main window comes forward on the Docs tab at this item (an outbox file as its deliverable, a
   // clone file as its doc, anything else at its project).

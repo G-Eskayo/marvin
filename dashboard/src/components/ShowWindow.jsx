@@ -1,36 +1,78 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useLayoutEffect, useRef, useState } from 'react'
+import '@fontsource/saira-condensed/600.css'
+import '@fontsource/share-tech-mono/400.css'
 import FileView, { FileCard } from './FileView.jsx'
+import './show_window.css'
 
 // A `marvin show` window (G-Eskayo/marvin#715): one project's window, showing only the item a session asked for.
 // The Docs viewer (FileView) draws files, as in the Docs tab; an HTML page runs in a sandboxed frame served by the
-// main process (show_window.js) with no access to the app; a web address is a link Gil opens in his browser.
-// The look is the mock-up look until Gil signs it off (the tag in the header says so).
+// main process (show_window.js) with no access to the app. A web address renders in the window, in its own isolated
+// view laid over the box this page reserves (show_web.js), with "Open in browser" always in the header and the link
+// card as the fallback when the page can't be drawn. The look is the celestial-navigation tokens (#428), as the owner
+// chose on PR #1029.
 
-export const MOCKUP_TAG = 'Mock-up look, waiting for sign-off'
+const KIND_TAG = { html: 'Page', link: 'Web', image: 'Image', pdf: 'PDF', markdown: 'Doc', text: 'Text' }
+
+export function itemTag(item) {
+  if (!item) return null
+  if (item.pr?.number) return `PR #${item.pr.number}`
+  return KIND_TAG[item.kind] || 'File'
+}
+
+export function LinkCard({ url, reason, api }) {
+  return (
+    <div className="show-card" data-show-link="">
+      {reason && <p className="show-reason" data-show-reason="">{reason}</p>}
+      <p className="show-card-url">{url}</p>
+      <button onClick={() => api.openLink(url)} className="show-btn mt-3">Open in browser</button>
+    </div>
+  )
+}
+
+// The box the web page is drawn into. Its place in the window is sent to the main process whenever it changes.
+export function WebArea({ item, api }) {
+  const ref = useRef(null)
+  useLayoutEffect(() => {
+    const el = ref.current
+    if (!el || !api.setWebBounds) return
+    const send = () => {
+      const r = el.getBoundingClientRect()
+      api.setWebBounds({ x: r.left, y: r.top, width: r.width, height: r.height })
+    }
+    send()
+    const ro = typeof ResizeObserver === 'function' ? new ResizeObserver(send) : null
+    ro?.observe(el)
+    window.addEventListener('resize', send)
+    return () => {
+      ro?.disconnect()
+      window.removeEventListener('resize', send)
+    }
+  }, [item?.url, api])
+  return (
+    <div ref={ref} className="show-web h-full w-full" data-show-web={item.web?.state || 'loading'}>
+      <p className="show-empty">Loading {item.url}…</p>
+    </div>
+  )
+}
 
 export function ShowBody({ item, file, error, api }) {
   if (error) return <FileCard file={{ name: item?.label || 'This item', label: '' }} reason={error} />
-  if (!item) return <p className="text-sm text-neutral-500">Nothing shown yet.</p>
+  if (!item) return <p className="show-empty">Nothing shown yet.</p>
   if (item.kind === 'link') {
-    return (
-      <div className="max-w-xl rounded-lg border border-neutral-800 p-4" data-show-link="">
-        <p className="break-all text-sm text-neutral-100">{item.url}</p>
-        <button onClick={() => api.openLink(item.url)} className="mt-3 rounded border border-neutral-700 px-2 py-1 text-xs text-neutral-200 hover:border-neutral-500">
-          Open in browser
-        </button>
-      </div>
-    )
+    // Drawn in the window when this Mac can (item.web); otherwise, or when it failed, the link card says why.
+    if (item.web && item.web.state !== 'failed') return <WebArea item={item} api={api} />
+    return <LinkCard url={item.web?.url || item.url} reason={item.web?.reason} api={api} />
   }
   if (item.kind === 'html') {
     // allow-scripts only: an opaque origin (no allow-same-origin), no pop-ups, no top navigation, no forms.
-    return <iframe key={item.frameUrl} title={item.label} src={item.frameUrl} sandbox="allow-scripts" data-show-frame="" className="h-full min-h-[calc(100vh-5rem)] w-full rounded border border-neutral-800 bg-white" />
+    return <iframe key={item.frameUrl} title={item.label} src={item.frameUrl} sandbox="allow-scripts" data-show-frame="" className="show-frame h-full min-h-[calc(100vh-5rem)] w-full" />
   }
-  if (!file) return <p className="text-sm text-neutral-500">Loading…</p>
+  if (!file) return <p className="show-empty">Loading…</p>
   return <FileView file={file} loadImage={(src) => api.image(src)} fitImage />
 }
 
-export default function ShowWindow({ project, api = window.api.show }) {
-  const [item, setItem] = useState(null)
+export default function ShowWindow({ project, api = window.api.show, initialItem = null }) {
+  const [item, setItem] = useState(initialItem)
   const [file, setFile] = useState(null)
   const [error, setError] = useState(null)
 
@@ -49,9 +91,12 @@ export default function ShowWindow({ project, api = window.api.show }) {
     }
     api.current().then(take).catch(() => {})
     const off = api.onItem(take)
+    // The web page's state (loading, loaded, failed) and the address it is on now.
+    const offWeb = api.onWeb?.((web) => live && setItem((it) => (it && it.kind === 'link' ? { ...it, web } : it)))
     return () => {
       live = false
       off?.()
+      offWeb?.()
     }
   }, [])
 
@@ -59,21 +104,24 @@ export default function ShowWindow({ project, api = window.api.show }) {
     document.title = `MARVIN · ${item?.project?.name || project}`
   }, [item, project])
 
+  const isWeb = item?.kind === 'link' && item.web && item.web.state !== 'failed'
+  const linkUrl = item?.kind === 'link' ? item.web?.url || item.url : null
   return (
-    <div className="flex h-screen flex-col bg-[#0f1117] text-white" data-show-window={project}>
-      <header className="flex items-center gap-3 border-b border-neutral-800 px-3 py-2">
+    <div className="show-root flex h-screen flex-col" data-show-window={project}>
+      <header className="show-hud flex items-center gap-3 px-3 py-2">
         <div className="min-w-0 flex-1">
-          <p className="truncate text-xs uppercase tracking-wide text-neutral-500">{item?.project?.name || project}</p>
-          <p className="truncate text-sm font-medium text-neutral-100" title={item?.path || item?.url || ''}>{item?.label || ' '}</p>
+          <p className="show-project truncate">{item?.project?.name || project}</p>
+          <p className="show-label truncate" title={item?.path || item?.url || ''}>{item?.label || ' '}</p>
         </div>
-        <span className="rounded border border-amber-700/60 px-1.5 py-0.5 text-[10px] text-amber-400" data-mockup-tag="">{MOCKUP_TAG}</span>
+        {item && <span className="show-tag" data-show-tag="">{itemTag(item)}</span>}
+        {linkUrl && (
+          <button onClick={() => api.openLink(linkUrl)} className="show-btn" data-show-open-browser="">Open in browser</button>
+        )}
         {item && (
-          <button onClick={() => api.openInDocs()} className="rounded border border-neutral-700 px-2 py-1 text-xs text-neutral-200 hover:border-neutral-500">
-            Open in Docs
-          </button>
+          <button onClick={() => api.openInDocs()} className="show-btn">Open in Docs</button>
         )}
       </header>
-      <main className="min-h-0 flex-1 overflow-auto p-3">
+      <main className={`min-h-0 flex-1 ${isWeb ? 'overflow-hidden' : 'overflow-auto p-3'}`}>
         <ShowBody item={item} file={file} error={error} api={api} />
       </main>
     </div>

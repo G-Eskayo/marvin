@@ -160,6 +160,13 @@ contextBridge.exposeInMainWorld('api', {
     image: (src) => ipcRenderer.invoke('show:image', src),
     openInDocs: () => ipcRenderer.invoke('show:openInDocs'),
     openLink: (url) => ipcRenderer.invoke('show:openLink', url),
+    // A shown web page is drawn by the main process in the area this page reserves for it.
+    setWebBounds: (rect) => ipcRenderer.invoke('show:webBounds', rect),
+    onWeb: (callback) => {
+      const listener = (_e, state) => callback(state)
+      ipcRenderer.on('show:web', listener)
+      return () => ipcRenderer.removeListener('show:web', listener)
+    },
     onItem: (callback) => {
       const listener = (_e, item) => callback(item)
       ipcRenderer.on('show:item', listener)
