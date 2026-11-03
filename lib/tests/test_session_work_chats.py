@@ -375,3 +375,10 @@ def test_each_state_event_is_wired_once_for_interactive_sessions():
     for need in [("Stop", "stop", None), ("Notification", "notify", None), ("PreToolUse", "ask", "AskUserQuestion"),
                  ("PostToolUse", "tool", None), ("SessionEnd", "end", None)]:
         assert need in wired
+
+
+def test_the_json_list_says_whether_wezterm_runs_at_all(store, monkeypatch, capsys):
+    monkeypatch.setattr(sw, "list_chats", lambda: [])
+    monkeypatch.setattr(sw, "wezterm_running", lambda: False)
+    assert sw.main(["chats", "--json"]) == 0
+    assert json.loads(capsys.readouterr().out) == {"chats": [], "wezterm": False}

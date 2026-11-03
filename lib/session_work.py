@@ -454,6 +454,15 @@ def _panes_by_socket(sockets) -> dict:
     return out
 
 
+def wezterm_running() -> bool:
+    try:
+        sys.path.insert(0, str(Path(__file__).resolve().parent))
+        import wezterm_cli
+        return bool(wezterm_cli.guis())
+    except Exception:  # noqa: BLE001
+        return False
+
+
 def list_chats(now: float | None = None) -> list[dict]:
     now = now if now is not None else time.time()
     with _Locked() as st:
@@ -598,8 +607,8 @@ def main(argv: list[str]) -> int:
         return 0
     if argv[:1] == ["chats"]:
         chats = list_chats()
-        if "--json" in argv:
-            print(json.dumps({"chats": chats}))
+        if "--json" in argv:   # "wezterm": is any WezTerm GUI running here, so an empty list is never ambiguous
+            print(json.dumps({"chats": chats, "wezterm": wezterm_running()}))
             return 0
         if not chats:
             print("No MARVIN chat tabs open on this Mac.")

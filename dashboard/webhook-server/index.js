@@ -24,6 +24,7 @@ import { readRebaseStatus } from './rebase_status.js'
 import { readLiveSessions } from './sessions.js'
 import { gateCheckNames } from './ci_status.js'
 import { engineRepo } from '../electron/main/instance.js'
+import { listLocalChats } from '../electron/main/chat_tabs.js'
 import { listHelpers } from './chat_helpers.js'
 import { startChangeWatch, createGithubProbe, startCheckWatch, createCheckProbe } from './gh_watch.js'
 import { createGithubFeedWriter } from './github_feed_writer.js'
@@ -182,6 +183,15 @@ const server = createServer(async (req, res) => {
 
   if (req.method === 'GET' && req.url === '/sessions') {
     res.writeHead(200, { 'Content-Type': 'application/json' }).end(JSON.stringify({ sessions: readLiveSessions() }))
+    return
+  }
+
+  // Chat tabs on this Mac (marvin#1064), for the other Mac's Sessions list. Read-only, like /sessions: names, state and
+  // titles, never a way to reach a chat (sending is IPC-only, #1067).
+  if (req.method === 'GET' && req.url === '/chats') {
+    listLocalChats()
+      .then((got) => res.writeHead(200, { 'Content-Type': 'application/json' }).end(JSON.stringify(got)))
+      .catch(() => res.writeHead(503, { 'Content-Type': 'application/json' }).end(JSON.stringify({ error: 'chat list unavailable' })))
     return
   }
 
