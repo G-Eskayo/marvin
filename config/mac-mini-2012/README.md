@@ -51,6 +51,12 @@ and `CONTEXT.md` "Third node". Every file the box needs outside the repos is in 
 - libvirt `default` network (autostart) for marvin-test; `virsh net-define marvin-isolated.xml` (no `<forward>`) for
   quarantine, plus `quarantine.nft` loaded by `marvin-quarantine-fw.service` (DHCP/DNS only to the host).
 - VMs need a video device: with `--graphics none` Debian's GRUB reset-loops under this libvirt.
+- Ticket builds (marvin #949) run in `marvin-build` VMs. Its golden image is built by the box's user, no sudo:
+  `bash ~/.agents/config/mac-mini-2012/build-builder-image.sh` (~20 min). It boots a throwaway copy of `marvin-test`, runs
+  `builder/provision.sh` (Node, npm, corepack/pnpm, git, rg, gh, Claude Code pinned to the Macs' version, the MARVIN
+  venv from `builder/requirements.txt` with CPU torch), refuses to freeze if any credential file is in it, then
+  flattens it read-only into `/var/lib/libvirt/images/runs/golden/marvin-build.qcow2` (`golden/` is root's). Rebuild it
+  when the Claude Code pin, Node or the venv changes. `vm_run.py sweep` removes run VMs and disks a crashed run left.
 
 ## 7. Register (only after work tags are on main)
 Add to `~/.claude/marvin-network.json` on a Mac:
