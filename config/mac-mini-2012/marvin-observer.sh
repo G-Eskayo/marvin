@@ -13,6 +13,7 @@ case "$cmd" in
   "cat ~/.claude/logs/tool-usage.json")               exec cat "$HOME/.claude/logs/tool-usage.json" ;;
   "cat ~/.claude/logs/token-usage.json")              exec cat "$HOME/.claude/logs/token-usage.json" ;;
   "cat ~/.claude/logs/health-status.json")            exec cat "$HOME/.claude/logs/health-status.json" ;;
+  "cat ~/.claude/logs/github-feed.json")              exec cat "$HOME/.claude/logs/github-feed.json" ;;
   'cat "$HOME/.claude/dispatch-state.json"')          exec cat "$HOME/.claude/dispatch-state.json" ;;
   'cat "$HOME/.claude/ticket-scan-heartbeat.json"')   exec cat "$HOME/.claude/ticket-scan-heartbeat.json" ;;
   "ps -axo command")                                  exec ps -axo command ;;

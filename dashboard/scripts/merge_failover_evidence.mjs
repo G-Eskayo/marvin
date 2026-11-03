@@ -98,12 +98,12 @@ try {
   await page.locator('button', { hasText: 'MR Review' }).first().click()
   await sleep(4000)
   // 1. both down
-  await card(702).locator('button', { hasText: 'Approve & Merge' }).click()
+  await card(702).locator('button', { hasText: /^Approve$/ }).click()
   await sleep(2500)
   await shot(702, 'both-down-queued')
   // 2. this Mac's webhook is up; the Mini is still down
   await new Promise((r) => server.listen(bookPort, '127.0.0.1', r))
-  await card(701).locator('button', { hasText: 'Approve & Merge' }).click()
+  await card(701).locator('button', { hasText: /^Approve$/ }).click()
   await sleep(2500)
   await shot(701, 'failover-merging')
   // 3. the trigger a webhook sends when it starts: the saved approval of #702 merges by itself

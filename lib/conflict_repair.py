@@ -114,8 +114,10 @@ def default_tests(repo: str, cwd: str, changed: list[str]) -> tuple[bool, str]:
     try:
         if repo.lower() == MARVIN.lower():
             env = {**os.environ, "MARVIN_MERGE_GATE": "1"}
-            p = subprocess.run([VENV_PYTHON, "-m", "pytest", "-q", "-p", "no:cacheprovider"], cwd=cwd, env=env,
-                               capture_output=True, text=True, timeout=TEST_TIMEOUT_S)
+            import cleanup_sweep
+            with cleanup_sweep.disposable_basetemp() as basetemp_args:
+                p = subprocess.run([VENV_PYTHON, "-m", "pytest", "-q", "-p", "no:cacheprovider", *basetemp_args], cwd=cwd, env=env,
+                                   capture_output=True, text=True, timeout=TEST_TIMEOUT_S)
             if p.returncode != 0:
                 return False, p.stdout[-1500:]
             if any(f.startswith("dashboard/") for f in changed):

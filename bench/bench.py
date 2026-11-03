@@ -96,11 +96,19 @@ def _check_quota() -> dict | None:
     """One cheap claude -p call to read the account's current rate_limit_info
     off the stream-json output. Returns None if it couldn't be determined
     (treated as 'proceed, unknown' rather than blocking)."""
+    # Run under the clean profile when it exists: the live profile's session hooks
+    # can push this past the timeout (marvin#645 saw it return None every time).
+    env = dict(os.environ)
+    if PROFILES["clean"].exists():
+        env["CLAUDE_CONFIG_DIR"] = str(PROFILES["clean"])
+        for k in list(env):
+            if k.startswith("CLAUDE_CODE_") or k in ("CLAUDECODE", "CLAUDE_EFFORT"):
+                env.pop(k, None)
     try:
         proc = subprocess.run(
             ["claude", "-p", "ok", "--output-format", "stream-json", "--verbose",
              "--permission-mode", "bypassPermissions"],
-            capture_output=True, text=True, timeout=30,
+            capture_output=True, text=True, timeout=60, env=env,
         )
     except Exception:
         return None
@@ -112,6 +120,20 @@ def _check_quota() -> dict | None:
             return json.loads(line).get("rate_limit_info")
         except Exception:
             continue
+    return None
+
+
+def _usage_over(quota: dict | None, limit: float) -> str | None:
+    """Return a reason string when the plan's five-hour or seven-day usage is above
+    `limit` (a fraction), else None. Unknown usage never stops the sweep."""
+    if not quota:
+        return None
+    if quota.get("status") not in (None, "allowed"):
+        return f"plan limit reached ({quota.get('rateLimitType')})"
+    for name, win in (quota.get("unifiedWindows") or {}).items():
+        u = win.get("utilization")
+        if u is not None and u > limit:
+            return f"{name} usage {u:.0%} > {limit:.0%}"
     return None
 
 
@@ -203,23 +225,56 @@ def load_task(task_dir: Path) -> dict:
     return cfg
 
 
-def run_once(task: dict, profile: str, capture_snapshot: bool = False, model: str | None = None) -> dict:
+def run_hidden_check(task: dict, workdir: Path) -> dict | None:
+    """Run a task's hidden tests against the agent's finished workdir (marvin#645).
+
+    task.json's "check": {"files": "check"} names a folder of pytest files kept out of
+    files/, so the agent never sees them. They are copied in after the run and run with
+    pytest; the result says whether the code really works, not just whether an expected
+    string appears. Returns None for tasks with no check.
+    """
+    spec = task.get("check")
+    if not spec:
+        return None
+    src = Path(task["dir"]) / spec.get("files", "check")
+    names = []
+    for p in sorted(src.glob("*.py")):
+        shutil.copy2(p, workdir / p.name)
+        names.append(p.name)
+    try:
+        proc = subprocess.run(
+            [sys.executable, "-m", "pytest", "-q", "-p", "no:cacheprovider", *names],
+            cwd=workdir, capture_output=True, text=True, timeout=spec.get("timeout", 120),
+        )
+        out, ok = proc.stdout + proc.stderr, proc.returncode == 0
+    except subprocess.TimeoutExpired:
+        out, ok = "hidden check timed out", False
+    return {"pass": ok, "output": out[-1500:]}
+
+
+def run_once(task: dict, profile: str, capture_snapshot: bool = False, model: str | None = None,
+             prompt_prefix: str = "") -> dict:
     config_dir = PROFILES[profile]
     is_fs = task.get("type") == "fs"
 
     # fs tasks get an isolated temp workdir; qa/recall tasks run in a fixed cwd
     # (default: home) so the project-scoped memory layer engages for the marvin
-    # profile. The clean profile loads no memory regardless of cwd.
-    if is_fs:
+    # profile.
+    # WARNING (marvin#645): with cwd = home, Claude Code reads ~/.claude/CLAUDE.md and
+    # ~/.claude/settings.json as the *project's* files, so even the clean profile gets
+    # MARVIN's instructions and hooks; cwd = ~/.agents loads the repo's CLAUDE.md and
+    # skills. A qa task that compares profiles should set "cwd": "tmp" — a fresh empty
+    # folder outside home, so only the profile decides what is loaded.
+    if is_fs or task.get("cwd") == "tmp":
         workdir = Path(tempfile.mkdtemp(prefix=f"mb-{task['id']}-{profile}-"))
-        if (task["dir"] / "files").exists():
+        if is_fs and (task["dir"] / "files").exists():
             shutil.copytree(task["dir"] / "files", workdir, dirs_exist_ok=True)
         cleanup = True
     else:
         workdir = Path(task.get("cwd", str(Path.home()))).expanduser()
         cleanup = False
 
-    cmd = ["claude", "-p", task["prompt"],
+    cmd = ["claude", "-p", prompt_prefix + task["prompt"],
            "--output-format", "stream-json", "--verbose"]
     if model:
         cmd += ["--model", model]
@@ -241,8 +296,13 @@ def run_once(task: dict, profile: str, capture_snapshot: bool = False, model: st
             env.pop(k, None)
 
     t0 = time.time()
-    proc = subprocess.run(cmd, cwd=workdir, env=env,
-                          capture_output=True, text=True, timeout=task.get("timeout", 600))
+    try:
+        proc = subprocess.run(cmd, cwd=workdir, env=env,
+                              capture_output=True, text=True, timeout=task.get("timeout", 600))
+    except subprocess.TimeoutExpired as exc:
+        # A run that never finishes is a failed run, not a crash of the whole sweep.
+        out = exc.stdout.decode(errors="ignore") if isinstance(exc.stdout, bytes) else (exc.stdout or "")
+        proc = subprocess.CompletedProcess(cmd, 124, out, "timed out")
     wall = time.time() - t0
 
     parsed = parse_stream(proc.stdout)
@@ -268,6 +328,10 @@ def run_once(task: dict, profile: str, capture_snapshot: bool = False, model: st
                     except OSError:
                         pass
             parsed["workdir_snapshot"] = "\n".join(parts)
+        if not parsed["infra_error"]:
+            check = run_hidden_check(task, workdir)
+            if check is not None:
+                parsed["check"] = check
         shutil.rmtree(workdir, ignore_errors=True)
 
     return parsed
@@ -526,6 +590,17 @@ def main() -> None:
                     help="context injection mode for marvin profile with --runner ollama: "
                          "'full' = dump all memory files (default), "
                          "'rag' = top-3 semantically relevant passages")
+    ap.add_argument("--prompt-prefix", default="", metavar="TEXT",
+                    help="text put before every task prompt, e.g. 'Caveman mode. ' to test one lever "
+                         "with everything else held constant (marvin#645)")
+    ap.add_argument("--tag", default="", metavar="NAME",
+                    help="names this cell in the saved results (e.g. caveman, repaste); cost_report.py "
+                         "groups runs by profile, model and tag")
+    ap.add_argument("--out-dir", default=None, metavar="DIR",
+                    help="where result JSONs go (default: results/)")
+    ap.add_argument("--stop-above", type=float, default=None, metavar="FRACTION",
+                    help="before each task, read the plan's five-hour and seven-day usage and stop the "
+                         "sweep if either is above this fraction (e.g. 0.8). Spends one tiny session per task.")
     args = ap.parse_args()
 
     # derive short display name for headers / filenames
@@ -585,6 +660,11 @@ def main() -> None:
         if not (task_dir / "task.json").exists():
             print(f"skip {task_dir} (no task.json)")
             continue
+        if args.stop_above is not None and args.runner == "claude":
+            over = _usage_over(_check_quota(), args.stop_above)
+            if over:
+                print(f"budget stop: {over} — not starting {task_dir.name}", flush=True)
+                break
         task = load_task(task_dir)
         rows = []
         all_raw: list[dict] = []
@@ -604,7 +684,8 @@ def main() -> None:
                 all_raw.append(run)
             elif args.repeat == 1:
                 print(f"running {task['id']} @ {profile} ...", flush=True)
-                run = run_once(task, profile, capture_snapshot=args.judge, model=args.model)
+                run = run_once(task, profile, capture_snapshot=args.judge, model=args.model,
+                                   prompt_prefix=args.prompt_prefix)
                 if run.get("infra_error"):
                     print(f"  ! infra error (rate/session limit or auth) — skipping judge, "
                           f"not scored as a real failure", flush=True)
@@ -619,7 +700,8 @@ def main() -> None:
                 for i in range(args.repeat):
                     print(f"running {task['id']} @ {profile} [{i+1}/{args.repeat}] ...",
                           flush=True)
-                    run = run_once(task, profile, capture_snapshot=args.judge, model=args.model)
+                    run = run_once(task, profile, capture_snapshot=args.judge, model=args.model,
+                                   prompt_prefix=args.prompt_prefix)
                     if run.get("infra_error"):
                         print(f"  ! infra error (rate/session limit or auth) on repeat "
                               f"{i+1}/{args.repeat} — stopping this profile early, "
@@ -652,10 +734,14 @@ def main() -> None:
 
         stamp = time.strftime("%Y%m%d-%H%M%S")
         model_tag = f"-{_MODEL_SHORT}" if _MODEL_SHORT else ""
-        out = ROOT / "results" / f"{task['id']}{model_tag}-{stamp}.json"
+        tag_part = f"-{args.tag}" if args.tag else ""
+        out_dir = Path(args.out_dir) if args.out_dir else ROOT / "results"
+        out_dir.mkdir(parents=True, exist_ok=True)
+        out = out_dir / f"{task['id']}{model_tag}{tag_part}-{stamp}.json"
         out.write_text(json.dumps(
             {"task": task["id"], "runner": args.runner,
              "model": args.ollama_model if args.runner == "ollama" else (args.model or "default"),
+             "tag": args.tag, "prompt_prefix": args.prompt_prefix,
              "repeat": args.repeat, "judge": args.judge, "runs": all_raw},
             indent=2, default=str,
         ))

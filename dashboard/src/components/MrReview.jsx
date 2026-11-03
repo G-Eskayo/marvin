@@ -4,7 +4,7 @@ import { cleanIpcError } from '../lib/ipcError.js'
 import { useEffect, useRef, useState } from 'react'
 import ProposalsSection from './ProposalsSection.jsx'
 import { toggleLabel } from '../lib/proposals_view.js'
-import { describePrState } from '../lib/prState.js'
+import { describePrState, queueLineFor } from '../lib/prState.js'
 import StageStrip from './StageStrip.jsx'
 import MrDetail from './MrDetail.jsx'
 import { useScrollPlace } from './ScrollPlaces.jsx'
@@ -260,6 +260,13 @@ export function ApproveDenyActions({ pr, onApproved, onDenied, inDetail = false 
         if (!result.alreadyMerging) setStatus('idle')
         return
       }
+      // marvin#231: in the merge queue on the merge Mac; it merges by itself in its turn. The list is read again, so the
+      // card shows its place from the queue.
+      if (result.mergeQueued) {
+        setStatus('idle')
+        onApproved?.(null)
+        return
+      }
       // No Mac could take it (marvin#762): it is saved and merges by itself when one comes back.
       if (result.queued) {
         setStatus('queued')
@@ -304,7 +311,7 @@ export function ApproveDenyActions({ pr, onApproved, onDenied, inDetail = false 
         <a href={pr.url} target="_blank" rel="noreferrer" onClick={(e) => e.stopPropagation()} className="rounded-md border border-neutral-700 px-4 py-1.5 text-sm text-neutral-300 hover:bg-neutral-800">
           Review on GitHub ↗
         </a>
-        <p className="max-w-[16rem] text-xs text-neutral-600">Merging {pr.repo.split('/')[1]} from here isn't set up: its project profile hasn't opted in (merge_from_dashboard).</p>
+        <p className="max-w-[16rem] text-xs text-neutral-600">{pr.readOnlyReason || `Merging ${pr.repo.split('/')[1]} from here isn't set up: its project profile hasn't opted in (merge_from_dashboard).`}</p>
       </div>
     )
   }
@@ -353,7 +360,7 @@ export function ApproveDenyActions({ pr, onApproved, onDenied, inDetail = false 
               disabled={view.approve === 'disabled'}
               className="rounded-md bg-blue-600 px-4 py-1.5 text-sm font-medium text-white transition-colors hover:bg-blue-500 disabled:opacity-50"
             >
-              Approve &amp; Merge
+              Approve
             </button>
           )}
         </div>
@@ -423,7 +430,7 @@ const PARITY_STYLE = {
 const COLUMN_NAME = { backlog: 'Backlog', ready: 'Ready', blocked: 'Blocked', progress: 'In progress', review: 'In review', done: 'Done' }
 
 // The PR's ticket and where it sits on the project's board: the one-to-one between this list and the boards.
-function TicketLine({ row, onOpenTicket }) {
+export function TicketLine({ row, onOpenTicket }) {
   if (!row) return null
   const t = row.ticket
   return (
@@ -437,10 +444,10 @@ function TicketLine({ row, onOpenTicket }) {
           className="truncate text-left text-neutral-400 hover:text-white"
           title="Open this ticket on its board"
         >
-          closes <span className="font-mono text-neutral-500">#{t.number}</span> {t.title} →
+          {t.relation === 'part of' ? 'part of' : 'closes'} <span className="font-mono text-neutral-500">#{t.number}</span> {t.title} →
         </button>
       ) : (
-        <span className="text-neutral-500">closes no ticket</span>
+        <span className="text-neutral-500">names no ticket</span>
       )}
       <span className={`rounded px-1.5 py-0.5 text-[10px] ${PARITY_STYLE[row.status]}`}>
         {row.status === 'ok' && 'board: In review ✓'}
@@ -473,6 +480,34 @@ function ParitySummary({ parity }) {
   )
 }
 
+// marvin#231: the merge queue's one line for a PR, under its title: amber when it waits (and why), sky when it is queued
+// (its place) or merging. Nothing when nothing is in its way and it isn't approved.
+export function QueueLine({ entry, className = '' }) {
+  if (!entry?.reason) return null
+  const tone = entry.tone === 'sky' ? 'text-sky-400' : 'text-amber-400'
+  return <p data-queue-line={entry.state} className={`text-xs ${tone} ${className}`}>{entry.reason}</p>
+}
+
+// marvin#231 follow-up, one card for both states: while a PR waits its line says where it is in the queue; once its
+// merge runs (here, or on another Mac and relayed), the stage strip says it all, so the queue line steps aside.
+export function PrQueueLine({ pr, className = '' }) {
+  const [merging, setMerging] = useState(false)
+  useEffect(() => {
+    let cancelled = false
+    let pushed = false
+    const off = window.api?.mr?.onMergeEvent?.((url, op) => {
+      if (cancelled || url !== pr.url) return
+      pushed = true
+      setMerging(op?.state === 'merging')
+    })
+    window.api?.mr?.mergeState?.(pr.url, pr.headRefOid)
+      .then((m) => { if (!cancelled && !pushed) setMerging(m?.state === 'merging') })
+      .catch(() => {})
+    return () => { cancelled = true; off?.() }
+  }, [pr.url, pr.headRefOid])
+  return merging ? null : <QueueLine entry={queueLineFor(pr)} className={className} />
+}
+
 function PrCard({ pr, parity, onOpenTicket, onApproved, onDenied, onSelect, waiting = false }) {
   const [prEvents, setPrEvents] = useState([])
 
@@ -501,6 +536,7 @@ function PrCard({ pr, parity, onOpenTicket, onApproved, onDenied, onSelect, wait
             #{pr.number} — {displayTitle(pr.title, parity?.ticket?.title)}{' '}
             {pr.repo !== 'G-Eskayo/marvin' && <span className="rounded bg-sky-950 px-1.5 py-0.5 font-sans text-[10px] font-normal text-sky-300">{pr.repo.split('/')[1]}</span>}
           </p>
+          <PrQueueLine pr={pr} />
           {pr.hasSchema ? (
             <>
               {pr.evidence.subsystem && (
@@ -565,6 +601,10 @@ export default function MrReview(props) {
     window.api.proposals?.list?.().then((r) => { if (live && r?.ok) setProposalCount(r.proposals.length) }).catch(() => {})
     return () => { live = false }
   }, [])
+  // The Workshop's control (#862) links its unbuilt views here: Shipped opens Merged, Proposals opens Proposals.
+  useEffect(() => {
+    if (['open', 'merged', 'proposals'].includes(props.nav?.view)) { setHistoryPr(null); setView(props.nav.view) }
+  }, [props.nav?.at])
   // Open, Merged and Proposals each keep their place; a merged PR opens at its top and Back returns to it (#755).
   useScrollPlace('mr-view', historyPr ? `merged:${historyPr.url}` : view)
   if (historyPr) {
@@ -595,7 +635,7 @@ export function FetchBanner({ status, now = Date.now() }) {
   const b = status ? prFetchBanner(status, now) : null
   if (!b) return null
   return (
-    <div role="alert" data-tone={b.tone} className={`rounded-lg border px-4 py-3 text-sm ${b.tone === 'red' ? 'border-red-700 bg-red-950/50 text-red-200' : 'border-amber-700 bg-amber-950/40 text-amber-200'}`}>
+    <div role={b.tone === 'info' ? 'status' : 'alert'} data-tone={b.tone} className={`rounded-lg border px-4 py-3 text-sm ${b.tone === 'red' ? 'border-red-700 bg-red-950/50 text-red-200' : b.tone === 'info' ? 'border-slate-700 bg-slate-900/40 text-slate-300' : 'border-amber-700 bg-amber-950/40 text-amber-200'}`}>
       {b.text}
     </div>
   )
@@ -743,7 +783,8 @@ function OpenPrs({ nav, onOpenDocs, onOpenBoard, onOpenTicket, onCount }) {
   }
   if (prs.length === 0 && motion.shown.length === 0) {
     // #422: an empty list because GitHub couldn't be reached is not "nothing to review".
-    return fetchStatus?.errors?.length ? <div className="p-6"><FetchBanner status={fetchStatus} /></div> : <EmptyState />
+    // marvin#954: nor is an empty list on the box while the Mini isn't answering.
+    return fetchStatus?.errors?.length || (fetchStatus?.source && fetchStatus.source.state !== 'fresh') ? <div className="p-6"><FetchBanner status={fetchStatus} /></div> : <EmptyState />
   }
 
   return (

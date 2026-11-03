@@ -51,6 +51,15 @@ export function createApproveFlow({ mergeOps, ledger, machines, send, push = () 
         push(url, mergeOps.interrupt(url))
         return { ...result, cancelled: false }
       }
+      // marvin#231: the machine took it into its merge queue; it merges there by itself when its turn comes. Not a merge
+      // and not a refusal: the op ends (the card shows the queue's line from the list), the ledger says where it waits.
+      if (result?.mergeQueued) {
+        ledger.conclude(url, 'merge-queue', { machine: machine.id, reason: result.reason })
+        mergeOps.cancel(url)
+        push(url, { state: 'idle' })
+        try { after(url, result) } catch { /* list bookkeeping never turns a queued merge into an error */ }
+        return { ...result, cancelled: false }
+      }
       const elsewhere = machine !== targets[0]
       const out = elsewhere ? { ...result, machine: machine.id, mergedOn: machine.here ? `this ${machine.label.replace(/^this /, '')}` : `the ${machine.label}`, ...(note ? { machineNote: note } : {}) } : result
       ledger.conclude(url, result?.merged ? 'merged' : 'reengaged', { machine: machine.id, reason: note ?? result?.reason })

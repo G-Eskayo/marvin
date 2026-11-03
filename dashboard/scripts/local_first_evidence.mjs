@@ -176,7 +176,7 @@ try {
   await page.getByText('#901 — Probe', { exact: false }).first().click()
   await page.locator('[data-question=probe]').waitFor({ timeout: 30_000 })
   await page.locator('[data-question=probe] button', { hasText: 'Yes' }).click()
-  const approve = page.locator('button', { hasText: 'Approve & Merge' })
+  const approve = page.locator('button', { hasText: /^Approve$/ })
 
   const t0 = Date.now()
   await page.locator('button', { hasText: 'Submit decisions' }).click()
@@ -188,7 +188,7 @@ try {
     result.correctionText = await page.locator('[data-correction]').first().innerText()
     result.approveEnabledAfterCorrection = await approve.isEnabled().catch(() => false)
   } else {
-    await page.waitForFunction(() => [...document.querySelectorAll('button')].some((x) => x.textContent.includes('Approve & Merge') && !x.disabled), null, { timeout: 180_000, polling: 50 })
+    await page.waitForFunction(() => [...document.querySelectorAll('button')].some((x) => x.textContent.trim() === 'Approve' && !x.disabled), null, { timeout: 180_000, polling: 50 })
     const t1 = Date.now()
     result.decisionsToApproveMs = t1 - t0
     result.decisionsCalls = summary(callsBetween(t0, t1))

@@ -178,3 +178,47 @@ describe('startRefreshServer', () => {
     }
   })
 })
+
+// marvin show (G-Eskayo/marvin#715): POST /show from a local program, never from a web page.
+describe('createRefreshServer: /show', () => {
+  const post = (port, body, headers = { 'content-type': 'application/json' }) =>
+    fetch(`http://127.0.0.1:${port}/show`, { method: 'POST', headers, body })
+
+  it('hands a JSON body to onShow and returns its answer', async () => {
+    const onShow = vi.fn(async (b) => ({ ok: true, project: 'marvin', got: b.kind }))
+    server = createRefreshServer(vi.fn(), { onShow })
+    const port = await listen(server)
+    const r = await post(port, JSON.stringify({ kind: 'file', path: '/x' }))
+    expect(r.status).toBe(200)
+    expect(await r.json()).toEqual({ ok: true, project: 'marvin', got: 'file' })
+  })
+
+  it('a refusal is 422 with the reason; a throw is 500, never a crash', async () => {
+    let n = 0
+    server = createRefreshServer(vi.fn(), { onShow: async () => (++n === 1 ? { ok: false, reason: 'Outside' } : Promise.reject(new Error('boom'))) })
+    const port = await listen(server)
+    const a = await post(port, '{}')
+    expect([a.status, (await a.json()).reason]).toEqual([422, 'Outside'])
+    const b = await post(port, '{}')
+    expect([b.status, (await b.json()).reason]).toEqual([500, 'boom'])
+  })
+
+  it('refuses what a browser page could send: text/plain, an Origin, a Referer; and junk or huge bodies', async () => {
+    const onShow = vi.fn(async () => ({ ok: true }))
+    server = createRefreshServer(vi.fn(), { onShow })
+    const port = await listen(server)
+    expect((await post(port, '{"kind":"url"}', { 'content-type': 'text/plain' })).status).toBe(403)
+    expect((await post(port, '{}', { 'content-type': 'application/json', origin: 'https://evil.example' })).status).toBe(403)
+    expect((await post(port, '{}', { 'content-type': 'application/json', referer: 'https://evil.example/' })).status).toBe(403)
+    expect((await post(port, '{not json')).status).toBe(400)
+    expect((await post(port, JSON.stringify({ pad: 'x'.repeat(100 * 1024) }))).status).toBe(413)
+    expect((await fetch(`http://127.0.0.1:${port}/show`)).status).toBe(405)
+    expect(onShow).not.toHaveBeenCalled()
+  })
+
+  it('without onShow (an older caller) /show is a 404 as before', async () => {
+    server = createRefreshServer(vi.fn())
+    const port = await listen(server)
+    expect((await post(port, '{}')).status).toBe(404)
+  })
+})

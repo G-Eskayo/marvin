@@ -246,6 +246,8 @@ def test_clarity_captions_notes_no_longer_say_the_app_cannot_be_built():
 
 
 @needs_instance
-def test_nourished_stays_off_and_has_a_real_verify_step():
+def test_nourished_has_a_real_verify_step():
+    # Builds were switched on by the owner on 2026-10-30 (instance #7), so whether it dispatches is the owner's
+    # setting, not this test's; what must hold is that a build has a real required check.
     p = pp.load_profile("G-Eskayo/nourished", directory=REAL_PROFILES)
-    assert p["dispatch"] == "off" and p["verify"] and any(t["required"] for t in p["verify"])
+    assert p["verify"] and any(t["required"] for t in p["verify"])

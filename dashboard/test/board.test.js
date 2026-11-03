@@ -509,3 +509,59 @@ describe('hold revisit comments on cards', () => {
 })
 
 
+
+describe('a PR names its ticket as Closes or Part of, in any repo (marvin#1004)', () => {
+  it('puts a ticket with an open "Part of" PR in review, and says the PR is a step', () => {
+    const r = deriveColumn(issue(), ctx({ prs: [pr({ body: 'Mock-up only. Part of #1' })] }))
+    expect(r.column).toBe('review')
+    expect(r.prs[0]).toMatchObject({ number: 50, relation: 'part-of' })
+    expect(r.reason).toMatch(/PR #50 open/)
+  })
+
+  it('does not count "for #N" or a bare mention', () => {
+    expect(deriveColumn(issue(), ctx({ prs: [pr({ body: 'Mock-up for #1' })] })).column).toBe('backlog')
+    expect(deriveColumn(issue(), ctx({ prs: [pr({ body: 'see #1' })] })).column).toBe('backlog')
+  })
+
+  it('finds a PR in another repo that closes this ticket (marvin-instance #6 -> marvin #623)', () => {
+    const t = issue({ number: 623, repo: 'G-Eskayo/marvin' })
+    const foreign = pr({ number: 6, repo: 'G-Eskayo/marvin-instance', body: 'Closes G-Eskayo/marvin#623' })
+    const b = buildBoard({ repo: 'G-Eskayo/marvin', issues: [t], prs: [foreign] })
+    const card = b.columns.find((c) => c.id === 'review').cards[0]
+    expect(card.number).toBe(623)
+    expect(card.prs[0]).toMatchObject({ number: 6, repo: 'G-Eskayo/marvin-instance', relation: 'closes' })
+    expect(card.reason).toMatch(/marvin-instance#6/)
+  })
+
+  it('a qualified ref to another repo never matches the same number here', () => {
+    // marvin-instance #6 closes marvin #623; a marvin-instance ticket #623 (if there were one) is not in review.
+    const b = buildBoard({ repo: 'G-Eskayo/marvin-instance', issues: [issue({ number: 623 })], prs: [pr({ number: 6, repo: 'G-Eskayo/marvin-instance', body: 'Closes G-Eskayo/marvin#623' })] })
+    expect(b.columns.find((c) => c.id === 'review').cards).toEqual([])
+  })
+
+  it('a bare #N in another repo\'s PR belongs to that repo, not this one', () => {
+    const b = buildBoard({ repo: 'o/r', issues: [issue({ number: 1 })], prs: [pr({ repo: 'o/other', body: 'Closes #1' })] })
+    expect(b.columns.find((c) => c.id === 'review').cards).toEqual([])
+  })
+
+  it('a PR list with no repo field is the board\'s own (as fetchBoardData returns it)', () => {
+    const { repo: _drop, ...bare } = pr({ body: 'Closes #1' })
+    const b = buildBoard({ repo: 'o/r', issues: [issue()], prs: [bare] })
+    expect(b.columns.find((c) => c.id === 'review').cards).toHaveLength(1)
+  })
+
+  it('a PR that names two tickets puts both in review', () => {
+    const b = buildBoard({ repo: 'o/r', issues: [issue({ number: 1 }), issue({ number: 2 })], prs: [pr({ body: 'Closes #1\nPart of #2' })] })
+    expect(b.columns.find((c) => c.id === 'review').cards.map((c) => c.number)).toEqual([1, 2])
+  })
+
+  it('lists the closing PR before a step PR when both are open', () => {
+    const r = deriveColumn(issue(), ctx({ prs: [pr({ number: 51, body: 'Part of #1' }), pr({ number: 52, body: 'Closes #1' })] }))
+    expect(r.prs.map((p) => p.number)).toEqual([52, 51])
+    expect(r.reason).toMatch(/PR #52/)
+  })
+
+  it('a code block quoting "Closes #1" is not a link', () => {
+    expect(deriveColumn(issue(), ctx({ prs: [pr({ body: '```\nCloses #1\n```' })] })).column).toBe('backlog')
+  })
+})

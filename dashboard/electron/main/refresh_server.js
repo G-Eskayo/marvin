@@ -7,8 +7,19 @@ import { createServer } from 'http'
 // only on its own fallback poll. Kept as its own module (not inlined into
 // electron/main/index.js) so the routing itself is testable without a
 // real BrowserWindow.
-export function createRefreshServer(onRefresh) {
+//
+// `onShow` (marvin show, G-Eskayo/marvin#715): POST /show with a JSON body asks the dashboard to show Gil one item in
+// its project's window; the handler's answer goes back as JSON. Only a local program can ask: the body must be JSON
+// (a browser page can't send that cross-site without a preflight, which this server never answers) and a request
+// with an Origin or Referer is refused. Bodies are capped at 64 KB.
+export const MAX_SHOW_BODY = 64 * 1024
+
+export function createRefreshServer(onRefresh, { onShow = null, showAllowed = defaultShowAllowed } = {}) {
   return createServer((req, res) => {
+    if (onShow && req.url === '/show') {
+      handleShow(req, res, onShow, showAllowed)
+      return
+    }
     if (req.method !== 'POST' || req.url !== '/refresh') {
       res.writeHead(404).end()
       return
@@ -31,6 +42,48 @@ export function createRefreshServer(onRefresh) {
   })
 }
 
+function defaultShowAllowed(headers = {}) {
+  const type = String(headers['content-type'] || '').split(';')[0].trim().toLowerCase()
+  return type === 'application/json' && headers.origin == null && headers.referer == null
+}
+
+function handleShow(req, res, onShow, showAllowed) {
+  const reply = (status, body) => {
+    if (!res.headersSent) res.writeHead(status, { 'Content-Type': 'application/json' })
+    res.end(JSON.stringify(body))
+  }
+  if (req.method !== 'POST') return reply(405, { ok: false, reason: 'POST only' })
+  if (!showAllowed(req.headers)) {
+    req.resume()
+    return reply(403, { ok: false, reason: 'Only a local program can ask to show something' })
+  }
+  let raw = ''
+  let tooBig = false
+  req.on('data', (chunk) => {
+    if (tooBig) return
+    raw += chunk
+    if (raw.length > MAX_SHOW_BODY) {
+      tooBig = true
+      raw = ''
+    }
+  })
+  req.on('end', async () => {
+    if (tooBig) return reply(413, { ok: false, reason: 'Request too large' })
+    let body
+    try {
+      body = JSON.parse(raw)
+    } catch {
+      return reply(400, { ok: false, reason: 'The body must be JSON' })
+    }
+    try {
+      const out = await onShow(body)
+      reply(out?.ok ? 200 : 422, out || { ok: false, reason: 'No answer' })
+    } catch (err) {
+      reply(500, { ok: false, reason: String(err?.message || err) })
+    }
+  })
+}
+
 export const DEFAULT_REFRESH_PORT = 7879
 
 // MARVIN_DASHBOARD_REFRESH_PORT -> a port number. 0 is honoured (ephemeral: the
@@ -49,8 +102,8 @@ export function parseRefreshPort(raw, fallback = DEFAULT_REFRESH_PORT) {
 // uncaught exception and Electron shows a modal error dialog (G-Eskayo/marvin#384).
 // Here it's one log line and this instance just doesn't get live refresh pings
 // (its fallback poll still runs).
-export function startRefreshServer(onRefresh, { port = DEFAULT_REFRESH_PORT, host = '127.0.0.1', log = console.warn } = {}) {
-  const server = createRefreshServer(onRefresh)
+export function startRefreshServer(onRefresh, { port = DEFAULT_REFRESH_PORT, host = '127.0.0.1', log = console.warn, onShow = null } = {}) {
+  const server = createRefreshServer(onRefresh, { onShow })
   server.on('error', (err) => {
     const line =
       err?.code === 'EADDRINUSE'

@@ -104,7 +104,7 @@ describe('createChangeDetector', () => {
     const onChange = vi.fn()
     const d = createChangeDetector({ probe, onChange })
     await d.tick(['o/r'])
-    await expect(d.tick(['o/r'])).resolves.toBeUndefined()
+    await expect(d.tick(['o/r'])).resolves.toBe(0) // a throwing probe resolves (0 repos answered), never rejects
     await d.tick(['o/r'])
     await d.tick(['o/r'])
     expect(onChange).not.toHaveBeenCalled()
