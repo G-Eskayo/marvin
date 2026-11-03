@@ -38,6 +38,19 @@ python3 bench.py tasks/* --repeat 3 --judge  # both
 python3 bench.py tasks/* --profiles clean,marvin  # specific profiles only
 ```
 
+Cost validation (marvin#645, Run 31 in RESULTS.md):
+
+```bash
+bash cost_validation.sh                       # the whole comparison, N=3, judged, budget-stopped
+python3 bench.py tasks/task-004-caveman --profiles marvin --prompt-prefix "Caveman mode. " --tag caveman
+python3 bench.py tasks/* --stop-above 0.75   # stop before a task once plan usage passes 75%
+~/.agents/venv/bin/python cost_report.py results/<dir> --base clean --treat marvin   # $ per successful task
+```
+
+A task.json `"check": {"files": "check"}` names hidden pytest files that are copied into the
+workdir after the run, so a coding task is graded by whether the code works, not by a substring.
+Run bench.py with `~/.agents/venv/bin/python` so the hidden checks have pytest.
+
 Results print a comparison table and save to `results/<task>-<stamp>.json`.
 `--repeat N` saves all N raw runs to JSON; the table shows mean ± σ across them.
 `--judge` calls claude as an LLM judge after each run; failing runs print the
