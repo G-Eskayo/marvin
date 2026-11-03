@@ -12,10 +12,16 @@ parallel, because nothing said "I'm on this". Hooks now keep a small live list, 
   pre     (PreToolUse Edit|Write)   before an interactive session edits a file another live session (active in the
                                     last 45 minutes) edited, the edit pauses and asks, naming what the other is doing.
                                     Once per file per pair of sessions.
+  start   (SessionStart)            a chat tab (marvin#1060, PRD #1058): an interactive session in a WezTerm pane is
+                                    recorded under "chats", keyed by (Mac, WezTerm GUI socket, pane) and checked
+                                    against the pane's tty. The pane owns the record: /clear or a resume in the same
+                                    pane just updates its session id. Chats are never pruned by age; `chats` lists
+                                    only those WezTerm and the claude process say are alive, and drops the rest.
 
 Runs on every edit, so standard library only, and any failure lets the edit through (it never blocks on its own bugs).
     session_work.py hook prompt|pre|post     (reads the hook payload on stdin)
     session_work.py list                     the live sessions and their files
+    session_work.py chats [--json]           the live chat tabs on this Mac (bin/marvin-chats)
 """
 from __future__ import annotations
 import fcntl
@@ -28,6 +34,7 @@ import sys
 import time
 import urllib.error
 import urllib.request
+from dataclasses import dataclass
 from pathlib import Path
 
 STATE_PATH = Path.home() / ".claude" / "logs" / "sessions-active.json"
@@ -244,6 +251,166 @@ def claim_wanted(st: dict, sid: str, repo: str | None) -> int | None:
     return ticket_in(s.get("request", ""))
 
 
+# ── chat tabs (marvin#1060) ─────────────────────────────────────────────────
+
+BRANCH_TICKET_RE = re.compile(r"#(\d+)$|^ticket/(\d+)(?:-|$)")   # the cleanup sweep's ISSUE_NUMBER_RE (#226)
+PS_FIELDS = ["/bin/ps", "-o", "pid=,ppid=,tty=,lstart=,command="]
+
+
+@dataclass(frozen=True)
+class Proc:
+    pid: int
+    started: str          # ps lstart, single-spaced: with the pid it tells a reused pid apart
+    tty: str              # e.g. "ttys004"; hooks have none of their own, the claude process does
+    interactive: bool     # False for `claude -p` / `--print` one-off runs
+
+
+def _ps_row(pid: int, run=None) -> tuple[int, str, str, list[str]] | None:
+    """(ppid, tty, lstart, command words) for one process, None if ps can't tell."""
+    run = run or subprocess.run
+    try:
+        out = run([*PS_FIELDS, "-p", str(pid)], capture_output=True, text=True, timeout=2)
+    except (OSError, subprocess.TimeoutExpired):
+        return None
+    words = (out.stdout or "").split() if out.returncode == 0 else []
+    if len(words) < 9 or not words[0].isdigit() or not words[1].isdigit():
+        return None
+    return int(words[1]), words[2], " ".join(words[3:8]), words[8:]
+
+
+def _is_claude(words: list[str]) -> bool:
+    return any(Path(w).name == "claude" for w in words[:2])
+
+
+def claude_proc(start_pid: int | None = None, run=None, depth: int = 12) -> Proc | None:
+    """The claude process this hook runs under, found by walking up the parents; None if there isn't one."""
+    pid, seen = (start_pid or os.getppid()), set()
+    for _ in range(depth):
+        if pid in seen or pid <= 1:
+            return None
+        seen.add(pid)
+        row = _ps_row(pid, run)
+        if row is None:
+            return None
+        ppid, tty, started, words = row
+        if _is_claude(words):
+            return Proc(pid, started, tty, interactive=not any(w in ("-p", "--print") for w in words))
+        pid = ppid
+    return None
+
+
+def proc_alive(pid, started: str, run=None) -> bool:
+    """The process is still running and is the same one (same start time), not a reused pid."""
+    if not isinstance(pid, int) or isinstance(pid, bool) or pid <= 1:
+        return False
+    row = _ps_row(pid, run)
+    return row is not None and " ".join(row[2].split()) == " ".join(str(started).split())
+
+
+def ticket_from_branch(branch: str | None) -> int | None:
+    m = BRANCH_TICKET_RE.search(branch or "")
+    return int(m.group(1) or m.group(2)) if m else None
+
+
+def _git_info(cwd: str) -> tuple[str | None, str | None]:
+    """(owner/name of origin, current branch) for a folder, Nones when it isn't a GitHub checkout."""
+    def git(*a):
+        try:
+            r = subprocess.run(["git", "-C", cwd, *a], capture_output=True, text=True, timeout=2)
+            return r.stdout.strip() if r.returncode == 0 else None
+        except (OSError, subprocess.TimeoutExpired):
+            return None
+    url = git("remote", "get-url", "origin") or ""
+    m = re.search(r"github\.com[:/]([\w.-]+/[\w.-]+?)(?:\.git)?$", url)
+    return (m.group(1) if m else None), git("rev-parse", "--abbrev-ref", "HEAD")
+
+
+def _mac() -> str:
+    try:
+        sys.path.insert(0, str(Path(__file__).resolve().parent))
+        import machine_profile
+        return machine_profile.machine_label()
+    except Exception:  # noqa: BLE001
+        return socket.gethostname().split(".")[0]
+
+
+def chat_from_env(payload: dict, env, proc: Proc | None, mac: str, git) -> dict | None:
+    """The chat-tab record for this session, None when it isn't a person's chat in a WezTerm pane (no pane, a helper
+    tab, a one-off `claude -p`, or no claude process found)."""
+    pane = str(env.get("WEZTERM_PANE") or "")
+    if not pane.isdigit() or env.get("MARVIN_HELPER_TAB") == "1" or proc is None or not proc.interactive:
+        return None
+    cwd = str(payload.get("cwd") or os.getcwd())
+    repo, branch = git(cwd)
+    return {"mac": mac, "socket": env.get("WEZTERM_UNIX_SOCKET") or "", "pane": int(pane), "tty": proc.tty,
+            "claude_pid": proc.pid, "claude_started": proc.started, "session": str(payload.get("session_id") or ""),
+            "cwd": cwd, "repo": repo, "branch": branch, "ticket": ticket_from_branch(branch)}
+
+
+def chat_key(rec: dict) -> str:
+    return f"{rec['mac']}|{rec['socket']}|{rec['pane']}"
+
+
+def register_chat(st: dict, rec: dict, now: float) -> None:
+    """The pane owns the record: same pane and tty is the same tab (newest session wins); another tty in that pane
+    is a new tab that reused the pane id, so it starts fresh."""
+    chats = st.setdefault("chats", {})
+    old = chats.get(chat_key(rec))
+    same_tab = isinstance(old, dict) and old.get("tty") == rec["tty"]
+    chats[chat_key(rec)] = {**(old if same_tab else {}), **rec,
+                            "started_at": old.get("started_at", now) if same_tab else now, "seen_at": now}
+
+
+def _valid(rec) -> bool:
+    return (isinstance(rec, dict) and isinstance(rec.get("pane"), int) and not isinstance(rec.get("pane"), bool)
+            and isinstance(rec.get("socket"), str) and isinstance(rec.get("tty"), str))
+
+
+def live_chats(st: dict, panes: dict, alive=proc_alive) -> list[dict]:
+    """Chats still alive, joined with their WezTerm pane; dead ones are removed from `st`.
+    panes: GUI socket -> that GUI's pane list, or None when that GUI has gone. A socket missing from `panes` didn't
+    answer: its chats are kept and marked unknown, never declared dead on a guess."""
+    out, keep = [], {}
+    for key, rec in (st.get("chats") or {}).items():
+        if not _valid(rec) or not alive(rec.get("claude_pid"), rec.get("claude_started", "")):
+            continue
+        if rec["socket"] not in panes:
+            keep[key] = rec
+            out.append({**rec, "unknown": True})
+            continue
+        rows = panes[rec["socket"]]
+        row = next((r for r in rows or [] if r.get("pane_id") == rec["pane"]), None)
+        if row is None or not str(row.get("tty_name") or "").endswith("/" + rec["tty"]):
+            continue
+        keep[key] = rec
+        out.append({**rec, "unknown": False, "title": row.get("title", ""), "window_id": row.get("window_id"),
+                    "tab_id": row.get("tab_id")})
+    st["chats"] = keep
+    return sorted(out, key=lambda c: (c["mac"], c["socket"], c["pane"]))
+
+
+def _panes_by_socket(sockets) -> dict:
+    """Each GUI's panes through the one WezTerm wrapper (marvin#1059); a GUI that errors is left out (unknown)."""
+    sys.path.insert(0, str(Path(__file__).resolve().parent))
+    import wezterm_cli
+    out = {}
+    for sock in sorted(set(sockets)):
+        try:
+            out[sock] = wezterm_cli.Wezterm(socket=sock or None, timeout=5).list()
+        except wezterm_cli.WeztermError:
+            continue
+    return out
+
+
+def list_chats(now: float | None = None) -> list[dict]:
+    now = now if now is not None else time.time()
+    with _Locked() as st:
+        recs = [r for r in (st.get("chats") or {}).values() if _valid(r)]
+    panes = _panes_by_socket(r["socket"] for r in recs)     # outside the lock: WezTerm may be slow
+    with _Locked() as st:
+        return live_chats(st, panes)
+
+
 # ── state file + hook entry points ──────────────────────────────────────────
 
 class _Locked:
@@ -285,13 +452,20 @@ def _start_claim(top: str, ticket: int) -> None:
                      stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, start_new_session=True)
 
 
-def handle(kind: str, payload: dict, now: float | None = None) -> str | None:
+def handle(kind: str, payload: dict, now: float | None = None, env=None) -> str | None:
     """Returns what the hook should print (only `pre` ever prints, and only to ask)."""
     now = now if now is not None else time.time()
     sid = str(payload.get("session_id") or "")
     if not sid:
         return None
     try:
+        if kind == "start":   # the slow lookups (ps, git) happen before the lock
+            rec = chat_from_env(payload, os.environ if env is None else env, proc=claude_proc(), mac=_mac(),
+                                git=_git_info)
+            if rec:
+                with _Locked() as st:
+                    register_chat(st, rec, now)
+            return None
         with _Locked() as st:
             prune(st, now)
             if kind == "prompt":
@@ -363,6 +537,18 @@ def main(argv: list[str]) -> int:
                 f.write(f"{time.strftime('%Y-%m-%dT%H:%M:%S')} {msg}\n")
         except OSError:
             pass
+        return 0
+    if argv[:1] == ["chats"]:
+        chats = list_chats()
+        if "--json" in argv:
+            print(json.dumps({"chats": chats}))
+            return 0
+        if not chats:
+            print("No MARVIN chat tabs open on this Mac.")
+        for c in chats:
+            where = f"#{c['ticket']}" if c.get("ticket") else (c.get("repo") or c.get("cwd") or "")
+            state = "?" if c.get("unknown") else "live"
+            print(f"pane {c['pane']:<4} {state:<4} {where:<24} {c.get('title', '')[:60]}")
         return 0
     if argv[:1] == ["list"]:
         now = time.time()
