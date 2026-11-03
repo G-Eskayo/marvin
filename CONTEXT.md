@@ -706,6 +706,21 @@ ever been closed unmerged. Gil approves almost everything; the wait is the cost.
   Notes with no inbound link are counted but stay green. Cost: O(notes + links), about 0.05 s for 164 notes.
 - `node_type` and `modified` are optional fields written by tooling, not required.
 
+## Profile parity (built 2026-11-02, marvin#1038)
+
+- **Public profile facts**: the owner's decided public facts (headline, current title, counts, names that never
+  appear, private values that never go public), each with its source and decision date. They live in one file in the
+  private instance, `config/public-profile.json`, never in the engine.
+- **Surface**: one place those facts show up: live web pages, a PDF, a local file (the master resume), a GitHub
+  profile, or a git branch of a site's source. A surface that can't be read is **couldn't check**, never a pass.
+- **Parity rule**: a test of a surface's text against the facts: `forbid`, `count` (exact or at least), `title_near`
+  (the title nearest an employer must be the real one) and `require`. An unconfirmed fact makes a **question** for the
+  owner, not a plain mismatch. A broken rule is itself a finding.
+- `lib/profile_parity.py` runs every rule on every surface and reports per surface and field; private matches are
+  redacted in every output. **Health check `profile:parity`**: amber naming the surface and field on drift, unknown
+  when nothing could be read, nothing at all when the instance keeps no facts file. Surfaces are re-read at most every
+  6 hours, or as soon as the facts file changes.
+
 ## Memory graph (built 2026-10-26, marvin#696)
 
 - **Memory graph**: `lib/memory_graph.py` follows memory's `[[links]]` instead of grepping for them. It is built
