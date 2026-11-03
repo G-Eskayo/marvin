@@ -809,13 +809,36 @@ def test_main_is_green_when_its_last_check_passed(tmp_path):
     assert r["id"] == "main:green" and r["severity"] == "green" and "abc1234" in r["detail"]
 
 
-def test_main_is_red_and_names_the_failing_tests(tmp_path):
+def test_a_local_failure_ci_passes_is_yellow_named_and_says_this_machine_only(tmp_path):
+    # marvin#1094: GitHub's CI is the judge; the local run's failures never hold merges.
     import json
     p = tmp_path / "m.json"
-    p.write_text(json.dumps({"sha": "def5678", "ok": False, "failed": ["tests/test_a.py::test_x"], "summary": "1 failed", "checked_at": hc._now().isoformat()}))
+    p.write_text(json.dumps({"sha": "def5678", "ok": False, "failed": ["tests/test_a.py::test_x"], "summary": "1 failed",
+                             "ci": "green", "machine": "mac-mini", "only_here": ["tests/test_a.py::test_x"],
+                             "checked_at": hc._now().isoformat()}))
     r = hc.check_main_health(path=p)
-    assert r["severity"] == "red"
-    assert "tests/test_a.py::test_x" in r["detail"] and "merges" in r["detail"].lower()
+    assert r["severity"] == "yellow"
+    assert "fails only on mac-mini" in r["detail"] and "tests/test_a.py::test_x" in r["detail"]
+    assert "not held" in r["detail"]
+
+
+def test_a_local_failure_without_cis_word_is_yellow_and_named_never_red(tmp_path):
+    import json
+    p = tmp_path / "m.json"
+    for extra in ({}, {"ci": "pending"}, {"ci": "unknown"}):
+        p.write_text(json.dumps({"sha": "def5678", "ok": False, "failed": ["tests/test_a.py::test_x"], "summary": "1 failed",
+                                 "checked_at": hc._now().isoformat(), **extra}))
+        r = hc.check_main_health(path=p)
+        assert r["severity"] == "yellow" and "tests/test_a.py::test_x" in r["detail"], extra
+
+
+def test_a_local_failure_ci_also_failed_is_red(tmp_path):
+    import json
+    p = tmp_path / "m.json"
+    p.write_text(json.dumps({"sha": "def5678", "ok": False, "failed": ["tests/test_a.py::test_x"], "summary": "1 failed",
+                             "ci": "red", "checked_at": hc._now().isoformat()}))
+    r = hc.check_main_health(path=p)
+    assert r["severity"] == "red" and "GitHub's CI" in r["detail"] and "tests/test_a.py::test_x" in r["detail"]
 
 
 def test_main_health_is_yellow_when_never_checked_or_stale(tmp_path):

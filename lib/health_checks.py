@@ -545,12 +545,13 @@ def check_hold_revisit(path: Path | None = None, now: datetime | None = None) ->
 
 
 MAIN_HEALTH_PATH = Path.home() / ".claude" / "logs" / "main-health.json"
-MAIN_HEALTH_STALE_HOURS = 24
+MAIN_HEALTH_STALE_HOURS = 30  # the local run is nightly (#1094): a day plus slack
 
 
 def check_main_health(path: Path | None = None, now: datetime | None = None) -> dict:
-    """Is the base branch green? Recorded by lib/main_health.py whenever origin/main moves. A red main refuses every
-    marvin merge (the gate says so by name), so it should be visible BEFORE someone clicks Approve."""
+    """Main's full suite on this machine (lib/main_health.py: nightly, on demand, or the queue's fallback). GitHub's
+    CI is the judge of main (marvin#1094): a local failure is yellow, named, and never holds a merge; one CI passed
+    on the same commit is named "fails only on <machine>". Red only when CI failed that commit too."""
     cid, label = "main:green", "The main branch passes its tests"
     path = path or MAIN_HEALTH_PATH
     now = now or _now()
@@ -559,19 +560,31 @@ def check_main_health(path: Path | None = None, now: datetime | None = None) -> 
     except (OSError, ValueError):
         return _result(cid, label, "yellow", "main has not been checked yet on this machine")
     when = datetime.fromisoformat(str(d.get("checked_at", "")).replace("Z", "+00:00")) if d.get("checked_at") else None
+    sha = d.get("sha", "?")
     if not d.get("ok"):
-        names = ", ".join(d.get("failed", [])[:3]) or d.get("summary", "failing")
-        return _result(cid, label, "red", f"main @ {d.get('sha', '?')} is failing: {names}. Merges are refused until it is fixed", value=len(d.get("failed", [])))
+        failed = d.get("failed", [])
+        names = ", ".join(failed[:3]) or d.get("summary", "failing")
+        if d.get("ci") == "red":
+            return _result(cid, label, "red", f"main @ {sha} fails here and in GitHub's CI: {names}. Merges wait for "
+                           "the fix (CI's main-red ticket)", value=len(failed))
+        only = d.get("only_here") or []
+        if only:
+            more = f" (+{len(only) - 3} more)" if len(only) > 3 else ""
+            return _result(cid, label, "yellow", f"{', '.join(only[:3])}{more} {'fails' if len(only) == 1 else 'fail'} "
+                           f"only on {d.get('machine', 'this Mac')} (GitHub's CI passes main @ {sha}). Merges are not "
+                           "held for these", value=len(only))
+        return _result(cid, label, "yellow", f"main @ {sha} fails on this Mac: {names}. GitHub's CI judges main; "
+                       "merges are not held for a local run", value=len(failed))
     if when is None or (now - when).total_seconds() > MAIN_HEALTH_STALE_HOURS * 3600:
-        return _result(cid, label, "yellow", f"last check ({d.get('sha', '?')}) is more than a day old")
+        return _result(cid, label, "yellow", f"last check ({sha}) is more than a day old")
     outside = d.get("outside") or []
     if outside:     # marvin#1047: main's code passes; state outside it (another repo, a local service) has moved
         from collections import Counter
         by_what = Counter(o.get("what", "?") for o in outside)
         named = "; ".join(f"{w} ({n})" for w, n in by_what.items())
-        return _result(cid, label, "yellow", f"main @ {d.get('sha', '?')}: its code passes, but {len(outside)} check(s) "
+        return _result(cid, label, "yellow", f"main @ {sha}: its code passes, but {len(outside)} check(s) "
                        f"of state outside it fail: {named}. Merges are not held for these", value=len(outside))
-    return _result(cid, label, "green", f"main @ {d.get('sha', '?')}: {d.get('summary', 'passing')}")
+    return _result(cid, label, "green", f"main @ {sha}: {d.get('summary', 'passing')}")
 
 
 def check_memory_lint() -> dict:

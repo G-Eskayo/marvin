@@ -9,7 +9,7 @@ every one of these holds:
 - its ticket is a watched incident that regressed (labels `watch` and `regression`);
 - it adds a **regression test that fails before the fix and passes after** (checked here on real git: the PR's test
   files run against the base commit, then against the PR's head);
-- its mutation score is at least 80 % (ADR 0063), main is green (main_health) and its checks pass;
+- its mutation score is at least 80 % (ADR 0063), main is green (GitHub CI on main's head, lib/main_ci.py, #1094) and its checks pass;
 - everything else ADR 0064's policy says still holds (no dependency change, size, plain paths, never finance-os); only
   the "is core" reasons are waived;
 - at most one per incident per day, and the trust ramp is open (a revert resets it).
@@ -245,11 +245,16 @@ def _checks_green(rollup) -> bool:
                                 for c in rollup if isinstance(c, dict))
 
 
-def _main_green() -> bool:
-    import main_health
+def _main_green(repo: str | None = None, read=None) -> bool:
+    """GitHub CI's verdict on main's head (marvin#1094): green only when CI passed it; pending, late or unreadable is
+    not green (ADR 0064's brake waits for CI)."""
+    import main_ci
     try:
-        return json.loads(main_health.STATE.read_text()).get("ok") is True
-    except (OSError, ValueError, AttributeError):
+        if repo is None:
+            import instance
+            repo = instance.engine_repo()
+        return (read or main_ci.read)(repo).get("state") == "green"
+    except Exception:  # noqa: BLE001 -- unreadable: not green
         return False
 
 
@@ -284,7 +289,7 @@ def run(repo: str | None = None, path: Path = STATE_PATH, gh=None) -> list[dict]
                     s2.setdefault("tested", {})[p["url"]] = cached
         entries.append({"pr": p, "labels": labels, "test": cached, "probe": spec["measure"] if spec else None})
     tops = set(_git(clone, "ls-tree", "--name-only", "-d", "origin/main").stdout.split())
-    main_green, ramp = _main_green(), trust_ramp.is_open(repo)
+    main_green, ramp = _main_green(repo), trust_ramp.is_open(repo)
     by_url = {r["pr"]["url"]: r for r in entries}
     seen = observe([{"number": r["pr"]["number"], "repo": repo, "url": r["pr"]["url"], "title": r["pr"]["title"],
                      "incident": incident_of(r["pr"]), "body": r["pr"].get("body") or "",

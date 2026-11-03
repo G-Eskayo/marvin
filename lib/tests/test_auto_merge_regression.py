@@ -264,3 +264,13 @@ def test_a_bot_written_regression_fix_waits_until_the_bots_ramp_is_open():
 
 def test_a_regression_fix_whose_author_is_unknown_waits():
     assert amr.verdict({**_pr(), "author": ""}, _facts(author_ramp_open=True), RULES)["verdict"] == "ask"
+
+
+def test_main_is_green_for_auto_merge_only_when_githubs_ci_passed_its_head():
+    # marvin#1094: CI is the judge, not the local main-health file; anything but green holds auto-merge.
+    import auto_merge_regression as amr
+    for state, green in (("green", True), ("red", False), ("pending", False), ("late", False), ("unknown", False)):
+        assert amr._main_green("o/r", read=lambda repo, s=state: {"state": s}) is green
+    def boom(repo):
+        raise RuntimeError("gh down")
+    assert amr._main_green("o/r", read=boom) is False

@@ -93,8 +93,8 @@ describe('mergeOrder: main is red', () => {
     expect(line(out, 1).reason).toBe('main is red · waits for #978')
   })
 
-  it('main-health red on main\'s current commit, with no ticket, still holds every PR', () => {
-    const out = mergeOrder([pr(1)], mainStateFrom({ health: { ok: false, sha: 'abc1234', failed: ['x'] }, headSha: 'abc1234def' }), q(1))
+  it('GitHub CI red on main\'s head, before its ticket exists, still holds every PR (#1094)', () => {
+    const out = mergeOrder([pr(1)], mainStateFrom({ ci: { sha: 'abc1234def', state: 'red', failing: ['Python tests'] }, headSha: 'abc1234def' }), q(1))
     expect(line(out, 1).reason).toBe('main is red · waits for a fix')
     expect(out.next).toBeNull()
   })

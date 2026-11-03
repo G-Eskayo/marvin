@@ -175,6 +175,14 @@ export function createCheckWatcher({ probe, onChange, now = Date.now }) {
   return { tick, checkedAt, size: () => watched.size }
 }
 
+// Main's head as a check-watch head while the merge queue waits for CI on it (marvin#1094): its checks changing (CI
+// finishing) is the trigger that decides again. Null when the queue is not waiting on CI.
+export function mainCiHead(repo, mainState) {
+  const ci = mainState?.ci
+  if (!ci || ci.state !== 'pending' || !ci.sha) return null
+  return { repo, sha: ci.sha, checkRuns: fromRest['check-runs']({ check_runs: ci.runs || [] }), statuses: null }
+}
+
 // Real probe: the same authenticated conditional GET as createGithubProbe. A body is read only on a 200.
 export function createCheckProbe(env = process.env, doFetch = fetch) {
   return async ({ kind, repo, sha, etag }) => {

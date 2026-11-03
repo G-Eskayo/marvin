@@ -418,7 +418,8 @@ ever been closed unmerged. Gil approves almost everything; the wait is the cost.
 - **Revert** (for now): undoes at once (a revert commit after a quick test run, no Approve wait); asks Gil for an
   optional one-line reason (what #73's learning step uses); sends the ticket back with that reason as its new
   requirement; resets the trust ramp for that area or project (its next 5 PRs wait for Gil).
-- **Safety brake**: auto-merges go one at a time, each waiting for main-health to pass on the previous one; a red main
+- **Safety brake**: auto-merges go one at a time, each waiting for GitHub's CI to pass on main after the previous one
+  (ADR 0064 amended 2026-11-03, #1094; was main-health); a red main
   pauses all auto-merging everywhere (phone push naming the likely PR) until main is green again; when the red appears
   within 30 min of an auto-merge and that PR's own tests fail on main, it is reverted automatically, once per incident
   (if that doesn't fix main, everything waits for Gil); no quiet hours.
@@ -1252,8 +1253,8 @@ untouched (it is the "legacy profile"); only repos with a profile file use the p
   ticket's stage log. At Approve, a PR behind main is rebased and retested only when main changed a file the PR also
   changes (`sharedFiles`), **or when main changed a rule since the split** (a test or guard file, `RULE_FILE`; Gil
   2026-10-26, after PR #572 merged directly past a test the split added and turned main red); otherwise it merges
-  directly, and main-health (which re-runs the suite on every main move and refuses merges while main is red) catches
-  the rare cross-file break. Unknown overlap = retest. MR Review's refresh is
+  directly, and GitHub's CI (the full suite on every push to main; the queue holds merges while it says main is red,
+  #1094) catches the rare cross-file break. Unknown overlap = retest. MR Review's refresh is
   the safety net for a missed stack move (`stack_retarget.js`). The pipeline scan still runs after the checks.
 - **A conflict gets the cheap fix before any rebuild (2026-10-09, #314)**: the hourly scan used to send every
   conflicting PR's ticket back for a full agent rebuild. Now `conflict_repair.py` first rebases it in a scratch worktree,
@@ -1577,6 +1578,13 @@ Mac has no push channel. Gil applies the hooks on each Mac with `marvin_hooks.py
   is built on; then the order approved. While main is red, only a PR that fixes main goes.
 - **Main-red fix**: a PR that closes the ticket saying main is red (or an incident ticket). It jumps the queue; every
   other PR waits for it.
+- **Main's judge** (#1094, Gil 2026-11-03): GitHub CI's verdict on main's current head commit (`lib/main_ci.py`) is
+  the only thing that says main is green or red. CI still checking: the queue waits ("CI is still checking main"). A
+  result for an older commit never counts. **CI silent**: no verdict 45 min after the commit landed; then one local run
+  (`main_health.py`) stands in for that commit, and the reason says so. A local run is otherwise never a judge.
+- **Fails only on <machine>**: a test that fails on one Mac (the nightly local run, or the merge gate) while CI passes
+  the same commit. Shown yellow in Health by name; never holds a merge, never sends a PR back (the gate says
+  `GATE_INFRA`).
 - **Queue line**: the one line under a PR's title in MR Review saying where it stands: its place ("queued · 2nd · starts
   after #971") or what it waits for ("waits for #936 (it's built on it)", "main is red · waits for #986", "checks
   failing: …", "conflicts with main after #970 · MARVIN is fixing it"). A PR's own blockers are said before what it
@@ -1690,7 +1698,7 @@ Every test command, setup step, and profile-driven verification tier now has an 
 ## Hardening after the red-main incident (2026-10-07)
 
 What went wrong: a figure test with a quote-style bug turned main red; nothing said so; the merge gate denied a good PR (#173) for it; three gate attempts hung with no result; and a PR could show "Merging…" forever. What now prevents a repeat:
-- **Main is watched:** `lib/main_health.py` runs the whole Python suite on a clean checkout of origin/main whenever it moves (started in the background by each pipeline scan) and records it; Health check `main:green` is red, naming the failing tests, until it is fixed. It runs everything, including tests that read other repos.
+- **Main is watched:** GitHub's CI runs the full suite on every push to main and is the only judge of main (2026-11-03, #1094: see **Main's judge**). `lib/main_health.py` runs the whole Python suite on a clean checkout of origin/main nightly and on demand, including tests that read other repos; Health check `main:green` shows its failures yellow, by name, and red only when CI failed that commit too. (Until #1094 it ran on every move of main and could hold merges.)
 - **A PR is not judged on another repo's data:** the gate runs pytest with `MARVIN_MERGE_GATE=1`, which leaves out tests that read the portfolio repo (`readable_guard.exclude_portfolio_tests`); they run in the main check instead.
 - **The gate is bounded:** a gate that doesn't finish in 40 minutes is cut off and refused as `GATE_INFRA` ("did not finish in time"), never sent back; a merge stuck "Merging…" expires into an error after 45 minutes. Per-command timeouts now kill the actual subprocesses, not just abandon the promise (fixed #190).
 - **If main is red anyway:** the gate compares the PR's failing tests with main and refuses `MAIN_RED` instead of denying the PR (earlier fix).

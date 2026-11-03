@@ -1,0 +1,37 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!-- Main's full suite on this Mac, once a night (lib/main_health.py nightly, marvin#1094). GitHub's CI is the judge of
+     main; this run only shows what fails on this machine (yellow in Health, "fails only on <machine>") and never holds
+     a merge. A calendar time, never an interval: 04:15, after the nightly reset's slots (00:30, 02:30).
+     Install on the Mac mini: cp this to ~/Library/LaunchAgents/ and
+     `launchctl bootstrap gui/$(id -u) ~/Library/LaunchAgents/com.marvin.main-health.plist`. -->
+<plist version="1.0">
+<dict>
+    <key>Label</key>
+    <string>com.marvin.main-health</string>
+    <key>ProgramArguments</key>
+    <array>
+        <string>/Users/gileskayo/.agents/venv/bin/python</string>
+        <string>/Users/gileskayo/.agents/lib/main_health.py</string>
+        <string>nightly</string>
+    </array>
+    <key>EnvironmentVariables</key>
+    <dict>
+        <key>HOME</key>
+        <string>/Users/gileskayo</string>
+        <key>PATH</key>
+        <string>/Users/gileskayo/.local/bin:/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin:/Users/gileskayo/.agents/venv/bin</string>
+    </dict>
+    <key>StartCalendarInterval</key>
+    <dict>
+        <key>Hour</key>
+        <integer>4</integer>
+        <key>Minute</key>
+        <integer>15</integer>
+    </dict>
+    <key>StandardOutPath</key>
+    <string>/Users/gileskayo/.claude/logs/main-health-nightly.log</string>
+    <key>StandardErrorPath</key>
+    <string>/Users/gileskayo/.claude/logs/main-health-nightly-error.log</string>
+</dict>
+</plist>

@@ -1,14 +1,19 @@
-"""Is the base branch green? Checked on a clean checkout of origin/main, recorded, and shown in Health.
+"""Main's full suite on THIS machine: nightly and on demand, never the judge of main (marvin#1094).
 
-On 2026-10-07 main went red because of a bad test, and nobody knew until a PR was denied for it. This keeps a record:
-whenever origin/main has a new commit, run the whole Python suite on a clean checkout and write the answer to
-~/.claude/logs/main-health.json (read by the Health check `main:green`). The ticket-pipeline scan starts it in the
-background, so a scan never waits on it. Unlike the merge gate it runs EVERYTHING, including the tests that read other
-repos' data, which the gate leaves out. A failure of a test marked `outside_state` (lib/outside_state.py, marvin#1047:
-another repo's working copy or a running local service, not main's code) is recorded under `outside` and shown
-yellow in Health. When those are the only failures, main is still ok and the queue still moves.
+GitHub's CI is the only judge of whether main is green (the owner, 2026-11-03; lib/main_ci.py reads its verdict on main's
+head, and the merge queue goes by that). Until then this ran the whole suite on the Mini on every move of main, and
+13 main-red fixes in four days were tests failing on the Mini only while CI was green. What only a local run sees is
+still worth seeing: tests marked `outside_state` (lib/outside_state.py, marvin#1047: another repo's working copy, a
+running local service) and anything the CI runner can't reach. So it runs:
+- nightly (config/launchd/com.marvin.main-health.plist, a calendar job: a schedule, not a poll), even if main hasn't moved;
+- on demand: `main_health.py refresh` (skips a commit already checked) or `main_health.py nightly` (always runs);
+- as the merge queue's one fallback when CI has not reported on main's head by its deadline (main_ci.DEADLINE_MIN).
+The answer goes to ~/.claude/logs/main-health.json (Health check `main:green`). Each run also records CI's verdict on
+the commit it tested and this machine's name: a test that fails here while CI passes that commit is listed under
+`only_here` and shown in Health as "fails only on <machine>", yellow, by name. It never holds a merge.
 
     python main_health.py refresh        check now (skips when origin/main has not moved)
+    python main_health.py nightly        check now, even when origin/main has not moved
 
 Once per change that can matter, one at a time (marvin#457 "main-health runs pile up (3 full test suites at once) and
 starve the merge gate: single-flight lock + skip docs/log-only commits"; pipeline review 2026-10-21, F1/F11):
@@ -155,8 +160,21 @@ def _write(state_path: Path, health_record: dict) -> None:
     tmp.replace(state_path)  # Health never reads a half-written answer
 
 
+def _ci_judge(sha: str) -> dict:
+    """GitHub CI's verdict on the commit this run tested (lib/main_ci.py): two GitHub calls per run."""
+    import instance
+    import main_ci
+    return main_ci.read(instance.engine_repo(), sha=sha)
+
+
+def _machine() -> str:
+    import machine_profile
+    return machine_profile.machine_label()
+
+
 def refresh(state_path: Path = STATE, head=_head, run_suite=_run_suite, now: datetime | None = None,
-            changed=_changed_paths, named_by_a_test=_named_by_a_test) -> dict:
+            changed=_changed_paths, named_by_a_test=_named_by_a_test, force: bool = False, judge=None,
+            machine=_machine) -> dict:
     Path(state_path).parent.mkdir(parents=True, exist_ok=True)
     again = Path(state_path).with_suffix(".again")
     with open(Path(state_path).with_suffix(".lock"), "a") as lock:
@@ -167,21 +185,24 @@ def refresh(state_path: Path = STATE, head=_head, run_suite=_run_suite, now: dat
             return {"ran": False, "busy": True}
         while True:
             again.unlink(missing_ok=True)
-            res = _refresh_once(state_path, head, run_suite, now or datetime.now(timezone.utc), changed, named_by_a_test)
+            res = _refresh_once(state_path, head, run_suite, now or datetime.now(timezone.utc), changed, named_by_a_test,
+                                force, judge, machine)
+            force = False   # a coalesced second pass only checks a newer main
             if not again.exists():
                 return res
 
 
-def _refresh_once(state_path, head, run_suite, now, changed, named_by_a_test) -> dict:
+def _refresh_once(state_path, head, run_suite, now, changed, named_by_a_test, force=False, judge=None,
+                  machine=_machine) -> dict:
     prior = {}
     try:
         prior = json.loads(Path(state_path).read_text())
     except (OSError, ValueError):
         pass
     sha = head()
-    if sha is None or sha == prior.get("sha"):
+    if sha is None or (sha == prior.get("sha") and not force):
         return {**prior, "ran": False}
-    if prior.get("sha") and "ok" in prior and not needs_suite(changed(prior["sha"], sha), lambda p: named_by_a_test(p, sha)):
+    if not force and prior.get("sha") and "ok" in prior and not needs_suite(changed(prior["sha"], sha), lambda p: named_by_a_test(p, sha)):
         res = {**{k: v for k, v in prior.items() if k in ("ok", "failed", "summary", "outside")}, "sha": sha,
                "tested_sha": prior.get("tested_sha", prior["sha"]), "checked_at": now.isoformat(),
                "carried": f"only docs or machine data changed since {prior['sha']}", "ran": False}
@@ -191,10 +212,27 @@ def _refresh_once(state_path, head, run_suite, now, changed, named_by_a_test) ->
     res = {"sha": sha, "ok": ok, "failed": failed, "summary": summary, "checked_at": now.isoformat(), "ran": True}
     if rest and rest[0]:
         res["outside"] = rest[0]
+    if judge is not None:
+        try:
+            ci = (judge(sha) or {}).get("state") or "unknown"
+        except Exception:  # noqa: BLE001 -- GitHub unreadable: the local answer is still recorded
+            ci = "unknown"
+        try:
+            res["machine"] = machine()
+        except Exception:  # noqa: BLE001
+            res["machine"] = "this Mac"
+        res["ci"] = ci
+        if ci == "green" and failed:
+            res["only_here"] = list(failed)
     _write(state_path, res)
     return res
 
+def main(argv: list[str]) -> int:
+    if argv not in (["refresh"], ["nightly"]):
+        sys.exit("usage: main_health.py refresh|nightly")
+    print(json.dumps(refresh(force=argv == ["nightly"], judge=_ci_judge)))
+    return 0
+
+
 if __name__ == "__main__":
-    if sys.argv[1:] != ["refresh"]:
-        sys.exit("usage: main_health.py refresh")
-    print(json.dumps(refresh()))
+    sys.exit(main(sys.argv[1:]))

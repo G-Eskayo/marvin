@@ -4,7 +4,7 @@ import path from 'path'
 import { createServer } from 'http'
 import { mergePr, baselineFailsOnMain, mergesAhead, execWithGroupTimeout, runDiskFirstAid, memoryGuardCheck, withMergeMark, forgetQueuedMerge, readMergeReady, sweepGateClones, repoJobsDone, triggerTicketPipeline } from './merge.js'
 import { createMergeQueue, createQueueStore } from './merge_queue.js'
-import { createUnbuiltCache, createFixTicketsCache, createQueueLoader, createBaseLookup, createFollowUpRequester, readMainHealth, readRepairFailures } from './merge_facts.js'
+import { createUnbuiltCache, createFixTicketsCache, createQueueLoader, createBaseLookup, createFollowUpRequester, readMainHealth, readRepairFailures, createFallbackRun, createDeadlineWake, mainCiFacts } from './merge_facts.js'
 import { pendingCheckHeads } from '../electron/main/mr_repos.js'
 import { snapshotExec } from './pr_snapshot.js'
 import { createMergeTracker, createInflightStore, takeInterruptedMerges, recordMergeDuration, estimateMergeMs, machineLoad, approveResponder, wantsStream, createMergeLatch, alreadyMergingBody } from './merge_progress.js'
@@ -23,11 +23,11 @@ import { appendError } from '../electron/main/error_log.js'
 import { readRebaseStatus } from './rebase_status.js'
 import { readLiveSessions } from './sessions.js'
 import { listHelpers } from './chat_helpers.js'
-import { startChangeWatch, createGithubProbe, startCheckWatch, createCheckProbe } from './gh_watch.js'
+import { startChangeWatch, createGithubProbe, startCheckWatch, createCheckProbe, mainCiHead } from './gh_watch.js'
 import { createGithubFeedWriter } from './github_feed_writer.js'
 import { gateCooldownUntil } from '../electron/main/github_state.js'
 import { readRegistry } from '../electron/main/boards.js'
-import { execFile } from 'child_process'
+import { execFile, spawn } from 'child_process'
 import { promisify } from 'util'
 import { createPortfolio } from '../electron/main/portfolio.js'
 import { handlePortfolioRequest } from '../electron/main/portfolio_remote.js'
@@ -167,7 +167,7 @@ const server = createServer(async (req, res) => {
   if (req.method === 'GET' && req.url === '/merge-queue') {
     res.writeHead(200, { 'Content-Type': 'application/json' }).end(JSON.stringify({
       repos: mergeQueue.snapshot(),
-      facts: { unbuilt: [...unbuiltCache.get()], unbuiltAt: unbuiltCache.at(), repairFailed: readRepairFailures(), health: readMainHealth(), tickets: fixTickets.get() },
+      facts: { unbuilt: [...unbuiltCache.get()], unbuiltAt: unbuiltCache.at(), repairFailed: readRepairFailures(), health: readMainHealth(), tickets: fixTickets.get(), ci: mainCiFacts(mergeQueue) },
       machine: machineId
     }))
     return
@@ -390,6 +390,9 @@ async function runMerge(prUrl, { by = 'you', reply = null } = {}) {
       // its end kicks the memory guard's queue (a merge ending may let the next queued item start).
       const result = await withMergeMark(() => mergePr(prUrl, snapshotExec(prUrl, execWithGroupTimeout), undefined, undefined, undefined, undefined, undefined, undefined, {
         baselineFails: (names) => baselineFailsOnMain(names),
+        // marvin#1094: CI's last verdict on main's head, so a test failing here and on main locally but passing in CI
+        // is named "fails only on <this Mac>" instead of "main is red".
+        mainCi: () => mergeQueue.view(repoOfPr(prUrl))?.main?.ci || null,
         progress: tracker ? tracker.progress : undefined,
         loadNow: () => ({ ...machineLoad(), id: machineId }),
         // A nearly full disk gets the cleanup sweep's rebuildable trims once before the gate refuses (2026-10-28).
@@ -431,9 +434,14 @@ const fixTickets = createFixTicketsCache({ exec: execAsync, owners: () => [...ne
 // Everything MR Review reads from here besides the queue: refreshed together on each trigger.
 const refreshFacts = () => Promise.all([unbuiltCache.refresh(), fixTickets.refresh()])
 const triggeredResolver = new Map() // url -> head sha the conflict resolver was started for
+// marvin#1094: main's state is GitHub CI's verdict on its head. While CI checks, the queue decides again when CI's checks
+// change (the check watch below) or at CI's deadline (one timer); past it, one local run stands in, and its end kicks.
+const kickRepo = (repo) => { mergeQueue.kick(repo).catch(() => {}) }
+const ciDeadlineWake = createDeadlineWake({ kick: kickRepo })
+const ciFallbackRun = createFallbackRun({ spawn, done: kickRepo, log: (m) => console.log(m) })
 const mergeQueue = createMergeQueue({
   store: createQueueStore(),
-  load: createQueueLoader({ exec: execAsync, unbuilt: () => unbuiltCache.get(), baseOf: createBaseLookup({ exec: execAsync }) }),
+  load: createQueueLoader({ exec: execAsync, unbuilt: () => unbuiltCache.get(), baseOf: createBaseLookup({ exec: execAsync }), wakeAt: ciDeadlineWake, fallback: ciFallbackRun }),
   run: async (url, attach) => {
     attach?.ran()
     const { status, body } = await runMerge(url, { by: 'you', reply: attach?.reply || null })
@@ -460,6 +468,8 @@ function queuedPendingHeads() {
     const view = mergeQueue.view(repo)
     if (!view) continue
     for (const pr of view.prs || []) if (view.entries[pr.url]?.queued) heads.push(...pendingCheckHeads(repo, [pr]))
+    const main = mainCiHead(repo, view.main) // main's head while the queue waits for CI on it (#1094)
+    if (main) heads.push(main)
   }
   return heads
 }

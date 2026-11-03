@@ -189,20 +189,6 @@ MAX_REENGAGE_ATTEMPTS = 3
 MARVIN_MACHINES = ("mac-mini-1", "macbook-pro-1")
 
 
-def _refresh_main_health() -> None:
-    """Check the base branch on a clean checkout when it has moved (lib/main_health.py), in the background: a red main
-    refuses every marvin merge, and should show in Health before anyone clicks Approve. Best effort, never blocks a scan."""
-    try:
-        subprocess.Popen([sys.executable, str(Path(__file__).with_name("main_health.py")), "refresh"],
-                         stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, start_new_session=True)
-    except Exception as e:  # noqa: BLE001
-        print(f"{LOG_PREFIX} main health check not started: {e}", file=sys.stderr)
-
-
-def _background_checks() -> None:
-    _refresh_main_health()
-
-
 def _owner_decisions() -> str:
     """Owner decisions unanswered for N hours become a ready-for-agent follow-up ticket (marvin#607): one GraphQL
     call for every registered repo. Never breaks the scan."""
@@ -920,7 +906,8 @@ def _scan(run, dry_run: bool) -> str | None:
         _run_ticket_agents(step, summary)
 
     if not dry_run:
-        _background_checks()
+        # No local main-health run here any more (marvin#1094): GitHub's CI judges main on every push; the local full
+        # suite runs nightly (com.marvin.main-health) and on demand.
         step("Conflicted PRs", "sending back PRs that no longer merge")
         sent = _requeue_all([REPO, *pp.runnable_repos()])
         step("Conflicted PRs", ", ".join(sent) + " sent back" if sent else "none")

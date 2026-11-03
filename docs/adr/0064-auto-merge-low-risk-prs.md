@@ -1,4 +1,4 @@
-# ADR 0064: Auto-merge low-risk PRs, judged by what they touch, earned per project, braked by main-health
+# ADR 0064: Auto-merge low-risk PRs, judged by what they touch, earned per project, braked by GitHub's CI on main
 
 **Status:** Accepted (2026-10-09, Gil, #332 design session). Builds on ADR 0061 (overlap rule) and ADR 0063 (tests try
 to break it). The governor (#327) later sets its pace.
@@ -24,7 +24,8 @@ systems ("things that don't affect core files or deleting my files", 2026-07-08)
   by Gil; a denial, revert or post-merge break resets the ramp to 5.
 
 **Operation:**
-- One auto-merge at a time, each waiting for main-health to pass on the previous one. A red main pauses all
+- One auto-merge at a time, each waiting for GitHub's CI to pass on main after the previous one (amended 2026-11-03,
+  below; this said "main-health"). A red main pauses all
   auto-merging (phone push); a red within 30 min of an auto-merge whose own tests fail on main is reverted
   automatically, once per incident; otherwise everything waits for Gil. No quiet hours.
 - Gil sees an "Auto-merged" list with one-click **Revert** (immediate revert commit, optional one-line reason, ticket
@@ -60,3 +61,20 @@ holds. The rules live in `config/auto_merge.json` (`known_incident_regressions`)
   the morning brief carries the report. It switches on with this ADR's own switch, only when Gil says yes. Until then
   rung-3 PRs wait for his Approve like any core change.
 - **Telling Gil:** a brief line and a phone notification when MARVIN fixed a regression itself, and when it couldn't.
+
+## Amendment (2026-11-03, Gil): wait for CI, not main-health (marvin#1094)
+
+"GitHub's CI is the only judge of whether main is green." Since 2026-10-30, 13 main-red fixes and 4 gate/queue
+tweaks were the Mini's local main-health run disagreeing with CI (tests that read live claims, pgrep, another repo's
+working copy) and holding every merge while CI on main was green. So, wherever this ADR said "main-health":
+
+- **The brake waits for CI.** Each merge waits for GitHub CI's verdict on main's current head commit
+  (`lib/main_ci.py`: every required check in `.github/required-checks.json` passed on that commit). A result for an
+  older commit never counts. While CI is still checking, the queue waits ("CI is still checking main"); a red verdict,
+  or CI's main-red ticket, pauses everything but the fix.
+- **One fallback.** If CI hasn't reported by `main_ci.DEADLINE_MIN` (45 min) after the commit landed, one local run
+  (`lib/main_health.py refresh`) stands in, only for that commit, and the queue's reason says so.
+- **The local full suite is not a judge.** It runs nightly (`config/launchd/com.marvin.main-health.plist`) and on
+  demand. Its failures are yellow in Health by name ("fails only on <machine>" when CI passed that commit) and never
+  hold a merge. The merge gate does the same: a test failing on the gate's machine and on main locally while CI
+  passes main is `GATE_INFRA` ("fails only on <machine>"), not `MAIN_RED`.

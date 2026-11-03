@@ -10,7 +10,8 @@ import { engineRepo, owner } from '../electron/main/instance.js'
 //   - the repo's open PRs and open tickets (two gh calls per decision, only for a repo with something queued)
 //   - answered-but-unbuilt Decisions: lib/owner_decisions.py `waiting --json` (one GraphQL call for every repo),
 //     kept here and refreshed on triggers, single flight
-//   - main's health: CI's main-red ticket (lib/main_red.py) and ~/.claude/logs/main-health.json (lib/main_health.py)
+//   - main's state (#1094): GitHub CI's verdict on main's head (lib/main_ci.py) and CI's main-red ticket
+//     (lib/main_red.py); ~/.claude/logs/main-health.json (lib/main_health.py) only as the fallback when CI is silent
 //   - conflict repairs that failed on a commit: ~/.claude/logs/conflict-repair.json (lib/conflict_repair.py)
 //   - the post-merge conflict check (#225): pr-rebase-status.json
 // Paths are worked out from os.homedir() at call time, so tests with a temp HOME never touch the real logs.
@@ -19,6 +20,7 @@ const __dirname = path.dirname(fileURLToPath(import.meta.url))
 const ROOT = path.resolve(__dirname, '..', '..')
 const OWNER_DECISIONS = path.join(ROOT, 'lib', 'owner_decisions.py')
 const PROFILE_SCRIPT = path.join(ROOT, 'lib', 'project_profile.py')
+const MAIN_CI = path.join(ROOT, 'lib', 'main_ci.py')
 const VENV_PYTHON = path.join(ROOT, 'venv', 'bin', 'python')
 
 const logs = () => path.join(os.homedir(), '.claude', 'logs')
@@ -119,7 +121,12 @@ const PR_FIELDS = 'number,title,url,body,baseRefName,headRefName,headRefOid,merg
 
 // load(repo) for the queue runner: { openPrs (enriched), mainState }. Throws when GitHub can't be read: the runner
 // then decides nothing (a queue never merges on a guess).
-export function createQueueLoader({ exec, unbuilt, baseOf, health = readMainHealth, repairs = readRepairFailures, rebase = readRebaseStatus }) {
+// For marvin itself main's state is GitHub CI's verdict on main's head (lib/main_ci.py, #1094); unreadable is
+// "unknown", and the queue waits. While CI is still checking, wakeAt(repo, ms) asks to decide again at CI's deadline
+// (the check watch also sees CI finish). Past the deadline with no local run on that commit, fallback(repo, sha) asks
+// for the one local run; its end is the next trigger.
+export function createQueueLoader({ exec, unbuilt, baseOf, health = readMainHealth, repairs = readRepairFailures, rebase = readRebaseStatus,
+  python = VENV_PYTHON, mainCi = MAIN_CI, wakeAt = () => {}, fallback = () => {} }) {
   return async (repo) => {
     const [prsOut, issuesOut] = await Promise.all([
       exec('gh', ['pr', 'list', '--repo', repo, '--state', 'open', '--limit', '100', '--json', PR_FIELDS]),
@@ -129,19 +136,68 @@ export function createQueueLoader({ exec, unbuilt, baseOf, health = readMainHeal
     const issues = JSON.parse(String(issuesOut?.stdout || ''))
     if (!Array.isArray(prs) || !Array.isArray(issues)) throw new Error('GitHub did not answer with lists')
     const base = await baseOf(repo)
-    // main's current commit, so an old local health check can't hold the queue (healthCountsFor). Unreadable: the
-    // local check is ignored and CI's main-red ticket alone says red.
-    let headSha = null
+    let ci = null
     if (repo === engineRepo()) {
       try {
-        headSha = String((await exec('gh', ['api', `repos/${repo}/commits/${base}`, '--jq', '.sha']))?.stdout || '').trim() || null
-      } catch { headSha = null }
+        ci = JSON.parse(String((await exec(python, [mainCi, 'verdict', '--repo', repo, '--base', base], { timeout: 90_000 }))?.stdout || ''))
+      } catch (e) {
+        ci = { sha: null, state: 'unknown', reason: `GitHub's CI result for ${base} could not be read: ${String(e?.message || e).slice(0, 120)}` }
+      }
     }
+    const mainState = mainStateFrom({ issues, health: repo === engineRepo() ? health() : null, base, ci })
+    if (ci?.state === 'pending' && ci.deadline_at) { try { wakeAt(repo, Date.parse(ci.deadline_at)) } catch { /* a hint */ } }
+    if (mainState.fallback && mainState.headSha) { try { fallback(repo, mainState.headSha) } catch { /* a hint */ } }
     return {
       openPrs: enrichForOrder(prs.filter((p) => !p.isCrossRepository).map((p) => ({ ...p, repo })), { repo, issues, unbuilt: unbuilt(), repairFailed: repairs(), rebaseStatus: rebase() }),
-      mainState: mainStateFrom({ issues, health: repo === engineRepo() ? health() : null, base, headSha })
+      mainState
     }
   }
+}
+
+// The one local run when CI is silent past its deadline (#1094): `main_health.py refresh` once per commit (it is
+// single flight and skips a commit it already checked), detached; done(repo) is called when it ends, so the queue
+// decides again on its answer. O(1) per call.
+export function createFallbackRun({ spawn, python = VENV_PYTHON, script = path.join(ROOT, 'lib', 'main_health.py'), done = () => {}, log = () => {} }) {
+  const asked = new Set()
+  return (repo, sha) => {
+    if (!sha || asked.has(sha)) return false
+    asked.add(sha)
+    log(`[merge-queue] ${repo}: CI hasn't reported on ${String(sha).slice(0, 7)} by its deadline; checking main on this Mac once`)
+    try {
+      const child = spawn(python, [script, 'refresh'], { stdio: 'ignore' })
+      child.on?.('exit', () => done(repo))
+      child.on?.('error', () => done(repo))
+    } catch (e) {
+      log(`[merge-queue] ${repo}: the local check could not start: ${String(e?.message || e).slice(0, 200)}`)
+      done(repo)
+    }
+    return true
+  }
+}
+
+// One timer per repo for "decide again at CI's deadline" (a known time, not a poll): a later ask replaces it.
+export function createDeadlineWake({ kick, setTimer = (f, ms) => setTimeout(f, ms), clearTimer = (t) => clearTimeout(t), now = Date.now }) {
+  const timers = new Map()
+  return (repo, at) => {
+    if (!Number.isFinite(at)) return
+    const prev = timers.get(repo)
+    if (prev && prev.at === at) return
+    if (prev) clearTimer(prev.t)
+    const t = setTimer(() => { timers.delete(repo); kick(repo) }, Math.max(0, at - now()) + 1000)
+    t?.unref?.()
+    timers.set(repo, { at, t })
+  }
+}
+
+// CI's last verdict on main's head per repo, from the queue's last decisions, for MR Review on either Mac (GET
+// /merge-queue facts.ci): both sides then work main's state out from the same verdict.
+export function mainCiFacts(queue) {
+  const out = {}
+  for (const repo of Object.keys(queue?.snapshot?.() || {})) {
+    const ci = queue.view?.(repo)?.main?.ci
+    if (ci) out[repo] = ci
+  }
+  return out
 }
 
 // The owner's Approve of a PR whose answers aren't built yet asks for the work now, not after the scan's grace hours

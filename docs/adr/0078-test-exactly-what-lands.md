@@ -42,8 +42,9 @@ pre-verify (see the plan, section 2).
    *landed untested*. The commit carries a `Verified-Tree: <T>` trailer.
 4. **A red main queues; it doesn't block.** Approve always enqueues. Queued PRs whose failures are a subset of main's
    are *blocked by main* and aren't sent back. The first candidate that passes completely lands, even ahead of earlier
-   entries (passing on a red main means it fixes main). Main-health runs only for trees nobody verified (auto-sync code
-   commits, merges on GitHub's site, environment changes). Exactly **one** push per red episode, naming the commit or
+   entries (passing on a red main means it fixes main). Main's state is GitHub CI's verdict on main's head (amended
+   2026-11-03, marvin#1094: this said main-health runs for trees nobody verified; CI now verifies every push to main,
+   and the local full suite runs only nightly, on demand, or once when CI is silent past its deadline). Exactly **one** push per red episode, naming the commit or
    commits since the last green tree, sent only by the merge owner through MARVIN's own delivery path (ADR 0046), with
    desktop notification as the fallback.
 5. **One queue and one merge owner per repo**, saved on disk (journal + OS file lock) under a MARVIN-owned directory,
@@ -61,7 +62,7 @@ candidates), with no checkout and no push to the PR branches.
   verification of the exact candidate, not a rebase plus a full suite on a branch that may not be what lands.
 - One commit per merge instead of two (the version bump lands inside the merge).
 - More CPU is spent speculatively, on PRs that may never be approved (historically about 95 % are). Main-health's
-  per-merge full runs (estimated 3.6–4.7 h/day of M4 time on 10-21) go away. Net is expected to fall, and the verdict
+  per-merge full runs (estimated 3.6–4.7 h/day of M4 time on 10-21) go away (done 2026-11-03, marvin#1094). Net is expected to fall, and the verdict
   store measures it.
 - Contributors' PR branches are never force-pushed by the gate.
 - The merge owner's direct push depends on the admin bypass. Removing that bypass would require the fallback in

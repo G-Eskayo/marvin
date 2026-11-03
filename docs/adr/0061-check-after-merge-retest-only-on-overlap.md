@@ -16,7 +16,8 @@ webhook's default exec returned no output, so the step failed on its first line 
   (no checkout, no tests, no push). Conflicts show on MR Review and the ticket timeline.
 - At Approve: a PR behind main is rebased and retested only when main changed, since the two split, a file the PR also
   changes. Otherwise it merges directly. If the overlap can't be computed, it is retested.
-- main-health (re-runs the suite on every main move; merges are refused while main is red) is the backstop for the
+- GitHub's CI (the full suite on every push to main; the queue holds merges while CI says main is red, ADR 0064 as
+  amended 2026-11-03, marvin#1094; this said "main-health") is the backstop for the
   rare break between different files (one PR renames what another calls).
 
 ## Consequences

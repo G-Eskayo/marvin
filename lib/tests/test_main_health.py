@@ -304,3 +304,63 @@ def test_the_suite_runs_in_the_machines_test_slot(monkeypatch):
     monkeypatch.setattr(mh.subprocess, "run", lambda cmd, **k: R())
     mh._run_suite()
     assert entered == ["main-health (after-merge full suite)", "left"]
+
+
+# ---- marvin#1094: CI is the judge; the local run is nightly / on demand, and names what fails only here ----
+
+def test_a_nightly_run_checks_again_even_when_main_has_not_moved(tmp_path):
+    state = tmp_path / "m.json"
+    ran = []
+    run = lambda: ran.append(1) or (True, [], "ok")
+    mh.refresh(state_path=state, head=lambda: "abc1234", run_suite=run, now=NOW)
+    res = mh.refresh(state_path=state, head=lambda: "abc1234", run_suite=run, now=NOW + timedelta(days=1), force=True)
+    assert len(ran) == 2 and res["ran"] is True
+
+
+def test_failures_ci_passes_on_the_same_commit_are_named_as_this_machines_only(tmp_path):
+    state = tmp_path / "m.json"
+    asked = []
+    judge = lambda sha: asked.append(sha) or {"sha": sha + "ffff", "state": "green"}
+    res = mh.refresh(state_path=state, head=lambda: "abc1234", now=NOW, judge=judge, machine=lambda: "mac-mini",
+                     run_suite=lambda: (False, ["lib/tests/test_scanner_handover.py::t"], "1 failed"))
+    assert asked == ["abc1234"]
+    assert res["ci"] == "green" and res["machine"] == "mac-mini"
+    assert res["only_here"] == ["lib/tests/test_scanner_handover.py::t"]
+
+
+def test_failures_ci_also_fails_or_has_not_judged_are_not_called_this_machines_only(tmp_path):
+    for ci in ("red", "pending", "unknown"):
+        state = tmp_path / f"{ci}.json"
+        res = mh.refresh(state_path=state, head=lambda: "abc1234", now=NOW, judge=lambda sha: {"state": ci},
+                         machine=lambda: "mac-mini", run_suite=lambda: (False, ["t.py::x"], "1 failed"))
+        assert res["ci"] == ci and res.get("only_here", []) == []
+
+
+def test_a_judge_that_breaks_never_breaks_the_record(tmp_path):
+    def boom(sha):
+        raise RuntimeError("gh down")
+    res = mh.refresh(state_path=tmp_path / "m.json", head=lambda: "abc1234", now=NOW, judge=boom, machine=lambda: "m",
+                     run_suite=lambda: (False, ["t.py::x"], "1 failed"))
+    assert res["ci"] == "unknown" and res["ok"] is False
+
+
+def test_the_cli_takes_refresh_and_nightly_only(monkeypatch):
+    seen = []
+    monkeypatch.setattr(mh, "refresh", lambda **k: seen.append(k) or {"ran": False})
+    assert mh.main(["refresh"]) == 0 and seen[-1]["force"] is False and seen[-1]["judge"] is mh._ci_judge
+    assert mh.main(["nightly"]) == 0 and seen[-1]["force"] is True
+    import pytest
+    with pytest.raises(SystemExit):
+        mh.main(["bogus"])
+
+
+def test_the_nightly_launchd_job_runs_nightly_at_a_calendar_time_never_on_an_interval():
+    import plistlib
+    p = plistlib.loads((Path(mh.__file__).resolve().parents[1] / "config" / "launchd" / "com.marvin.main-health.plist").read_bytes())
+    assert p["Label"] == "com.marvin.main-health"
+    assert p["ProgramArguments"][-2:] == [str(Path(p["ProgramArguments"][-2])), "nightly"]
+    assert p["ProgramArguments"][-2].endswith("lib/main_health.py")
+    assert "StartInterval" not in p and "WatchPaths" not in p and not p.get("RunAtLoad")
+    when = p["StartCalendarInterval"]
+    when = when if isinstance(when, list) else [when]
+    assert len(when) == 1 and set(when[0]) == {"Hour", "Minute"}

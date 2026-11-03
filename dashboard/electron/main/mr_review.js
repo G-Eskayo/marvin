@@ -293,7 +293,8 @@ export function queueLines(prs, { queue = null, issuesFor = () => [], sentBackKe
     try { issues = issuesFor(repo) || [] } catch { issues = [] }
     if (!issues.length && Array.isArray(facts.tickets?.[repo])) issues = facts.tickets[repo]
     const enriched = enrichForOrder(list, { repo, issues, unbuilt, repairFailed: facts.repairFailed || {}, rebaseStatus: rebased, sentBack: sentBackKeys })
-    const main = mainStateFrom({ issues, health: repo === MARVIN_REPO ? facts.health || null : null })
+    // GitHub CI's verdict on main's head, as the merge server last read it (#1094): the same answer on both sides.
+    const main = mainStateFrom({ issues, health: repo === MARVIN_REPO ? facts.health || null : null, ci: facts.ci?.[repo] || null })
     const q = queue?.repos?.[repo] || {}
     const order = mergeOrder(enriched, main, { items: q.items || [], failed: q.failed || {}, lastMerged: q.lastMerged ?? null, running: q.running || null })
     Object.assign(out, order.entries)

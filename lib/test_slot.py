@@ -6,7 +6,7 @@ full suite started once per merge (they piled up after a burst), helpers' runs, 
 The merge machinery starved its own merges. This is the single queue they all go through:
 
   the merge gate     its pytest and vitest run through `test_slot.py run --merge` (merge.js)
-  main-health        the after-merge full suite takes the slot before it starts (main_health.py)
+  main-health        the local full suite (nightly, on demand) takes the slot before it starts (main_health.py)
   helpers            a whole-suite or parallel pytest takes it in the repo conftest, a whole vitest run in
                      vitest.config.js; one test file is small and never waits
 

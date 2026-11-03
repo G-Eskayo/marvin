@@ -8,7 +8,8 @@ import { summarizeDecisions, vagueness, answersAsBuilt } from './decisions.js'
 //   mergeOrder(openPrs, mainState, queue) -> { entries: {url: entry}, order: [url], next: url|null, dropped: [url] }
 //
 // openPrs:   one repo's open PRs, enriched by enrichForOrder() (sentBack, decisionsUnbuilt, conflict, ...).
-// mainState: mainStateFrom(): is the base branch red, and which open tickets fix it.
+// mainState: mainStateFrom(): is the base branch red (GitHub CI's verdict on its head, #1094), is CI still checking it,
+//            and which open tickets fix it.
 // queue:     { items: [{url, approvedAt, conflictHead?}], failed: {url: {reason}}, lastMerged: N|null, running: url|null }
 //            conflictHead: the commit the gate found conflicting; held as a conflict until a new commit replaces it.
 // entry:     { url, number, queued, state, tone, reason, position, waitsFor }
@@ -46,24 +47,45 @@ export function isFixTicket(issue) {
   return isRedTicket(issue) || labelNames(issue).includes('incident')
 }
 
-// What MARVIN already knows about main: CI's open main-red ticket (lib/main_red.py) and, for marvin itself, the full
-// suite on a clean main (lib/main_health.py, ~/.claude/logs/main-health.json, `health`).
-// A local health check (main-health.json) counts only for the commit main is on now. On 2026-11-02 the queue held
-// every merge because the Mini's check from 10-31, on an older commit, still said red, while GitHub's CI on main was
-// green. GitHub's CI owns main's state (its main-red job files the ticket); an old or unmatched local check is ignored.
+// What MARVIN knows about main (marvin#1094, the owner 2026-11-03: "GitHub's CI is the only judge of whether main is
+// green"): CI's result on main's current head commit (`ci`, from lib/main_ci.py), and the open tickets saying main is
+// red (CI's main-red job files one, lib/main_red.py; or one filed by hand).
+//   ci.state green: main is green, whatever a local run says · red: main is red · pending (or unknown: GitHub
+//   unreadable): the queue waits, "CI is still checking main" · late: CI has not reported by its deadline, so one
+//   local run (lib/main_health.py) stands in, and only a local run on that very commit counts.
+// A local run never makes main red otherwise. On 2026-11-02 the queue held every merge because the Mini's check on an
+// older commit still said red while CI on main was green; 13 main-red fixes in four days were tests that failed on one
+// Mac only. A CI result for another commit than main's head never counts (the stale-result rule).
 export function healthCountsFor(health, headSha) {
   if (!health || !health.sha || !headSha) return false
-  const a = String(health.sha).toLowerCase(), b = String(headSha).toLowerCase()
-  return a.length >= 7 && (b.startsWith(a) || a.startsWith(b))
+  return sameCommit(health.sha, headSha)
+}
+function sameCommit(x, y) {
+  const a = String(x || '').toLowerCase(), b = String(y || '').toLowerCase()
+  return a.length >= 7 && b.length >= 7 && (b.startsWith(a) || a.startsWith(b))
 }
 
-export function mainStateFrom({ issues = [], health = null, base = 'main', headSha = null } = {}) {
+export function mainStateFrom({ issues = [], health = null, base = 'main', headSha = null, ci = null } = {}) {
   const open = (issues || []).filter((i) => i && (!i.state || String(i.state).toUpperCase() === 'OPEN'))
   const byNumber = (a, b) => a - b
   const redTickets = open.filter(isRedTicket).map((i) => i.number).sort(byNumber)
   const fixTickets = open.filter(isFixTicket).map((i) => i.number).sort(byNumber)
-  const healthRed = healthCountsFor(health, headSha) && health.ok === false
-  return { base, red: redTickets.length > 0 || healthRed, redTickets, fixTickets, healthRed }
+  const head = headSha || ci?.sha || null
+  // CI's word counts only for main's head: a verdict on another commit is no verdict (wait for the head's).
+  const verdict = !ci ? null : ci.sha && head && !sameCommit(ci.sha, head) ? { state: 'pending', reason: `CI is still checking main @ ${String(head).slice(0, 7)}` } : ci
+  const ciRed = verdict?.state === 'red'
+  const late = verdict?.state === 'late'
+  const local = late && healthCountsFor(health, head) ? health : null
+  const healthRed = !!local && local.ok === false
+  const red = redTickets.length > 0 || ciRed || healthRed
+  let waiting = null
+  let fallback = false
+  if (!red && verdict) {
+    if (verdict.state === 'pending' || verdict.state === 'unknown') waiting = verdict.reason || 'CI is still checking main'
+    else if (late && !local) { waiting = verdict.reason || "CI hasn't reported on main, so main is being checked on this Mac once instead"; fallback = true }
+  }
+  const judge = !verdict ? 'tickets' : local ? 'local fallback' : 'ci'
+  return { base, red, redTickets, fixTickets, healthRed, ciRed, waiting, fallback, judge, headSha: head, ci: verdict }
 }
 
 // The facts mergeOrder reads off each PR, from what each side already has. One implementation for both.
@@ -192,8 +214,11 @@ export function mergeOrder(openPrs, mainState, queue) {
     }
     if (!why && main.red && !isFix(p)) {
       waitsFor = redWaitsFor
-      why = { reason: redWaitsFor ? `main is red · waits for #${redWaitsFor}` : 'main is red · waits for a fix' }
+      const said = main.healthRed && !main.ciRed && !(main.redTickets || []).length ? 'main is red on this Mac (CI silent)' : 'main is red'
+      why = { reason: redWaitsFor ? `${said} · waits for #${redWaitsFor}` : `${said} · waits for a fix` }
     }
+    // CI still checking main's head (or silent, with the one local run on its way): only a fix for main may go.
+    if (!why && !main.red && main.waiting && !isFix(p)) why = { reason: main.waiting }
     entries[p.url] = { url: p.url, number: p.number, queued, state: why ? 'waiting' : queued ? 'queued' : 'ready', tone: why ? 'amber' : queued ? 'sky' : null,
       reason: why?.reason || null, position: null, waitsFor, ...(why?.unbuilt ? { unbuilt: true } : {}), ...(why?.conflict ? { conflict: true } : {}) }
   }

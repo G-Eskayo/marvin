@@ -1240,14 +1240,30 @@ describe('the gate tells a red main apart from a bad PR', () => {
     } finally { rmSync(root, { recursive: true, force: true }) }
   })
 
-  const world = (baselineFails) => {
+  const world = (baselineFails, mainCi = null) => {
     const exec = vi.fn(async () => ({ stdout: JSON.stringify({ baseRefName: 'main', statusCheckRollup: [] }), stderr: '' }))
     const rebase = vi.fn().mockResolvedValue({ ok: false, reason: 'Tests failed after rebasing onto main:\n\nFAILED tests/test_render_diagrams.py::test_every_figure - AssertionError' })
     const reengage = vi.fn().mockResolvedValue(undefined)
     const gate = vi.fn().mockResolvedValue({ gate: true, headRefName: 'pipeline/x', body: 'Closes G-Eskayo/marvin#147' })
-    const run = () => mergePr(PR, exec, noopRebuild, noopRedispatch, gate, rebase, reengage, vi.fn(), { baselineFails })
+    const run = () => mergePr(PR, exec, noopRebuild, noopRedispatch, gate, rebase, reengage, vi.fn(), { baselineFails, mainCi, loadNow: () => ({ id: 'mac-mini-1' }) })
     return { run, reengage }
   }
+
+  it('#1094: failing here and on main locally, but GitHub\'s CI passed main: "fails only on" this Mac, never MAIN_RED, never sent back', async () => {
+    const w = world(async (names) => names, () => ({ sha: 'abc1234def', state: 'green' }))
+    const err = await w.run().catch((e) => e)
+    expect(err.payload).toMatchObject({ code: 'GATE_INFRA', action: 'escalate' })
+    expect(err.payload.message).toMatch(/fails only on .+: tests\/test_render_diagrams\.py::test_every_figure/)
+    expect(err.payload.message).toContain("GitHub's CI passes it on main @ abc1234")
+    expect(w.reengage).not.toHaveBeenCalled()
+  })
+
+  it('#1094: CI red or still checking main: the shared failure is still MAIN_RED', async () => {
+    for (const state of ['red', 'pending', 'late']) {
+      const w = world(async (names) => names, () => ({ sha: 'abc1234def', state }))
+      await expect(w.run()).rejects.toMatchObject({ payload: { code: 'MAIN_RED' } })
+    }
+  })
 
   it('if the failing tests ALSO fail on main, refuse without sending the PR back, and name them', async () => {
     const w = world(async (names) => names)   // every named test fails on main too

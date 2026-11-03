@@ -104,8 +104,8 @@ export function gateExec(exec, signal) {
 
 // The overlap rule (Gil 2026-10-09): a PR behind main is retested only when main changed a file the PR also changes
 // since the two split. Different files cannot conflict in git; a cross-file break (one PR renames what another
-// calls) is rare and is caught minutes later by main-health, which re-runs the suite on every main move and refuses
-// merges while main is red. The same files are where conflicts and interactions concentrate, so those get the retest.
+// calls) is rare and is caught minutes later by GitHub's CI, which runs the full suite on every main move; the queue
+// holds merges while CI says main is red (#1094). The same files are where conflicts and interactions concentrate, so those get the retest.
 //
 // Amended (Gil 2026-10-26): main also gets a say through its *rules*. A test or guard file main added or changed since
 // the split may judge files the PR adds, which the PR's own earlier run never saw (#572 was tested on 10-21, main then
@@ -787,7 +787,7 @@ async function mergePrUnqueued(
   deps = {}
 ) {
   const { sleep, recordFailureFn = recordFailure, gateContext = defaultGateContext, baselineFails = null, gateTimeoutMs = GATE_TIMEOUT_MS, rebaseOpen = checkOpenPrs, uiEvidence = assertUiEvidence, decisions = assertDecisions,
-    progress: report = noProgress, loadNow = () => machineLoad(), now = Date.now, diskFirstAid = null, memoryCheck = null } = deps
+    progress: report = noProgress, loadNow = () => machineLoad(), now = Date.now, diskFirstAid = null, memoryCheck = null, mainCi = null } = deps
   if (typeof prUrl !== 'string' || !prUrl.startsWith('https://github.com/')) {
     throw new MergeFailure(classifyFailure({ stage: 'request', error: new Error(`Not a GitHub PR URL: ${prUrl}`) }))
   }
@@ -851,7 +851,7 @@ async function mergePrUnqueued(
     for (const s of ['rebasing', 'installing', 'tests']) progress(s, 'skipped', { detail: `no retest needed: ${why}` })
   }
   if (!gate && behind) {
-    stage('gate', 'passed', `no retest needed: behind ${ctx ? ctx.base : 'main'}, but ${ctx ? ctx.base : 'main'} changed none of this PR's files, so it merges directly (main-health re-runs the suite after the merge)`)
+    stage('gate', 'passed', `no retest needed: behind ${ctx ? ctx.base : 'main'}, but ${ctx ? ctx.base : 'main'} changed none of this PR's files, so it merges directly (GitHub's CI runs the full suite after the merge)`)
   }
   if (gate) {
     const baseName = ctx ? ctx.base : 'main'
@@ -908,6 +908,18 @@ async function mergePrUnqueued(
         // Did the PR break these, or was the base branch already red? Only a test that passes on the base is the PR's fault.
         const onBase = await baselineFails(summary.failingTests).catch(() => null)
         if (Array.isArray(onBase) && summary.failingTests.every((n) => onBase.includes(n))) {
+          // marvin#1094: GitHub's CI is the judge of main. When it passed main's head, these fail only on this machine:
+          // the machine, not the PR (GATE_INFRA, nothing sent back) and not a red main either.
+          let ci = null
+          try { ci = mainCi ? mainCi() : null } catch { ci = null }
+          if (ci?.state === 'green') {
+            const here = where || 'this Mac'
+            const names = summary.failingTests.slice(0, 3).join(', ')
+            stage('gate', 'failed', `GATE_INFRA: ${summary.failingTests.length} test(s) fail only on ${here}; GitHub's CI passes them on ${ctx ? ctx.base : 'main'}`)
+            throw new MergeFailure(refusal('GATE_INFRA', 'gate',
+              `${summary.failingTests.length === 1 ? 'This test fails' : 'These tests fail'} only on ${here}: ${names}. GitHub's CI passes ${summary.failingTests.length === 1 ? 'it' : 'them'} on ${ctx ? ctx.base : 'main'} @ ${String(ci.sha || '').slice(0, 7)}. That is the machine, not the PR's code`,
+              `Make ${summary.failingTests.length === 1 ? 'that test' : 'those tests'} hermetic on ${here} (lib/tests/conftest.py), then approve again. The PR was not sent back.`))
+          }
           stage('gate', 'failed', `MAIN_RED: ${summary.failingTests.length} failing test(s) also fail on ${ctx ? ctx.base : 'main'}`)
           throw new MergeFailure(refusal('MAIN_RED', 'gate',
             `${ctx ? ctx.base : 'main'} itself fails ${summary.failingTests.length === 1 ? 'this test' : 'these tests'}, so this PR cannot be judged yet: ${summary.failingTests.slice(0, 3).join(', ')}`,
