@@ -18,7 +18,6 @@ import json
 import os
 import re
 import shlex
-import shutil
 import subprocess
 import sys
 import time
@@ -26,8 +25,9 @@ from pathlib import Path
 
 SEP = " · "
 MARKS = {"running": "●", "done": "✓", "failed": "✗"}
-WEZTERM = os.environ.get("HELPER_TAB_WEZTERM") or shutil.which("wezterm") or "/opt/homebrew/bin/wezterm"
 HERE = Path(__file__).resolve()
+sys.path.insert(0, str(HERE.parent))
+import wezterm_cli  # noqa: E402  every wezterm cli call goes through it (marvin#1059)
 PY = Path.home() / ".agents" / "venv" / "bin" / "python"
 LUA = HERE.parents[1] / "config" / "wezterm" / "helper_tabs_marvin.lua"
 WEZTERM_CONFIG = Path.home() / ".config" / "wezterm" / "wezterm.lua"
@@ -107,9 +107,12 @@ def run_helper(group: str, title: str, command: list[str], on_exit: str | None =
         pass
     state = "done" if rc == 0 else "failed"
     pane = os.environ.get("WEZTERM_PANE")
-    if pane:
-        subprocess.run([WEZTERM, "cli", "set-tab-title", "--pane-id", pane, tab_title(group, title, state)],
-                       capture_output=True)
+    if pane and pane.isdigit():
+        try:  # this pane's own WezTerm, named by the socket WezTerm gave the pane
+            wezterm_cli.Wezterm(socket=os.environ.get("WEZTERM_UNIX_SOCKET")).set_tab_title(
+                int(pane), tab_title(group, title, state))
+        except (wezterm_cli.WeztermError, ValueError):
+            pass  # a title is cosmetic: never let it change the helper's result
     if not os.environ.get("HELPER_TAB_QUIET"):
         import notify
         notify.notify(f"{group}: {'finished' if rc == 0 else 'failed'}", title)
@@ -119,10 +122,14 @@ def run_helper(group: str, title: str, command: list[str], on_exit: str | None =
     return rc
 
 
+def _wezterm() -> "wezterm_cli.Wezterm":
+    """The GUI helpers go to: this pane's own when launched from inside WezTerm, else the oldest running one."""
+    return wezterm_cli.Wezterm.for_gui(wezterm_cli.main_gui())
+
+
 def _list_panes() -> list[dict] | None:
     """Panes of the running WezTerm GUI, or None when no GUI is running."""
-    r = subprocess.run([WEZTERM, "cli", "--no-auto-start", "list", "--format", "json"], capture_output=True, text=True)
-    return json.loads(r.stdout) if r.returncode == 0 and r.stdout.strip() else None
+    return _wezterm().list()
 
 
 DISK_REFUSED_RC = 2
@@ -190,10 +197,8 @@ def launch(group: str, title: str, command: list[str], cwd: str, on_exit: str | 
             print("helper-tab: WezTerm started but no new pane appeared within 30 s", file=sys.stderr)
             return 1
     else:
-        r = subprocess.run([WEZTERM, "cli", "spawn", "--window-id", str(window), "--cwd", cwd, "--", *argv],
-                           capture_output=True, text=True, check=True)
-        pane_id = int(r.stdout.strip())
-    subprocess.run([WEZTERM, "cli", "set-tab-title", "--pane-id", str(pane_id), running], check=True)
+        pane_id = _wezterm().spawn(Path(cwd), argv, window_id=window)
+    _wezterm().set_tab_title(pane_id, running)
     print(pane_id)
     return 0
 
