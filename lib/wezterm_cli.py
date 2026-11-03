@@ -187,6 +187,23 @@ class Wezterm:
         self._ok("send-text", "--pane-id", _pane(pane), *([] if paste else ["--no-paste"]),
                  *(["--", text] if text.startswith("-") else [text]))
 
+    def kill_pane(self, pane: int) -> None:
+        self._ok("kill-pane", "--pane-id", _pane(pane))
+
+    def list_clients(self) -> list[dict]:
+        """The GUI clients attached to this mux, each with its focused_pane_id; [] when none answers."""
+        r = self.cli("list-clients", "--format", "json")
+        if r.returncode != 0 or not (r.stdout or "").strip():
+            return []
+        try:
+            rows = json.loads(r.stdout)
+        except ValueError:
+            return []
+        return [x for x in rows if isinstance(x, dict)] if isinstance(rows, list) else []
+
+    def focused_panes(self) -> set[int]:
+        return {c["focused_pane_id"] for c in self.list_clients() if isinstance(c.get("focused_pane_id"), int)}
+
     def start(self, cwd: Path, program: list[str]) -> None:
         """Start WezTerm itself (its own GUI) with this program, detached."""
         try:

@@ -336,7 +336,7 @@ def _mac() -> str:
         return socket.gethostname().split(".")[0]
 
 
-def chat_from_env(payload: dict, env, proc: Proc | None, mac: str, git) -> dict | None:
+def chat_from_env(payload: dict, env, proc: Proc | None, mac: str, git, version: str | None = None) -> dict | None:
     """The chat-tab record for this session, None when it isn't a person's chat in a WezTerm pane (no pane, a helper
     tab, a one-off `claude -p`, or no claude process found)."""
     pane = str(env.get("WEZTERM_PANE") or "")
@@ -346,7 +346,8 @@ def chat_from_env(payload: dict, env, proc: Proc | None, mac: str, git) -> dict 
     repo, branch = git(cwd)
     return {"mac": mac, "socket": env.get("WEZTERM_UNIX_SOCKET") or "", "pane": int(pane), "tty": proc.tty,
             "claude_pid": proc.pid, "claude_started": proc.started, "session": str(payload.get("session_id") or ""),
-            "cwd": cwd, "repo": repo, "branch": branch, "ticket": ticket_from_branch(branch)}
+            "cwd": cwd, "repo": repo, "branch": branch, "ticket": ticket_from_branch(branch),
+            "claude_version": version}   # the Claude Code it started on, so an update can be noticed (#1086)
 
 
 def chat_id(key: str) -> str:
@@ -417,6 +418,24 @@ def state_event(kind: str, payload: dict, env, now: float) -> None:
         if kind == "tool" and not (isinstance(cur, dict) and cur.get("state") == "waiting"):
             return
         set_state(st, key, state, waiting_for, kind, now)
+        version = (cur or {}).get("claude_version") if isinstance(cur, dict) else None
+    if kind == "stop" and version and _installed_claude() not in (None, version):
+        _start_detached("sweep")   # this chat just became idle on an old Claude Code: let the restarter look (#1086)
+
+
+def _installed_claude() -> str | None:
+    try:
+        sys.path.insert(0, str(Path(__file__).resolve().parent))
+        import chat_restart
+        return chat_restart.installed_version()
+    except Exception:  # noqa: BLE001
+        return None
+
+
+def _start_detached(*args: str) -> None:
+    subprocess.Popen([sys.executable, str(Path(__file__).resolve().parent / "chat_restart.py"), *args],
+                     stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+                     start_new_session=True)
 
 
 def _valid(rec) -> bool:
@@ -531,7 +550,7 @@ def handle(kind: str, payload: dict, now: float | None = None, env=None) -> str 
             return None
         if kind == "start":   # the slow lookups (ps, git) happen before the lock
             rec = chat_from_env(payload, os.environ if env is None else env, proc=claude_proc(), mac=_mac(),
-                                git=_git_info)
+                                git=_git_info, version=_installed_claude())
             if rec:
                 with _Locked() as st:
                     register_chat(st, rec, now)
