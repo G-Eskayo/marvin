@@ -243,3 +243,11 @@ def test_claim_still_proceeds_when_the_verify_read_fails(monkeypatch, capsys):
     monkeypatch.setattr(tp, "_ensure_board", lambda repo: None)
     assert tp._claim(7, "this-mac") is True
     assert "could not verify" in capsys.readouterr().err
+
+
+def test_a_real_scan_running_on_this_mac_never_reaches_the_tests():
+    # 2026-11-03: main-health ran while the Mini's own scan held ~/.claude/dispatch/scan.lock, so main() skipped here
+    # and two handover tests failed on the Mini only, holding every merge as main red.
+    assert not str(tp.SCAN_LOCK_PATH).startswith(str(Path.home() / ".claude"))
+    with tp._scan_lock() as acquired:
+        assert acquired
