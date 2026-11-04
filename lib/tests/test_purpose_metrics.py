@@ -384,3 +384,37 @@ def test_ci_python_minutes_skips_a_job_with_a_broken_timestamp():
 
 def test_ci_python_minutes_is_a_registered_measure():
     assert "ci-python-tests-minutes" in pm.MEASURES
+
+
+# ── missing-bundled-model: pipeline worktrees get the app's models (#1114) ─────────────────────────────────────────
+
+def _fail_line(t, reason):
+    import json as _j
+    return _j.dumps({"t": t.isoformat(), "kind": "failure", "ticket": 266, "project": "G-Eskayo/clarity-captions",
+                     "reason": reason})
+
+
+MISSING = ('App builds produced no result: Spec validation error: Target "CaptionSpike" has a missing source directory '
+           '"/w/Apps/Spike/Resources/Models/ParakeetUltra"')
+
+
+def test_missing_model_failures_are_counted_over_the_window(tmp_path):
+    from datetime import timedelta
+    log = tmp_path / "pipeline-failures.jsonl"
+    log.write_text("\n".join([_fail_line(NOW - timedelta(days=1), MISSING), _fail_line(NOW - timedelta(days=6), MISSING),
+                              _fail_line(NOW - timedelta(days=8), MISSING),                      # outside 7 days
+                              _fail_line(NOW - timedelta(hours=1), "timed out after 1200s"),     # another symptom
+                              _fail_line(NOW - timedelta(hours=1), 'missing source directory "/w/Sources/App"'),
+                              '{"t": "soon", "reason": "missing source directory Resources/Models"}',
+                              "{garbled", "[]", ""]) + "\n")
+    assert pm._missing_model_failures(path=log, now=NOW) == 2.0
+    assert pm._missing_model_failures(days=2, path=log, now=NOW) == 1.0
+
+
+def test_missing_model_failures_without_a_log_are_zero(tmp_path):
+    assert pm._missing_model_failures(path=tmp_path / "missing.jsonl", now=NOW) == 0.0
+
+
+def test_missing_model_probe_is_registered_with_a_zero_threshold():
+    fn, limit, what = pm.PROBES["missing-bundled-model"]
+    assert limit == 0.0 and "#1114" in what
