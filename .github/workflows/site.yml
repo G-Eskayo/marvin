@@ -78,6 +78,8 @@ jobs:
     environment:
       name: github-pages
       url: ${{ steps.deployment.outputs.page_url }}
+    outputs:
+      page_url: ${{ steps.deployment.outputs.page_url }}
     # A publish is never cancelled half-way by a newer push; the newer one waits and publishes after it.
     concurrency:
       group: pages
@@ -85,3 +87,36 @@ jobs:
     steps:
       - id: deployment
         uses: actions/deploy-pages@v4
+
+  report:
+    # The ship step and its alarm (lib/site_deploy.py, ADR 0080 I4): published -> each ticket the publish carried gets
+    # its live link once, and an open site-deploy-failed ticket closes; failed -> one such ticket (never main-red, so
+    # merges are not held). A cancelled publish (a newer merge replaced it) says nothing: the newer run reports.
+    name: Site deploy report
+    if: always() && github.event_name == 'push' && github.ref == 'refs/heads/main'
+    needs: [build, deploy]
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      issues: write
+      contents: read
+      deployments: read
+      pull-requests: read
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0 # the ship step reads which merges since the last publish touched the site
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - run: python -m pip install PyYAML==6.0.3
+      - name: Report the publish
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RESULTS: ${{ toJSON(needs) }}
+          PAGE_URL: ${{ needs.deploy.outputs.page_url }}
+          SITE_DEPLOY_REF: ${{ github.sha }}
+        run: >-
+          python lib/site_deploy.py report --sha "$GITHUB_SHA"
+          --run "$GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID" --results "$RESULTS"
+          --page-url "$PAGE_URL"

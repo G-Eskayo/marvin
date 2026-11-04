@@ -192,7 +192,13 @@
   //   { kind: 'macs', targets: ['MacBook', 'Mini'] }      MARVIN: every Mac pulled and restarted
   //   { kind: 'testflight' }                             Seal Speak: build bumped and uploaded
   //   { kind: 'pages', where: 'gh-pages' }               a site: published
+  //   { kind: 'pages', via: 'actions', where: 'marvin.gileskayo.me' }
+  //                                                      a site its Actions deploy publishes (marvin#1122): live once
+  //                                                      the Pages deployment for the merge succeeded; live.url links it
   // row.live: { state: 'live'|'shipping'|'failed'|'waiting', pulled: [names], build, reason }
+  // Only an https link is ever shown as where the work is live (a row's url comes from GitHub's deployment).
+  const httpsUrl = (u) => (typeof u === 'string' && /^https:\/\/[^\s"'<>]+$/.test(u) ? u : null)
+
   function liveLine(row, ship) {
     if (!row || row.kind === 'refused') return null
     if (!ship || !ship.kind) return { text: 'no ship step yet', tone: 'dim', marks: [] }
@@ -215,8 +221,11 @@
     }
     if (ship.kind === 'pages') {
       const where = ship.where || 'the site'
-      if (live.state === 'live') return { text: `live on ${where}`, tone: 'green', marks: [{ name: where, on: true }] }
-      if (live.state === 'shipping') return { text: `publishing to ${where}`, tone: 'amber', marks: [{ name: where, on: false }] }
+      if (live.state === 'live') return { text: `live on ${where}`, tone: 'green', marks: [{ name: where, on: true }], url: httpsUrl(live.url) }
+      if (live.state === 'shipping') {
+        const how = ship.via === 'actions' ? 'GitHub Pages deploy running' : `publishing to ${where}`
+        return { text: how, tone: 'amber', marks: [{ name: where, on: false }] }
+      }
       return { text: `not on ${where} yet`, tone: 'dim', marks: [{ name: where, on: false }] }
     }
     return { text: 'no ship step yet', tone: 'dim', marks: [] }
