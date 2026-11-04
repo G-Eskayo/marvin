@@ -13,7 +13,7 @@ import { sendFeedback } from './deny.js'
 import { parseTicketRef } from '../electron/main/mr_review.js'
 import { repoFromPrUrl, MARVIN_REPO } from '../electron/main/mr_repos.js'
 import { recordStage } from './ticket_stages.js'
-import { assertChecksGreen } from './ci_status.js'
+import { assertChecksGreen, gateCheckNames, postGateStatus } from './ci_status.js'
 import { checkOpenPrs } from './post_merge_rebase.js'
 import { applyVersionBump } from './changelog.js'
 import { createCountParser, gateExtension, machineLoad } from './merge_progress.js'
@@ -833,7 +833,8 @@ async function mergePrUnqueued(
   // The repo's own CI (GitHub checks), when it has any: failing means the code is wrong and the PR goes back
   // with the check names; still running means wait. Before the gate, so no machine time is spent on a red PR.
   try {
-    await assertChecksGreen(prUrl, exec)
+    // marvin#1099: GitHub's copy of a check the gate runs itself doesn't hold the merge; the gate runs it below.
+    await assertChecksGreen(prUrl, exec, { ignore: gateCheckNames(ctx ? ctx.clone : REPO_PATH) })
   } catch (e) {
     if (e instanceof MergeFailure && e.payload.code === 'CI_FAILED' && ticketNumber !== null) {
       stage('gate', 'failed', `CI_FAILED: ${e.payload.message}`)
@@ -937,6 +938,7 @@ async function mergePrUnqueued(
     } else {
       stage('gate', 'passed', 'rebased and retested clean')
     }
+    await postGateStatus(prUrl, exec, gateCheckNames(ctx ? ctx.clone : REPO_PATH))   // marvin#1099: the gate is the check
   }
 
   // No code review here: it runs in the build loop before the PR opens (sandbox_orchestration.execute_ticket).

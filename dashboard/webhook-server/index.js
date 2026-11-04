@@ -23,6 +23,8 @@ import { appendError } from '../electron/main/error_log.js'
 import { readRebaseStatus } from './rebase_status.js'
 import { readLiveSessions } from './sessions.js'
 import { listLocalChats } from '../electron/main/chat_tabs.js'
+import { gateCheckNames } from './ci_status.js'
+import { engineRepo } from '../electron/main/instance.js'
 import { listHelpers } from './chat_helpers.js'
 import { startChangeWatch, createGithubProbe, startCheckWatch, createCheckProbe } from './gh_watch.js'
 import { createGithubFeedWriter } from './github_feed_writer.js'
@@ -168,7 +170,7 @@ const server = createServer(async (req, res) => {
   if (req.method === 'GET' && req.url === '/merge-queue') {
     res.writeHead(200, { 'Content-Type': 'application/json' }).end(JSON.stringify({
       repos: mergeQueue.snapshot(),
-      facts: { unbuilt: [...unbuiltCache.get()], unbuiltAt: unbuiltCache.at(), repairFailed: readRepairFailures(), health: readMainHealth(), tickets: fixTickets.get() },
+      facts: { unbuilt: [...unbuiltCache.get()], unbuiltAt: unbuiltCache.at(), repairFailed: readRepairFailures(), health: readMainHealth(), tickets: fixTickets.get(), gateCovers: { [engineRepo()]: gateCheckNames() } },
       machine: machineId
     }))
     return
