@@ -112,6 +112,7 @@ def test_wrapper_keeps_the_tab_open_afterwards():
     assert ht.wrapper_script(["true"], "G", "w").rstrip().endswith("exec zsh -l")
 
 
+@pytest.mark.requires_tool("zsh")  # the helper wrapper runs under zsh, macOS's shell
 def test_success_retitles_done_and_logs_a_passed_run(tmp_path):
     out = _run_wrapper(tmp_path, ["echo", "hello"], "Seal Speak", "#60 split")
     assert "hello" in out.stdout
@@ -120,6 +121,7 @@ def test_success_retitles_done_and_logs_a_passed_run(tmp_path):
     assert doc["runs"][-1]["status"] == "passed"
 
 
+@pytest.mark.requires_tool("zsh")  # the helper wrapper runs under zsh, macOS's shell
 def test_failure_retitles_failed_logs_it_and_keeps_the_exit_code(tmp_path):
     out = _run_wrapper(tmp_path, ["sh", "-c", "exit 3"])
     assert (tmp_path / "title").read_text() == ht.tab_title("G", "w", "failed")
@@ -128,16 +130,19 @@ def test_failure_retitles_failed_logs_it_and_keeps_the_exit_code(tmp_path):
     assert doc["runs"][-1]["status"] == "failed"
 
 
+@pytest.mark.requires_tool("zsh")  # the helper wrapper runs under zsh, macOS's shell
 def test_on_exit_fires_once_with_the_exit_code(tmp_path):
     _run_wrapper(tmp_path, ["sh", "-c", "exit 2"], on_exit=f'echo "$HELPER_RC" >> {tmp_path}/fired')
     assert (tmp_path / "fired").read_text() == "2\n"
 
 
+@pytest.mark.requires_tool("zsh")  # the helper wrapper runs under zsh, macOS's shell
 def test_missing_command_fails_the_tab_instead_of_crashing_the_wrapper(tmp_path):
     out = _run_wrapper(tmp_path, ["/no/such/helper"])
     assert (tmp_path / "title").read_text() == ht.tab_title("G", "w", "failed")
 
 
+@pytest.mark.requires_tool("zsh")  # the helper wrapper runs under zsh, macOS's shell
 def test_hostile_titles_and_arguments_are_never_expanded(tmp_path):
     canary = tmp_path / "pwned"
     hostile = f"it's $(touch {canary}) `touch {canary}`"
@@ -208,6 +213,7 @@ def test_the_disk_check_can_be_skipped_on_purpose(monkeypatch):
     assert ht.launch("G", "w", ["true"], "/tmp") == 0
 
 
+@pytest.mark.requires_tool("zsh")  # the helper wrapper runs under zsh, macOS's shell
 def test_the_helper_is_told_where_the_download_cache_is(tmp_path):
     out = _run_wrapper(tmp_path, ["sh", "-c", 'printf "%s" "$MARVIN_DOWNLOAD_CACHE"'])
     assert out.stdout.startswith(str(tmp_path / ".cache" / "marvin-downloads"))

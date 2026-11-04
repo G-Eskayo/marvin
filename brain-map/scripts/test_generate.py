@@ -137,6 +137,7 @@ def test_live_tree_contains_every_skill_agent_machine_tab_and_project():
     assert {"Dashboard", "Projects"} <= tree_ids
 
 
+@pytest.mark.macos_only("plutil reads the plist that Python's parser refuses")
 def test_plist_that_only_launchd_tolerates_still_counts(tmp_path, monkeypatch):
     # "--" inside an XML comment: launchd and plutil accept it, Python's parser doesn't.
     (tmp_path / "com.marvin.nightly.plist").write_text(
