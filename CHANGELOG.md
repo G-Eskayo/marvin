@@ -1,5 +1,13 @@
 # Changelog
 
+- Chat records: each MARVIN chat tab recorded in the existing session store, with a read-only `marvin chats list` ([#1084](https://github.com/G-Eskayo/marvin/pull/1084))
+
+- WezTerm wrapper: one place for every wezterm cli call, aimed at the right WezTerm when two run ([#1082](https://github.com/G-Eskayo/marvin/pull/1082))
+
+- Contrast checker: every MARVIN colour pair measured against the accessibility rule ([#1091](https://github.com/G-Eskayo/marvin/pull/1091))
+
+- Main red on the Mini: pipeline handover tests read live claims and runs ([#1089](https://github.com/G-Eskayo/marvin/pull/1089))
+
 - Profile parity: one facts file and one check across the site, resume, GitHub, LinkedIn and the product sites ([#1039](https://github.com/G-Eskayo/marvin/pull/1039))
 
 - Main red on the Mini: portfolio dev-site drift (brand redesign) fails main-health; outside-state checks should be named, not block merges ([#1049](https://github.com/G-Eskayo/marvin/pull/1049))
