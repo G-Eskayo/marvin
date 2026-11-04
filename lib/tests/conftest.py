@@ -132,6 +132,8 @@ def _isolate_board_registry(tmp_path_factory, monkeypatch):
     monkeypatch.setattr(ticket_pipeline, "_discover_boards", lambda: [])  # no real gh calls from tests
     monkeypatch.setattr(ticket_pipeline, "_refresh_catalog", lambda: None)
     monkeypatch.setattr(ticket_pipeline, "_local_busy", lambda: False)  # the real machine may be mid-ticket
+    # the real machine may be mid-scan: its lock made main() skip in tests and main-health go red (2026-11-03)
+    monkeypatch.setattr(ticket_pipeline, "SCAN_LOCK_PATH", tmp_path_factory.mktemp("scan") / "scan.lock")
     monkeypatch.setattr(ticket_pipeline, "_run_ticket_agents", lambda step, summary: None)  # no real gh calls
 
 
