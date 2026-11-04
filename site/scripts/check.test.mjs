@@ -4,7 +4,7 @@ import { mkdtempSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { test } from 'node:test';
-import { checkFeatures, checkPagesHaveFeatures, internalLinks, loadPatterns, scanText, sourceLinks } from './check.mjs';
+import { checkCname, checkFeatures, checkPagesHaveFeatures, cnameFor, internalLinks, loadPatterns, scanText, sourceLinks } from './check.mjs';
 
 const areas = [{ id: 'a', title: 'A' }];
 const ok = { id: 'x', title: 'X', area: 'a', status: 'released', summary: 's', evidence: ['lib/x.py'], verified_on: '2026-11-02' };
@@ -101,4 +101,26 @@ test('sourceLinks pulls repo paths out of blob and tree links, without anchors o
 test('internalLinks keeps site paths, drops external and protocol-relative ones', () => {
   const html = '<a href="/docs/">d</a><a href="https://x.y/">x</a><img src="/diagrams/a.svg"><a href="//cdn.x/y">c</a><a href="/why/#n">w</a>';
   assert.deepEqual(internalLinks(html), ['/docs/', '/diagrams/a.svg', '/why/']);
+});
+
+// ── The custom domain (GitHub Pages reads dist/CNAME; marvin.gileskayo.me) ──────────────────────────────────────
+test('the CNAME is the bare host of site.config.json url', () => {
+  assert.equal(cnameFor('https://marvin.gileskayo.me'), 'marvin.gileskayo.me');
+  assert.equal(cnameFor('https://marvin.gileskayo.me/'), 'marvin.gileskayo.me');
+});
+
+test('a url GitHub Pages cannot serve as a custom domain is refused', () => {
+  for (const bad of ['http://marvin.gileskayo.me', 'https://marvin.gileskayo.me/docs/', 'https://u:p@marvin.gileskayo.me',
+    'https://marvin.gileskayo.me:8443', 'https://g-eskayo.github.io', 'not a url', '', undefined]) {
+    assert.throws(() => cnameFor(bad), /custom domain/, String(bad));
+  }
+});
+
+test('the built CNAME must match the configured domain exactly', () => {
+  const url = 'https://marvin.gileskayo.me';
+  assert.deepEqual(checkCname('marvin.gileskayo.me\n', url), []);
+  assert.match(checkCname(null, url).join(), /no CNAME/);
+  assert.match(checkCname('', url).join(), /CNAME/);
+  assert.match(checkCname('evil.example.com\n', url).join(), /evil\.example\.com/);
+  assert.match(checkCname('marvin.gileskayo.me\nextra.example.com\n', url).join(), /one line/);
 });
