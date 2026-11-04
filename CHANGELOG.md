@@ -1,5 +1,7 @@
 # Changelog
 
+- Workshop: one item page for a ticket and its PRs ([#1053](https://github.com/G-Eskayo/marvin/pull/1053))
+
 - Chat tabs restart onto a new Claude Code version on their own, by resume, only while idle on your turn ([#1096](https://github.com/G-Eskayo/marvin/pull/1096))
 
 - Send into a chat, safely: dashboard only, idle only, never onto a permission prompt ([#1095](https://github.com/G-Eskayo/marvin/pull/1095))
