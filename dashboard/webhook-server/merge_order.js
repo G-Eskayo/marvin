@@ -70,7 +70,9 @@ export function mainStateFrom({ issues = [], health = null, base = 'main', headS
 //   issues: the repo's open tickets (labels) · unbuilt: Set of PR urls with answered-but-unbuilt Decisions
 //   repairFailed: {"repo#n": headSha} whose conflict repair failed (lib/conflict_repair.py)
 //   rebaseStatus: the post-merge conflict check by url (#225) · sentBack: Set of "repo#ticket" (optional)
-export function enrichForOrder(prs, { repo = null, issues = [], unbuilt = new Set(), repairFailed = {}, rebaseStatus = {}, sentBack = null } = {}) {
+// gateCovers (marvin#1099): names of the checks the merge gate runs itself; GitHub's copy of those doesn't hold a PR.
+export function enrichForOrder(prs, { repo = null, issues = [], unbuilt = new Set(), repairFailed = {}, rebaseStatus = {}, sentBack = null, gateCovers = null } = {}) {
+  const covers = Array.isArray(gateCovers) ? gateCovers.filter((n) => typeof n === 'string') : []
   const sentBackTickets = sentBack || new Set((issues || []).filter((i) => labelNames(i).includes('needs-reengagement')).map((i) => `${repo}#${i.number}`))
   return (prs || []).map((p) => {
     const r = p.repo || repo
@@ -86,7 +88,8 @@ export function enrichForOrder(prs, { repo = null, issues = [], unbuilt = new Se
       decisionsUnbuilt: unbuilt.has(p.url) && !answersAsBuilt(p.body || ''),
       conflict,
       conflictAfter: rbConflict && Number.isFinite(rb.after) ? rb.after : null,
-      repairFailed: !!p.headRefOid && repairFailed?.[`${r}#${p.number}`] === p.headRefOid
+      repairFailed: !!p.headRefOid && repairFailed?.[`${r}#${p.number}`] === p.headRefOid,
+      gateCovers: covers
     }
   })
 }
@@ -111,7 +114,7 @@ function ownReason(pr, base) {
     return { reason: `${n} Decision${n === 1 ? ' is' : 's are'} waiting for you` }
   }
   if (pr.decisionsUnbuilt) return { reason: "your answers aren't built yet", unbuilt: true }
-  const ci = ciState(pr.statusCheckRollup)
+  const ci = ciState(pr.statusCheckRollup, { ignore: pr.gateCovers })
   if (ci.state === 'failing') return { reason: `checks failing: ${ci.failing.join(', ')}` }
   if (pr.conflict) {
     const after = pr.conflictAfter ? ` after #${pr.conflictAfter}` : ''

@@ -3,6 +3,7 @@ import os from 'os'
 import path from 'path'
 import { fileURLToPath } from 'url'
 import { enrichForOrder, mainStateFrom } from './merge_order.js'
+import { gateCheckNames } from './ci_status.js'
 import { readRebaseStatus } from './rebase_status.js'
 import { engineRepo, owner } from '../electron/main/instance.js'
 
@@ -119,7 +120,7 @@ const PR_FIELDS = 'number,title,url,body,baseRefName,headRefName,headRefOid,merg
 
 // load(repo) for the queue runner: { openPrs (enriched), mainState }. Throws when GitHub can't be read: the runner
 // then decides nothing (a queue never merges on a guess).
-export function createQueueLoader({ exec, unbuilt, baseOf, health = readMainHealth, repairs = readRepairFailures, rebase = readRebaseStatus }) {
+export function createQueueLoader({ exec, unbuilt, baseOf, health = readMainHealth, repairs = readRepairFailures, rebase = readRebaseStatus, covers = () => gateCheckNames() }) {
   return async (repo) => {
     const [prsOut, issuesOut] = await Promise.all([
       exec('gh', ['pr', 'list', '--repo', repo, '--state', 'open', '--limit', '100', '--json', PR_FIELDS]),
@@ -138,7 +139,7 @@ export function createQueueLoader({ exec, unbuilt, baseOf, health = readMainHeal
       } catch { headSha = null }
     }
     return {
-      openPrs: enrichForOrder(prs.filter((p) => !p.isCrossRepository).map((p) => ({ ...p, repo })), { repo, issues, unbuilt: unbuilt(), repairFailed: repairs(), rebaseStatus: rebase() }),
+      openPrs: enrichForOrder(prs.filter((p) => !p.isCrossRepository).map((p) => ({ ...p, repo })), { repo, issues, unbuilt: unbuilt(), repairFailed: repairs(), rebaseStatus: rebase(), gateCovers: repo === engineRepo() ? covers() : null }),
       mainState: mainStateFrom({ issues, health: repo === engineRepo() ? health() : null, base, headSha })
     }
   }
