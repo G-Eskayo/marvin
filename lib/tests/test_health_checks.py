@@ -1655,3 +1655,17 @@ def test_profile_parity_drift_turns_the_row_amber_with_the_field(tmp_path, monke
     rows = hc.guarded("profile:parity", "Public profile matches everywhere", hc.check_profile_parity)
     assert rows[0]["severity"] == "yellow"
     assert "Live site" in rows[0]["detail"] and "Eagle Palms" in rows[0]["detail"]
+
+
+# ── marvin#974: accounts ride the health sweep's schedule ───────────────────────────────────────────────────────────
+
+def test_react_to_accounts_summarises_and_never_raises():
+    rows = [{"state": "works"}, {"state": "works"}, {"state": "expiring"}]
+    assert hc.react_to_accounts(lambda: {"accounts": rows}) == "1 expiring, 2 works"
+    assert hc.react_to_accounts(lambda: {}).startswith("skipped")
+    assert hc.react_to_accounts(lambda: 1 / 0).startswith("could not check accounts: ZeroDivisionError")
+
+
+def test_the_health_sweep_entry_point_runs_the_accounts_check():
+    import inspect
+    assert "react_to_accounts()" in inspect.getsource(hc._cli)

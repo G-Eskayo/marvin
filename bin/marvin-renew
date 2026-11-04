@@ -1,0 +1,82 @@
+#!/bin/bash
+# marvin-renew <account>: renew one of MARVIN's credentials on THIS machine (marvin#974, Vitals > Accounts).
+# Run by the dashboard's Renew button in a labelled helper tab (lib/helper_tab.py), or by hand in a terminal.
+#
+#   github              gh's web/device login (you approve it in the browser), then the token gh got is saved as
+#                       MARVIN's shared token, ~/.claude/.gh-token
+#   claude-setup-token  `claude setup-token` (you approve it in the browser), then paste the token it prints
+#   anthropic-api-key   paste a key made at console.anthropic.com > API keys
+#   marvin-bot-token    paste a classic token (repo scope) made as MARVIN-bot-gil on github.com
+#
+# Rules (Gil's hard rule: MARVIN never enters a credential): you type or approve every login yourself. A token is held
+# only in this shell's memory and written with the shell's own printf (a builtin: never in any process's argv), into a
+# mode-600 file via a temp file and a rename. Nothing here logs it, echoes it, or puts it in git (~/.claude ignores
+# token files). Afterwards the account is checked live with lib/accounts.py and the result is shown.
+set -uo pipefail
+umask 077
+CLAUDE_DIR="${MARVIN_RENEW_HOME:-$HOME}/.claude"
+PY="$HOME/.agents/venv/bin/python"
+ACCOUNTS="$HOME/.agents/lib/accounts.py"
+
+say() { printf '%s\n' "$*"; }
+die() { printf 'marvin-renew: %s\n' "$*" >&2; exit 1; }
+
+# save <file name>: the token in $tok -> ~/.claude/<file name>, mode 600, atomically; clears $tok.
+save() {
+  local dest="$CLAUDE_DIR/$1" tmp
+  case "$tok" in ""|*[[:space:]]*) tok=""; die "that doesn't look like a token (empty or has spaces); nothing was saved" ;; esac
+  mkdir -p "$CLAUDE_DIR" || die "can't create $CLAUDE_DIR"
+  tmp="$dest.renew.$$"
+  if ! printf '%s' "$tok" > "$tmp"; then rm -f "$tmp"; tok=""; die "couldn't write $tmp"; fi
+  chmod 600 "$tmp" && mv -f "$tmp" "$dest" || { rm -f "$tmp"; tok=""; die "couldn't save $dest"; }
+  tok=""
+  say "Saved ~/.claude/$1 (only you can read it)."
+}
+
+# paste <prompt>: read a token without echoing it.
+paste() {
+  tok=""
+  IFS= read -r -s -p "$1 " tok || true
+  printf '\n'
+}
+
+verify() { # verify <accounts.py id>
+  [ -x "$PY" ] && [ -f "$ACCOUNTS" ] || return 0
+  say "Checking it now..."
+  "$PY" "$ACCOUNTS" check --only "$1"
+}
+
+account="${1:-}"
+case "$account" in
+  github)
+    command -v gh >/dev/null || die "gh isn't installed"
+    say "GitHub: approve the login in your browser (gh shows a one-time code)."
+    env -u GH_TOKEN -u GITHUB_TOKEN gh auth login --hostname github.com --git-protocol https --web \
+      --scopes repo,workflow,read:org,gist || die "the GitHub login didn't finish; nothing was saved"
+    tok="$(env -u GH_TOKEN -u GITHUB_TOKEN gh auth token --hostname github.com 2>/dev/null)" || tok=""
+    save .gh-token
+    verify github-token ;;
+  claude-setup-token)
+    command -v claude >/dev/null || die "Claude Code isn't installed"
+    say "Claude: approve in your browser; at the end it prints a long token starting sk-ant-oat."
+    claude setup-token || die "claude setup-token didn't finish; nothing was saved"
+    paste "Paste the token it printed (hidden), then Enter:"
+    save .oauth-token
+    say "Tip: clear this tab's scrollback (Cmd-K) so the printed token isn't left on screen."
+    verify claude-setup-token ;;
+  anthropic-api-key)
+    say "Make a key at https://console.anthropic.com/settings/keys (Create Key)."
+    paste "Paste the key (hidden), then Enter:"
+    save .anthropic-api-key
+    verify anthropic-api-key ;;
+  marvin-bot-token)
+    say "Sign in to github.com as MARVIN-bot-gil > Settings > Developer settings > Personal access tokens (classic)."
+    say "Regenerate the token with the repo scope."
+    paste "Paste the token (hidden), then Enter:"
+    save .marvin-bot-token
+    verify marvin-bot ;;
+  -h|--help|"")
+    sed -n '2,15p' "$0" | sed 's/^# \{0,1\}//'
+    [ -n "$account" ] || exit 2 ;;
+  *) die "unknown account '$account' (github, claude-setup-token, anthropic-api-key, marvin-bot-token)" ;;
+esac
