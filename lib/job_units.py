@@ -14,6 +14,10 @@ A job is defined once in config/jobs/<name>.json, with no machine's paths in it 
     low_priority  optional: yields CPU and disk to real work (launchd Background + LowPriorityIO + Nice 10;
                   systemd Nice=10 + idle IO)
     log           stdout to ~/.claude/logs/<log>.log, stderr to <log>-error.log (untracked logs, ADR 0069)
+    reports_itself  optional: true when the script records its own job_events run (job_events.reported). Otherwise
+                  a scheduled job runs under lib/job_report.py, so every run is recorded and a non-zero exit, a
+                  REFUSING line or a skip caused by an error counts as failed (ADR 0083). Keep-alive services are
+                  never wrapped: a server has no runs.
 
 render_plist() writes launchd's form for the Macs and render_systemd() systemd's for Linux (mac-mini-2012), with the
 same command, schedule, environment and logs. host_os's rule: a portable core plus thin host adapters, never a fork.
@@ -38,7 +42,8 @@ import host_os  # noqa: E402
 
 JOBS_DIR = Path(__file__).resolve().parent.parent / "config" / "jobs"
 NAME_RE = re.compile(r"^[a-z0-9][a-z0-9-]*$")
-KEYS = {"name", "description", "command", "schedule", "env", "low_priority", "log"}
+KEYS = {"name", "description", "command", "schedule", "env", "low_priority", "log", "reports_itself"}
+REPORTER = ["~/.agents/venv/bin/python", "~/.agents/lib/job_report.py"]  # every run recorded in job_events (#1123)
 NICE = 10
 RESTART_S = 30  # a keep-alive service that keeps dying is retried this often, never in a tight loop
 
@@ -108,6 +113,8 @@ def validate(job: dict) -> dict:
         raise JobError(f"{name}: env must map VARIABLE names to strings")
     for k, v in env.items():
         _str(v, f"{name}: env {k}")
+    if "reports_itself" in job and not isinstance(job["reports_itself"], bool):
+        raise JobError(f"{name}: reports_itself must be true or false")
     if "low_priority" in job and not isinstance(job["low_priority"], bool):
         raise JobError(f"{name}: low_priority must be true or false")
     log = job.get("log", name)
@@ -152,9 +159,17 @@ def _logs(job: dict, home: str) -> tuple[str, str]:
 
 # ── launchd (macOS) ──────────────────────────────────────────────────────
 
+def argv(job: dict, home: str) -> list[str]:
+    """The command as installed: under job_report unless the job reports itself or is a keep-alive service."""
+    cmd = list(job["command"])
+    if not job.get("reports_itself") and "keep_alive" not in job["schedule"]:
+        cmd = [*REPORTER, job["name"], "--", *cmd]
+    return [_expand(a, home) for a in cmd]
+
+
 def plist_dict(job: dict, home: str) -> dict:
     out: dict = {"Label": launchd_label(job["name"]),
-                 "ProgramArguments": [_expand(a, home) for a in job["command"]]}
+                 "ProgramArguments": argv(job, home)}
     if job.get("env"):
         out["EnvironmentVariables"] = {k: _expand(v, home) for k, v in job["env"].items()}
     if job.get("low_priority"):
@@ -204,7 +219,7 @@ def render_systemd(job: dict, home: str) -> tuple[str, str | None]:
            "", "[Service]", "Type=simple" if keep else "Type=oneshot"]
     for k, v in job.get("env", {}).items():
         svc.append(f'Environment="{k}={_sd_escape(_expand(v, home))}"')
-    svc.append("ExecStart=" + " ".join(_sd_word(_expand(a, home)) for a in job["command"]))
+    svc.append("ExecStart=" + " ".join(_sd_word(a) for a in argv(job, home)))
     if job.get("low_priority"):
         svc += [f"Nice={NICE}", "IOSchedulingClass=idle"]
     svc += [f"StandardOutput=append:{_sd_escape(out_log)}", f"StandardError=append:{_sd_escape(err_log)}"]

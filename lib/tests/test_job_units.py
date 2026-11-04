@@ -113,13 +113,19 @@ def test_rendered_plist_matches_what_this_mac_has_installed(name):
     installed = Path(real_home) / "Library" / "LaunchAgents" / f"com.marvin.{name}.plist"
     if not installed.exists():
         pytest.skip(f"{name} is not installed on this machine")
-    assert plistlib.loads(ju.render_plist(ju.load(name), real_home)) == plistlib.loads(installed.read_bytes())
+    have = plistlib.loads(installed.read_bytes())
+    job = ju.load(name)
+    if have != plistlib.loads(ju.render_plist(job, real_home)) and \
+            have == plistlib.loads(ju.render_plist({**job, "reports_itself": True}, real_home)):
+        pytest.xfail(f"{name}: installed before job_report wrapped it (#1123); run `job_units.py install {name}`")
+    assert have == plistlib.loads(ju.render_plist(job, real_home))
 
 
 def test_plist_keeps_a_path_with_xml_specials_intact():
     job = ju.validate({"name": "x", "command": ["~/a&b<c>/run", "--q=\"1\""], "schedule": {"every_s": 60}})
     parsed = plistlib.loads(ju.render_plist(job, "/Users/o'neil"))
-    assert parsed["ProgramArguments"] == ["/Users/o'neil/a&b<c>/run", "--q=\"1\""]
+    assert parsed["ProgramArguments"] == ["/Users/o'neil/.agents/venv/bin/python", "/Users/o'neil/.agents/lib/job_report.py",
+                                          "x", "--", "/Users/o'neil/a&b<c>/run", "--q=\"1\""]
 
 
 def test_low_priority_maps_to_launchds_three_keys():
@@ -217,7 +223,8 @@ def test_systemd_exec_start_passes_awkward_arguments_through_unchanged(arg):
     # written, or a job would run something other than what launchd runs.
     job = ju.validate({"name": "x", "command": ["/bin/echo", arg], "schedule": {"every_s": 60}})
     [exec_start] = _unit(ju.render_systemd(job, BOX_HOME)[0])["ExecStart"]
-    assert [_unescape(a) for a in shlex.split(exec_start)] == ["/bin/echo", arg]
+    assert [_unescape(a) for a in shlex.split(exec_start)] == [f"{BOX_HOME}/.agents/venv/bin/python",
+                                                               f"{BOX_HOME}/.agents/lib/job_report.py", "x", "--", "/bin/echo", arg]
     assert "%h" not in exec_start.replace("%%", "")
     assert "$H" not in exec_start.replace("$$", "")
 
@@ -348,3 +355,30 @@ def test_site_demo_job_is_a_keep_alive_service_with_no_machine_paths():
 def test_install_refuses_an_os_it_has_no_adapter_for(tmp_path):
     with pytest.raises(ju.JobError, match="windows"):
         ju.install(["usage-scan"], os_name="windows", home=tmp_path, run=FakeRun())
+
+
+# ── every scheduled job reports through job_events (#1123, ADR 0083) ──────────────────────────────
+
+def test_a_scheduled_job_runs_under_job_report_so_every_run_is_recorded():
+    job = ju.validate({"name": "nightly", "command": ["/bin/true"], "schedule": {"calendar": {"hour": 3, "minute": 0}}})
+    assert ju.argv(job, "/h") == ["/h/.agents/venv/bin/python", "/h/.agents/lib/job_report.py", "nightly", "--", "/bin/true"]
+
+
+def test_a_job_that_reports_itself_or_a_keep_alive_server_is_not_wrapped():
+    me = ju.validate({"name": "a", "command": ["/x"], "schedule": {"every_s": 60}, "reports_itself": True})
+    srv = ju.validate({"name": "b", "command": ["/y"], "schedule": {"keep_alive": True}})
+    assert ju.argv(me, "/h") == ["/x"] and ju.argv(srv, "/h") == ["/y"]
+
+
+@pytest.mark.parametrize("bad", ["yes", 1, None, [], "true"])
+def test_reports_itself_must_be_a_real_boolean(bad):
+    with pytest.raises(ju.JobError, match="reports_itself"):
+        ju.validate({"name": "a", "command": ["/x"], "schedule": {"every_s": 60}, "reports_itself": bad})
+
+
+def test_every_job_in_the_repo_either_is_wrapped_or_its_script_really_reports_itself():
+    for name in ju.available():
+        job = ju.load(name)
+        if job.get("reports_itself"):
+            script = next(a for a in job["command"] if a.endswith(".py")).replace("~/.agents/", "")
+            assert "job_events" in (Path(__file__).resolve().parents[2] / script).read_text(), name
