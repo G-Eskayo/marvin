@@ -1,13 +1,20 @@
+import { readFileSync } from 'fs'
+import os from 'os'
+import path from 'path'
 import { MergeFailure, refusal } from './failure.js'
 
 const FAILED = new Set(['FAILURE', 'TIMED_OUT', 'CANCELLED', 'ACTION_REQUIRED', 'STARTUP_FAILURE'])
 
 // What GitHub says about a PR's checks (`gh pr view --json statusCheckRollup`): none / passing / pending / failing.
 // Handles both kinds of entry: Actions check runs and the older commit statuses.
-export function ciState(rollup) {
+// ignore (marvin#1099): names of checks the merge gate runs itself (gateChecks). GitHub's copy of those doesn't count:
+// the gate runs them again on the commit it merges, so a cancelled or failed GitHub run of one never holds a PR.
+export function ciState(rollup, { ignore = null } = {}) {
   const failing = []
   const pending = []
-  for (const c of rollup || []) {
+  const skip = new Set(Array.isArray(ignore) ? ignore : [])
+  const counted = (rollup || []).filter((c) => !skip.has(c?.__typename === 'StatusContext' ? c.context : c?.name))
+  for (const c of counted) {
     if (c.__typename === 'StatusContext') {
       const name = c.context || 'status'
       if (c.state === 'FAILURE' || c.state === 'ERROR') failing.push(name)
@@ -18,7 +25,7 @@ export function ciState(rollup) {
       else if (FAILED.has(c.conclusion)) failing.push(name)
     }
   }
-  const state = !(rollup || []).length ? 'none' : failing.length ? 'failing' : pending.length ? 'pending' : 'passing'
+  const state = !counted.length ? 'none' : failing.length ? 'failing' : pending.length ? 'pending' : 'passing'
   return { state, failing, pending }
 }
 
@@ -64,7 +71,8 @@ export function checkRuns(rollup) {
 // Merging waits for the repo's own CI when it has one. Failing checks mean the code is wrong, so the PR goes back
 // for rework with the check names; running checks are only a reason to wait (the PR is not sent back). A repo
 // with no CI is unaffected, and a metadata hiccup does not block (the merge gate still retests locally).
-export async function assertChecksGreen(prUrl, exec) {
+// ignore: the checks the gate itself runs (marvin#1099); only GitHub-only checks (the secret scan) are waited for.
+export async function assertChecksGreen(prUrl, exec, { ignore = null } = {}) {
   let rollup
   try {
     const { stdout } = await exec('gh', ['pr', 'view', prUrl, '--json', 'statusCheckRollup'])
@@ -72,7 +80,7 @@ export async function assertChecksGreen(prUrl, exec) {
   } catch {
     return
   }
-  const { state, failing, pending } = ciState(rollup)
+  const { state, failing, pending } = ciState(rollup, { ignore })
   if (state === 'failing') {
     throw new MergeFailure(refusal('CI_FAILED', 'request', `GitHub's checks failed on this PR: ${failing.join(', ')}`,
       'Fix what the failing checks report. The PR is sent back for rework.', 'reengage'))
@@ -80,5 +88,34 @@ export async function assertChecksGreen(prUrl, exec) {
   if (state === 'pending') {
     throw new MergeFailure(refusal('CI_PENDING', 'request', `GitHub's checks are still running: ${pending.join(', ')}`,
       'Wait for them to finish, then approve again. The PR was not sent back.'))
+  }
+}
+
+// marvin#1099: the names of the checks the merge gate runs itself, from a checkout's .github/required-checks.json
+// (the gate's own list: every check not marked CI-only). GitHub's copy of these never holds a PR. Unreadable or broken:
+// [] (nothing is ignored; the gate itself refuses a broken list when it runs).
+export function gateCheckNames(dir = path.join(os.homedir(), '.agents')) {
+  try {
+    const checks = JSON.parse(readFileSync(path.join(dir, '.github', 'required-checks.json'), 'utf8')).checks
+    return Array.isArray(checks) ? checks.filter((c) => c && (c.where || 'both') === 'both' && typeof c.name === 'string').map((c) => c.name) : []
+  } catch {
+    return []
+  }
+}
+
+// After the gate's checks pass, say so on the commit it merges, so GitHub shows what was really checked. Best effort:
+// a refused or failed post never blocks the merge.
+export async function postGateStatus(prUrl, exec, names = []) {
+  try {
+    const m = /^https:\/\/github\.com\/([^/]+\/[^/]+)\/pull\/\d+/.exec(String(prUrl))
+    if (!m) return false
+    const sha = String((await exec('gh', ['pr', 'view', prUrl, '--json', 'headRefOid', '--jq', '.headRefOid']))?.stdout || '').trim()
+    if (!/^[0-9a-f]{40}$/.test(sha)) return false
+    const what = names.length ? names.join(', ') : 'the required checks'
+    await exec('gh', ['api', `repos/${m[1]}/statuses/${sha}`, '-f', 'state=success', '-f', 'context=MARVIN gate',
+      '-f', `description=${`Passed on the rebased commit: ${what}`.slice(0, 140)}`])
+    return true
+  } catch {
+    return false
   }
 }

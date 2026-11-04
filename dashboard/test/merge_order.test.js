@@ -193,3 +193,31 @@ describe('mergeOrder: positions', () => {
     expect(closesRefs('Closes #1, fixes #2. Resolved G-Eskayo/marvin#3 and closes other/repo#4; Fixes #1', REPO)).toEqual([1, 2, 3])
   })
 })
+
+// marvin#1099: the gate is the check. GitHub's copy of a check the gate runs itself doesn't hold a PR in the queue.
+describe('checks the gate runs itself', () => {
+  const cancelledPython = [{ __typename: 'CheckRun', name: 'Python tests', status: 'COMPLETED', conclusion: 'CANCELLED' },
+    { __typename: 'CheckRun', name: 'Secret and transcript scan', status: 'COMPLETED', conclusion: 'SUCCESS' }]
+  const failedScan = [{ __typename: 'CheckRun', name: 'Secret and transcript scan', status: 'COMPLETED', conclusion: 'FAILURE' }]
+  const lineOf = (out, n) => out.entries[url(n)]
+  it('a PR whose GitHub Python run was cancelled is next to merge when the gate covers Python', () => {
+    const prs = enrichForOrder([pr(1093, { statusCheckRollup: cancelledPython })], { repo: REPO, gateCovers: ['Python tests'] })
+    const out = mergeOrder(prs, green_main, q(1093))
+    expect(out.next).toBe(url(1093))
+  })
+  it('without gateCovers the same PR is held as before', () => {
+    const out = mergeOrder(enrichForOrder([pr(1093, { statusCheckRollup: cancelledPython })], { repo: REPO }), green_main, q(1093))
+    expect(out.next).toBeNull()
+    expect(lineOf(out, 1093).reason).toMatch(/checks failing: Python tests/)
+  })
+  it('a failing check the gate does not run still holds it', () => {
+    const prs = enrichForOrder([pr(1093, { statusCheckRollup: failedScan })], { repo: REPO, gateCovers: ['Python tests'] })
+    expect(lineOf(mergeOrder(prs, green_main, q(1093)), 1093).reason).toMatch(/checks failing: Secret and transcript scan/)
+  })
+  it('a junk gateCovers value covers nothing', () => {
+    for (const junk of [null, 'Python tests', 42, {}]) {
+      const prs = enrichForOrder([pr(1093, { statusCheckRollup: cancelledPython })], { repo: REPO, gateCovers: junk })
+      expect(mergeOrder(prs, green_main, q(1093)).next).toBeNull()
+    }
+  })
+})
