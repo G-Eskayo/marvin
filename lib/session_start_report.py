@@ -29,6 +29,7 @@ sys.path.insert(0, str(Path.home() / ".agents" / "skills" / "safety-monitor" / "
 
 from hook_errors import log_hook_error  # noqa: E402
 import machine_profile  # noqa: E402
+import inbox  # noqa: E402
 
 HOME = Path.home()
 CLAUDE_DIR = HOME / ".claude"
@@ -100,7 +101,16 @@ def check_handoff() -> str | None:
     return f"## Most recent handoff — {latest.name} ({age.days}d old)\n\n{latest.read_text()}"
 
 
+def _open_in_inbox(pile: str) -> int | None:
+    """Open items in an inbox pile (ADR 0083), or None while the pile hasn't moved in yet (read the old file)."""
+    root = CLAUDE_DIR / "inbox"
+    return len(inbox.open_items(pile, root)) if inbox.pile_exists(pile, root) else None
+
+
 def check_suggestions() -> str | None:
+    n = _open_in_inbox("suggestions")
+    if n is not None:
+        return f"{n} architecture suggestion(s) pending in the inbox" if n else None
     f = CLAUDE_DIR / "suggestions.md"
     if not f.exists():
         return None
@@ -118,6 +128,9 @@ def load_lexicon() -> str | None:
 
 
 def check_improvement_queue() -> str | None:
+    n = _open_in_inbox("improvement-queue")
+    if n is not None:
+        return f"{n} item(s) queued in the improvement queue" if n else None
     f = CLAUDE_DIR / "improvement-queue.md"
     if not f.exists():
         return None

@@ -123,3 +123,67 @@ def test_known_project_paths_point_where_the_projects_actually_live():
     assert sweep.KNOWN_PROJECTS["resume-tailor"] == home / ".agents" / "skills" / "resume-tailor"
     assert sweep.KNOWN_PROJECTS["marvin-bench"] == home / ".agents" / "bench"
     assert sweep.KNOWN_PROJECTS["portfolio"] == home / "Developer" / "portfolio-website-updater"
+
+
+# ── after the move to the inbox (ADR 0083) ───────────────────────────────────────────────────────────────────
+
+import json  # noqa: E402
+
+import pytest  # noqa: E402
+
+LIB = Path(__file__).resolve().parents[4] / "lib"
+sys.path.insert(0, str(LIB))
+import inbox  # noqa: E402
+
+
+@pytest.fixture
+def piled(tmp_path, monkeypatch):
+    """A temp ~/.claude whose improvement queue has already moved into the inbox."""
+    claude = tmp_path / ".claude"
+    claude.mkdir()
+    queue_file = claude / "improvement-queue.md"
+    queue_file.write_text("# Improvement Queue\n\n---\n## 2026-07-01 — marvin\n\n"
+                          "- **[NAMING]** old one (`a.py`) — auto-fix: done, PR #9 merged\n")
+    monkeypatch.setattr(inbox, "default_root", lambda: claude / "inbox")
+    monkeypatch.setattr(isw, "QUEUE_FILE", queue_file)
+    monkeypatch.setattr(isw, "_SAFETY_MONITOR_AVAILABLE", False)
+    inbox.import_legacy("improvement-queue")
+    return queue_file
+
+
+def _items():
+    return {i["fields"]["entry"]: i for i in inbox.list_items("improvement-queue")["items"]}
+
+
+def test_in_inbox_mode_findings_become_items_and_the_old_file_is_untouched(piled):
+    before = piled.read_text()
+    assert isw.append_to_queue("marvin", [_issue("LOGIC", "new bug", "b.py"), _issue("NAMING", "old one", "a.py")])
+    items = _items()
+    assert piled.read_text() == before
+    new = items["**[LOGIC]** new bug (`b.py`)"]
+    assert new["status"] == {"state": "open"} and new["fields"]["project"] == "marvin" and new["source"] == "improvement-sweep"
+    assert items["**[NAMING]** old one (`a.py`)"]["status"]["state"] == "done"  # a repeat keeps its auto-fix status
+    assert items["**[NAMING]** old one (`a.py`)"]["added"] == "2026-07-01"  # and its first date
+
+
+def test_in_inbox_mode_a_repeat_sweep_adds_nothing_and_reports_skipped(piled):
+    issues = [_issue("LOGIC", "new bug", "b.py")]
+    isw.append_to_queue("marvin", issues)
+    before = isw.queue_snapshot()
+    assert isw.append_to_queue("other-project", issues)  # dedupe is by finding, not per project
+    after = isw.queue_snapshot()
+    assert before == after and len(_items()) == 2
+    assert "skipped" in isw._report_outcome(True, before, after, "marvin", 1)
+
+
+def test_in_inbox_mode_a_quarantined_block_adds_nothing(piled, monkeypatch):
+    monkeypatch.setattr(isw, "_SAFETY_MONITOR_AVAILABLE", True)
+    monkeypatch.setattr(isw, "pass_or_quarantine", lambda block, loop_name: False, raising=False)
+    assert isw.append_to_queue("marvin", [_issue("LOGIC", "garbled", "c.py")]) is False
+    assert len(_items()) == 1
+
+
+def test_in_inbox_mode_an_unparseable_finding_is_kept_as_an_untyped_item(piled):
+    isw.append_to_queue("marvin", [{"metadata": {"category": "anti-pattern"}, "document": "weird ünïcode finding"}])
+    assert any(i["title"] == "weird ünïcode finding" and "kind" not in i["fields"] for i in _items().values())
+    json.dumps(inbox.list_items("improvement-queue"))

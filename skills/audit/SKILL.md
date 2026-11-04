@@ -44,8 +44,8 @@ For each real divergence found:
 - If it's fixable within the exact scope auto_fix.py already covers (NAMING/VERBOSITY
   findings only, files under ~/.agents, never files in auto_fix.py's own _core_files()
   exclusion list) — run auto_fix.py, don't fix it yourself.
-- Otherwise, do NOT fix it. Append a suggestion to ~/.claude/suggestions.md using
-  architecture-review's exact entry format (## [date] [title], Status: pending, Impact,
+- Otherwise, do NOT fix it. Queue a suggestion in the inbox (`inbox.py import suggestions --file <entry.md>`,
+  see architecture-review's SKILL.md) using architecture-review's exact entry format (## [date] [title], Status: pending, Impact,
   Effort, Why, What, How) so it's queued for review, not silently changed.
 
 Report back: what you found, what you fixed (if anything, via auto_fix.py), what you queued.
@@ -56,10 +56,10 @@ Report back: what you found, what you fixed (if anything, via auto_fix.py), what
 No new dedicated findings file — reuse what already exists, split by risk tier:
 
 - **Low-risk, auto-fixable** (matches `auto_fix.py`'s existing narrow scope exactly): triggered via `auto_fix.py`, not fixed directly. Lands in `~/.claude/auto-fix-log.md`, same as any other auto-fix run. Session Start step 8 already surfaces this.
-- **Needs real judgment** (a design decision, a logic change, anything auto_fix.py's safety boundary doesn't cover — the shape of all three fixes in ADR 0015): appended to `~/.claude/suggestions.md` in `architecture-review`'s exact format, unimplemented, queued for the user's review. Session Start step 2 already surfaces the pending count.
+- **Needs real judgment** (a design decision, a logic change, anything auto_fix.py's safety boundary doesn't cover — the shape of all three fixes in ADR 0015): queued in the inbox's suggestions pile (`lib/inbox.py`, ADR 0083) in `architecture-review`'s exact format, unimplemented, queued for the user's review. Session Start step 2 already surfaces the pending count.
 
 If the investigation finds nothing — intent and reality actually match — don't write anything anywhere. A clean result isn't a finding.
 
 ## Reporting back to the user
 
-When the backgrounded agent completes, relay a concise summary in the main conversation — what was investigated, what was found (or that nothing was), what got auto-fixed vs. queued. Don't dump the full investigation transcript; the durable record already lives in `auto-fix-log.md`/`suggestions.md`.
+When the backgrounded agent completes, relay a concise summary in the main conversation — what was investigated, what was found (or that nothing was), what got auto-fixed vs. queued. Don't dump the full investigation transcript; the durable record already lives in `auto-fix-log.md` and the inbox's suggestions pile.

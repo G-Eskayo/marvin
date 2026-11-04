@@ -34,6 +34,10 @@ Queue marks are a suffix on the item's bullet (every copy of it), so the existin
     - **[VERBOSITY]** ... (`lib/z.py`) — auto-fix: tried 2026-10-26, tests failed
 Delete the suffix to put an item back in the queue.
 
+The queue moved into the inbox (lib/inbox.py, ADR 0083). Once its improvement-queue pile exists, items are read from
+there and a mark is the item's status (state in_pr / done / skipped / tried, the mark's text kept whole in its note);
+`inbox.py act improvement-queue <id> open` puts one back. Until the pile exists, the markdown file is used as above.
+
 Every run appends to ~/.claude/auto-fix-log.md ("N candidate(s) found, M fixed", the line output_contracts reads).
 
 Run standalone: ~/.agents/venv/bin/python auto_fix.py
@@ -82,6 +86,9 @@ from build_type_measure import _scope_root  # noqa: E402
 from evidence_capture import capture_test_results, TestTimedOut  # noqa: E402
 import job_events  # noqa: E402  (run log shown in the dashboard's Health tab)
 import instance  # noqa: E402
+import inbox  # noqa: E402
+
+PILE = "improvement-queue"
 
 REPO = instance.engine_repo()  # where the PR goes: this install's own engine repo
 
@@ -144,7 +151,7 @@ _sleep = time.sleep
 # ── the queue ─────────────────────────────────────────────────────────────────────────────────────────────────────
 
 MARK_SEP = " — auto-fix: "
-LINE_RE = re.compile(r"^- (\*\*\[([A-Z]+)\]\*\* (.+?) \(`([^`\n]+)`\))(?: — auto-fix: (.*))?$")
+LINE_RE = inbox.QUEUE_LINE_RE  # one copy of the bullet format, in the inbox
 
 
 def parse_queue(text: str) -> list[dict]:
@@ -171,8 +178,38 @@ def _read_queue() -> str:
         return ""
 
 
+def _use_inbox() -> bool:
+    return inbox.pile_exists(PILE)
+
+
+def load_queue() -> list[dict]:
+    """The queue's items, oldest first: from the inbox once the pile has moved in, else from the markdown file.
+    Inbox items carry their `id`; untyped findings (no [KIND]) are left out, as the markdown parser leaves them out."""
+    if not _use_inbox():
+        return parse_queue(_read_queue())
+    out = []
+    for item in inbox.list_items(PILE)["items"]:
+        f = item["fields"]
+        if not (f.get("kind") and f.get("path") and f.get("entry")):
+            continue
+        out.append({"entry": f["entry"], "kind": f["kind"], "message": f.get("message", ""), "path": f["path"],
+                    "mark": inbox.mark_of(item), "id": item["id"]})
+    return out
+
+
+def _mark_in_inbox(marks: dict[str, str]) -> None:
+    ids = {i["entry"]: i["id"] for i in load_queue()}
+    for entry, mark in marks.items():
+        if entry in ids:
+            status = inbox.queue_status(mark)
+            inbox.act(PILE, ids[entry], status["state"], {"note": status["note"]})
+
+
 def mark_items(marks: dict[str, str]) -> None:
     """Set the auto-fix suffix on every copy of each entry in `marks`. Written atomically; O(lines)."""
+    if marks and _use_inbox():
+        _mark_in_inbox(marks)
+        return
     if not marks or not QUEUE_PATH.exists():
         return
     out = []
@@ -191,7 +228,7 @@ def refresh_pr_marks(today: str | None = None) -> None:
     """Items "in PR #n": done once n merged, tried once it was closed unmerged; left alone while open or unreadable."""
     today = today or _today()
     marks, states = {}, {}
-    for item in parse_queue(_read_queue()):
+    for item in load_queue():
         m = re.match(r"in PR #(\d+)", item["mark"] or "")
         if not m:
             continue
@@ -378,7 +415,7 @@ def pr_body(today: str, fixed: list[dict], left_out: dict[str, str], cmd: list[s
     from mr_raiser import _format_test_results
     lines = [f"Daily auto-fix batch for {today} (`com.marvin.auto-fix`, `skills/improve/scripts/auto_fix.py`).",
              "",
-             "Behaviour-preserving fixes taken from `~/.claude/improvement-queue.md`, made in a worktree on "
+             "Behaviour-preserving fixes taken from the improvement queue, made in a worktree on "
              f"`auto-fix/{today}` from origin/main; the shared `~/.agents` checkout was not touched. The tests that cover "
              "these files ran before and after the fix and passed both times.",
              "",
@@ -447,7 +484,7 @@ def _run_locked(today: str) -> None:
         return
 
     core = _core_files()
-    pending = [i for i in parse_queue(_read_queue()) if _in_scope(i, core)]
+    pending = [i for i in load_queue() if _in_scope(i, core)]
     if not pending:
         log_run(today, "Skipped — no queued items in scope")
         return

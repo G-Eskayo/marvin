@@ -12,11 +12,19 @@ Priorities), then by Effort (low wins).
 
 Run standalone or after any edit to suggestions.md:
     ~/.agents/venv/bin/python sort_suggestions.py
+
+Suggestions moved into the inbox (lib/inbox.py, ADR 0083), where this order is a sort applied when they're read
+(inbox.suggestion_order, using the same ranks, which now live there). Once the inbox's suggestions pile exists, the old
+file is a read-only backup and this script leaves it alone.
 """
 from __future__ import annotations
 import re
 import sys
 from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).resolve().parents[3] / "lib"))
+import inbox  # noqa: E402
+from inbox import EFFORT_RANK, IMPACT_RANK  # noqa: E402  (one copy of ADR 0017's ranks)
 
 SUGGESTIONS_FILE = Path.home() / ".claude" / "suggestions.md"
 
@@ -25,9 +33,6 @@ PRIORITY_RE = re.compile(r"^\*\*Priority\*\*:\s*(\d+)", re.MULTILINE)
 IMPACT_RE = re.compile(r"^\*\*Impact\*\*:\s*(\S+)", re.MULTILINE)
 EFFORT_RE = re.compile(r"^\*\*Effort\*\*:\s*(\S+)", re.MULTILINE)
 STATUS_RE = re.compile(r"^\*\*Status\*\*:\s*(\S+)", re.MULTILINE)
-
-IMPACT_RANK = {"token-reduction": 0, "speed": 1, "organization": 2, "pipeline-logic": 3, "reliability": 4, "robustness": 5}
-EFFORT_RANK = {"low": 0, "medium": 1, "high": 2}
 
 DEFAULT_HEADER = (
     "# Suggestions\n\n"
@@ -68,6 +73,8 @@ def _sort_key(block: str) -> tuple:
 
 
 def sort_suggestions() -> int:
+    if inbox.pile_exists("suggestions", SUGGESTIONS_FILE.parent / "inbox"):
+        return -1  # sorted when read; the old file is a read-only backup now
     if not SUGGESTIONS_FILE.exists() or not SUGGESTIONS_FILE.read_text().strip():
         SUGGESTIONS_FILE.write_text(DEFAULT_HEADER)
         return 0
@@ -86,4 +93,8 @@ def sort_suggestions() -> int:
 
 if __name__ == "__main__":
     count = sort_suggestions()
-    print(f"[sort-suggestions] {count} entries sorted by priority", file=sys.stderr)
+    if count < 0:
+        print("[sort-suggestions] suggestions are in the inbox, sorted when read; suggestions.md left as it is",
+              file=sys.stderr)
+    else:
+        print(f"[sort-suggestions] {count} entries sorted by priority", file=sys.stderr)
