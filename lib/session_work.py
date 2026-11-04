@@ -349,6 +349,12 @@ def chat_from_env(payload: dict, env, proc: Proc | None, mac: str, git) -> dict 
             "cwd": cwd, "repo": repo, "branch": branch, "ticket": ticket_from_branch(branch)}
 
 
+def chat_id(key: str) -> str:
+    """The opaque id the dashboard holds for a chat (marvin#1067): never its socket or tty."""
+    import hashlib
+    return hashlib.sha256(key.encode()).hexdigest()[:16]
+
+
 def chat_key(rec: dict) -> str:
     return f"{rec['mac']}|{rec['socket']}|{rec['pane']}"
 
@@ -428,15 +434,15 @@ def live_chats(st: dict, panes: dict, alive=proc_alive) -> list[dict]:
             continue
         if rec["socket"] not in panes:
             keep[key] = rec
-            out.append({**rec, "unknown": True})
+            out.append({**rec, "id": chat_id(key), "unknown": True})
             continue
         rows = panes[rec["socket"]]
         row = next((r for r in rows or [] if r.get("pane_id") == rec["pane"]), None)
         if row is None or not str(row.get("tty_name") or "").endswith("/" + rec["tty"]):
             continue
         keep[key] = rec
-        out.append({**rec, "unknown": False, "title": row.get("title", ""), "window_id": row.get("window_id"),
-                    "tab_id": row.get("tab_id")})
+        out.append({**rec, "id": chat_id(key), "unknown": False, "title": row.get("title", ""),
+                    "window_id": row.get("window_id"), "tab_id": row.get("tab_id")})
     st["chats"] = keep
     return sorted(out, key=lambda c: (c["mac"], c["socket"], c["pane"]))
 
