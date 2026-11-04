@@ -36,7 +36,7 @@
         <key>HOME</key>
         <string>/Users/gileskayo</string>
         <key>PATH</key>
-        <string>/Users/gileskayo/.local/bin:/usr/local/bin:/usr/bin:/bin:/Users/gileskayo/.agents/venv/bin</string>
+        <string>/Users/gileskayo/.local/bin:/usr/local/bin:/usr/bin:/bin:/Users/gileskayo/.agents/venv/bin:/opt/homebrew/bin</string>
     </dict>
 
     <!-- Restart if the job crashes -->

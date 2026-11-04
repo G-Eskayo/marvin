@@ -972,6 +972,11 @@ def _neutral() -> None:
     _RUN["neutral"] = True
 
 
+def _told(result) -> str:
+    import mr_notification
+    return mr_notification.told_text(result)
+
+
 def _track_episode(repo: Path, action: str, failed: str | None, neutral: bool, now: float) -> None:
     path = _episodes_path()
     try:
@@ -988,16 +993,16 @@ def _track_episode(repo: Path, action: str, failed: str | None, neutral: bool, n
         minutes = int((now - float(ep.get("since") or now)) // 60)
         if not ep.get("alerted") and now - float(ep.get("since") or now) >= STUCK_ALERT_AFTER_S:
             ep["alerted"] = True
-            notify("MARVIN code-sync STUCK", f"{Path(repo).name} on {machine_label()} has not synced for {minutes} min: "
-                   f"{failed.splitlines()[0][:120]}", open_target=str(LOG_PATH))
-            _log(repo, "alert", f"told the owner: sync has been failing for {minutes} min")
+            told = notify("MARVIN code-sync STUCK", f"{Path(repo).name} on {machine_label()} has not synced for {minutes} min: "
+                          f"{failed.splitlines()[0][:120]}", open_target=str(LOG_PATH))
+            _log(repo, "alert", f"{_told(told)}: sync has been failing for {minutes} min")
     elif ep and not neutral:
         ep.get("failing", {}).pop(action, None)
         if not ep.get("failing"):
             if ep.get("alerted"):
                 minutes = int((now - float(ep.get("since") or now)) // 60)
-                notify("MARVIN code-sync", f"{Path(repo).name} on {machine_label()} is back in sync (stuck {minutes} min)")
-                _log(repo, "alert", f"told the owner: back in sync after {minutes} min")
+                told = notify("MARVIN code-sync", f"{Path(repo).name} on {machine_label()} is back in sync (stuck {minutes} min)")
+                _log(repo, "alert", f"{_told(told)}: back in sync after {minutes} min")
             del state[key]
     if not state:
         path.unlink(missing_ok=True)

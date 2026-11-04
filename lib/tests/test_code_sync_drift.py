@@ -81,7 +81,10 @@ class World:
         self.notes: list[tuple[str, str]] = []
         self.mac = "mac-a"
         monkeypatch.setattr(cs, "LOG_PATH", state / "sync-log.md")
-        monkeypatch.setattr(cs, "notify", lambda title, msg, **kw: self.notes.append((title, msg)))
+        self.delivered = ["desktop"]  # what the alert path reports back (#1123); a test can make it deliver nothing
+        monkeypatch.setattr(cs, "notify", lambda title, msg, **kw: self.notes.append((title, msg)) or
+                            {"delivered": list(self.delivered),
+                             "channels": {"desktop": "sent" if self.delivered else "failed: RuntimeError: no banner"}})
         monkeypatch.setattr(cs, "machine_label", lambda: self.mac)
         monkeypatch.setattr(cs.error_log, "record", lambda *a, **kw: None)
         self.a = self._clone(tmp_path / "home-a", name)
@@ -543,12 +546,23 @@ def test_a_leftover_stash_not_in_head_is_kept_and_refuses(w, variant):
     assert "REFUSING to run" in w.log()
 
 
+def test_a_stuck_alert_nobody_received_is_logged_as_not_told_never_as_told(w):
+    """#1123: the log used to say "told the owner" whatever happened. A banner that failed must say so."""
+    w.delivered = []
+    _leave_stash(w.b, contained=False)
+    for k, action in enumerate(["pull", "push"] * 3):
+        getattr(w, action)(w.b, T + k * 900)
+    assert len(w.stuck_alerts()) == 1
+    assert "COULD NOT tell the owner (desktop failed: RuntimeError: no banner): sync has been failing" in w.log()
+    assert "told the owner by" not in w.log()
+
+
 def test_a_stuck_episode_longer_than_30_minutes_alerts_exactly_once_then_clears_once(w):
     _leave_stash(w.b, contained=False)
     for k, action in enumerate(["pull", "push"] * 6):   # 3 hours of 15-minute cycles
         getattr(w, action)(w.b, T + k * 900)
         assert len(w.stuck_alerts()) == (0 if k * 900 < cs.STUCK_ALERT_AFTER_S else 1), k
-    assert "told the owner: sync has been failing for 30 min" in w.log()
+    assert "told the owner by desktop: sync has been failing for 30 min" in w.log()
     _git(w.b, "stash", "drop")   # a person resolves it
     w.pull(w.b, T + 4 * 3600)
     assert w.cleared() == [], "cleared while push had not yet run healthy"
