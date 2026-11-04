@@ -254,7 +254,7 @@ def test_a_corrupt_alert_state_file_is_started_over_not_a_crash(tmp_path):
     path.write_text("{oops")
     fired = []
     ac.alert_changes([_r("failed")], path, fire=lambda t, m: fired.append(t))
-    assert len(fired) == 1 and json.loads(path.read_text()) == {"github-token@mac-mini-1": "failed"}
+    assert len(fired) == 1 and json.loads(path.read_text())["github-token@mac-mini-1"]["state"] == "failed"
 
 
 def test_an_alert_that_throws_never_stops_the_others_or_the_sweep(tmp_path):
