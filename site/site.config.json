@@ -11,5 +11,5 @@
   ],
   "_mapUrl": "The privacy-checked public snapshot (brain-map/export_snapshot.py + deploy_snapshot.py, ADRs 0050 and 0057). Never the raw generator output.",
   "mapUrl": "https://gileskayo.me/wp-content/marvin-map/",
-  "contactEmail": ""
+  "contactEmail": "marvin@gileskayo.me"
 }
