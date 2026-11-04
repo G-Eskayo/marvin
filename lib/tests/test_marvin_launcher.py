@@ -185,8 +185,6 @@ def test_the_phone_chat_runs_as_an_interactive_launch():
     ("skills/architecture-review/scripts/background_architecture_review.py", "background-analyst"),
     ("skills/improve/scripts/auto_fix.py", "background-analyst"),
     ("lib/ticket_promotion.py", "background-analyst"),
-    ("lib/disk_forecast_notify.py", "utility-call"),
-    ("lib/mr_notification.py", "utility-call"),
     ("skills/handoff/scripts/generate_handoff_from_transcript.py", "utility-call"),
     ("skills/safety-monitor/scripts/verify.py", "judge"),
 ])

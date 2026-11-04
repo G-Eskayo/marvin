@@ -375,29 +375,30 @@ def tell_message(state: str, peer: str, p: Probe | None = None) -> str:
     }.get(state, f"The {name} has a problem ({state}) that I can't fix.")
 
 
-def notify_owner(title: str, message: str, actions: bool = False, device: str | None = None) -> None:
-    """This machine's desktop notification (with Postpone / Skip tonight when `actions`) plus the phone push."""
-    if actions and sys.platform == "darwin" and shutil.which("terminal-notifier"):
+def notify_owner(title: str, message: str, actions: bool = False, device: str | None = None) -> dict | None:
+    """The one alert path (#1123); with `actions`, the desktop banner carries Postpone / Skip tonight. Returns its result."""
+    import notify
+    notifier = notify._notifier() if actions and sys.platform == "darwin" else None  # also where launchd's PATH can't see
+    if notifier:
         py = sys.executable
         script = str(HERE / "nightly_reset.py")
         # terminal-notifier blocks until clicked or timed out and prints the chosen action; run it detached
         subprocess.Popen(["/bin/sh", "-c",
-                          'a=$(terminal-notifier -title "$1" -message "$2" -actions "Postpone,Skip tonight" '
+                          'a=$("$5" -title "$1" -message "$2" -actions "Postpone,Skip tonight" '
                           '-timeout 300 -group marvin-nightly-reset); '
                           'case "$a" in Postpone) "$3" "$4" postpone;; "Skip tonight") "$3" "$4" skip;; esac',
-                          "_", title, message, py, script], start_new_session=True,
+                          "_", title, message, py, script, notifier], start_new_session=True,
                          stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-        try:
+        try:  # the banner above is the desktop channel; the rest of the one alert path (dashboard, phone) and its record
             import mr_notification
-            mr_notification.push_notify(message)
+            return mr_notification._fire(title, message, None, desktop_result="sent (actionable banner, started detached)")
         except Exception:  # noqa: BLE001
-            pass
-        return
+            return None
     try:
         import mr_notification
-        mr_notification._fire(title, message, None)
+        return mr_notification._fire(title, message, None)
     except Exception:  # noqa: BLE001 -- telling must never break the watcher
-        pass
+        return None
 
 
 def _incident_path(state_dir: Path, peer: str) -> Path:
@@ -471,11 +472,13 @@ def handle(peer: str, trigger: str, cfg: dict, *, probe: Callable = probe, run_f
             _save_incident(state_dir, peer, inc)               # counted before acting
             run.step("fix", f"{fix} (attempt {inc['attempts']} of {budget})")
             if fix == "tell-owner":
+                told = "already told the owner in this incident"
                 if not inc["told"]:
-                    tell(f"MARVIN: the {name} needs you", tell_message(state, peer, p))
+                    import mr_notification
+                    told = mr_notification.told_text(tell(f"MARVIN: the {name} needs you", tell_message(state, peer, p)))
                     inc["told"] = True
                     _save_incident(state_dir, peer, inc)
-                run.step("result", "told the owner")
+                run.step("result", told)
                 return {"peer": peer, "action": "told", "state": state, "fix": fix}
             ok, detail = run_fix(fix, peer, p, facts(peer))
             p2 = probe(peer)

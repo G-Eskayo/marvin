@@ -1904,28 +1904,33 @@ def react_to_accounts(sweep=None) -> str:
 
 import job_events  # noqa: E402  (run log shown in the dashboard's Health tab)
 
+HEALTH_ALERT_STATE = HOME / ".claude" / "logs" / "health-alerted.json"
+ALERT_BATCH_OVER = 3  # more than this many changes in one sweep go out as one summary banner
+
+
+def alert_red_checks(checks: list[dict], path: Path | None = None, fire=None, today=None) -> str:
+    """One alert path (mr_notification.alert_on_change) over every check: turned red, still red (daily), cleared."""
+    import mr_notification
+    items = [{"key": c["id"], "state": c.get("severity"), "title": f"MARVIN: {c.get('label') or c['id']} is red",
+              "message": str(c.get("detail") or "")[:300]}
+             for c in checks if isinstance(c, dict) and isinstance(c.get("id"), str)]
+    due = mr_notification.alert_on_change(items, path or HEALTH_ALERT_STATE, bad=("red",), fire=fire, today=today,
+                                          batch_over=ALERT_BATCH_OVER)
+    if not due:
+        return "nothing changed"
+    counts: dict[str, int] = {}
+    for d in due:
+        counts[d["why"]] = counts.get(d["why"], 0) + 1
+    return ", ".join(f"{n} {why}" for why, n in counts.items())
+
 
 @job_events.reported("health-check", "Health check sweep")
 def _cli() -> None:
     out = write_status()
 
-    # Notify on red disk:headroom (once per device per day)
-    for result in out.get("checks", []):
-        if result.get("id", "").startswith("disk:headroom") and result.get("severity") == "red":
-            try:
-                import disk_forecast_notify as dfn  # noqa: E402
-                device = result["id"].split("@")[1] if "@" in result["id"] else machine_profile.registry_id()
-                # Extract days forecast from detail (rough parse: "N days forecast...")
-                detail = result.get("detail", "")
-                days = 0.0
-                if "forecast" in detail:
-                    import re
-                    match = re.search(r"(\d+\.?\d*)d", detail)
-                    if match:
-                        days = float(match.group(1))
-                dfn.notify_red_headroom(device, days, detail)
-            except Exception:
-                pass
+    # Tell the owner when a check turns red, once a day while it stays red, and when it clears (#1123, ADR 0083).
+    # It replaced the disk forecast's own three-channel notifier: disk:headroom is one of these checks.
+    job_events.step("Alerts", alert_red_checks(out.get("checks", [])))
 
     for aid in react_to_low_disk(out.get("checks", [])):
         job_events.step("Disk first aid", f"{aid['device']}: {'ok' if aid['ok'] else 'failed'}, {aid['detail']}")
