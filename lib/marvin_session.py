@@ -86,7 +86,7 @@ def session_dir(clone: Path, ticket: int | None, title: str | None) -> Path:
     return path
 
 
-def shell_script(directory: Path, prompt_file: Path | None = None) -> str:
+def shell_script(directory: Path, prompt_file: Path | None = None, resume: str | None = None) -> str:
     """The session's shell. A prompt (Ask MARVIN about a proposal) is read from a file at run time, so its text,
     which came from a feed or a model, never becomes shell code."""
     return "\n".join([
@@ -95,7 +95,8 @@ def shell_script(directory: Path, prompt_file: Path | None = None) -> str:
         f"export VIRTUAL_ENV={shlex.quote(str(HOME / '.agents/venv'))}",
         f"export {KIND_ENV}=interactive",
         f'[ -f {shlex.quote(str(GH_TOKEN_FILE))} ] && export GH_TOKEN="$(cat {shlex.quote(str(GH_TOKEN_FILE))})"',
-        f'exec claude "$(cat {shlex.quote(str(prompt_file))})"' if prompt_file else "exec claude",
+        f"exec claude --resume {shlex.quote(resume)}" if resume  # marvin#1086: back onto a new version, same chat
+        else f'exec claude "$(cat {shlex.quote(str(prompt_file))})"' if prompt_file else "exec claude",
     ])
 
 

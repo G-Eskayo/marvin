@@ -242,6 +242,8 @@ if __name__ == "__main__":
             print("wezterm look: not installed:", exc)
         strays = stray_memories()
         print(f"hooks installed in {USER_SETTINGS}; memory -> {MAIN_MEMORY}")
+        import chat_restart  # chat tabs move onto a new Claude Code when it lands (marvin#1086): a WatchPaths job
+        print("claude update watch:", chat_restart.install_watch())
         if strays:
             print(f"{len(strays)} note(s) in other memory folders, merge them into the main memory:")
             print("\n".join(f"  {p}" for p in strays))
