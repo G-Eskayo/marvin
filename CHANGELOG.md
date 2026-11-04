@@ -1,5 +1,7 @@
 # Changelog
 
+- Open session focuses the existing chat instead of opening a duplicate ([#1090](https://github.com/G-Eskayo/marvin/pull/1090))
+
 - MARVIN's WezTerm config: synced, guarded, installed on both Macs, accessible palette ([#1092](https://github.com/G-Eskayo/marvin/pull/1092))
 
 - Chat state hooks: working, waiting on you, your turn, done, without ever slowing a chat ([#1085](https://github.com/G-Eskayo/marvin/pull/1085))
