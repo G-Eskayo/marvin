@@ -1,5 +1,7 @@
 # Changelog
 
+- Accounts: live checks, expiry warnings, one alert per change, and renewal for every MARVIN credential (backend for #640) ([#977](https://github.com/G-Eskayo/marvin/pull/977))
+
 - Workshop: one item page for a ticket and its PRs ([#1053](https://github.com/G-Eskayo/marvin/pull/1053))
 
 - Chat tabs restart onto a new Claude Code version on their own, by resume, only while idle on your turn ([#1096](https://github.com/G-Eskayo/marvin/pull/1096))
