@@ -21,6 +21,8 @@ contextBridge.exposeInMainWorld('api', {
   },
   mr: {
     list: () => ipcRenderer.invoke('mr:list'),
+    projects: () => ipcRenderer.invoke('mr:projects'),
+    helperTabs: () => ipcRenderer.invoke('mr:helperTabs'),
     // Confirmation happens in the main process via a native dialog, not here --
     // see the comment on the mr:approve handler for why.
     approve: (pr) => ipcRenderer.invoke('mr:approve', pr),

@@ -139,6 +139,8 @@ import { createDeliverables } from './deliverables.js'
 import { createThumbs } from './thumbs.js'
 import { docsTextFor, maxNumbers, docsClickHandlers } from './docs_handlers.js'
 import { readCatalog, readMasterDoc, readOverrides, CATALOG_DIR, MASTER_DOC_PATH } from './catalog.js'
+import { readHelperTabs } from './helper_tabs.js'
+import { withOverrides } from '../../src/lib/project_names.js'
 import { STAGES_DIR } from '../../webhook-server/ticket_stages.js'
 import { DISPATCH_STATE_PATH } from './dispatch_status.js'
 import { createHash } from 'crypto'
@@ -593,7 +595,7 @@ function registerActivityHandlers() {
     ])
     return { gh: ghJson, registryRepos, data, evidence, otherPrs }
   }
-  ipcMain.handle('boards:list', () => withProjectStatus(readRegistry(), readCatalog({ deviceId: deviceId() })))
+  ipcMain.handle('boards:list', () => withProjectStatus(readRegistry(), readCatalog({ deviceId: deviceId() }), readOverrides()))
   ipcMain.handle('boards:load', async (_event, repo, source = 'poll') => {
     assertRegistered(repo)
     const board = await loadBoard(repo, await boardInputs(repo))
@@ -727,7 +729,7 @@ function registerDocsHandlers() {
     overview: () => relations.overview(),
     peekBoards: () => githubState.peek('board'),
     stagesFor: defaultStagesFor,
-    boards: () => withProjectStatus(readRegistry(), readCatalog({ deviceId: deviceId() })),
+    boards: () => withProjectStatus(readRegistry(), readCatalog({ deviceId: deviceId() }), readOverrides()),
     savedMerged: () => readSavedMerged(MR_HISTORY_PATH),
     serverMerges: () =>
       fetch(MR_WEBHOOK_URL.replace(/\/approve$/, '/merge-history'), { signal: AbortSignal.timeout(3000) })
@@ -1102,6 +1104,11 @@ function registerMrReviewHandlers() {
       .then((prs) => withReadOnlyReason(prs, pullOnly)),
     () => `${githubState.localSeq()}:${githubState._genOf(null)}`
   )
+  // MR Review by project (marvin#848): the projects with their one name (overrides.json applied now), and the helper
+  // tabs for the cards' chips. Both read when the list is read, never on a timer of their own.
+  ipcMain.handle('mr:projects', () => withOverrides(readCatalog({ deviceId: deviceId() })?.projects, readOverrides())
+    .map(({ id, name, catalogName, repo, status, aliases }) => ({ id, name, catalogName, repo, status, aliases })))
+  ipcMain.handle('mr:helperTabs', () => readHelperTabs())
   ipcMain.handle('mr:list', async () => {
     if (!fixturePrs && !pullOnly) listOpenPrs().then((prs) => stackRetarget.check(prs)).catch(() => {})
     const list = await mrList()
