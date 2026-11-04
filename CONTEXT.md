@@ -2058,3 +2058,15 @@ runs no merge or test of its own and its memory is normal).
   When the data is here it returns at once with no network. When the folder is parked it fetches the data back
   (locked, space-checked, verified) and returns. A path inside a parked folder fetches only that part. This is the
   trigger: nothing polls.
+
+## Loops (ADR 0083, marvin#1123, 2026-11-04)
+
+- **Loop**: a feedback cycle that works only when all four steps run: **notice → act → verify → remember**. Each one
+  is an entry in `config/loops.json`, read only by `lib/loops.py`.
+- **Loop status**: derived, never stored. **Closed**: a full cycle within its limit. **Stalled**: no full cycle within
+  `cycle_days`. **Broken**: its signal or its verify is red, or its job failed 3 runs in a row. **Not wired**: its
+  action doesn't run or doesn't report yet.
+- **Full cycle**: a passed run of the loop's action while its verify signal isn't red.
+- **Alert path**: `mr_notification._fire`, the one way MARVIN tells Gil (desktop, dashboard, and the phone once #958
+  lands). An alert fires on a change to bad, then once a day while it stays bad, and once when it clears.
+- **Inbox**: one JSON file per item per pile (`lib/inbox.py`), replacing the separate markdown piles one at a time.
