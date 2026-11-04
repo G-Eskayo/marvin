@@ -1,5 +1,7 @@
 # Changelog
 
+- Pipeline and merge gate: Seal Speak worktrees get the app's models from one sha-checked cache per machine, so the app builds there ([#1119](https://github.com/G-Eskayo/marvin/pull/1119))
+
 - Main is red at e46bda3: fix forward ([#1147](https://github.com/G-Eskayo/marvin/pull/1147))
 
 - GitHub's Python tests run on Linux: start at once, and Mac-only tests skip there with a reason ([#1135](https://github.com/G-Eskayo/marvin/pull/1135))
