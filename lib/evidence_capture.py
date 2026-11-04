@@ -22,9 +22,16 @@ import os
 import re
 import resource
 import signal
+import codecs
 import subprocess
+import sys
+import threading
+import time
 from pathlib import Path
 from typing import Callable
+
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+import test_slot  # noqa: E402  (stdlib only: the slot's own waiting/took lines, marvin#1113)
 
 
 def parse_test_output(suite: str, output: str) -> dict:
@@ -97,6 +104,109 @@ class TestTimedOut(RuntimeError):
         super().__init__(f"timed out after {timeout_s}s running {cmd_hint}")
 
 
+# marvin#1113: how long a run may wait in line for this machine's test slot before the pipeline gives up. Merges go
+# first (#940) and a burst of them can hold the slot a long time, so this is generous; the tests' own timeout never
+# includes it.
+SLOT_WAIT_CAP_S = 7200
+
+
+class SlotWaitTimedOut(TestTimedOut):
+    """The run waited longer than the cap for the test slot and never started its tests. The machine was busy; the
+    ticket did nothing wrong. A TestTimedOut, so every caller treats it as the machine's time (run_ticket.py), with
+    its own message so the breaker signs it apart from a slow test (failure_breaker.signature: slot-busy)."""
+
+    def __init__(self, command: list[str], cap_s: float, partial_output: str):
+        self.command = command
+        self.timeout_s = cap_s
+        self.partial_output = partial_output
+        RuntimeError.__init__(self, f"waited {cap_s:g}s for the test slot (this machine was busy with merges or other "
+                                    f"test runs) and gave up before the tests started")
+
+
+def _kill_group(proc: subprocess.Popen) -> None:
+    try:
+        os.killpg(os.getpgid(proc.pid), signal.SIGKILL)
+    except (ProcessLookupError, PermissionError):
+        pass
+
+
+def run_timed(cmd: list[str], cwd=None, env: dict | None = None, timeout_s: float = 1200,
+              slot_wait_cap_s: float | None = None, preexec_fn=None) -> tuple[int, str]:
+    """Run cmd and return (returncode, stdout + stderr). Raises TestTimedOut when the run takes longer than timeout_s,
+    not counting any time it spends waiting for this machine's test slot (marvin#1113): the slot says on stderr when
+    a run starts waiting and when it takes the slot (test_slot.WAITING_RE / TOOK_RE), and the clock stops in between.
+    A wait longer than slot_wait_cap_s (default SLOT_WAIT_CAP_S) raises SlotWaitTimedOut. Either way the whole process
+    group is killed. Event-driven: the deadline is re-read whenever a slot line arrives or the process ends."""
+    cap = SLOT_WAIT_CAP_S if slot_wait_cap_s is None else slot_wait_cap_s
+    proc = subprocess.Popen(cmd, cwd=cwd, env=env, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+                            start_new_session=True, preexec_fn=preexec_fn)
+    out: list[bytes] = []
+    err: list[bytes] = []
+    wake = threading.Event()
+    lock = threading.Lock()
+    state = {"waiting_since": None, "waited": 0.0}
+
+    def mark(text: str, whole_line: bool) -> None:
+        now = time.monotonic()
+        with lock:
+            if state["waiting_since"] is None:
+                if test_slot.WAITING_RE.search(text):
+                    state["waiting_since"] = now
+                    wake.set()
+            elif whole_line and test_slot.TOOK_RE.search(text):
+                state["waited"] += now - state["waiting_since"]
+                state["waiting_since"] = None
+                wake.set()
+
+    def pump_out() -> None:
+        for chunk in iter(lambda: proc.stdout.read1(65536), b""):
+            out.append(chunk)
+
+    def pump_err() -> None:
+        decode = codecs.getincrementaldecoder("utf-8")(errors="replace")
+        pending = ""
+        for chunk in iter(lambda: proc.stderr.read1(65536), b""):
+            err.append(chunk)
+            pending += decode.decode(chunk)
+            *lines, pending = pending.split("\n")
+            for line in lines:
+                mark(line, True)
+            if pending:
+                mark(pending, False)   # a wait line cut off mid-write (the run killed) still stops the clock
+            pending = pending[-4096:]
+
+    readers = [threading.Thread(target=pump_out, daemon=True), threading.Thread(target=pump_err, daemon=True)]
+    for t in readers:
+        t.start()
+    threading.Thread(target=lambda: (proc.wait(), wake.set()), daemon=True).start()
+
+    def output() -> str:
+        for t in readers:
+            t.join()
+        return b"".join(out).decode("utf-8", "replace") + b"".join(err).decode("utf-8", "replace")
+
+    start = time.monotonic()
+    while proc.poll() is None:
+        now = time.monotonic()
+        with lock:
+            waiting_since, waited = state["waiting_since"], state["waited"]
+        if waiting_since is not None:
+            left = cap - (now - waiting_since)
+            if left <= 0:
+                _kill_group(proc)
+                proc.wait()
+                raise SlotWaitTimedOut(cmd, cap, output())
+        else:
+            left = start + timeout_s + waited - now
+            if left <= 0:
+                _kill_group(proc)
+                proc.wait()
+                raise TestTimedOut(cmd, timeout_s, output())
+        wake.wait(left)
+        wake.clear()
+    return proc.returncode, output()
+
+
 def capture_test_results(worktree_path: Path, test_command: list[str], timeout_s: int = 1200) -> dict:
     """Run the ticket's real test command inside worktree_path and parse
     its output. `test_command` is caller-supplied (e.g.
@@ -104,20 +214,10 @@ def capture_test_results(worktree_path: Path, test_command: list[str], timeout_s
     subsystems use different runners -- this module has no way to know
     which one a given ticket needs.
 
-    Raises TestTimedOut if the command exceeds timeout_s."""
-    proc = subprocess.Popen(
-        test_command, cwd=worktree_path, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
-        text=True, start_new_session=True, preexec_fn=_raise_nofile_limit,
-    )
-    try:
-        stdout, stderr = proc.communicate(timeout=timeout_s)
-    except subprocess.TimeoutExpired:
-        os.killpg(os.getpgid(proc.pid), signal.SIGKILL)
-        stdout, stderr = proc.communicate()
-        output = (stdout or "") + (stderr or "")
-        raise TestTimedOut(test_command, timeout_s, output)
-
-    output = (stdout or "") + (stderr or "")
+    Raises TestTimedOut if the tests run longer than timeout_s (time spent waiting for the test slot not counted),
+    SlotWaitTimedOut if the wait for the slot passes SLOT_WAIT_CAP_S."""
+    _rc, output = run_timed(test_command, cwd=worktree_path, timeout_s=timeout_s, slot_wait_cap_s=SLOT_WAIT_CAP_S,
+                            preexec_fn=_raise_nofile_limit)
     parsed = parse_test_output(" ".join(test_command), output)
     parsed["output_tail"] = output[-600:]
     return parsed

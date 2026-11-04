@@ -243,6 +243,32 @@ def _mirror_failures(days: float = PROBE_WINDOW_DAYS, path: Path | None = None, 
     return float(mirror_health.recent_failures(entries, now.timestamp(), window_s=days * 86400))
 
 
+def _slot_wait_timeouts(days: float = PROBE_WINDOW_DAYS, path: Path | None = None, now: datetime | None = None) -> float:
+    """#1113 (2026-11-04): pipeline verify timeouts that were spent waiting in line for the test slot, in this Mac's
+    pipeline-failures.jsonl over the window. The run's last line was the slot's "waiting for ... to finish", so the
+    tests never ran. After the fix a wait doesn't count against the timeout and a too-long wait is signed slot-busy,
+    so this stays 0. O(log size)."""
+    import failure_breaker
+    now = now or datetime.now(timezone.utc)
+    cut = now - timedelta(days=days)
+    try:
+        lines = Path(path or failure_breaker.LOG_PATH).read_text(encoding="utf-8", errors="replace").splitlines()
+    except OSError:
+        return 0.0
+    count = 0
+    for line in lines:
+        try:
+            e = json.loads(line)
+            when = datetime.fromisoformat(e["t"])
+        except (ValueError, KeyError, TypeError):
+            continue
+        reason = str(e.get("reason", ""))
+        if (e.get("kind") == "failure" and e.get("sig") == "verify-timeout" and when >= cut
+                and "test-slot:" in reason and "waiting for" in reason):
+            count += 1
+    return float(count)
+
+
 # name -> (symptom counter, the most it may read while the fix holds, what it counts). Summed across Macs like any
 # measure; the logs are per Mac (~/.claude/logs doesn't sync), so nothing is counted twice.
 # Each counter takes `days` (default the 7-day window): a watched incident is re-measured over the time since its last
@@ -257,6 +283,8 @@ PROBES: dict[str, tuple[Callable[..., float], float, str]] = {
     # Six is one hour of failed runs in a week: a blip passes, an outage Health let run for an hour doesn't.
     "box-mirror-failures": (lambda days=PROBE_WINDOW_DAYS: _mirror_failures(days=days), 6.0,
                             "mirror failures on pull-only nodes (sync:mirror in errors.jsonl) over 7 days (#910)"),
+    "verify-timeout-in-slot-wait": (lambda days=PROBE_WINDOW_DAYS: _slot_wait_timeouts(days=days), 0.0,
+                                    "pipeline verify timeouts spent waiting for the test slot over 7 days, per Mac, summed (#1113)"),
 }
 MEASURES.update({name: fn for name, (fn, _limit, _what) in PROBES.items()})
 

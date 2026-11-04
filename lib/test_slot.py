@@ -56,6 +56,11 @@ GB = 2**30
 PER_WORKER = 512 * 2**20
 RESERVE = GB
 UNKNOWN_WORKERS = 2
+# A run that waits says so twice, on stderr, as "test-slot: ...": when it starts waiting and when it takes the slot.
+# The pipeline's test runner reads both and stops its timeout clock in between (marvin#1113), so these must match
+# what slot() says, through any prefix a caller adds ("test-slot: <what>: ").
+WAITING_RE = re.compile(r"test-slot:.*\bwaiting for .* to finish \(one test run at a time")
+TOOK_RE = re.compile(r"test-slot:.*\btook the slot after \d+ s\b")
 
 
 def slot_dir() -> Path:
@@ -107,6 +112,7 @@ def slot(what: str, merge: bool = False, d: Path | None = None, say=None) -> Ite
         if marked:
             fcntl.flock(marked, fcntl.LOCK_SH)
         told = False
+        waited_from = time.monotonic()
         while True:
             try:
                 if not merge and merge_pending(d):
@@ -126,6 +132,8 @@ def slot(what: str, merge: bool = False, d: Path | None = None, say=None) -> Ite
             if merge or not merge_pending(d):
                 break
             fcntl.flock(fh, fcntl.LOCK_UN)   # a merge marked itself while we waited: it goes first
+        if say and told:
+            say(f"took the slot after {round(time.monotonic() - waited_from)} s")
         try:
             (d / "holder.json").write_text(json.dumps({"what": what, "pid": os.getpid(), "merge": merge,
                                                         "since": time.time()}))
