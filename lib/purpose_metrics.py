@@ -108,6 +108,27 @@ def _github_calls(path: Path | None = None, days: float = 1, now: datetime | Non
                      if isinstance(r.get("t"), (int, float)) and r["t"] >= cut))
 
 
+def _ci_python_minutes(fetch=None, repo: str = "G-Eskayo/marvin", runs: int = 20) -> float:
+    """North star 1 (#1117): median minutes GitHub's "Python tests" job took from being queued to finishing, over its
+    last `runs` successful runs. Queue time counts: waiting for a macOS runner was the cost. Cancelled and failed jobs
+    have no meaningful duration and are left out. 1 + `runs` REST calls."""
+    fetch = fetch or (lambda path: _gh_json(path))
+    listed = fetch(f"repos/{repo}/actions/workflows/ci.yml/runs?status=completed&per_page={runs}")
+    minutes = []
+    for run in listed.get("workflow_runs", [])[:runs]:
+        for job in fetch(f"repos/{repo}/actions/runs/{run['id']}/jobs").get("jobs", []):
+            if job.get("name") != "Python tests" or job.get("conclusion") != "success":
+                continue
+            start, end = _when(job.get("created_at")), _when(job.get("completed_at"))
+            if start and end and end >= start:
+                minutes.append((end - start).total_seconds() / 60)
+    if not minutes:
+        raise OSError("no successful Python tests job to measure")
+    minutes.sort()
+    mid = len(minutes) // 2
+    return round(minutes[mid] if len(minutes) % 2 else (minutes[mid - 1] + minutes[mid]) / 2, 1)
+
+
 def _failed_headless_runs(path: Path | None = None, days: float = 1, now: datetime | None = None) -> float:
     """North star 2 (nothing breaks silently): headless runs that ended non-zero over the last day: an error, a timeout
     (exit 124, recorded since #597), a refusal. exit_cause (#598) says which; any non-zero code counts."""
@@ -123,6 +144,7 @@ MEASURES: dict[str, Callable[[], float]] = {
     "headless-bash-calls-per-week": lambda: float(_headless_bash()[1]),
     "github-calls-per-day": lambda: _github_calls(),
     "failed-headless-runs-per-day": lambda: _failed_headless_runs(),
+    "ci-python-tests-minutes": lambda: _ci_python_minutes(),
 }
 # Not a measure yet: minutes a machine was overloaded. Nothing samples load over time (machine_resources keeps cpu_pct,
 # not the load average, and its collector isn't running on either Mac as of 2026-10-26); run_ticket reads it only live.

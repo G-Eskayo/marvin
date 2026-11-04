@@ -343,3 +343,44 @@ def test_mirror_failures_on_a_machine_without_the_log_are_zero(tmp_path):
 def test_mirror_probe_is_registered():
     fn, limit, what = pm.PROBES["box-mirror-failures"]
     assert "#910" in what and limit >= 0
+
+
+# ── #1117: GitHub's Python tests job, queued to finished ──────────────────────────────────────────────────────
+
+def _job(name, conclusion, created, completed):
+    return {"name": name, "conclusion": conclusion, "created_at": created, "completed_at": completed}
+
+
+def test_ci_python_minutes_is_the_median_queue_plus_run_of_successful_jobs():
+    runs = {"workflow_runs": [{"id": 1}, {"id": 2}, {"id": 3}, {"id": 4}]}
+    jobs = {
+        1: [_job("Python tests", "success", "2026-11-04T10:00:00Z", "2026-11-04T10:25:00Z"),   # 17 min queued
+            _job("Rules", "success", "2026-11-04T10:00:00Z", "2026-11-04T10:01:00Z")],
+        2: [_job("Python tests", "success", "2026-11-04T11:00:00Z", "2026-11-04T11:09:00Z")],
+        3: [_job("Python tests", "cancelled", "2026-11-04T12:00:00Z", "2026-11-04T12:59:00Z")],  # not a duration
+        4: [_job("Python tests", "success", "2026-11-04T13:00:00Z", "2026-11-04T13:04:00Z")],
+    }
+
+    def fetch(path):
+        if "/jobs" in path:
+            return {"jobs": jobs[int(path.split("/runs/")[1].split("/")[0])]}
+        assert "workflows/ci.yml/runs" in path and "status=completed" in path
+        return runs
+    assert pm._ci_python_minutes(fetch=fetch) == 9.0
+
+
+def test_ci_python_minutes_with_nothing_measurable_is_an_error_not_zero():
+    with pytest.raises(OSError):
+        pm._ci_python_minutes(fetch=lambda path: {"workflow_runs": []} if "jobs" not in path else {"jobs": []})
+
+
+def test_ci_python_minutes_skips_a_job_with_a_broken_timestamp():
+    runs = {"workflow_runs": [{"id": 1}, {"id": 2}]}
+    jobs = {1: [_job("Python tests", "success", "garbage", "2026-11-04T10:25:00Z")],
+            2: [_job("Python tests", "success", "2026-11-04T11:00:00Z", "2026-11-04T11:06:00Z")]}
+    fetch = lambda path: {"jobs": jobs[int(path.split("/runs/")[1].split("/")[0])]} if "/jobs" in path else runs
+    assert pm._ci_python_minutes(fetch=fetch) == 6.0
+
+
+def test_ci_python_minutes_is_a_registered_measure():
+    assert "ci-python-tests-minutes" in pm.MEASURES
