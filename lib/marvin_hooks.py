@@ -235,6 +235,11 @@ if __name__ == "__main__":
         print("commit check:", commit_check.install_hook(AGENTS))
         import rule_checks  # the repo's rules before each commit (marvin#826): secrets, instance split, Decisions
         print("rule checks:", rule_checks.install_hook(AGENTS))
+        import wezterm_look  # MARVIN's WezTerm look on this Mac (marvin#1069): one guarded loader in wezterm.lua
+        try:
+            print("wezterm look:", wezterm_look.install())
+        except (OSError, ValueError) as exc:
+            print("wezterm look: not installed:", exc)
         strays = stray_memories()
         print(f"hooks installed in {USER_SETTINGS}; memory -> {MAIN_MEMORY}")
         import chat_restart  # chat tabs move onto a new Claude Code when it lands (marvin#1086): a WatchPaths job
