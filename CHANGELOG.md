@@ -1,5 +1,7 @@
 # Changelog
 
+- Chat state hooks: working, waiting on you, your turn, done, without ever slowing a chat ([#1085](https://github.com/G-Eskayo/marvin/pull/1085))
+
 - Chat records: each MARVIN chat tab recorded in the existing session store, with a read-only `marvin chats list` ([#1084](https://github.com/G-Eskayo/marvin/pull/1084))
 
 - WezTerm wrapper: one place for every wezterm cli call, aimed at the right WezTerm when two run ([#1082](https://github.com/G-Eskayo/marvin/pull/1082))
