@@ -175,6 +175,7 @@ import { createChatsReader, createChatSender } from './chat_tabs.js'
 import { isPullOnlyNode, createFeedSource, feedOnlyGh, readNetworkRegistry, assertActsHere as assertPullOnlyActs, canMergeHere, withReadOnlyReason } from './github_feed.js'
 import { createAccounts } from './accounts.js'
 import { createAlerts } from './alerts.js'
+import { createLoops } from './loops.js'
 
 // The pipeline's screenshot copy runs unattended beside the real dashboard: log, never show a modal (#384).
 if (isEvidenceCapture(process.env)) installCaptureGuard(process)
@@ -185,6 +186,7 @@ instrumentIpc(ipcMain)
 const execFileAsync = promisify(execFile)
 const accountsView = createAccounts({ machine: () => resolveDeviceId(), execFile: execFileAsync })
 const alertsView = createAlerts({ execFile: execFileAsync })
+const loopsView = createLoops({ execFile: execFileAsync, renew: (account) => accountsView.renew(account, null) })
 
 // marvin#954: a pull-only node (mac-mini-2012, ADR 0069) holds no GitHub credential. Its dashboard reads the open PRs
 // and boards from the Mini's feed (github_feed.js) and every other GitHub read or write here is refused in plain words,
@@ -511,6 +513,8 @@ function registerHealthHandlers() {
   ipcMain.handle('accounts:list', (_event, opts) => accountsView.list({ fresh: !!opts?.fresh }))
   ipcMain.handle('alerts:status', () => alertsView.status())
   ipcMain.handle('alerts:test', () => alertsView.test())
+  ipcMain.handle('loops:status', () => loopsView.status())
+  ipcMain.handle('loops:fix', (_event, id) => loopsView.fix(String(id || '')))
   ipcMain.handle('accounts:renew', (_event, id, machine) => accountsView.renew(String(id || ''), machine ? String(machine) : null))
   ipcMain.handle('health:setMergeFromDashboard', async (_event, repo, value) => {
     if (value === true) {
