@@ -1,0 +1,15 @@
+{
+  "_comment": "The one place the product's name and identity live (marvin#1007). The name is a working name until the trademark question is settled: change `name` here and every page follows. Kept as data, not code, so the engine's no-hard-coded-owner rule (lib/tests/test_instance.py) stays about engine code.",
+  "name": "MARVIN",
+  "description": "Claude Code with a memory, its own skills and a way to keep working while you're away.",
+  "url": "https://marvin.gileskayo.me",
+  "repo": "G-Eskayo/marvin",
+  "builder": "Gil Eskayo",
+  "builderSite": "https://gileskayo.me",
+  "builtWith": [
+    { "name": "Seal Speak", "url": "https://seal-speak.gileskayo.me", "repo": "G-Eskayo/clarity-captions", "what": "A live-captioning app for iPhone, on the App Store since 28 October 2026. 19 of its merged PRs were written by MARVIN's pipeline." }
+  ],
+  "_mapUrl": "The privacy-checked public snapshot (brain-map/export_snapshot.py + deploy_snapshot.py, ADRs 0050 and 0057). Never the raw generator output.",
+  "mapUrl": "https://gileskayo.me/wp-content/marvin-map/",
+  "contactEmail": "marvin@gileskayo.me"
+}

@@ -1,0 +1,59 @@
+name: Site
+
+# Builds the MARVIN website (site/: Astro + Starlight, marvin#1007) and uploads the built pages as an artifact to
+# preview. It does not deploy: publishing to the domain is a separate, later step the owner turns on.
+# Not a required check (.github/required-checks.json): the site can't break the engine.
+
+on:
+  pull_request:
+    paths:
+      - "site/**"
+      - "CHANGELOG.md"
+      - "VERSION"
+      - "docs/adr/**"
+      - "docs/diagrams/**"
+      - ".github/workflows/site.yml"
+  push:
+    branches: [main]
+    paths:
+      - "site/**"
+      - "CHANGELOG.md"
+      - "VERSION"
+      - "docs/adr/**"
+      - "docs/diagrams/**"
+      - ".github/workflows/site.yml"
+
+concurrency:
+  group: site-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    name: Build site
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    defaults:
+      run:
+        working-directory: site
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0 # the changelog dates each entry from git blame
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: site/package-lock.json
+      - run: npm ci --no-audit --no-fund
+      - name: Script tests
+        run: npm test
+      - name: Build (checks features.yaml before, scans and link-checks the output after)
+        run: npm run build
+      - uses: actions/upload-artifact@v4
+        with:
+          name: site-preview
+          path: site/dist
+          retention-days: 14

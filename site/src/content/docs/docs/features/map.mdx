@@ -1,0 +1,125 @@
+---
+title: The map
+description: A 3D map of MARVIN generated from the real system, used as a live desktop wallpaper and published as a privacy-checked public snapshot.
+sidebar:
+  order: 7
+---
+import FeatureStatus from '~/components/FeatureStatus.astro';
+
+<FeatureStatus page="map" />
+
+## What it does
+
+The map is a 3D picture of MARVIN drawn from what's actually installed: one node per skill, scheduled job, hook, memory store, machine, dashboard tab and project. Nodes light when they do real work. It has three surfaces. You can open the generated page in a browser, run it as a live desktop wallpaper, or view a public snapshot. [Open the public map full screen](/map/).
+
+Use the map to see what MARVIN is made of and what's active right now. To find out whether something is broken and why, use the Health tab in the [dashboard](/docs/features/dashboard/). It names the failing check; the map only colours it.
+
+## Why it exists
+
+A hand-drawn architecture diagram is wrong a week after you draw it. MARVIN adds skills, jobs and hooks all the time, and the early map missed them because every node had to be listed by hand. The map exists so the picture of the system can't drift from the system. A second problem came later: a map that moves all the time teaches you to ignore it. The rule from [PR #851](https://github.com/G-Eskayo/marvin/pull/851) is "nothing on the map moves unless something real happened, at a speed a person can follow".
+
+## See it work
+
+The public snapshot rebuilds and redeploys itself. This is its deploy log on the always-on Mac for 2026-11-02 (trimmed, times UTC, home path shortened to `~/`):
+
+```text
+$ grep '^2026-11-02T1[67]' ~/.claude/logs/deploy-snapshot.log   # skill-index and success lines trimmed
+2026-11-02T16:00:06 ✓ skill-index — Done. 35 entries → ~/.claude/manifest.json
+2026-11-02T16:00:08 ✓ export — Generated ~/.agents/brain-map/snapshot/index.html (snapshot, 1420 tracked files)
+2026-11-02T16:00:08 ✓ validate-files — snapshot files valid
+2026-11-02T16:00:08 ✓ validate-content — snapshot content valid
+2026-11-02T16:00:13 ✗ deploy — upload timed out
+2026-11-02T17:00:09 ✓ export — Generated ~/.agents/brain-map/snapshot/index.html (snapshot, 1440 tracked files)
+2026-11-02T17:00:09 ✓ validate-files — snapshot files valid
+2026-11-02T17:00:09 ✓ validate-content — snapshot content valid
+2026-11-02T17:00:10 ✓ deploy — deployed to /wp-content/marvin-map/
+2026-11-02T17:00:14 ✓ publish-production — published f28ccd0 (3 file(s))
+```
+
+Not every run lands. Counting that day's lines with `grep -c`, the upload step timed out 18 times and succeeded once. When it times out, the previous snapshot stays up. The privacy checks passed every run.
+
+## How it works
+
+```text
+manifest.json (skills)          ─┐
+LaunchAgents com.marvin.*.plist ─┤
+settings hooks                  ─┼─► brain-map/generate.py ─► brain-map/index.html ─┬─► browser
+marvin-network.json (machines)  ─┤        + enrichment.json                          ├─► DesktopLive wallpaper (?wallpaper=1)
+dashboard tabs, project catalog ─┘                                                   │
+                                   brain-map/export_snapshot.py (allowlist, scan) ───┴─► public snapshot
+skill calls ─► brain-map/activity.jsonl ─► lights nodes on the page
+```
+
+1. **Discover, don't list.** `brain-map/generate.py` reads the live sources at generation time: skills from `~/.claude/manifest.json`, recurring jobs from `~/Library/LaunchAgents/com.marvin.*.plist` ([ADR 0018](https://github.com/G-Eskayo/marvin/blob/main/docs/adr/0018-auto-discover-cron-agents-from-launchd.md)), hooks from the settings files ([ADR 0019](https://github.com/G-Eskayo/marvin/blob/main/docs/adr/0019-auto-discover-infra-hooks-from-settings.md)), machines from `marvin-network.json` ([ADR 0020](https://github.com/G-Eskayo/marvin/blob/main/docs/adr/0020-cross-machine-network-trunk.md)), plus the dashboard's tabs and the project catalog.
+2. **Polish is optional.** `brain-map/enrichment.json` adds descriptions and groupings. A discovered item with no entry still gets a node. Existence never waits on prose.
+3. **Layout is computed ahead of time**, the same every run, so the browser runs no physics ([ADR 0049](https://github.com/G-Eskayo/marvin/blob/main/docs/adr/0049-map-v2-one-3d-renderer-local-server.md)). The output is one self-contained HTML file with no CDN dependencies.
+4. **Light comes from real events.** `brain-map/scripts/skill_activity.py` appends skill calls and touched files to `brain-map/activity.jsonl`. Each event raises a node's level, which decays with a 4-second time constant (`LEVEL_TAU_MS = 4000` in `brain-map/template.html`). Idle nodes are dark and still. A link lights only when one skill call is followed by an event on a connected node in the same session within 60 seconds. A failed event turns its node red until a later success. The camera never moves on its own.
+5. **The wallpaper** is `DesktopLive`, a small Swift app that loads the page with `?wallpaper=1` (no controls), passes new activity lines in, and recovers on wake, display changes and WebKit crashes. `brain-map/desktop-live-linux/` is the same host for Linux.
+6. **The public snapshot** goes through `brain-map/export_snapshot.py`: code only from files tracked in the public repo, private projects shown as locked nodes, machines named by kind, no live events and no health ([ADR 0050](https://github.com/G-Eskayo/marvin/blob/main/docs/adr/0050-public-map-snapshot-allowlist-auto-deploy.md)). `deploy_snapshot.py` blocks the deploy if the output contains a `/Users/` path, an email address or a token pattern. On a pass, `publish_map.py` pushes only `deploy/marvin-map/**` to production, from its own sparse checkout, and refuses if anything else would change ([ADR 0057](https://github.com/G-Eskayo/marvin/blob/main/docs/adr/0057-map-snapshot-auto-publishes-to-production.md)).
+
+## Use it
+
+```bash
+# Generate the map and open it
+~/.agents/venv/bin/python ~/.agents/brain-map/generate.py
+open ~/.agents/brain-map/index.html
+
+# Install the live wallpaper (macOS, needs Swift)
+bash ~/.agents/brain-map/install.sh
+
+# Build the privacy-filtered snapshot, then check it without deploying
+~/.agents/venv/bin/python ~/.agents/brain-map/export_snapshot.py
+~/.agents/venv/bin/python ~/.agents/brain-map/deploy_snapshot.py --dry-run
+```
+
+Page options, added to the URL:
+
+| Option | Effect |
+|---|---|
+| `?wallpaper=1` | No controls; used by the wallpaper hosts |
+| `?rotate=1` | Turns on auto-rotate (off by default) |
+| `?layout=work` | The Work view: projects and the workers on them (a mock-up, #854) |
+
+## Configure
+
+| Setting | Where | What it does |
+|---|---|---|
+| Node text and grouping | `brain-map/enrichment.json` | Descriptions, categories, overrides for discovered nodes |
+| `MARVIN_SNAPSHOT_ENABLED` | env, default `0` | Lets `deploy_snapshot.py` deploy at all |
+| `MARVIN_SNAPSHOT_PUBLISH` | env, default `0` | Also publishes to production after a passing deploy (ADR 0057) |
+| Nightly rebuild | `brain-map/launchd/com.marvin.snapshot-deploy-nightly.plist` | 02:00, both flags on |
+| Rebuild on change | `brain-map/launchd/com.marvin.snapshot-deploy-reactive.plist` | Hourly; deploys only when a commit touched the generator, enrichment, the export, the project catalog, job plists or a `SKILL.md` |
+| Wallpaper | `brain-map/launchd/com.marvin.desktoplive.plist` | Runs at load, kept alive |
+| Deploy log | `~/.claude/logs/deploy-snapshot.log` | One line per step |
+| Activity feed | `~/.agents/brain-map/activity.jsonl` | The events that light nodes |
+
+## Requirements and limitations
+
+- The generator is Python and runs anywhere MARVIN does. The wallpaper needs macOS and Swift, or the Linux host.
+- The deploy step uploads through `wp-cli` in a Docker container to one WordPress site. A second install would need its own target. Uploads time out often; see the log above.
+- The public copy at [/map/](/map/) shows the last snapshot that deployed. It doesn't receive live events, and while uploads time out it can be days behind. The old GitHub Pages address (`docs/index.html`) now forwards to the same snapshot.
+- ADR 0049's dedicated local map server (SSE events, a map tab in the dashboard) isn't built. The wallpaper reads the HTML file and the activity file directly.
+- The Body and Work layout and worker nodes are still a mock-up behind `?layout=work`.
+
+## Design and source
+
+ADRs:
+
+- [0018: Auto-discover cron agents from launchd](https://github.com/G-Eskayo/marvin/blob/main/docs/adr/0018-auto-discover-cron-agents-from-launchd.md)
+- [0019: Auto-discover infra hooks from settings](https://github.com/G-Eskayo/marvin/blob/main/docs/adr/0019-auto-discover-infra-hooks-from-settings.md)
+- [0020: Cross-machine network trunk](https://github.com/G-Eskayo/marvin/blob/main/docs/adr/0020-cross-machine-network-trunk.md)
+- [0049: Map v2, one 3D renderer, local server](https://github.com/G-Eskayo/marvin/blob/main/docs/adr/0049-map-v2-one-3d-renderer-local-server.md). Rejected: a 2D code layer under a 3D overview; the owner chose 3D throughout so opening a node feels like zooming in.
+- [0050: Public map snapshot, allowlist, auto-deploy](https://github.com/G-Eskayo/marvin/blob/main/docs/adr/0050-public-map-snapshot-allowlist-auto-deploy.md). An allowlist, not a blocklist: only files tracked in the public repo.
+- [0057: The map snapshot auto-publishes to production](https://github.com/G-Eskayo/marvin/blob/main/docs/adr/0057-map-snapshot-auto-publishes-to-production.md). The one thing MARVIN may publish without the owner; everything else on the site is still promoted by hand.
+
+Source: [`brain-map/generate.py`](https://github.com/G-Eskayo/marvin/blob/main/brain-map/generate.py), [`brain-map/template.html`](https://github.com/G-Eskayo/marvin/blob/main/brain-map/template.html), [`brain-map/export_snapshot.py`](https://github.com/G-Eskayo/marvin/blob/main/brain-map/export_snapshot.py), [`brain-map/deploy_snapshot.py`](https://github.com/G-Eskayo/marvin/blob/main/brain-map/deploy_snapshot.py), [`brain-map/publish_map.py`](https://github.com/G-Eskayo/marvin/blob/main/brain-map/publish_map.py), [`brain-map/DesktopLive/`](https://github.com/G-Eskayo/marvin/blob/main/brain-map/DesktopLive/), [`brain-map/desktop-live-linux/`](https://github.com/G-Eskayo/marvin/blob/main/brain-map/desktop-live-linux/).
+
+Key PR: [#851 Live map: nothing moves unless something real happened](https://github.com/G-Eskayo/marvin/pull/851).
+
+## Related features
+
+- [Dashboard app](/docs/features/dashboard/)
+- [Skills](/docs/features/skills/)
+- [Memory and context retrieval](/docs/features/memory/)
+- [Ticket pipeline](/docs/features/ticket-pipeline/)
+- Session start, Cross-machine sync

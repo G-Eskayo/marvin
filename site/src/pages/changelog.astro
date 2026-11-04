@@ -1,0 +1,106 @@
+---
+// Generated from the engine's CHANGELOG.md at build time (scripts/changelog.mjs): one line per merged PR, dated
+// and versioned from git history (ADR 0028).
+import Marketing from '~/layouts/Marketing.astro';
+import data from '~/data/changelog.json';
+import { SITE, blob, fmtDate } from '~/lib/site';
+---
+
+<Marketing title="Changelog" description={`Every change that shipped in ${SITE.name}, newest first, each linked to its pull request.`}>
+  <header class="m-pagehead m-narrow">
+    <p class="m-eyebrow">Changelog</p>
+    <h1>What shipped</h1>
+    <p>
+      A merge through the merge gate writes a line here and bumps the version; the ticket's labels decide how big the
+      bump is. Newest first, each line linked to its PR. Not every merged PR appears: merges made by hand on GitHub
+      skip this step. Current version: <span class="m-mono m-ver">{data.current}</span>.
+    </p>
+    <p class="m-source">
+      Generated from <a href={blob('CHANGELOG.md')}>CHANGELOG.md</a> on every build: {data.count} entries.
+    </p>
+  </header>
+
+  <div class="m-narrow m-log">
+    {
+      data.days.map((d) => (
+        <section>
+          <h2>
+            <span>{d.date ? fmtDate(d.date) : 'Undated'}</span>
+            {d.from && (
+              <span class="m-range m-mono">{d.from === d.to ? `v${d.to}` : `v${d.from} to v${d.to}`}</span>
+            )}
+          </h2>
+          <ul>
+            {d.entries.map((e) => (
+              <li>
+                <span class="m-v m-mono">{e.version ? `v${e.version}` : ''}</span>
+                <span>
+                  {e.title}{' '}
+                  {e.url && (
+                    <a class="m-pr m-mono" href={e.url}>
+                      #{e.pr}
+                    </a>
+                  )}
+                </span>
+              </li>
+            ))}
+          </ul>
+        </section>
+      ))
+    }
+  </div>
+</Marketing>
+
+<style>
+  .m-ver {
+    color: var(--m-green);
+  }
+  .m-log section {
+    border-top: 1px solid var(--m-line);
+    padding: 1.25rem 0 0.5rem;
+  }
+  .m-log h2 {
+    font-size: 1.4rem;
+    display: flex;
+    justify-content: space-between;
+    align-items: baseline;
+    gap: 1rem;
+    flex-wrap: wrap;
+  }
+  .m-range {
+    font-size: 0.85rem;
+    font-weight: 400;
+    color: var(--m-ink-dim);
+    letter-spacing: 0.04em;
+  }
+  .m-log ul {
+    list-style: none;
+    padding: 0;
+    margin: 0 0 1rem;
+  }
+  .m-log li {
+    display: grid;
+    grid-template-columns: 4.5rem 1fr;
+    gap: 0.75rem;
+    padding: 0.45rem 0;
+    border-bottom: 1px dashed var(--m-hair);
+  }
+  .m-log li:last-child {
+    border-bottom: 0;
+  }
+  .m-v {
+    color: var(--m-ink-faint);
+    font-size: 0.85rem;
+    padding-top: 0.15rem;
+  }
+  .m-pr {
+    font-size: 0.85rem;
+    white-space: nowrap;
+  }
+  @media (max-width: 30rem) {
+    .m-log li {
+      grid-template-columns: 1fr;
+      gap: 0.1rem;
+    }
+  }
+</style>

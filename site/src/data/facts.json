@@ -1,0 +1,48 @@
+{
+  "counted_on": "2026-11-02",
+  "how": "Run `npm run facts` in site/ on a machine with the engine checkout, its venv, the dashboard's node_modules and gh signed in. It re-runs every command below and rewrites this file with today's date.",
+  "items": [
+    {
+      "id": "pipeline_prs",
+      "value": "100",
+      "label": "PRs written by the pipeline and merged",
+      "detail": "81 on MARVIN itself, 19 on Seal Speak. Counted as merged PRs whose branch starts with pipeline/.",
+      "command": "gh pr list --state merged --limit 1000 --json headRefName (G-Eskayo/marvin and G-Eskayo/clarity-captions), count pipeline/*"
+    },
+    {
+      "id": "tests",
+      "value": "7,600+",
+      "label": "tests",
+      "detail": "7,674 counted: 4,640 Python tests collected by pytest in lib/tests, plus 3,034 dashboard tests listed by vitest.",
+      "command": "pytest lib/tests --collect-only -q; cd dashboard && npx vitest list | wc -l"
+    },
+    {
+      "id": "adrs",
+      "value": "80+",
+      "label": "design decisions written down",
+      "detail": "82 architecture decision records in docs/adr.",
+      "command": "ls docs/adr/[0-9]*.md | wc -l"
+    },
+    {
+      "id": "skills",
+      "value": "33",
+      "label": "skills it can load",
+      "detail": "Playbooks in the public repo, one SKILL.md each.",
+      "command": "git ls-tree origin/main skills/*/SKILL.md | wc -l"
+    },
+    {
+      "id": "machines",
+      "value": "3",
+      "label": "machines, one system",
+      "detail": "A MacBook Pro, a Mac mini, and a 2012 Mac mini running Linux.",
+      "command": "the machine list in the network config; the Linux box's timers checked over ssh"
+    },
+    {
+      "id": "merged_prs",
+      "value": "299",
+      "label": "merged PRs on the engine",
+      "detail": "Every merged PR on G-Eskayo/marvin, written by the pipeline or in a session with the owner, since the first merge on 27 August 2026.",
+      "command": "gh pr list -R G-Eskayo/marvin --state merged --limit 2000 --json number | length"
+    }
+  ]
+}

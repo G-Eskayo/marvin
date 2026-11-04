@@ -1,0 +1,210 @@
+---
+import Marketing from '~/layouts/Marketing.astro';
+import Hero from '~/components/Hero.astro';
+import ProofStrip from '~/components/ProofStrip.astro';
+import { SITE, FEATURES, pageHref } from '~/lib/site';
+
+const released = FEATURES.filter((f) => f.status === 'released').length;
+const testing = FEATURES.filter((f) => f.status === 'testing').length;
+
+const pillars = [
+  {
+    tag: '01 · Remembers',
+    title: 'It starts every session knowing what you decided',
+    body: 'Notes, decisions and lessons live outside the model. Each session pulls in the ones that matter for the task, plus a shared vocabulary, so you stop re-explaining your own project.',
+    links: [
+      { label: 'Memory', href: pageHref('memory') },
+      { label: 'Skills', href: pageHref('skills') },
+    ],
+  },
+  {
+    tag: '02 · Works while you are away',
+    title: 'Tickets turn into tested pull requests',
+    body: 'Label an issue and walk off. MARVIN makes a clean worktree, plans with a strong model, edits with a cheap one, measures the result, and only opens a PR when nothing got worse.',
+    links: [{ label: 'Ticket pipeline', href: pageHref('ticket-pipeline') }],
+  },
+  {
+    tag: '03 · You stay in charge',
+    title: 'Nothing lands without your Approve',
+    body: 'Every merge goes through a gate: rebase, re-run the tests the change can touch, check the screenshots, and log why if it refuses. When a PR needs you to choose, it asks with options you tick.',
+    links: [
+      { label: 'Merge gate', href: pageHref('merge-gate') },
+      { label: 'Decisions', href: pageHref('decisions') },
+    ],
+  },
+];
+
+const flow = [
+  ['TICKET', 'An issue on GitHub, labelled ready'],
+  ['WORKTREE', 'A clean copy, so nothing touches your checkout'],
+  ['PLAN', 'A strong model writes the plan'],
+  ['BUILD', 'A cheaper model makes the edits, up to 3 rounds'],
+  ['MEASURE', 'Kept only if something got better and nothing got worse'],
+  ['PR', 'Opened with the evidence attached'],
+  ['GATE', 'You approve; the gate re-checks before main'],
+];
+---
+
+<Marketing>
+  <Hero />
+
+  <section class="m-section">
+    <div class="m-wrap">
+      <p class="m-eyebrow">Counted, not claimed</p>
+      <h2>What it has done so far</h2>
+      <ProofStrip />
+    </div>
+  </section>
+
+  <section class="m-section">
+    <div class="m-wrap">
+      <p class="m-eyebrow">What it does</p>
+      <h2>Three things Claude Code doesn't do on its own</h2>
+      <div class="m-grid m-pillars">
+        {
+          pillars.map((p) => (
+            <article class="m-panel">
+              <p class="m-pillar-tag">{p.tag}</p>
+              <h3>{p.title}</h3>
+              <p class="m-dim">{p.body}</p>
+              <p class="m-pillar-links">
+                {p.links.map((l) => (
+                  <a href={l.href}>{l.label} →</a>
+                ))}
+              </p>
+            </article>
+          ))
+        }
+      </div>
+    </div>
+  </section>
+
+  <section class="m-section">
+    <div class="m-wrap">
+      <p class="m-eyebrow">The life of a ticket</p>
+      <h2>From an issue to main, while you sleep</h2>
+      <ol class="m-flow">
+        {
+          flow.map(([k, v], i) => (
+            <li style={`--i:${i}`}>
+              <span class="m-flow-k">{k}</span>
+              <span class="m-flow-v">{v}</span>
+            </li>
+          ))
+        }
+      </ol>
+      <p class="m-dim">
+        Every step logs what happened. If three tickets fail the same way inside two hours, the pipeline stops itself
+        and tells you why. <a href={pageHref('ticket-pipeline')}>How the pipeline works</a>.
+      </p>
+    </div>
+  </section>
+
+  <section class="m-section">
+    <div class="m-wrap m-built">
+      <div>
+        <p class="m-eyebrow">Built with {SITE.name}</p>
+        <h2>It already shipped an app</h2>
+        <p class="m-lede">
+          {SITE.builtWith[0].name} is a live-captioning app for iPhone. It went from first commit to the App Store in 50
+          days, and 19 of its merged pull requests were written by {SITE.name}'s pipeline.
+        </p>
+        <a class="m-btn" href={SITE.builtWith[0].url}>See {SITE.builtWith[0].name}</a>
+      </div>
+      <div class="m-panel m-status">
+        <p class="m-pillar-tag">Status, honestly</p>
+        <ul>
+          <li><strong>{released}</strong> features released and in daily use</li>
+          <li><strong>{testing}</strong> built and in testing</li>
+          <li>Runs on macOS. The core and its tests also run on Linux.</li>
+          <li>Not packaged for other people yet. That's what the waitlist is for.</li>
+        </ul>
+        <p class="m-actions">
+          <a class="m-btn m-btn--primary" href="/waitlist/">Join the waitlist</a>
+          <a class="m-btn" href="/roadmap/">See the roadmap</a>
+        </p>
+      </div>
+    </div>
+  </section>
+</Marketing>
+
+<style>
+  .m-pillar-tag {
+    font-family: var(--m-font-mono);
+    font-size: 0.8rem;
+    letter-spacing: 0.1em;
+    text-transform: uppercase;
+    color: var(--m-orange);
+    margin-bottom: 0.5rem;
+  }
+  .m-pillar-links {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.4rem 1.2rem;
+  }
+  .m-flow {
+    list-style: none;
+    padding: 0;
+    margin: 1.5rem 0;
+    display: grid;
+    grid-template-columns: repeat(7, minmax(0, 1fr));
+    border: 1px solid var(--m-line);
+  }
+  .m-flow li {
+    padding: 1rem 0.85rem;
+    border-right: 1px solid var(--m-hair);
+    display: grid;
+    gap: 0.4rem;
+    align-content: start;
+    position: relative;
+  }
+  .m-flow li:last-child {
+    border-right: 0;
+  }
+  .m-flow-k {
+    font-family: var(--m-font-mono);
+    color: var(--m-green);
+    letter-spacing: 0.1em;
+    font-size: 0.85rem;
+  }
+  .m-flow-v {
+    font-size: 0.92rem;
+    color: var(--m-ink-dim);
+  }
+  @media (max-width: 62rem) {
+    .m-flow {
+      grid-template-columns: 1fr;
+    }
+    .m-flow li {
+      border-right: 0;
+      border-bottom: 1px solid var(--m-hair);
+      grid-template-columns: 7rem 1fr;
+      align-items: baseline;
+    }
+    .m-flow li:last-child {
+      border-bottom: 0;
+    }
+  }
+  .m-built {
+    display: grid;
+    grid-template-columns: minmax(0, 1.2fr) minmax(0, 1fr);
+    gap: 2rem;
+    align-items: start;
+  }
+  @media (max-width: 52rem) {
+    .m-built {
+      grid-template-columns: 1fr;
+    }
+  }
+  .m-status ul {
+    padding-left: 1.1rem;
+    margin: 0;
+  }
+  .m-status li {
+    margin-bottom: 0.45rem;
+  }
+  .m-status strong {
+    font-family: var(--m-font-mono);
+    color: var(--m-green);
+  }
+</style>

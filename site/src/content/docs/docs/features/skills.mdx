@@ -1,0 +1,134 @@
+---
+title: Skills
+description: MARVIN's 33 on-demand playbooks for Claude Code, each a SKILL.md loaded only when a task calls for it.
+sidebar:
+  order: 3
+---
+import FeatureStatus from '~/components/FeatureStatus.astro';
+
+<FeatureStatus page="skills" />
+
+## What it does
+
+A skill is a folder with a `SKILL.md`: frontmatter that says what it's for and when to use it, then the steps to follow. MARVIN ships 33 of them, among them `tdd`, `diagnose`, `research`, `grill-with-docs`, `handoff`, `audit` and `write-a-skill`. A session sees only each skill's name and one-line description. The body, and any reference files next to it, load when the task matches. Use a skill for a repeatable way of working. For a fact or a rule, write a [memory note](/docs/features/memory/) instead; for a one-off instruction, just say it in the prompt.
+
+## Why it exists
+
+The same work kept getting done differently each time. A bug got patched before anyone reproduced it, tests got written after the code, a long session switched topics and lost the thread. Writing the method down once fixes that, but pasting every method into every session wastes context. Skills keep the method on disk and pay for it only when it's used.
+
+## See it work
+
+Counted on 2026-11-02 from the public repo, then asked which skill fits a task. The retrieval ran against the live index on the owner's laptop.
+
+```text
+$ git ls-tree -r --name-only origin/main skills | grep -E '^skills/[^/]+/SKILL.md$' | wc -l
+      33
+
+$ ~/.agents/venv/bin/python ~/.agents/skills/self-improve/scripts/retrieve.py "write a new skill"
+  [0.667] (semantic) ~/.agents/skills/self-improve/SKILL.md
+           self-improve
+  [0.667] (semantic) ~/.agents/skills/creative/SKILL.md
+           creative
+  [0.660] (semantic) ~/.agents/skills/write-a-skill/SKILL.md
+           write-a-skill
+  [0.633] (semantic) ~/.agents/skills/readme/SKILL.md
+           readme
+  [0.630] (semantic) ~/.agents/skills/setup-matt-pocock-skills/SKILL.md
+           setup-matt-pocock-skills
+```
+
+`write-a-skill` comes third, 0.007 behind two neighbors. Retrieval narrows the field; the description is what makes the model pick the right one.
+
+## How it works
+
+```text
+ skills/<name>/SKILL.md ──► name + description in every session (~1 line each)
+           │
+   task matches a trigger ── CLAUDE.md routing table, /<name>, or retrieve.py
+           │
+           ▼
+   body of SKILL.md loads ──► reference files load only if the steps point to them
+           │
+   calls: [other-skill] ──► that skill loads too, if the task needs it
+```
+
+1. **Install.** `setup.sh` copies each folder under `skills/` into `~/.agents/skills/`, skipping any that already exist so local edits survive.
+2. **Discovery.** Claude Code shows the model each skill's `name` and `description`, and nothing else. That's why `write-a-skill` treats the description as the whole interface: first sentence says what it does, second says "Use when ..." with concrete triggers, at most 1,024 characters.
+3. **Triggering.** Three ways in. The global `CLAUDE.md` (installed from `claude-config/CLAUDE.md`) carries a routing table of skills and their triggers and tells the model to read the matching `SKILL.md`. A slash command such as `/diagnose` invokes one by name. And the `index` skill tells a session to run `retrieve.py` with the task and load what comes back.
+4. **Loading.** Only then does the body enter context. Long skills keep detail in sibling files: `tdd` is a 111-line `SKILL.md` that links to `tests.md`, `mocking.md`, `deep-modules.md`, `interface-design.md` and `refactoring.md`, read only when a step needs them.
+5. **Chaining.** A `calls:` list in frontmatter names skills this one may hand off to. `tdd` declares `calls: [diagnose]`.
+6. **Indexing.** Any edit inside a skill folder fires the `rebuild-manifest.py` hook, which refreshes `~/.claude/manifest.json` and the `skills` vector collection, so retrieval sees the change right away.
+
+A real example, `skills/tdd/`:
+
+```text
+skills/tdd/
+├── SKILL.md            # frontmatter + the red-green-refactor loop
+├── tests.md            # what a good test looks like
+├── mocking.md          # when to mock, and what not to
+├── deep-modules.md
+├── interface-design.md
+└── refactoring.md
+```
+
+```yaml
+---
+name: tdd
+description: Test-driven development with red-green-refactor loop. Use when user wants to build
+  features or fix bugs using TDD, mentions "red-green-refactor", wants integration tests, or asks
+  for test-first development.
+tags: [domain:testing, intent:test, intent:tdd, intent:build, type:skill]
+calls: [diagnose]
+---
+```
+
+## Use it
+
+```bash
+# Invoke by name in Claude Code
+/tdd
+/diagnose
+
+# Find the skill for a task
+~/.agents/venv/bin/python ~/.agents/skills/self-improve/scripts/retrieve.py "<task>" --json
+
+# Regenerate the skills list in docs/skills.md from frontmatter (or --check it)
+~/.agents/venv/bin/python lib/skill_index.py --check
+```
+
+To write a new one, ask for it ("write a skill that ...") and the `write-a-skill` skill walks through it: gather the use cases, draft `SKILL.md` under 100 lines with split-out reference files, review, then run its checklist. One item on that list is specific to MARVIN: if a skill claims to run on its own, there has to be a hook, job or log that actually makes it run. Then wire it: add `~/.claude/commands/<name>.md` with the one-line "read this SKILL.md and follow it" template and a row in the `CLAUDE.md` routing table (`self-improve` step 4).
+
+## Configure
+
+| Field or file | What it controls |
+|---|---|
+| `name` (frontmatter) | The id: slash command, routing table row, manifest entry |
+| `description` | The only text the model sees before loading; must carry the triggers |
+| `tags` | `namespace:value` tags (`type:`, `intent:`, `domain:`); required for the manifest and retrieval |
+| `calls` | Other skills this one may load |
+| `model-scope` | Model tiers allowed to use it: omit or `all`, `sonnet+`, or a list like `haiku,sonnet`; `retrieve.py --model` filters on it |
+| `~/.claude/CLAUDE.md` routing table | Which phrases trigger which skill in every session |
+| `~/.claude/commands/<name>.md` | The `/<name>` slash command stub |
+| `docs/skills.md` | Generated grouped list, from `lib/skill_index.py` |
+
+## Requirements and limitations
+
+- Claude Code. Skills themselves are Markdown and run anywhere Claude Code does. The retrieval path needs Ollama and the venv (see [memory](/docs/features/memory/)); without them the manual routing table and slash commands still work.
+- Wiring is a manual step. `setup.sh` copies skill folders but doesn't create the command stubs or routing rows, and it skips a folder that's already installed, so an updated skill from the repo doesn't overwrite a local copy.
+- Triggering depends on the model reading descriptions well. A vague description means the skill doesn't fire.
+- A few skills are written for the owner's own setup (`resume-tailor`, `portfolio-page`, `writing-style`) and need adapting before they help anyone else.
+- `docs/skills.md` lags: on 2026-11-02 it said 32 skills and `lib/skill_index.py --check` exited 1, because `portfolio-page` was added after the last regeneration.
+
+## Design and source
+
+- Skill counts were fixed to count only folders holding a file named exactly `SKILL.md`, not manifest entries (which include memory notes) or command files: [#602 Skill counts: count real skills (33), not memories or command files](https://github.com/G-Eskayo/marvin/pull/602). A tag-based count was tried first and rejected because four real skills are tagged `type:agent`, `type:system` or `type:library`.
+- [ADR 0059: Every model run goes through the MARVIN launcher, and every producer declares an output contract](https://github.com/G-Eskayo/marvin/blob/main/docs/adr/0059-marvin-launcher-and-output-contracts.md): skills reach headless runs through Claude Code itself, not the launcher's injected layers.
+- Source: [`skills/`](https://github.com/G-Eskayo/marvin/tree/main/skills), [`skills/write-a-skill/SKILL.md`](https://github.com/G-Eskayo/marvin/blob/main/skills/write-a-skill/SKILL.md), [`skills/index/SKILL.md`](https://github.com/G-Eskayo/marvin/blob/main/skills/index/SKILL.md), [`skills/self-improve/scripts/rebuild-manifest.py`](https://github.com/G-Eskayo/marvin/blob/main/skills/self-improve/scripts/rebuild-manifest.py), [`lib/skill_index.py`](https://github.com/G-Eskayo/marvin/blob/main/lib/skill_index.py), [`claude-config/CLAUDE.md`](https://github.com/G-Eskayo/marvin/blob/main/claude-config/CLAUDE.md), [`docs/skills.md`](https://github.com/G-Eskayo/marvin/blob/main/docs/skills.md) for the full grouped list.
+- Per-repo setup for the engineering skills: `setup-matt-pocock-skills` writes an `## Agent skills` block and `docs/agents/` so `triage`, `to-issues` and `to-prd` know the repo's issue tracker, triage labels and domain docs.
+
+## Related features
+
+- [Memory and context retrieval](/docs/features/memory/): the index and `retrieve.py` that find a skill for a task.
+- [Ticket pipeline](/docs/features/ticket-pipeline/): planner and executor runs load the same skills.
+- [The map](/docs/features/map/): one node per skill; a skill call lights it.
+- Lexicon, handoffs, qa-agent knowledge base, routing classifier, session start.
