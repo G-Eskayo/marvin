@@ -116,10 +116,9 @@ describe('gateCheckNames and postGateStatus (marvin#1099)', async () => {
   it('a missing, broken or odd list covers nothing', () => {
     for (const t of [null, '{not json', '{"checks": "x"}', '{"checks": [{"id": 1}]}']) expect(gateCheckNames(dirWith(t))).toEqual([])
   })
-  it("this repo's own list covers Python, Rules and Dashboard, never the secret scan", () => {
+  it("this repo's own list covers every required check, the secret scan too (#1101): no merge waits on GitHub", () => {
     const names = gateCheckNames(path.resolve(import.meta.dirname, '..', '..'))
-    expect(names).toEqual(expect.arrayContaining(['Python tests', 'Rules', 'Dashboard unit tests']))
-    expect(names).not.toContain('Secret and transcript scan')
+    expect(names).toEqual(expect.arrayContaining(['Python tests', 'Rules', 'Dashboard unit tests', 'Secret and transcript scan']))
   })
   it('posts a MARVIN gate success on the PR head', async () => {
     const calls = []
