@@ -1,0 +1,9 @@
+{
+  "name": "tidy-agent",
+  "description": "Daily Desktop/Downloads tidy (~/.claude/organize/tidy_agent.py): files aged items into ~/Documents buckets and rewrites the Desktop map. The venv Python, which holds Full Disk Access on both Macs; /usr/bin/python3 lost it on the Mini (marvin#1123 0.6)",
+  "command": ["~/.agents/venv/bin/python", "~/.claude/organize/tidy_agent.py"],
+  "schedule": {"calendar": {"hour": 3, "minute": 0}},
+  "env": {"HOME": "~", "PATH": "~/.local/bin:/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:~/.agents/venv/bin"},
+  "low_priority": true,
+  "log": "tidy-agent"
+}
