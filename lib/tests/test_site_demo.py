@@ -21,7 +21,9 @@ def home(tmp_path, monkeypatch):
 
 
 def _git(cwd, *args):
-    subprocess.run(["git", *args], cwd=cwd, check=True, capture_output=True, text=True)
+    # its own identity: the merge gate's machine has no global git config, so a bare `git commit` fails there (exit 128)
+    subprocess.run(["git", "-c", "user.name=site-demo test", "-c", "user.email=test@example.invalid", *args], cwd=cwd,
+                   check=True, capture_output=True, text=True)
 
 
 @pytest.fixture
