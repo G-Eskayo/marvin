@@ -1,9 +1,9 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <!-- The morning brief (lib/morning_brief.py, marvin#306), built on the Mini only, after the daily digest (08:30)
-     and research digest (09:00) complete. Mini only: running on the laptop is now the fallback-only job (10:15).
+     and research digest (09:00) complete. Mini only: running on the laptop is now the fallback-only job (10:20).
      ~/. claude/briefs syncs to the MacBook after the Mini builds.
-     Install on the Mini: cp this to ~/Library/LaunchAgents/ and `launchctl bootstrap gui/$(id -u) <that file>`. -->
+     Install: ~/.agents/venv/bin/python ~/.agents/lib/brief_fallback.py install (each Mac gets its half of the pair). -->
 <plist version="1.0">
 <dict>
     <key>Label</key>

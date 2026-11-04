@@ -11,13 +11,13 @@
         <string>/Users/gileskayo/.agents/skills/improve/scripts/daily_digest.py</string>
     </array>
 
-    <!-- Run every day at 09:30 on the MacBook only (fallback: runs if the Mini went quiet; primary is 08:30 on Mini) -->
+    <!-- Run every day at 09:35 on the MacBook only (fallback: runs if the Mini went quiet; primary is 08:30 on Mini) -->
     <key>StartCalendarInterval</key>
     <dict>
         <key>Hour</key>
         <integer>9</integer>
         <key>Minute</key>
-        <integer>30</integer>
+        <integer>35</integer>
     </dict>
 
     <!-- Pin cwd: call_claude() runs a real agentic session that reads repo
