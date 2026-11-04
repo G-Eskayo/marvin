@@ -12,6 +12,8 @@ parallel, because nothing said "I'm on this". Hooks now keep a small live list, 
   pre     (PreToolUse Edit|Write)   before an interactive session edits a file another live session (active in the
                                     last 45 minutes) edited, the edit pauses and asks, naming what the other is doing.
                                     Once per file per pair of sessions.
+  stop|notify|ask|tool|end          a chat tab's state: working, waiting (permission or question), your-turn, done
+                                    (marvin#1061; the order is explained above STATE_EVENTS)
   start   (SessionStart)            a chat tab (marvin#1060, PRD #1058): an interactive session in a WezTerm pane is
                                     recorded under "chats", keyed by (Mac, WezTerm GUI socket, pane) and checked
                                     against the pane's tty. The pane owns the record: /clear or a resume in the same
@@ -357,8 +359,58 @@ def register_chat(st: dict, rec: dict, now: float) -> None:
     chats = st.setdefault("chats", {})
     old = chats.get(chat_key(rec))
     same_tab = isinstance(old, dict) and old.get("tty") == rec["tty"]
-    chats[chat_key(rec)] = {**(old if same_tab else {}), **rec,
+    chats[chat_key(rec)] = {"state": "your-turn", **(old if same_tab else {}), **rec,
                             "started_at": old.get("started_at", now) if same_tab else now, "seen_at": now}
+
+
+# A chat tab's state (marvin#1061). Claude Code's own hook order decides it:
+#   prompt (UserPromptSubmit)        -> working
+#   stop   (Stop)                    -> your-turn: Claude finished; not urgent
+#   notify (Notification)            -> waiting for "permission" only when the message asks for it; the idle reminder
+#                                       ("waiting for your input") changes nothing, it is already your turn
+#   ask    (PreToolUse AskUserQuestion) -> waiting for a "question"
+#   tool   (PostToolUse, any tool)   -> working again, but only if it was waiting: the permission was granted or the
+#                                       question answered. PreToolUse can't clear it: it fires before the prompt shows.
+#   end    (SessionEnd)              -> done, except reason "clear" (a SessionStart follows in the same pane)
+# A denied permission runs no tool, so it settles when Claude stops (your-turn).
+STATE_EVENTS = {"stop": ("your-turn", None), "ask": ("waiting", "question"), "tool": ("working", None),
+                "end": ("done", None), "notify": ("waiting", "permission")}
+
+
+def env_chat_key(env) -> str | None:
+    pane = str(env.get("WEZTERM_PANE") or "")
+    return f"{_mac()}|{env.get('WEZTERM_UNIX_SOCKET') or ''}|{pane}" if pane.isdigit() else None
+
+
+def set_state(st: dict, key: str, state: str, waiting_for: str | None, event: str, now: float) -> bool:
+    rec = (st.get("chats") or {}).get(key)
+    if not isinstance(rec, dict):
+        return False
+    rec.update(state=state, waiting_for=waiting_for, state_at=now, last_event=event)
+    return True
+
+
+def state_event(kind: str, payload: dict, env, now: float) -> None:
+    key = env_chat_key(env)
+    if key is None:
+        return
+    if kind == "notify" and "permission" not in str(payload.get("message") or "").lower():
+        return
+    if kind == "end" and payload.get("reason") == "clear":
+        return
+    if kind == "tool":   # runs after every tool call: read without the lock, write only when it was waiting
+        try:
+            cur = (json.loads(STATE_PATH.read_text()).get("chats") or {}).get(key)
+        except (OSError, ValueError, AttributeError):
+            return
+        if not isinstance(cur, dict) or cur.get("state") != "waiting":
+            return
+    state, waiting_for = STATE_EVENTS[kind]
+    with _Locked() as st:
+        cur = (st.get("chats") or {}).get(key)
+        if kind == "tool" and not (isinstance(cur, dict) and cur.get("state") == "waiting"):
+            return
+        set_state(st, key, state, waiting_for, kind, now)
 
 
 def _valid(rec) -> bool:
@@ -459,6 +511,9 @@ def handle(kind: str, payload: dict, now: float | None = None, env=None) -> str 
     if not sid:
         return None
     try:
+        if kind in STATE_EVENTS:
+            state_event(kind, payload, os.environ if env is None else env, now)
+            return None
         if kind == "start":   # the slow lookups (ps, git) happen before the lock
             rec = chat_from_env(payload, os.environ if env is None else env, proc=claude_proc(), mac=_mac(),
                                 git=_git_info)
@@ -470,6 +525,9 @@ def handle(kind: str, payload: dict, now: float | None = None, env=None) -> str 
             prune(st, now)
             if kind == "prompt":
                 record_prompt(st, sid, payload.get("prompt", ""), now)
+                key = env_chat_key(os.environ if env is None else env)
+                if key:
+                    set_state(st, key, "working", None, "prompt", now)
                 return None
             path = (payload.get("tool_input") or {}).get("file_path") or (payload.get("tool_input") or {}).get("notebook_path")
             if not path:

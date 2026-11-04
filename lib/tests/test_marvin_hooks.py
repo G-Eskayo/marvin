@@ -81,7 +81,7 @@ def test_install_moves_hooks_to_user_settings_and_sets_one_memory(tmp_path):
     assert u["model"] == "opus" and u["permissions"] == {"allow": ["Read"]}  # nothing else touched
     assert u["autoMemoryDirectory"] == str(tmp_path / "memory")
     assert set(u["hooks"]) == {"PreToolUse", "PostToolUse", "SessionStart", "UserPromptSubmit", "SubagentStart",
-                                  "SubagentStop"}
+                                  "SubagentStop", "Stop", "Notification", "SessionEnd"}  # the last three: chat state, #1061
     assert all("marvin_hooks.py gate" in h["command"] for groups in u["hooks"].values()
                for g in groups for h in g["hooks"])
     assert "hooks" not in l and l["permissions"] == {"allow": ["Bash(ls)"]}
