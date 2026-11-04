@@ -61,8 +61,8 @@ jobs:
           cache-dependency-path: requirements-ci.txt
       - name: A clean MARVIN install (~/.agents, its venv, an empty ~/.claude)
         run: .github/ci-machine.sh
-      - name: Tools the tests declare (ripgrep)
-        run: brew install ripgrep
+      - name: Tools the tests declare (ripgrep, gitleaks)
+        run: brew install ripgrep gitleaks
       - name: Git identity for tests that commit in temp repos
         run: git config --global user.name ci && git config --global user.email ci@example.invalid && git config --global init.defaultBranch main
       - run: .github/run-check.sh python
@@ -137,10 +137,8 @@ jobs:
           curl -fsSLo gl.tgz https://github.com/gitleaks/gitleaks/releases/download/v8.30.1/gitleaks_8.30.1_linux_x64.tar.gz
           echo "551f6fc83ea457d62a0d98237cbad105af8d557003051f41f3e7ca7b3f2470eb  gl.tgz" | sha256sum -c -
           tar -xzf gl.tgz gitleaks && rm gl.tgz
-      - name: gitleaks
-        run: ./gitleaks git --no-banner --redact --config .gitleaks.toml --log-opts="${{ steps.range.outputs.base }}..HEAD" .
-      - name: pre-push guard (shared patterns)
-        run: |
-          mkdir -p "$RUNNER_TEMP/home/.claude" && touch "$RUNNER_TEMP/home/.claude/private-push-patterns.txt"
-          echo "refs/heads/ci $(git rev-parse HEAD) refs/heads/ci ${{ steps.range.outputs.base }}" \
-            | HOME="$RUNNER_TEMP/home" bin/pre-push-guard origin
+      # gitleaks, then the pre-push guard, over the commits this change adds: the same script the merge gate runs
+      # (marvin#1101), so a merge never waits on GitHub for this check.
+      - run: .github/run-check.sh secret-scan
+        env:
+          MARVIN_BASE: ${{ steps.range.outputs.base }}
