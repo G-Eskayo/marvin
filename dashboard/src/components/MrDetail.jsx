@@ -83,7 +83,7 @@ function DevEvidenceSection({ devEvidence, images }) {
 }
 
 // A UI change with no image in its description can't be approved (marvin #374); say so where the images would be.
-function NeedsImages({ needsImages }) {
+export function NeedsImages({ needsImages }) {
   return (
     <div className="rounded-lg border border-amber-700 bg-amber-950/40 p-4 text-sm text-amber-200">
       <p className="font-semibold">Needs images</p>
@@ -104,7 +104,7 @@ function DeviceSection({ device }) {
 
 // A linked ticket or parent PRD, rendered for reading (owner, 2026-10-09: "format descriptions in tickets instead of just
 // having them as scrollable text boxes"); see IssueBody.jsx.
-function IssueBody({ label, issue, repo, onOpenTicket, onOpenDocs }) {
+export function LinkedIssue({ label, issue, repo, onOpenTicket, onOpenDocs }) {
   if (!issue) {
     return <p className="text-sm text-neutral-500">Not available.</p>
   }
@@ -125,7 +125,7 @@ function IssueBody({ label, issue, repo, onOpenTicket, onOpenDocs }) {
 
 // A long summary opens clamped, so the mock-up and the first pictures still show in the first screen at 1200 px.
 export const SUMMARY_CLAMP_CHARS = 420
-function SummarySection({ summary, repo, headRef, onOpenTicket, onOpenDocs }) {
+export function SummarySection({ summary, repo, headRef, onOpenTicket, onOpenDocs }) {
   const long = summary.length > SUMMARY_CLAMP_CHARS
   const [open, setOpen] = useState(!long)
   return (
@@ -148,10 +148,43 @@ function SummarySection({ summary, repo, headRef, onOpenTicket, onOpenDocs }) {
   )
 }
 
+// The PR's own evidence: the structured sections when it has the schema, else its description. Shared with the
+// Workshop's item page (#863), which folds it under "PR details".
+export function PrEvidenceSections({ pr, onOpenTicket, onOpenDocs }) {
+  return pr.hasSchema ? (
+    <>
+      <Section title="Device">
+        <DeviceSection device={pr.evidence.device} />
+      </Section>
+
+      <Section title="Metrics Comparison">
+        <EvidenceTable metrics={pr.evidence.metrics} />
+      </Section>
+
+      <Section title="Test Results">
+        <TestResultsSection testResults={pr.evidence.testResults} />
+      </Section>
+
+      <Section title="Dev Environment Evidence">
+        <DevEvidenceSection devEvidence={pr.evidence.devEvidence} images={pr.images} />
+      </Section>
+    </>
+  ) : (
+    <Section title="PR Description (no structured evidence template)">
+      <IssueBodyView
+        body={pr.rawBody}
+        ctx={{ repo: pr.repo }}
+        headRef={pr.headRef}
+        onLink={(l) => (l.type === 'ticket' ? onOpenTicket?.(l.repo, l.number) : onOpenDocs?.(l.project, l.path))}
+      />
+    </Section>
+  )
+}
+
 // Where "Jump to the Decisions" lands.
-const DECISIONS_ANCHOR = 'mr-decisions'
+export const DECISIONS_ANCHOR = 'mr-decisions'
 // The main gallery's anchors (Decisions link to them) and how many images show before "Show all".
-const GALLERY = 'pr-image'
+export const GALLERY = 'pr-image'
 export const GALLERY_LIMIT = 6
 
 export default function MrDetail({ pr, onBack, onApproved, onDenied, onOpenDocs, onOpenBoard, onOpenTicket, onChanged, notice = null }) {
@@ -283,34 +316,7 @@ export default function MrDetail({ pr, onBack, onApproved, onDenied, onOpenDocs,
         </Section>
       )}
 
-      {pr.hasSchema ? (
-        <>
-          <Section title="Device">
-            <DeviceSection device={pr.evidence.device} />
-          </Section>
-
-          <Section title="Metrics Comparison">
-            <EvidenceTable metrics={pr.evidence.metrics} />
-          </Section>
-
-          <Section title="Test Results">
-            <TestResultsSection testResults={pr.evidence.testResults} />
-          </Section>
-
-          <Section title="Dev Environment Evidence">
-            <DevEvidenceSection devEvidence={pr.evidence.devEvidence} images={pr.images} />
-          </Section>
-        </>
-      ) : (
-        <Section title="PR Description (no structured evidence template)">
-          <IssueBodyView
-            body={pr.rawBody}
-            ctx={{ repo: pr.repo }}
-            headRef={pr.headRef}
-            onLink={(l) => (l.type === 'ticket' ? onOpenTicket?.(l.repo, l.number) : onOpenDocs?.(l.project, l.path))}
-          />
-        </Section>
-      )}
+      <PrEvidenceSections pr={pr} onOpenTicket={onOpenTicket} onOpenDocs={onOpenDocs} />
 
       <Section title="Requirements & Tasks (linked ticket)">
         {contextLoading ? (
@@ -318,7 +324,7 @@ export default function MrDetail({ pr, onBack, onApproved, onDenied, onOpenDocs,
         ) : error ? (
           <p className="text-sm text-red-400">Failed to load: {error}</p>
         ) : (
-          <IssueBody label="Ticket" issue={context.ticket} repo={pr.repo} onOpenTicket={onOpenTicket} onOpenDocs={onOpenDocs} />
+          <LinkedIssue label="Ticket" issue={context.ticket} repo={pr.repo} onOpenTicket={onOpenTicket} onOpenDocs={onOpenDocs} />
         )}
       </Section>
 
@@ -328,7 +334,7 @@ export default function MrDetail({ pr, onBack, onApproved, onDenied, onOpenDocs,
         ) : error ? (
           <p className="text-sm text-red-400">Failed to load: {error}</p>
         ) : (
-          <IssueBody label="Parent" issue={context.parent} repo={pr.repo} onOpenTicket={onOpenTicket} onOpenDocs={onOpenDocs} />
+          <LinkedIssue label="Parent" issue={context.parent} repo={pr.repo} onOpenTicket={onOpenTicket} onOpenDocs={onOpenDocs} />
         )}
       </Section>
 
