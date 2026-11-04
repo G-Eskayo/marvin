@@ -16,6 +16,8 @@
 - **One window**: the first press opens a window; later presses add a tab to that window while it's still open
   (marvin#375). The window is remembered with the WezTerm process that owns it, because window ids restart at 0
   when WezTerm restarts and an old id could now be one of Gil's own windows.
+- **No duplicates**: if a chat tab for that ticket is already open on this Mac (in its worktree, or on a branch naming
+  the ticket), it is focused and raised instead of opening a second one (marvin#1063).
 - **This machine only**: it opens WezTerm on the machine that runs it. The phone's backend never calls it.
 """
 from __future__ import annotations
@@ -224,17 +226,75 @@ def _proposal_record(pid: str) -> dict:
     raise SessionError(f"no open proposal {pid[:60]!r}")
 
 
-def open_session(ticket: int | None, repo: str = "G-Eskayo/marvin", proposal: str | None = None) -> Path:
+# ── an open chat for the ticket is focused, never duplicated (marvin#1063) ─────────────────────
+
+def _live_chats() -> list[dict]:
+    """This Mac's live chat tabs (session_work's records joined with WezTerm, marvin#1060)."""
+    import session_work
+    here = session_work._mac()
+    return [c for c in session_work.list_chats() if c.get("mac") == here]
+
+
+def _inside(path, root: Path) -> bool:
+    try:
+        p, r = Path(str(path)).resolve(), Path(root).resolve()
+    except (OSError, ValueError, TypeError):
+        return False
+    return p == r or r in p.parents
+
+
+def find_chat(chats: list[dict], directory: Path, repo: str, ticket: int) -> dict | None:
+    """The ticket's chat: one working in its worktree (or a folder inside it, so a chat opened by hand counts), or one
+    on a branch naming the same ticket in the same repo. With several, the one seen most recently."""
+    match = [c for c in chats if isinstance(c, dict) and isinstance(c.get("pane"), int) and (
+        _inside(c.get("cwd") or "", directory) or (c.get("ticket") == ticket and c.get("repo") == repo))]
+    return max(match, key=lambda c: c.get("seen_at") or 0) if match else None
+
+
+def _raise_gui(pid: int) -> None:
+    """Bring that WezTerm process forward, onto its Space if it lives on another (best effort)."""
+    subprocess.run(["/usr/bin/osascript", "-e", "tell application \"System Events\" to set frontmost of "
+                    f"(first process whose unix id is {int(pid)}) to true"], capture_output=True, timeout=5)
+
+
+def focus_chat(chat: dict, raise_app: Callable[[int], None] = _raise_gui) -> None:
+    """Activate the chat's pane on its own WezTerm, then raise that WezTerm. Raises WeztermError if the pane is gone."""
+    wezterm_cli.Wezterm(socket=chat.get("socket") or None).activate_pane(chat["pane"])
+    m = re.search(r"gui-sock-(\d+)$", chat.get("socket") or "")
+    if m:
+        try:
+            raise_app(int(m.group(1)))
+        except (OSError, subprocess.TimeoutExpired):
+            pass
+
+
+def _open(ticket: int | None, repo: str, proposal: str | None, chats, focus) -> tuple[Path, dict | None]:
     if proposal is not None:
         if ticket is not None:
             raise SessionError("open a ticket or a proposal, not both")
         directory = HOME
         open_in_wezterm(directory, prompt_file=write_prompt(_proposal_record(proposal), PROMPT_DIR))
-        return directory
+        return directory, None
     clone = _clone_for(repo) if ticket is not None else HOME
     directory = session_dir(clone, ticket, _ticket_title(repo, ticket) if ticket is not None else None)
+    if ticket is not None:
+        try:
+            chat = find_chat((chats or _live_chats)(), directory, repo, ticket)
+        except Exception:  # noqa: BLE001 -- the chat list is a nicety; a session must still open
+            chat = None
+        if chat is not None:
+            try:
+                (focus or focus_chat)(chat)
+                return directory, chat
+            except (wezterm_cli.WeztermError, ValueError, KeyError):
+                pass  # it closed a moment ago: open a fresh one
     open_in_wezterm(directory)
-    return directory
+    return directory, None
+
+
+def open_session(ticket: int | None, repo: str = "G-Eskayo/marvin", proposal: str | None = None,
+                 chats: Callable[[], list[dict]] | None = None, focus: Callable[[dict], None] | None = None) -> Path:
+    return _open(ticket, repo, proposal, chats, focus)[0]
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -245,11 +305,14 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--proposal")
     args = parser.parse_args(argv)
     try:
-        directory = open_session(args.ticket, args.repo, args.proposal)
+        directory, chat = _open(args.ticket, args.repo, args.proposal, None, None)
     except (SessionError, subprocess.TimeoutExpired) as exc:
         print(json.dumps({"ok": False, "error": str(exc)}))
         return 1
-    print(json.dumps({"ok": True, "dir": str(directory)}))
+    out = {"ok": True, "dir": str(directory), "focused": chat is not None}
+    if chat is not None:
+        out["pane"] = chat["pane"]
+    print(json.dumps(out))
     return 0
 
 
