@@ -282,5 +282,7 @@ def test_showing_gil_things_is_enforced_for_every_kind(tmp_path):
     for event in ("Stop", "SubagentStop"):
         h = by[(event, "temp_deliverable_hook.py")]
         assert h.kinds == {"all"} and h.command[-1] == "stop" and h.timeout <= 5
-    stop = mh.settings_hooks()["Stop"][0]["hooks"][0]
-    assert "gate all -- " in stop["command"] and "temp_deliverable_hook.py stop" in stop["command"]
+    # Other Stop hooks come first (session_work.py's chat state, #1060), so find this one rather than take the first.
+    stops = [h["command"] for g in mh.settings_hooks()["Stop"] for h in g["hooks"]]
+    stop = [c for c in stops if "temp_deliverable_hook.py stop" in c]
+    assert len(stop) == 1 and "gate all -- " in stop[0]
