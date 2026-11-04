@@ -1,5 +1,7 @@
 # Changelog
 
+- Chat tabs restart onto a new Claude Code version on their own, by resume, only while idle on your turn ([#1096](https://github.com/G-Eskayo/marvin/pull/1096))
+
 - Send into a chat, safely: dashboard only, idle only, never onto a permission prompt ([#1095](https://github.com/G-Eskayo/marvin/pull/1095))
 
 - Chat list data for the dashboard: both Macs, the other Mac read-only, honest when WezTerm is down ([#1093](https://github.com/G-Eskayo/marvin/pull/1093))
