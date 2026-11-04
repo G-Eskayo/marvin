@@ -258,22 +258,17 @@ def test_non_dict_state_file_counts_as_not_fired_and_is_repaired(tmp_path, monke
     assert arh._already_fired("s1") is True
 
 
-def test_concurrent_sessions_do_not_lose_each_others_marks(tmp_path, monkeypatch):
-    import multiprocessing as mp
+def test_concurrent_sessions_do_not_lose_each_others_marks(tmp_path):
+    """24 real processes mark at once (separate interpreters, not fork: a forked child can
+    inherit a lock held by another thread, which hung the combined suite)."""
+    import subprocess
     state = tmp_path / "auto-route-state.json"
-    ctx = mp.get_context("fork")
-    procs = [ctx.Process(target=_mark_in_child, args=(str(state), f"s{i}")) for i in range(24)]
-    for p in procs:
-        p.start()
-    for p in procs:
-        p.join(30)
-    data = json.loads(state.read_text())
-    assert set(data) == {f"s{i}" for i in range(24)}
-
-
-def _mark_in_child(path, sid):
-    arh.STATE_FILE = Path(path)
-    arh._mark_fired(sid)
+    code = ("import sys; sys.path.insert(0, sys.argv[1]); import auto_route_hook as a; "
+            "from pathlib import Path; a.STATE_FILE = Path(sys.argv[2]); a._mark_fired(sys.argv[3])")
+    procs = [subprocess.Popen([sys.executable, "-c", code, str(SCRIPTS), str(state), f"s{i}"])
+             for i in range(24)]
+    assert all(p.wait(60) == 0 for p in procs)
+    assert set(json.loads(state.read_text())) == {f"s{i}" for i in range(24)}
 
 
 def test_hook_script_exits_zero_on_garbage_stdin(tmp_path):
