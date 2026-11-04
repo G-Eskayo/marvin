@@ -1,5 +1,7 @@
 # Changelog
 
+- GitHub's Python tests run on Linux: start at once, and Mac-only tests skip there with a reason ([#1135](https://github.com/G-Eskayo/marvin/pull/1135))
+
 - Pipeline verify timeout counts the wait for the test slot, so builds behind merges are parked without running a test ([#1120](https://github.com/G-Eskayo/marvin/pull/1120))
 
 - Publish the MARVIN site to marvin.gileskayo.me on GitHub Pages from main ([#1126](https://github.com/G-Eskayo/marvin/pull/1126))
