@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react'
 import AccountsPanel from './AccountsPanel.jsx'
 import ReachRow from './ReachRow.jsx'
+import LoopsPanel from './LoopsPanel.jsx'
 import { useScrollPlace, useScrollAreaControl } from './ScrollPlaces.jsx'
 import HealthDrilldown from './HealthDrilldown.jsx'
 import AgentsPanel from './AgentsPanel.jsx'
@@ -145,7 +146,7 @@ function OverallBadge({ overall, generatedAt, refreshing, onRefresh }) {
   )
 }
 
-export default function HealthDashboard({ nav }) {
+export default function HealthDashboard({ nav, onOpenTicket = null }) {
   const [status, setStatus] = useState(null)
   const [error, setError] = useState(null)
   const [selected, setSelected] = useState(null)
@@ -272,7 +273,7 @@ export default function HealthDashboard({ nav }) {
   return (
     <div className="p-6">
       <div className="mb-4 flex flex-wrap gap-1">
-        {[['checks', 'Checks'], ['agents', 'Autonomous agents'], ['readiness', 'Project readiness'], ['reviews', reviews ? `Safety reviews (${reviews.pending})` : 'Safety reviews']].map(([id, label]) => (
+        {[['checks', 'Checks'], ['loops', 'Loops'], ['agents', 'Autonomous agents'], ['readiness', 'Project readiness'], ['reviews', reviews ? `Safety reviews (${reviews.pending})` : 'Safety reviews']].map(([id, label]) => (
           <button
             key={id}
             onClick={() => setView(id)}
@@ -284,7 +285,9 @@ export default function HealthDashboard({ nav }) {
           </button>
         ))}
       </div>
-      {view === 'reviews' ? (
+      {view === 'loops' ? (
+        <LoopsPanel onOpenTicket={onOpenTicket} />
+      ) : view === 'reviews' ? (
         <SafetyReviews data={reviews} reload={loadReviews} />
       ) : view === 'agents' ? (
         <AgentsPanel agents={agents} />

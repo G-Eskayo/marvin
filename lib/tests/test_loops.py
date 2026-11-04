@@ -208,7 +208,8 @@ def test_file_ticket_files_one_needs_triage_ticket_and_opens_it(tmp_path):
     _world(tmp_path, [_loop(fix={"level": "one_tap", "kind": "ticket"})])
     calls = []
     out = lp.run_fix("disk", tmp_path / "loops.json", gh=lambda args, body: calls.append((args, body)) or (0, "https://github.com/G-Eskayo/marvin/issues/2001\n", ""))
-    assert out == {"ok": True, "how": "open", "url": "https://github.com/G-Eskayo/marvin/issues/2001", "says": "Filed #2001"}
+    assert out == {"ok": True, "how": "open", "repo": "G-Eskayo/marvin", "number": 2001,
+                   "url": "https://github.com/G-Eskayo/marvin/issues/2001", "says": "Filed #2001"}
     assert "needs-triage" in calls[0][0] and "Part of #1123" in calls[0][1]
 
 
