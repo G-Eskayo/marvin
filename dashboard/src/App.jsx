@@ -175,7 +175,7 @@ export default function App() {
           ) : activeTab === 'mr-review' ? (
             <MrReview nav={nav} onOpenDocs={(projectId, path) => navigate('docs', { projectId, path })} onOpenBoard={(repo) => navigate('activity', { repo })} onOpenTicket={(repo, number) => openItem(repo, number, 'ticket')} />
           ) : activeTab === 'health' ? (
-            <HealthDashboard nav={nav} />
+            <HealthDashboard nav={nav} onOpenTicket={(repo, number) => openItem(repo, number, 'ticket')} />
           ) : activeTab === 'docs' ? (
             <DocsExplorer nav={nav} onOpenBoard={(repo) => navigate('activity', { repo })} onOpenTicket={(repo, number) => openItem(repo, number, 'ticket')} onOpenPr={(repo, number) => openItem(repo, number, 'pr')} />
           ) : activeTab === 'workshop' ? (

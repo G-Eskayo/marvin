@@ -514,7 +514,7 @@
    "fix": {
     "level": "one_tap",
     "kind": "relogin",
-    "arg": "github"
+    "arg": "github-token"
    },
    "wired": true,
    "ticket": 1123,
