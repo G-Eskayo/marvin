@@ -226,9 +226,20 @@ def _new_id(d: Path, title: str, key: str | None) -> list[str]:
     return [first] + [f"{first}-{n}" for n in range(2, 100)]
 
 
+def _fits(record: dict) -> dict:
+    """Refuse a record that would be over the size cap: written, it could never be read back."""
+    try:
+        size = len(json.dumps(record, indent=2, ensure_ascii=False).encode())
+    except (TypeError, ValueError) as exc:
+        raise InboxError(f"not storable as JSON: {exc}")
+    if size > MAX_FILE_BYTES - 1024:
+        raise InboxError(f"the item would be bigger than {MAX_FILE_BYTES // 1024} KB")
+    return record
+
+
 def _create(d: Path, pile: str, clean: dict, today: date) -> dict:
     for iid in _new_id(d, clean["title"], clean.get("key")):
-        record = {"id": iid, "pile": pile, **clean, "added": clean["added"] or today.isoformat(), "history": []}
+        record = _fits({"id": iid, "pile": pile, **clean, "added": clean["added"] or today.isoformat(), "history": []})
         if create_exclusive(d / f"{iid}.json", record):
             return record
     raise InboxError("too many items with this title")
@@ -306,7 +317,7 @@ def _change(pile: str, iid: object, root: Path | None, edit: Callable[[dict], tu
         rec = get(pile, iid, root)
         rec, entry = edit(rec)
         rec["history"] = [*rec["history"], entry]
-        write_atomic(d / f"{iid}.json", rec)
+        write_atomic(d / f"{iid}.json", _fits(rec))
     return rec
 
 
@@ -467,6 +478,16 @@ def queue_item(entry: str, kind: str | None, message: str, path: str | None, pro
             "key": "entry:" + hashlib.sha256(entry.encode("utf-8", "surrogateescape")).hexdigest()[:32]}
 
 
+def queue_line_item(line: str, project: str, day: str | None, source: str) -> dict:
+    """One `- **[KIND]** message (`path`)[ — auto-fix: mark]` bullet (or any other bullet, untyped) as an item."""
+    m = QUEUE_LINE_RE.match(line)
+    if m:
+        entry, kind, message, path, mark = m.groups()
+        return queue_item(entry, kind, message, path.strip(), project, day, mark, source)
+    entry = line[2:].strip()[:LIMITS["title"]]
+    return queue_item(entry, None, entry, None, project, day, None, source)
+
+
 def parse_queue(text: str, source: str = "improvement-queue.md") -> list[dict]:
     """Every bullet in a dated `## YYYY-MM-DD — project` section, first-seen (oldest) first, identical bullets folded
     into the first (a later copy's mark is kept if the first had none, as auto_fix.parse_queue does)."""
@@ -479,13 +500,8 @@ def parse_queue(text: str, source: str = "improvement-queue.md") -> list[dict]:
             continue
         if day is None or not line.startswith("- ") or not line[2:].strip():
             continue
-        m = QUEUE_LINE_RE.match(line)
-        if m:
-            entry, kind, message, path, mark = m.groups()
-            item = queue_item(entry, kind, message, path.strip(), project, day, mark, source)
-        else:
-            entry = line[2:].strip()[:LIMITS["title"]]
-            item = queue_item(entry, None, entry, None, project, day, None, source)
+        item = queue_line_item(line, project, day, source)
+        entry = item["fields"]["entry"]
         first = seen.get(entry)
         if first is None:
             seen[entry] = item
@@ -511,7 +527,8 @@ def legacy_file(pile: str, root: Path | None = None) -> Path:
     return (root or default_root()).parent / f"{check_pile(pile)}.md"
 
 
-def _read_legacy(path: Path) -> str:
+def read_legacy(path: Path) -> str:
+    """A markdown file to import: refused if it's a symlink or over 32 MB; empty if missing."""
     if path.is_symlink():
         raise InboxError(f"{path.name} is a symlink; not imported")
     if not path.exists():
@@ -541,7 +558,7 @@ def import_legacy(pile: str, root: Path | None = None, file: Path | None = None,
     d, first = _pile_ready(pile, root, today)
     if first is not None and file is None:
         return {**first, "from": str(path)}
-    out = _add_many_in(d, pile, _parse(pile, _read_legacy(path), path.name), today)
+    out = _add_many_in(d, pile, _parse(pile, read_legacy(path), path.name), today)
     return {**out, "from": str(path)}
 
 
@@ -561,7 +578,7 @@ def _pile_ready(pile: str, root: Path | None, today: date) -> tuple[Path, dict |
     try:
         legacy = legacy_file(pile, root) if pile in PARSERS else None
         if legacy is not None and (legacy.exists() or legacy.is_symlink()):
-            result = _add_many_in(stage, pile, _parse(pile, _read_legacy(legacy), legacy.name), today)
+            result = _add_many_in(stage, pile, _parse(pile, read_legacy(legacy), legacy.name), today)
         try:
             os.rename(stage, d)
         except OSError:

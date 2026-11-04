@@ -501,3 +501,19 @@ def test_cli_add_list_act_import(tmp_path):
 def test_cli_errors_are_json_with_nonzero_exit(tmp_path, args):
     rc, out = run_cli(tmp_path, *args)
     assert rc == 1 and out["ok"] is False and out["error"]
+
+
+def test_an_item_that_would_outgrow_the_size_cap_is_refused_and_the_file_stays_readable(root):
+    rec, _ = inbox.add("notes", item(fields={"blob": "x" * 200_000}), root, TODAY)
+    with pytest.raises(inbox.InboxError, match="bigger"):
+        inbox.update_fields("notes", rec["id"], {"more": "y" * 100_000}, root, TODAY)
+    with pytest.raises(inbox.InboxError, match="bigger"):
+        inbox.add("notes", item(fields={"blob": "x" * 300_000}), root, TODAY)
+    assert inbox.list_items("notes", root)["problems"] == []
+    assert inbox.get("notes", rec["id"], root)["fields"] == {"blob": "x" * 200_000}
+
+
+def test_a_value_json_cannot_store_is_refused(root):
+    with pytest.raises(inbox.InboxError, match="JSON"):
+        inbox.add("notes", item(fields={"when": date(2026, 1, 1)}), root, TODAY)
+    assert not list((root / "notes").glob("*"))  or all(p.name == ".locks" for p in (root / "notes").iterdir())

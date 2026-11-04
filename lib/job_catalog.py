@@ -61,7 +61,7 @@ JOBS: dict[str, dict] = {
                           "healthy": "port 7878 answers", "consumer": "the dashboard's Approve and the merge gate"},
     "ticket-pipeline": {"machine": "both", "goal": "project:marvin", "reporter": "ticket stages (ticket_stages.py)",
                         "healthy": "a scan in the last 2 h; no breaker tripped", "consumer": "Activity and MR Review"},
-    "architecture-review": {"machine": "mini", "goal": "ns1", "reporter": "suggestions.md",
+    "architecture-review": {"machine": "mini", "goal": "ns1", "reporter": "the inbox's suggestions pile",
                             "healthy": "last run exit 0", "consumer": "the session-start report (suggestion count)"},
     "auto-fix": {"machine": "mini", "goal": "ns1", "reporter": "its daily PR (auto-fix/<date>), plus auto-fix-log.md",
                  "healthy": "last run exit 0", "consumer": "the owner, via MR Review"},

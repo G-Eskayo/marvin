@@ -25,6 +25,12 @@ granted to the LLM as a tool — keeps "never implement without approval"
 intact (the LLM can propose, a deterministic post-step can format, but only
 the wrapper decides what's safe to run non-interactively).
 
+Suggestions moved into the inbox (lib/inbox.py, ADR 0083). Once the inbox's suggestions pile exists, the reviewer
+reads a snapshot of it (STATE_DIR/suggestions-now.md, for duplicates) and writes its new entries, in the same entry
+format, to STATE_DIR/new-suggestions.md; this script then adds them through inbox.import_text (keyed by content, so
+nothing is added twice) and deletes that file. The old suggestions.md stays a read-only backup. Until the pile exists
+it works as before: the reviewer appends to suggestions.md and sort_suggestions.py re-sorts it.
+
 Run standalone: ~/.agents/venv/bin/python background_architecture_review.py
 """
 from __future__ import annotations
@@ -37,6 +43,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path.home() / ".agents" / "lib"))
 from hook_errors import log_hook_error  # noqa: E402
+import inbox  # noqa: E402
 from claude_bin import resolve_claude_bin as _resolve_claude_bin  # noqa: E402
 import marvin_launcher  # noqa: E402
 
@@ -49,6 +56,8 @@ STATE_DIR = CLAUDE_DIR / "architecture-review"
 CURSOR_FILE = STATE_DIR / "chunk-cursor.json"
 LOCK_FILE = STATE_DIR / ".last-run"
 LOG_FILE = STATE_DIR / "background-review.log"
+SNAPSHOT_FILE = STATE_DIR / "suggestions-now.md"     # the inbox's suggestions, for the reviewer to read (inbox mode)
+STAGING_FILE = STATE_DIR / "new-suggestions.md"      # the reviewer's new entries, imported after the run (inbox mode)
 
 LINE_THRESHOLD = 80
 ROUTING_ENTRY_THRESHOLD = 20
@@ -165,8 +174,42 @@ This run is scoped to ONE chunk of the whole system, not everything — chunked 
 
 Trigger reason for this run: {trigger_reason}
 
-Append your findings to ~/.claude/suggestions.md using the exact entry format from SKILL.md. Only queue suggestions that pass the Suggestion Bar (concrete, measurable, net positive). If you find nothing that passes the bar in this chunk, write nothing — do not force suggestions to justify the run.
+{destination} Only queue suggestions that pass the Suggestion Bar (concrete, measurable, net positive). If you find nothing that passes the bar in this chunk, write nothing — do not force suggestions to justify the run.
 """
+
+MD_DESTINATION = "Append your findings to ~/.claude/suggestions.md using the exact entry format from SKILL.md."
+INBOX_DESTINATION = """The suggestions backlog now lives in MARVIN's inbox, not in ~/.claude/suggestions.md (that file is a read-only backup: never edit it). Every existing suggestion, in priority order, is in {snapshot}: read it to avoid duplicates. Write your new findings, using the exact entry format from SKILL.md (one `## Title` block each), to {staging} — the only file you write. It is added to the inbox after you finish."""
+
+
+def _inbox_mode() -> bool:
+    return inbox.pile_exists("suggestions")
+
+
+def _write_snapshot() -> None:
+    """Every suggestion in the inbox, rendered in the entry format, in ADR 0017's order."""
+    listed = inbox.list_items("suggestions")
+    text = "# Suggestions (snapshot of the inbox; read-only)\n\n" + "\n".join(
+        inbox.render_suggestion(i) for i in listed["items"])
+    SNAPSHOT_FILE.write_text(text)
+
+
+def _import_staged(before_md: str) -> str:
+    """Add the reviewer's new entries to the inbox; a summary for the log. Also picks up anything it appended to the
+    old file by habit (keyed by content, so only new entries are added)."""
+    notes = []
+    if STAGING_FILE.exists() or STAGING_FILE.is_symlink():
+        try:
+            text = inbox.read_legacy(STAGING_FILE)  # refuses a symlink or an oversized file
+            out = inbox.import_text("suggestions", text, source="architecture-review")
+            notes.append(f"{out['added']} new suggestion(s) added to the inbox ({out['already_there']} already there)")
+        except inbox.InboxError as exc:
+            notes.append(f"staged suggestions not imported: {exc}")
+        STAGING_FILE.unlink()
+    after_md = SUGGESTIONS_FILE.read_text(errors="replace") if SUGGESTIONS_FILE.exists() else ""
+    if after_md != before_md:
+        out = inbox.import_text("suggestions", after_md, source="architecture-review")
+        notes.append(f"the reviewer wrote to the old suggestions.md; {out['added']} entry(ies) from it added")
+    return "; ".join(notes) or "no new suggestions from this chunk"
 
 
 def run_review(chunk: dict, trigger_reason: str, is_threshold_trigger: bool) -> None:
@@ -180,32 +223,42 @@ def run_review(chunk: dict, trigger_reason: str, is_threshold_trigger: bool) -> 
         return
 
     chunk_paths = _render_chunk_paths(chunk["paths"])
-    prompt = REVIEW_PROMPT_TEMPLATE.format(chunk_paths=chunk_paths, trigger_reason=trigger_reason)
+    use_inbox = _inbox_mode()
+    if use_inbox:
+        STAGING_FILE.unlink(missing_ok=True)
+        _write_snapshot()
+        destination = INBOX_DESTINATION.format(snapshot=SNAPSHOT_FILE, staging=STAGING_FILE)
+    else:
+        destination = MD_DESTINATION
+    prompt = REVIEW_PROMPT_TEMPLATE.format(chunk_paths=chunk_paths, trigger_reason=trigger_reason, destination=destination)
     before = SUGGESTIONS_FILE.read_text() if SUGGESTIONS_FILE.exists() else ""
 
     with LOG_FILE.open("a") as log:
         log.write(f"\n=== run {datetime.now(timezone.utc).isoformat()} — chunk: {chunk['name']} — trigger: {trigger_reason} ===\n")
         log.flush()
+        ok = False
         try:
             result = marvin_launcher.launch("background-analyst", prompt, tools="Read,Write,Edit",
                                             permission_mode="bypassPermissions", timeout=CLAUDE_CALL_TIMEOUT)
             log.write(result.text + (f"\n{result.stderr}" if result.stderr else "") + "\n")
             log.write(f"=== claude exit {result.exit_code} ===\n")
-            if result.exit_code != 0:
-                log.flush()
-                return  # don't advance cursor or sort on a failed run
+            ok = result.exit_code == 0
         except subprocess.TimeoutExpired:
             log.write(f"=== TIMED OUT after {CLAUDE_CALL_TIMEOUT}s — chunk may be too large, consider splitting it further ===\n")
+        if use_inbox:
+            # Whatever it wrote is kept, as it was when it appended to suggestions.md directly, even on a failed run.
+            log.write(f"=== inbox: {_import_staged(before)} ===\n")
+        if not ok:
             log.flush()
             return  # don't advance cursor or sort on a failed run
 
-        sort_proc = subprocess.run(
-            [sys.executable, str(SORT_SCRIPT)], capture_output=True, text=True, timeout=30,
-        )
-        log.write(f"=== sort_suggestions: {sort_proc.stderr.strip()} ===\n")
-
-        after = SUGGESTIONS_FILE.read_text() if SUGGESTIONS_FILE.exists() else ""
-        log.write("=== new suggestion(s) queued ===\n" if after != before else "=== no new suggestions from this chunk ===\n")
+        if not use_inbox:
+            sort_proc = subprocess.run(
+                [sys.executable, str(SORT_SCRIPT)], capture_output=True, text=True, timeout=30,
+            )
+            log.write(f"=== sort_suggestions: {sort_proc.stderr.strip()} ===\n")
+            after = SUGGESTIONS_FILE.read_text() if SUGGESTIONS_FILE.exists() else ""
+            log.write("=== new suggestion(s) queued ===\n" if after != before else "=== no new suggestions from this chunk ===\n")
 
     LOCK_FILE.write_text(str(time.time()))
     if is_threshold_trigger:

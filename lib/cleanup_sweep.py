@@ -773,7 +773,7 @@ def run_daily_sweep(
         pass
 
     if not pull_only:
-        _default_outcome_check()   # rewrites ~/.claude/suggestions.md (ticket promotion): never on the box
+        _default_outcome_check()   # ticket promotion rewrites suggestions (the inbox pile, or suggestions.md before its import): never on the box
 
     compressed = _default_compress_transcripts()
 

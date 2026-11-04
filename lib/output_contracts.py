@@ -10,6 +10,9 @@ the consumer that will.
 
     output_contracts.py health    # the findings, as JSON
     output_contracts.py promote   # ticket promotion: the top pending suggestions, capped per day
+
+Suggestions and the improvement queue live in the inbox (lib/inbox.py, ADR 0083). Until a pile's inbox folder exists
+(its one-time import hasn't run), they are read from the old markdown file as before.
 """
 from __future__ import annotations
 
@@ -22,6 +25,7 @@ from pathlib import Path
 from typing import Callable
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
+import inbox  # noqa: E402
 
 CLAUDE = Path.home() / ".claude"
 SUGGESTIONS = CLAUDE / "suggestions.md"
@@ -72,12 +76,30 @@ def _read(path: Path) -> str:
     return path.read_text(errors="ignore") if path.exists() else ""
 
 
+def inbox_state(pile: str) -> tuple[list[datetime], list[datetime]]:
+    """An inbox pile's waiting items (open, by the day added) and consumed ones (by the day their status changed)."""
+    pending, consumed = [], []
+    for item in inbox.list_items(pile)["items"]:
+        st = item["status"]
+        if st["state"] == "open":
+            if item.get("added"):
+                pending.append(_day(item["added"]))
+        elif st.get("on"):
+            consumed.append(_day(st["on"]))
+    return pending, consumed
+
+
 def _suggestions() -> tuple[list[datetime], list[datetime]]:
+    if inbox.pile_exists("suggestions"):
+        return inbox_state("suggestions")
     return suggestions_state(_read(SUGGESTIONS))
 
 
 def _queue() -> tuple[list[datetime], list[datetime]]:
-    pending = [_day(m) for m in re.findall(r"^## " + _DATE, _read(QUEUE), re.M)]
+    if inbox.pile_exists("improvement-queue"):
+        pending = inbox_state("improvement-queue")[0]
+    else:
+        pending = [_day(m) for m in re.findall(r"^## " + _DATE, _read(QUEUE), re.M)]
     consumed = [_day(m.group(1)) for m in re.finditer(r"^## " + _DATE + r"T[^\n]*\n(\d+) candidate\(s\) found, ([1-9]\d*) fixed",
                                                         _read(AUTO_FIX_LOG), re.M)]
     return pending, consumed
@@ -114,9 +136,9 @@ def _brief() -> tuple[list[datetime], list[datetime]]:
 
 
 CONTRACTS: list[Contract] = [
-    Contract("architecture-review", "~/.claude/suggestions.md",
+    Contract("architecture-review", "the inbox's suggestions pile (~/.claude/inbox/suggestions)",
              f"ticket promotion (daily, top {PROMOTE_PER_DAY}, as needs-triage tickets) or Gil", 14, _suggestions),
-    Contract("improvement-sweep", "~/.claude/improvement-queue.md", "auto-fix (naming/verbosity/KISS, as a daily PR) or Gil", 14, _queue),
+    Contract("improvement-sweep", "the inbox's improvement-queue pile (~/.claude/inbox/improvement-queue)", "auto-fix (naming/verbosity/KISS, as a daily PR) or Gil", 14, _queue),
     Contract("safety-monitor", "~/.claude/quarantine.md", "Gil's approve/deny review", 7, _quarantine),
     Contract("daily-digest", "~/.claude/daily-digest/<day>.md", "the morning brief", 1, _digest("daily-digest")),
     Contract("research-digest", "~/.claude/research-digest/<day>.md", "the morning brief", 1, _digest("research-digest")),
@@ -162,37 +184,67 @@ def health_findings(now: datetime | None = None) -> list[dict]:
 
 # ── ticket promotion: the consumer the analysts never had ──────────────────────────────────────────────────
 
+def decision_status(decision: dict) -> tuple[str, str] | None:
+    """Ticket promotion's decision as (state, note), or None when no ticket came out (stays pending, tried again
+    another day)."""
+    ref = decision.get("ticket_ref")
+    if decision.get("promoted") and ref == "NOTHING_LEFT":
+        return "resolved", "(ticket promotion: its own updates say nothing remains)"
+    if decision.get("promoted") and ref:
+        return "promoted", str(ref)
+    if decision.get("promoted"):
+        return None
+    reason = re.sub(r"\s+", " ", decision.get("reasoning") or "").strip()[:160]
+    return "declined", f"({reason})"
+
+
+def _default_promote() -> Callable[[str], dict]:
+    import ticket_promotion
+    return ticket_promotion.promote_finding
+
+
 def promote_pending(text: str, now: datetime, limit: int = PROMOTE_PER_DAY,
                     promote: Callable[[str], dict] | None = None) -> str:
     """Send the top `limit` pending suggestions (the file is priority-sorted) through ticket promotion, and
-    record each decision in the suggestion's Status line, which is what makes it consumed."""
-    if promote is None:
-        import ticket_promotion
-        promote = ticket_promotion.promote_finding
+    record each decision in the suggestion's Status line, which is what makes it consumed. (The legacy file, used
+    only until the suggestions pile is imported into the inbox.)"""
+    promote = promote or _default_promote()
     today = now.date().isoformat()
     head, *blocks = re.split(r"^(?=## )", text, flags=re.M)
     done = 0
     for i, block in enumerate(blocks):
         if done >= limit or not re.search(r"^\*\*Status\*\*:\s*pending\b", block, re.M):
             continue
-        decision = promote(block.strip())
+        decision = decision_status(promote(block.strip()))
         done += 1
-        ref = decision.get("ticket_ref")
-        if decision.get("promoted") and ref == "NOTHING_LEFT":
-            status = f"resolved {today} (ticket promotion: its own updates say nothing remains)"
-        elif decision.get("promoted") and ref:
-            status = f"promoted {today} {ref}"
-        elif decision.get("promoted"):
-            continue  # no ticket came out: stays pending, tried again another day
-        else:
-            reason = re.sub(r"\s+", " ", decision.get("reasoning") or "").strip()[:160]
-            status = f"declined {today} ({reason})"
-        blocks[i] = re.sub(r"^\*\*Status\*\*:\s*pending\b.*$", f"**Status**: {status}", block, count=1, flags=re.M)
+        if decision is None:
+            continue
+        state, note = decision
+        blocks[i] = re.sub(r"^\*\*Status\*\*:\s*pending\b.*$", f"**Status**: {state} {today} {note}", block, count=1,
+                           flags=re.M)
     return head + "".join(blocks)
+
+
+def promote_inbox(now: datetime, limit: int = PROMOTE_PER_DAY, promote: Callable[[str], dict] | None = None,
+                  root: Path | None = None) -> int:
+    """The same, for the inbox: the top `limit` open suggestions in ADR 0017's order, each decision recorded as the
+    item's status. Returns how many were tried."""
+    promote = promote or _default_promote()
+    tried = 0
+    for item in inbox.open_items("suggestions", root)[:limit]:
+        decision = decision_status(promote(inbox.render_suggestion(item).strip()))
+        tried += 1
+        if decision is not None:
+            state, note = decision
+            inbox.act("suggestions", item["id"], state, {"note": note}, root, now.date())
+    return tried
 
 
 def run_promotion(now: datetime | None = None) -> None:
     now = now or datetime.now(timezone.utc)
+    if inbox.pile_exists("suggestions"):
+        promote_inbox(now)
+        return
     if not SUGGESTIONS.exists():
         return
     updated = promote_pending(SUGGESTIONS.read_text(), now)

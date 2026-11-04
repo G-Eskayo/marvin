@@ -23,6 +23,7 @@ HANDOFFS_DIR = CLAUDE_DIR / "handoffs"
 sys.path.insert(0, str(Path.home() / ".agents" / "lib"))
 from notify import notify  # noqa: E402
 import marvin_launcher  # noqa: E402
+import inbox  # noqa: E402
 
 RESULTS_MD   = Path.home() / ".agents" / "bench" / "RESULTS.md"
 QA_SCRIPTS   = Path.home() / ".agents" / "skills" / "qa-agent" / "scripts"
@@ -120,6 +121,17 @@ def qa_kb_summary() -> str:
 
 
 def improvement_queue_summary() -> str:
+    root = CLAUDE_DIR / "inbox"
+    if inbox.pile_exists("improvement-queue", root):  # moved into the inbox (ADR 0083)
+        items = inbox.list_items("improvement-queue", root)["items"]
+        if not items:
+            return "(improvement queue is empty)"
+        waiting = sum(1 for i in items if i["status"]["state"] == "open")
+        recent = sorted(items, key=lambda i: (i.get("added") or "", i["id"]))[-15:]
+        lines = [f"{waiting} of {len(items)} item(s) still open. Most recent:"]
+        lines += [f"- {i.get('added') or '?'} {i['fields'].get('project', '')}: {i['title']}"
+                  + ("" if i["status"]["state"] == "open" else f" [{inbox.mark_of(i)}]") for i in recent]
+        return "\n".join(lines)
     queue = CLAUDE_DIR / "improvement-queue.md"
     if not queue.exists():
         return "(no improvement queue)"

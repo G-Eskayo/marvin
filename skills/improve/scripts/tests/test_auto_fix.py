@@ -527,3 +527,83 @@ def test_a_script_any_launchd_job_runs_is_core_whatever_its_label_prefix(tmp_pat
     monkeypatch.setattr(af, "LAUNCH_AGENTS_DIR", agents_dir)
     monkeypatch.setattr(af, "HOOK_SETTINGS_PATHS", (tmp_path / "none.json", tmp_path / "none2.json"))
     assert af._core_files() == {script.resolve()}
+
+
+# ── after the move to the inbox (ADR 0083): the same run, the queue read and marked in the inbox ──────────────────
+
+import inbox  # noqa: E402
+
+
+@pytest.fixture
+def ienv(env, monkeypatch):
+    """env, with the queue already imported into an inbox under the temp dir; the .md must never change again."""
+    root = env.tmp / ".claude" / "inbox"
+    monkeypatch.setattr(inbox, "default_root", lambda: root)
+    inbox.import_legacy("improvement-queue", root, file=env.queue)
+    env.md_before = env.queue.read_text()
+    env.items = lambda: {i["fields"]["entry"]: i for i in inbox.list_items("improvement-queue", root)["items"]}
+    env.root = root
+    return env
+
+
+def _states(env):
+    return sorted((i["status"]["state"], i["status"].get("note")) for i in env.items().values())
+
+
+def test_inbox_a_good_batch_opens_one_pr_and_marks_each_item_in_pr(ienv):
+    run(ienv)
+    assert ienv.gh.created() == 1
+    assert _states(ienv) == [("in_pr", f"in PR #901 ({TODAY})")] * 3
+    assert ienv.queue.read_text() == ienv.md_before
+    body = ienv.gh.bodies[0]
+    assert all(e in body for e in ienv.items())  # the PR lists every item's queue entry
+
+
+def test_inbox_items_become_done_once_the_pr_merges_and_tried_if_it_closes(ienv):
+    run(ienv)
+    ienv.gh.prs["901"] = {"number": 901, "state": "MERGED"}
+    af.refresh_pr_marks()
+    assert _states(ienv) == [("done", "done, PR #901 merged")] * 3
+    assert all(len(i["history"]) == 2 for i in ienv.items().values())  # in PR, then done: both recorded
+
+
+def test_inbox_a_fix_that_breaks_a_test_marks_items_tried(ienv):
+    ienv.fixer["fn"] = lambda p, cwd: (cwd / "lib" / "widget.py").write_text(WIDGET.replace("result + x", "result - x"))
+    run(ienv)
+    assert ienv.gh.created() == 0
+    assert _states(ienv) == [("tried", f"tried {TODAY}, tests failed")] * 3
+
+
+def test_inbox_done_items_are_not_picked_again_and_putting_one_back_open_makes_it_eligible(ienv):
+    run(ienv)
+    ienv.gh.prs["901"] = {"number": 901, "state": "MERGED"}
+    af.refresh_pr_marks()
+    assert [i for i in af.load_queue() if not i["mark"]] == []
+    some = next(iter(ienv.items().values()))
+    inbox.act("improvement-queue", some["id"], "open", None, ienv.root)
+    assert [i["entry"] for i in af.load_queue() if not i["mark"]] == [some["fields"]["entry"]]
+
+
+def test_inbox_a_skipped_item_gets_its_note(ienv):
+    inbox.add("improvement-queue", inbox.queue_line_item(
+        "- **[NAMING]** Generic parameter name `x` in `g()` at line 1. (`lib/gone.py`)", "marvin", "2026-07-02", "t"),
+        ienv.root)
+    run(ienv)
+    gone = next(i for e, i in ienv.items().items() if "gone.py" in e)
+    assert gone["status"]["state"] == "skipped" and gone["status"]["note"] == f"skipped {TODAY}, file no longer exists"
+
+
+def test_inbox_untyped_and_broken_items_are_ignored_not_fatal(ienv):
+    inbox.add("improvement-queue", inbox.queue_line_item("- just some text", "marvin", "2026-07-02", "t"), ienv.root)
+    (ienv.root / "improvement-queue" / "junk.json").write_text("{")
+    assert len(af.load_queue()) == 3
+    run(ienv)
+    assert ienv.gh.created() == 1
+
+
+def test_inbox_an_empty_pile_launches_nothing(env, monkeypatch):
+    root = env.tmp / ".claude" / "inbox"
+    monkeypatch.setattr(inbox, "default_root", lambda: root)
+    (root / "improvement-queue").mkdir(parents=True)
+    run(env)
+    assert env.launches == [] and "no queued items" in env.log.read_text()

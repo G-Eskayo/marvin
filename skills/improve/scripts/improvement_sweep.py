@@ -4,6 +4,10 @@ and append the top code-quality issues to ~/.claude/improvement-queue.md.
 
 Runs after qa_session_capture so both hooks fire on the same handoff event.
 Never blocks or errors the originating tool — any failure exits silently.
+
+The queue moved into the inbox (lib/inbox.py, ADR 0083): once its improvement-queue pile exists, each finding is added
+there as one item keyed by its bullet text, so a finding seen again on a later day is the same item (its first date and
+any auto-fix status kept). Until the pile exists, findings are appended to improvement-queue.md as before.
 """
 from __future__ import annotations
 import json
@@ -20,6 +24,9 @@ SAFETY_MONITOR_SCRIPTS = Path.home() / ".agents" / "skills" / "safety-monitor" /
 
 sys.path.insert(0, str(Path.home() / ".agents" / "lib"))
 from hook_errors import log_hook_error  # noqa: E402
+import inbox  # noqa: E402
+
+PILE = "improvement-queue"
 
 sys.path.insert(0, str(QA_SCRIPTS))
 sys.path.insert(0, str(SAFETY_MONITOR_SCRIPTS))
@@ -128,15 +135,32 @@ def _last_block_issue_lines(project_name: str) -> list[str] | None:
     return None
 
 
+def _use_inbox() -> bool:
+    return inbox.pile_exists(PILE)
+
+
+def queue_snapshot() -> str:
+    """What changed-or-not is judged by: the queue file's text, or the inbox pile's item ids."""
+    if _use_inbox():
+        return "\n".join(sorted(i["id"] for i in inbox.list_items(PILE)["items"]))
+    return QUEUE_FILE.read_text() if QUEUE_FILE.exists() else ""
+
+
 def append_to_queue(project_name: str, issues: list[dict]) -> bool:
     """Returns True if the block was appended (or skipped as a pure repeat of
     the last one queued for this project), False if safety-monitor
     quarantined it instead (garbled/mismatched entry — see rubrics/improvement_sweep.md)."""
     issue_lines = [format_issue(issue) for issue in issues]
-    if issue_lines == _last_block_issue_lines(project_name):
+    date_str = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+    use_inbox = _use_inbox()
+    if use_inbox:
+        items = [inbox.queue_line_item(line, project_name, date_str, "improvement-sweep") for line in issue_lines]
+        known = {i.get("key") for i in inbox.list_items(PILE)["items"]}
+        if all(i["key"] in known for i in items):
+            return True  # every finding is already queued (or already handled)
+    elif issue_lines == _last_block_issue_lines(project_name):
         return True
 
-    date_str = datetime.now(timezone.utc).strftime("%Y-%m-%d")
     lines = [f"\n---\n## {date_str} — {project_name}\n"]
     lines.extend(issue_lines)
     lines.append(
@@ -153,7 +177,9 @@ def append_to_queue(project_name: str, issues: list[dict]) -> bool:
     if _SAFETY_MONITOR_AVAILABLE and not pass_or_quarantine(block, loop_name="improvement_sweep"):
         return False
 
-    if not QUEUE_FILE.exists():
+    if use_inbox:
+        inbox.add_many(PILE, items)
+    elif not QUEUE_FILE.exists():
         QUEUE_FILE.write_text("# Improvement Queue\n\n" + block)
     else:
         existing = QUEUE_FILE.read_text()
@@ -167,8 +193,9 @@ def _report_outcome(appended: bool, before: str, after: str, project_name: str, 
                 f"quarantined by safety-monitor — see ~/.claude/quarantine.md")
     if after == before:
         return (f"\n[improve] {count} improvement(s) for '{project_name}' "
-                f"already queued (identical to the last block) — skipped")
-    return f"\n[improve] {count} improvement(s) queued for '{project_name}' → ~/.claude/improvement-queue.md"
+                f"already queued (nothing new) — skipped")
+    where = "the inbox (improvement-queue)" if _use_inbox() else "~/.claude/improvement-queue.md"
+    return f"\n[improve] {count} improvement(s) queued for '{project_name}' → {where}"
 
 
 # ── main ───────────────────────────────────────────────────────────────────────
@@ -220,9 +247,9 @@ def main() -> None:
         return
 
     try:
-        before = QUEUE_FILE.read_text() if QUEUE_FILE.exists() else ""
+        before = queue_snapshot()
         appended = append_to_queue(project_name, issues)
-        after = QUEUE_FILE.read_text() if QUEUE_FILE.exists() else ""
+        after = queue_snapshot()
         print(_report_outcome(appended, before, after, project_name, len(issues)), flush=True)
     except Exception as e:
         log_hook_error("improvement_sweep", f"writing queue/quarantine for {project_name}", e)
