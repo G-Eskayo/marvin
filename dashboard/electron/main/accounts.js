@@ -70,11 +70,11 @@ export function createAccounts({ machine = () => null, execFile, statusPath = AC
   return {
     // fresh=false: the saved view at once. fresh=true: this machine checked now (a few seconds), merged in.
     async list({ fresh = false } = {}) {
-      const saved = readAccountsStatus(statusPath, read)
+      const saved = { ...readAccountsStatus(statusPath, read), thisMachine: machine() }   // the card marks "this machine"
       if (!fresh) return saved
       try {
         const { stdout } = await execFile(PY, [ACCOUNTS_PY, 'check', '--json'], { timeout: 90_000 })
-        return mergeLocal(saved, JSON.parse(stdout), machine())
+        return { ...mergeLocal(saved, JSON.parse(stdout), machine()), thisMachine: machine() }
       } catch (err) {
         return { ...saved, freshProblem: String(err?.message || err).split('\n')[0].slice(0, 200) }
       }
