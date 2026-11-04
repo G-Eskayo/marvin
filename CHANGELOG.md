@@ -1,5 +1,7 @@
 # Changelog
 
+- Chat list data for the dashboard: both Macs, the other Mac read-only, honest when WezTerm is down ([#1093](https://github.com/G-Eskayo/marvin/pull/1093))
+
 - Main red: the gate progress test pins the check list from before the gate ran the secret scan ([#1104](https://github.com/G-Eskayo/marvin/pull/1104))
 
 - Open session focuses the existing chat instead of opening a duplicate ([#1090](https://github.com/G-Eskayo/marvin/pull/1090))
