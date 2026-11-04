@@ -1,5 +1,7 @@
 # Changelog
 
+- Publish the MARVIN site to marvin.gileskayo.me on GitHub Pages from main ([#1126](https://github.com/G-Eskayo/marvin/pull/1126))
+
 - Wire MR Review by project into the real tab (#767), with one set of project names everywhere ([#935](https://github.com/G-Eskayo/marvin/pull/935))
 
 - Merge queue: a PR set aside as CI_PENDING comes back by itself when its checks finish ([#1109](https://github.com/G-Eskayo/marvin/pull/1109))
