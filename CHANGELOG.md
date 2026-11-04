@@ -1,5 +1,7 @@
 # Changelog
 
+- Pipeline verify timeout counts the wait for the test slot, so builds behind merges are parked without running a test ([#1120](https://github.com/G-Eskayo/marvin/pull/1120))
+
 - Publish the MARVIN site to marvin.gileskayo.me on GitHub Pages from main ([#1126](https://github.com/G-Eskayo/marvin/pull/1126))
 
 - Wire MR Review by project into the real tab (#767), with one set of project names everywhere ([#935](https://github.com/G-Eskayo/marvin/pull/935))
