@@ -1,0 +1,22 @@
+{
+  "name": "MARVIN WezTerm palette (celestial navigation, accessible)",
+  "notes": "Decided with Gil 2026-11-03 (PRD #1058, rule in marvin#1062). Text is MARVIN Term, so the pixel level (7:1) applies. The AAA fixes replace red #ff3b2f (5.8), secondary #6b551f (2.9) and labels #8a7030 (4.3).",
+  "levels": {"text": 4.5, "large": 3.0, "ui": 3.0, "pixel": 7.0},
+  "pairs": [
+    {"what": "main text (amber)", "fg": "#f0b32a", "bg": "#05040A", "level": "pixel"},
+    {"what": "ok / phosphor green", "fg": "#54ff8a", "bg": "#05040A", "level": "pixel"},
+    {"what": "light text (moon)", "fg": "#cfd6e6", "bg": "#05040A", "level": "pixel"},
+    {"what": "in progress (orange)", "fg": "#ff6a1f", "bg": "#05040A", "level": "pixel"},
+    {"what": "errors (red, AAA fix)", "fg": "#ff645a", "bg": "#05040A", "level": "pixel"},
+    {"what": "blue", "fg": "#8fb4ff", "bg": "#05040A", "level": "pixel"},
+    {"what": "cyan", "fg": "#7fe0c8", "bg": "#05040A", "level": "pixel"},
+    {"what": "secondary text, ANSI bright black (AAA fix)", "fg": "#b89235", "bg": "#05040A", "level": "pixel"},
+    {"what": "inactive tab labels (AAA fix)", "fg": "#b6933f", "bg": "#05040A", "level": "pixel"},
+    {"what": "active tab label on amber", "fg": "#05040A", "bg": "#f0b32a", "level": "pixel"},
+    {"what": "focused glass (60%) over a mid-grey window", "fg": "#f0b32a", "bg": "#05040A", "opacity": 0.6, "backdrop": "#808080", "level": "text"},
+    {"what": "focused glass (60%) over a white window", "fg": "#f0b32a", "bg": "#05040A", "opacity": 0.6, "backdrop": "#ffffff", "level": "text",
+     "exception": "Gil chose 30% unfocused / 60% focused glass on 2026-11-03 knowing it falls below AA over a white window; the glass/solid toggle (#1073) is the escape hatch"},
+    {"what": "unfocused glass (30%) over a white window", "fg": "#f0b32a", "bg": "#05040A", "opacity": 0.3, "backdrop": "#ffffff", "level": "text",
+     "exception": "Gil chose 30% unfocused glass on 2026-11-03; unfocused text is glanced at, the toggle (#1073) gives solid when reading"}
+  ]
+}

@@ -676,7 +676,7 @@ def _score_ready(ready: list[dict], issues: list[dict], open_numbers: set[int], 
 
 
 def _order_key(ticket: dict) -> tuple:
-    """A main-red ticket (lib/main_red.py) first of all. Then the priority tier: the label a person (or the prioritizer) set, else the tier the ticket's own score earns
+    """A main-red ticket (lib/main_red.py) first of all, then the owner's answers to build (owner_decisions.py). Then the priority tier: the label a person (or the prioritizer) set, else the tier the ticket's own score earns
     (priority_for, the same mapping the prioritizer labels with). Within a tier a labelled ticket goes first, then bugs
     (#237, ADR 0054), then the
     urgency score, deadlines weighing heavily, then age. A near hard deadline still lands a tier above a bare bug."""
@@ -686,8 +686,12 @@ def _order_key(ticket: dict) -> tuple:
         rank = ticket_policy.PRIORITY_LABELS.index(ticket_policy.priority_for(ticket["_score"])) if "_score" in ticket else UNSCORED_RANK
     names = ticket_policy.label_names(ticket)
     is_bug = "bug" in names
-    # A red main blocks every merge, so the ticket that fixes it goes before all others, p0s included (#826).
-    return ("main-red" not in names, rank, not labelled, not is_bug, -ticket.get("_score", 0.0), ticket["createdAt"])
+    # A red main blocks every merge, so the ticket that fixes it goes before all others, p0s included (#826). Next come
+    # the owner's answers to build: the merge queue holds those PRs until they are built, so each one is a merge
+    # waiting (2026-11-03: nine sat behind 117 ready tickets).
+    answers = "owner-decisions" in names
+    return ("main-red" not in names, not answers, rank, not labelled, not is_bug, -ticket.get("_score", 0.0),
+            ticket["createdAt"])
 
 
 def _retry_not_before(repo: str, ticket: dict, now: datetime | None = None) -> datetime | None:
