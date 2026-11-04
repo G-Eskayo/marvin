@@ -100,7 +100,9 @@ contextBridge.exposeInMainWorld('api', {
   },
   marvin: {
     // Opens a MARVIN session in WezTerm on this Mac: { ticket } for its worktree, or no ticket for home.
-    openSession: (request) => ipcRenderer.invoke('marvin:openSession', request)
+    openSession: (request) => ipcRenderer.invoke('marvin:openSession', request),
+    // marvin#1064: { macs: [{ id, here, status: 'ok'|'wezterm-down'|'unreachable'|'error', chats: [...] }] }
+    listChats: () => ipcRenderer.invoke('marvin:listChats')
   },
   proposals: {
     list: () => ipcRenderer.invoke('proposals:list'),
