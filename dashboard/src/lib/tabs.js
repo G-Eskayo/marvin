@@ -1,5 +1,7 @@
 export const TABS = [
   { id: 'metrics', label: 'Metrics' },
+  // Workshop (#862, ADR 0080) ships beside Activity and MR Review until it covers everything they show.
+  { id: 'workshop', label: 'Workshop' },
   { id: 'mr-review', label: 'MR Review' },
   { id: 'health', label: 'Health' },
   { id: 'docs', label: 'Docs' },

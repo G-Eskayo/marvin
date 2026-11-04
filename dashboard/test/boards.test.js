@@ -2,7 +2,7 @@ import { describe, it, expect, beforeEach } from 'vitest'
 import { mkdtempSync, rmSync, writeFileSync } from 'fs'
 import { tmpdir } from 'os'
 import path from 'path'
-import { readRegistry, loadBoard, clearCrossProjectCache } from '../electron/main/boards.js'
+import { readRegistry, loadBoard, clearCrossProjectCache, prsOfProjects } from '../electron/main/boards.js'
 
 const tmp = () => mkdtempSync(path.join(tmpdir(), 'boards-'))
 
@@ -275,6 +275,17 @@ describe('withProjectStatus', () => {
     expect(withProjectStatus([{ repo: 'G-Eskayo/marvin' }], null)[0].status).toBe('recent')
   })
 
+  it('names each board the one way, from overrides.json (marvin#848), whatever the registry calls it', () => {
+    const c = { projects: [{ id: 'clarity-captions', name: 'clarity-captions', repo: 'G-Eskayo/clarity-captions', status: 'active' }, { id: 'marvin', name: 'marvin', repo: 'G-Eskayo/marvin', status: 'active' }] }
+    const out = withProjectStatus([{ repo: 'G-Eskayo/clarity-captions', name: 'clarity-captions' }, { repo: 'G-Eskayo/marvin', name: 'marvin' }, { repo: 'G-Eskayo/unknown', name: 'unknown' }], c, { 'clarity-captions': { name: 'Seal Speak' }, marvin: { name: 'MARVIN' } })
+    expect(out.map((b) => b.name)).toEqual(['Seal Speak', 'MARVIN', 'unknown'])
+    expect(out[0].repo).toBe('G-Eskayo/clarity-captions') // the repo stays the key
+  })
+
+  it('a board keeps its registry name when there is no catalog or no override', () => {
+    expect(withProjectStatus([{ repo: 'G-Eskayo/marvin', name: 'marvin' }], null, null)[0].name).toBe('marvin')
+  })
+
   it('passes through lastActivity from the catalog', () => {
     const out = withProjectStatus([{ repo: 'G-Eskayo/marvin' }, { repo: 'G-Eskayo/Old_Thing' }], cat)
     expect(out[0].lastActivity).toBe('2026-10-08T12:00:00Z')
@@ -381,5 +392,46 @@ describe('fetchCrossProjectIssues', () => {
     const issues = await fetchCrossProjectIssues('G-Eskayo/marvin', registryRepos, gh)
     expect(issues[0].state).toBe('OPEN')
     expect(issues[1].state).toBe('CLOSED')
+  })
+})
+
+describe('PRs in other projects that name a ticket here (marvin#1004)', () => {
+  beforeEach(() => clearCrossProjectCache())
+  const t = (n, over = {}) => ({ number: n, title: `T${n}`, state: 'OPEN', labels: [], body: '', url: 'u', createdAt: '2026-10-01T00:00:00Z', ...over })
+  const p = (n, repo, body) => ({ number: n, title: `PR ${n}`, url: `p${n}`, state: 'OPEN', isDraft: false, body, repo })
+
+  it('a marvin-instance PR that closes marvin #623 puts #623 in review on the marvin board', async () => {
+    const data = { issues: [t(623)], prs: [] }
+    const board = await loadBoard('G-Eskayo/marvin', { gh: async () => '[]', data, otherPrs: [p(6, 'G-Eskayo/marvin-instance', 'Closes G-Eskayo/marvin#623')], stagesFor: () => ({}), liveNumbers: new Set() })
+    const review = board.columns.find((c) => c.id === 'review').cards
+    expect(review.map((c) => c.number)).toEqual([623])
+    expect(review[0].prs[0]).toMatchObject({ number: 6, repo: 'G-Eskayo/marvin-instance' })
+  })
+
+  it('a foreign ticket shown on this board (project: label) sees its own repo\'s PR', async () => {
+    const gh = async (args) => args[0] === 'search'
+      ? JSON.stringify([{ ...t(7), repository: { nameWithOwner: 'G-Eskayo/clarity-captions' }, labels: [{ name: 'project:marvin' }] }])
+      : '[]'
+    const registryRepos = [{ repo: 'G-Eskayo/marvin' }, { repo: 'G-Eskayo/clarity-captions' }]
+    const board = await loadBoard('G-Eskayo/marvin', { gh, registryRepos, data: { issues: [t(7)], prs: [] }, otherPrs: [p(9, 'G-Eskayo/clarity-captions', 'Part of #7')], stagesFor: () => ({}), liveNumbers: new Set() })
+    const review = board.columns.find((c) => c.id === 'review').cards
+    expect(review).toHaveLength(1)
+    expect(review[0]).toMatchObject({ number: 7, repo: 'G-Eskayo/clarity-captions' })
+    // the marvin #7 (same number) is not touched by clarity's bare "#7"
+    expect(board.columns.find((c) => c.id === 'backlog').cards.map((c) => c.repo)).toEqual([undefined])
+  })
+})
+
+describe('prsOfProjects', () => {
+  it('reads each other project once, tags every PR with its repo, and skips one that fails', async () => {
+    const seen = []
+    const getData = async (repo) => {
+      seen.push(repo)
+      if (repo === 'o/bad') throw new Error('404')
+      return { issues: [], prs: [{ number: 1, body: 'Closes o/r#2' }] }
+    }
+    const prs = await prsOfProjects(['o/r', 'o/a', 'o/bad', 'o/a'], getData, 'o/r')
+    expect(seen.sort()).toEqual(['o/a', 'o/bad'])
+    expect(prs).toEqual([{ number: 1, body: 'Closes o/r#2', repo: 'o/a' }])
   })
 })

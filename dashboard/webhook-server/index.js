@@ -12,6 +12,7 @@ import { resolveDeviceId, peerHosts, isPrimaryHost } from '../electron/main/devi
 import { sendFeedback, dropEntirely } from './deny.js'
 import { forwardRefreshPing } from './refresh_relay.js'
 import { announceMergeHost, relayMergeHostUp } from './merge_host_announce.js'
+import { createStageRelay, createLiveMerges, allowedPeerAddress, cleanStageMessage, stageFanOut } from './merge_stage_relay.js'
 import { loadGhToken } from './gh_auth.js'
 import { useGhGate } from '../electron/main/path.js'
 import { failureResponse } from './failure.js'
@@ -21,6 +22,9 @@ import { appendMerge, readMergeHistory } from './merge_history.js'
 import { appendError } from '../electron/main/error_log.js'
 import { readRebaseStatus } from './rebase_status.js'
 import { readLiveSessions } from './sessions.js'
+import { listLocalChats } from '../electron/main/chat_tabs.js'
+import { gateCheckNames } from './ci_status.js'
+import { engineRepo } from '../electron/main/instance.js'
 import { listHelpers } from './chat_helpers.js'
 import { startChangeWatch, createGithubProbe, startCheckWatch, createCheckProbe } from './gh_watch.js'
 import { createGithubFeedWriter } from './github_feed_writer.js'
@@ -166,7 +170,7 @@ const server = createServer(async (req, res) => {
   if (req.method === 'GET' && req.url === '/merge-queue') {
     res.writeHead(200, { 'Content-Type': 'application/json' }).end(JSON.stringify({
       repos: mergeQueue.snapshot(),
-      facts: { unbuilt: [...unbuiltCache.get()], unbuiltAt: unbuiltCache.at(), repairFailed: readRepairFailures(), health: readMainHealth(), tickets: fixTickets.get() },
+      facts: { unbuilt: [...unbuiltCache.get()], unbuiltAt: unbuiltCache.at(), repairFailed: readRepairFailures(), health: readMainHealth(), tickets: fixTickets.get(), gateCovers: { [engineRepo()]: gateCheckNames() } },
       machine: machineId
     }))
     return
@@ -182,6 +186,15 @@ const server = createServer(async (req, res) => {
     return
   }
 
+  // Chat tabs on this Mac (marvin#1064), for the other Mac's Sessions list. Read-only, like /sessions: names, state and
+  // titles, never a way to reach a chat (sending is IPC-only, #1067).
+  if (req.method === 'GET' && req.url === '/chats') {
+    listLocalChats()
+      .then((got) => res.writeHead(200, { 'Content-Type': 'application/json' }).end(JSON.stringify(got)))
+      .catch(() => res.writeHead(503, { 'Content-Type': 'application/json' }).end(JSON.stringify({ error: 'chat list unavailable' })))
+    return
+  }
+
   // Chat helpers on this Mac (#612), for the other Mac's Activity tab. Read-only, like /sessions.
   if (req.method === 'GET' && req.url === '/helpers') {
     res.writeHead(200, { 'Content-Type': 'application/json' }).end(JSON.stringify({ helpers: listHelpers() }))
@@ -190,6 +203,32 @@ const server = createServer(async (req, res) => {
 
   // marvin#762: another Mac's webhook just started, so it can merge again: tell the dashboard here, which retries the
   // approvals it saved while no Mac could merge. Only ever triggers that retry; the body names the machine, nothing more.
+  // marvin#231 follow-up: a merge's stage event from the merge server on another Mac, for the dashboard here (topic
+  // 'merge', as if it were local). Only the owner's Macs may send it (loopback or Tailscale); never relayed onward.
+  if (req.method === 'POST' && req.url === '/merge-stage') {
+    if (!allowedPeerAddress(req.socket?.remoteAddress)) {
+      res.writeHead(403, { 'Content-Type': 'application/json' }).end('{"ok":false}')
+      return
+    }
+    let msg = null
+    try { msg = cleanStageMessage(JSON.parse(await readBody(req, 64 * 1024))) } catch { msg = null }
+    if (!msg) {
+      res.writeHead(400, { 'Content-Type': 'application/json' }).end('{"ok":false}')
+      return
+    }
+    res.writeHead(200, { 'Content-Type': 'application/json' }).end('{"ok":true}')
+    forwardRefreshPing(DASHBOARD_REFRESH_URL, (url) => postJson(url, { topics: ['merge'], source: 'merge-relay', merge: msg }))
+    return
+  }
+
+  // ...and where a merge running here is now, read once by a dashboard that opens mid-merge (or sees the queue say a
+  // PR is merging without having its strip): one url, or every merge still running.
+  if (req.method === 'GET' && req.url.split('?')[0] === '/merge-progress') {
+    const want = new URL(req.url, 'http://localhost').searchParams.get('url')
+    res.writeHead(200, { 'Content-Type': 'application/json' }).end(JSON.stringify(want ? { merge: liveMerges.get(want) } : { merges: liveMerges.running() }))
+    return
+  }
+
   if (req.method === 'POST' && req.url === '/merge-host-up') {
     let body = null
     try { body = await readJsonBody(req) } catch { /* the trigger is the request itself */ }
@@ -313,6 +352,13 @@ const rebuildCheck = createRebuildCheckTrigger()
 const machineId = resolveDeviceId()
 const inflight = createInflightStore()
 const mergeLatch = createMergeLatch()
+// marvin#231 follow-up: each merge's progress, kept for GET /merge-progress, and its stage events sent to the other Macs.
+const liveMerges = createLiveMerges()
+const relayStage = createStageRelay({
+  peers: () => peerHosts(),
+  post: (url, body, { timeoutMs }) => fetch(url, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body), signal: AbortSignal.timeout(timeoutMs) }),
+  log: (m) => console.warn(m)
+})
 const repoOfPr = (url) => (String(url).match(/github\.com\/([^/]+\/[^/]+)\/pull\//) || [])[1] || null
 
 // One merge through the existing gate, exactly as an Approve ran it before the queue (marvin#568 stages, #845 memory,
@@ -331,10 +377,21 @@ async function runMerge(prUrl, { by = 'you', reply = null } = {}) {
       measure: () => machineLoad(),
       estimate: (repo, gated) => estimateMergeMs(repo, gated),
       record: recordMergeDuration,
-      emit: (event) => {
-        reply?.event(event)
-        forwardRefreshPing(DASHBOARD_REFRESH_URL, (url) => postJson(url, { topics: ['merge'], source: 'merge', merge: { url: prUrl, event } }))
-      }
+      emit: (() => {
+        // This Mac's dashboard, and (marvin#231 follow-up) every other Mac's through its webhook: the same message, so a
+        // merge the queue or the phone started shows its stage strip wherever MR Review is open. Never awaited.
+        const fanOut = stageFanOut({
+          url: prUrl,
+          machineId,
+          live: liveMerges,
+          local: (merge) => forwardRefreshPing(DASHBOARD_REFRESH_URL, (url) => postJson(url, { topics: ['merge'], source: 'merge', merge })),
+          relay: relayStage
+        })
+        return (event, progress) => {
+          reply?.event(event)
+          fanOut(event, progress)
+        }
+      })()
     }) : null
     tracker?.start(mergesAhead(prUrl))
     try {

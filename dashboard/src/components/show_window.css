@@ -1,0 +1,46 @@
+/* `marvin show` windows (#715), in the celestial-navigation tokens (#428; docs/design/celestial-navigation/README.md
+   on the design/celestial-navigation branch). Owner's answer on PR #1029: restyle in these tokens, then the
+   "Mock-up look" tag comes off. Scoped to .show-root; the shown file itself is still drawn by the Docs viewer. */
+.show-root {
+  --bg: #05040A; --green: #54ff8a; --amber: #f0b32a; --line: #7a5a14; --orange: #ff6a1f; --red: #ff3b2f;
+  --dim: #6b551f; --moon: #cfd6e6;
+  --display: 'Saira Condensed', 'Arial Narrow', sans-serif;
+  --mono: 'Share Tech Mono', ui-monospace, monospace;
+  background: var(--bg); color: var(--moon);
+}
+/* Header: a HUD strip with a hairline border, diamond nodes on its edge and the modern-raster texture (1px lines at
+   a 3px pitch, about 3%: felt more than seen, never over text it softens). */
+.show-hud { position: relative; border-bottom: 1px solid var(--line);
+  background: repeating-linear-gradient(to bottom, #ffffff07 0 1px, #0000 1px 3px), var(--bg); }
+.show-hud::before, .show-hud::after { content: ''; position: absolute; bottom: -4px; width: 7px; height: 7px;
+  background: var(--bg); border: 1px solid var(--line); transform: rotate(45deg); }
+.show-hud::before { left: 10px; }
+.show-hud::after { right: 10px; }
+.show-project { font: 600 11px/1.2 var(--display); letter-spacing: 3px; text-transform: uppercase; color: var(--orange); }
+.show-label { font: 14px/1.4 var(--mono); color: var(--amber); }
+.show-tag { font: 600 10px/1 var(--display); letter-spacing: 2px; text-transform: uppercase; color: var(--dim);
+  border: 1px solid var(--line); border-radius: 2px; padding: 3px 6px; white-space: nowrap; }
+.show-btn { font: 11px/1 var(--mono); letter-spacing: 1px; text-transform: uppercase; color: var(--amber);
+  border: 1px solid var(--line); border-radius: 2px; padding: 6px 9px; background: transparent; white-space: nowrap;
+  transition: color .15s, border-color .15s, box-shadow .15s; cursor: pointer; }
+.show-btn:hover, .show-btn:focus-visible { color: var(--green); border-color: var(--green); box-shadow: 0 0 10px #54ff8a55; outline: none; }
+.show-empty { font: 12px var(--mono); color: var(--dim); letter-spacing: 1px; }
+/* The link card: a panel with a hairline border; a reason it couldn't render is a red-outlined tag. */
+.show-card { max-width: 40rem; border: 1px solid var(--line); border-radius: 2px; padding: 16px; background: #ffffff04; }
+.show-card-url { font: 13px/1.5 var(--mono); color: var(--amber); word-break: break-all; }
+.show-reason { display: inline-block; margin-bottom: 10px; font: 600 10px/1.3 var(--display); letter-spacing: 1.5px;
+  text-transform: uppercase; color: var(--red); border: 1px solid var(--red); border-radius: 2px; padding: 3px 6px; }
+.show-frame { border: 1px solid var(--line); border-radius: 2px; background: #fff; }
+/* Where the web page is drawn (the main process lays its own view over this box). */
+/* 5px clear of the header so its diamond nodes (4px below its edge) stay visible over the page. */
+.show-web { position: relative; margin-top: 5px; height: calc(100% - 5px); }
+.show-web .show-empty { position: absolute; left: 16px; top: 14px; }
+/* The history strip (#715): this project's earlier items under the header; the current one in amber. */
+.show-history { border-bottom: 1px solid var(--line); }
+.show-history-item { border: 1px solid var(--line); border-radius: 2px; padding: 4px 8px; background: transparent;
+  color: var(--moon); cursor: pointer; transition: color .15s, border-color .15s; }
+.show-history-item:hover, .show-history-item:focus-visible { border-color: var(--green); color: var(--green); outline: none; }
+.show-history-item.is-current { border-color: var(--amber); color: var(--amber); cursor: default; }
+.show-history-label { font: 12px/1.3 var(--mono); }
+.show-history-meta { font: 600 9px/1.3 var(--display); letter-spacing: 1.5px; text-transform: uppercase; color: var(--dim); }
+.show-notice { font: 12px var(--mono); color: var(--red); border-bottom: 1px solid var(--line); }

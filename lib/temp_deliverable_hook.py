@@ -92,7 +92,7 @@ def save(session: str, state: dict, state_dir: Path = STATE_DIR) -> None:
 def reminder(paths: list[str]) -> str:
     shown = paths[:3]
     cmds = "; ".join(f"marvin-show {p}" for p in shown)
-    return (f"Gil can't open a temp path or a file card: {', '.join(shown)} lives only in a temp folder. Show it with "
+    return (f"The owner can't open a temp path or a file card: {', '.join(shown)} lives only in a temp folder. Show it with "
             f"`{cmds}` (it copies the file into ~/.claude/outbox/<project>-<date>-<topic>/ and opens it in that "
             "project's MARVIN window), and put that command in your reply. (docs/agents/showing-things.md, temp_deliverable_hook.py)")
 
@@ -156,7 +156,7 @@ def last_reply(transcript_path: str) -> str:
 
 
 def unshown_mentions(reply: str, state: dict) -> list[str]:
-    """Temp deliverables the reply points Gil at that were never shown: a temp path in the text, or a noted file's
+    """Temp deliverables the reply points the owner at that were never shown: a temp path in the text, or a noted file's
     full path or file name."""
     files = state.get("files") or {}
     out: list[str] = []

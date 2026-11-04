@@ -169,5 +169,41 @@ def test_a_clean_sys_exit_is_a_pass_and_a_nonzero_exit_is_a_failure(tmp_path, mo
     assert json.loads((tmp_path / "exits-bad.json").read_text())["runs"][-1]["status"] == "failed"
 
 
+def test_a_nonzero_exit_keeps_the_reason_the_job_gave(tmp_path, monkeypatch):
+    # marvin#1123 0.5: "exited with status 1" must not replace the real reason ("OAuth session expired").
+    monkeypatch.setattr(je, "JOBS_DIR", tmp_path)
+    monkeypatch.delenv("XPC_SERVICE_NAME", raising=False)
+
+    @je.reported("says-why")
+    def main():
+        je._CURRENT[-1].fail("running review: claude exit 1: OAuth session expired")
+        sys.exit(1)
+
+    try:
+        main()
+    except SystemExit as e:
+        assert e.code == 1
+    run = json.loads((tmp_path / "says-why.json").read_text())["runs"][-1]
+    assert run["status"] == "failed"
+    assert run["error"] == "running review: claude exit 1: OAuth session expired"
+
+
+def test_a_clean_exit_after_a_recorded_failure_is_still_a_failure(tmp_path, monkeypatch):
+    monkeypatch.setattr(je, "JOBS_DIR", tmp_path)
+    monkeypatch.delenv("XPC_SERVICE_NAME", raising=False)
+
+    @je.reported("fails-then-exits-0")
+    def main():
+        je._CURRENT[-1].fail("half done")
+        sys.exit(0)
+
+    try:
+        main()
+    except SystemExit:
+        pass
+    run = json.loads((tmp_path / "fails-then-exits-0.json").read_text())["runs"][-1]
+    assert (run["status"], run["error"]) == ("failed", "half done")
+
+
 def test_step_outside_any_run_is_a_harmless_no_op():
     je.step("nothing is running")  # must not raise

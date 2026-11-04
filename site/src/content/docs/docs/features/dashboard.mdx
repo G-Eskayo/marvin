@@ -1,0 +1,133 @@
+---
+title: Dashboard app
+description: MARVIN.app, a desktop app that shows what MARVIN is doing, what's broken and what needs you, read from the files MARVIN already writes.
+sidebar:
+  order: 6
+---
+import FeatureStatus from '~/components/FeatureStatus.astro';
+
+<FeatureStatus page="dashboard" />
+
+## What it does
+
+MARVIN.app is an Electron app for macOS that puts MARVIN's state in one window. Its tabs come from `dashboard/src/lib/tabs.js`: **Metrics**, **MR Review**, **Health**, **Docs**, **Activity** and **Portfolio**, plus **Support** when a support link to a second install exists. Health is where the health checks land. Activity shows the ranked queue of tickets the pipeline will pick up next. Docs reads every project's docs and ADRs, private repos included. A short boot sequence plays on launch and gives a health verdict backed by the latest sweep.
+
+The app is a viewer. It doesn't own any state: it reads files and asks the Python tools that write them. If you only want the health verdict in a terminal, run `lib/health_checks.py` directly. If you want the system's shape rather than its status, use [the map](/docs/features/map/).
+
+## Why it exists
+
+Answering "is anything broken, and what's waiting on me?" used to mean reading logs on two machines. On 2026-10-01 one session turned up an empty ChromaDB collection, missing auth tokens that had blocked the pipeline on one Mac for weeks, and a stale lock that had stopped the hourly pipeline for 15 days. Each was a simple fact nobody was checking ([ADR 0033](https://github.com/G-Eskayo/marvin/blob/main/docs/adr/0033-health-monitoring-absorbs-cron-health-auto-discovered-coverage.md)). The dashboard is where those checks, the review queue and the docs sit together, so the answer is one glance away.
+
+## See it work
+
+The Health tab and the boot verdict both read `~/.claude/logs/health-status.json`. This is the sweep written on the always-on Mac on 2026-11-02 at 17:58 UTC, summarised (the command reads the file; it doesn't run the checks):
+
+```text
+$ python3 -c "import json, collections; d = json.load(open('$HOME/.claude/logs/health-status.json')); ..."
+generated 2026-11-02T17:58  overall red
+checks 64 {'green': 41, 'yellow': 11, 'red': 12}
+jobs covered 6 of 26
+ red  Missed purpose
+ red  Output: safety-monitor
+ red  Output: daily-digest
+ red  Output: research-digest
+ red  The main branch passes its tests
+ red  Disk space -- mac-mini-1
+ red  Disk headroom forecast -- mac-mini-1
+ red  Scheduled jobs' last run -- mac-mini-1
+ red  Disk headroom forecast -- macbook-pro-1
+ red  Recent errors -- mac-mini-1
+ red  Recent errors -- macbook-pro-1
+ red  Recent errors -- mac-mini-2012
+```
+
+That's a real red day: low disk on both Macs, a failing test on main, and three outputs nobody consumes. "jobs covered 6 of 26" is the coverage diff from ADR 0033. The sweep found 26 scheduled jobs on the machines and 20 of them have no dedicated check yet, so they show as unmonitored instead of silently missing. With this file, the boot sequence won't say ALL SYSTEMS NOMINAL. It only does that when the overall verdict is green, every check is green and the file is under 20 minutes old (`dashboard/electron/main/boot_data.js`).
+
+## How it works
+
+```text
+launchd jobs ──► lib/health_checks.py ──► ~/.claude/logs/health-status.json ─┐
+lib/ticket_queue.py, device_status.py (JSON on stdout) ─────────────────────┤
+project catalog + local clones or GitHub (Docs) ────────────────────────────┤
+                                                                             ▼
+                               Electron main (dashboard/electron/main/*.js)
+                                                                             │ IPC
+                                                                             ▼
+                                         React tabs (dashboard/src/components)
+```
+
+1. **Checks run on a schedule.** `config/jobs/health-check.json` runs `lib/health_checks.py` every 900 seconds. It runs every registered check, enumerates the real launchd jobs, machines and synced repos, and writes the result whole (temp file plus rename), so the app never reads half a file.
+2. **The app reads, never decides.** `electron/main/health.js` reads the status file. Activity asks `lib/ticket_queue.py`, which calls the scanner's own ordering functions, so the "Next up" strip can't drift from what the pipeline will actually dispatch ([ADR 0053](https://github.com/G-Eskayo/marvin/blob/main/docs/adr/0053-activity-next-up-queue.md)).
+3. **Docs come from the project catalog.** Every project gets a card. Its docs load from a local clone when there is one, otherwise from GitHub with a saved copy, and images in private repos load signed in (`electron/main/docs_service.js`).
+4. **Merged code reaches the installed app on its own.** After a merge that touches app files, the merge server runs `dashboard/scripts/rebuild_and_install.sh`. `lib/dashboard_rebuild.py` covers every other path: when the installed app is older than the latest dashboard commit on `origin/main`, it waits 2 minutes for the merge to settle, then rebuilds. After a failed build it backs off until newer code lands.
+5. **The install script** pulls the merged code, runs `npm install` and `npm run build:mac`, re-signs ad hoc when the keychain is locked (an SSH session, or just after a reboot), replaces `/Applications/MARVIN.app`, relaunches it, checks it started, and restarts the merge server so it runs the new code. A failure is recorded in the error log Health shows.
+
+## Use it
+
+```bash
+# Build and install by hand (the same script the merge server runs)
+bash ~/.agents/dashboard/scripts/rebuild_and_install.sh
+
+# Develop with hot reload, and run the tests
+cd ~/.agents/dashboard && npm install && npm run dev
+cd ~/.agents/dashboard && npm test
+
+# The same checks in a terminal (this writes the status file, and can start disk first aid on a Mac that's low)
+~/.agents/venv/bin/python ~/.agents/lib/health_checks.py
+~/.agents/venv/bin/python ~/.agents/lib/health_checks.py --json
+```
+
+Common tasks:
+
+- **Find out why the boot says something is wrong.** Click the line. It opens the exact Health check behind it ([PR #434](https://github.com/G-Eskayo/marvin/pull/434)).
+- **See what the pipeline takes next.** Activity, "Next up". Reorder with `priority:p0` to `priority:p3` labels, not in the app.
+- **Read a plan or ADR in a private repo.** Docs, then the project's card.
+
+## Configure
+
+| Setting | Where | What it does |
+|---|---|---|
+| Health sweep schedule | `config/jobs/health-check.json` | `every_s: 900`, runs at load |
+| Health status file | `~/.claude/logs/health-status.json` | What the Health tab and the boot read |
+| Auto-launch | launchd `com.marvin.dashboard-launch` | Opens the app by bundle id at login |
+| Merge server | launchd `com.marvin.dashboard-webhook` | Runs `dashboard/webhook-server/`; triggers rebuilds after merges |
+| Rebuild log | `~/.claude/logs/dashboard-rebuild.log` | Output of the last install |
+| Rebuild backoff | `~/.claude/logs/dashboard-rebuild-failed` | Written on failure, cleared by the next good install |
+| Rebuild settle time | `SETTLE_SECONDS` in `lib/dashboard_rebuild.py` | 2 minutes |
+| Tab list | `dashboard/src/lib/tabs.js` | The tabs, in order |
+
+## Requirements and limitations
+
+- **macOS only.** The build target is `--mac` and the installer copies `dist/mac-arm64/MARVIN.app`, so it's Apple silicon. A Linux machine runs the checks and the core, not the app.
+- Node and npm, to build. The app uses Electron 30.
+- **Health is per machine.** The app reads its own machine's status file. A Mac without the `health-check` job loaded shows an old sweep. On the laptop the file was four days old on 2026-11-02 while the always-on Mac's was current.
+- Coverage is honest, not complete: on 2026-11-02, 20 of 26 discovered jobs had no dedicated check.
+- The Portfolio tab serves one owner's website tooling. It isn't general yet.
+- Vitals v5 (planned, [#835](https://github.com/G-Eskayo/marvin/issues/835)) is meant to replace the Health and Metrics tabs with a verdict line and a "what needs you" column over the live map.
+
+## Design and source
+
+ADRs:
+
+- [0033: Health monitoring absorbs cron_health.py; coverage is auto-discovered](https://github.com/G-Eskayo/marvin/blob/main/docs/adr/0033-health-monitoring-absorbs-cron-health-auto-discovered-coverage.md). Rejected: a second health system beside `cron_health.py` (two answers to "is it healthy" drift), and a hand-kept job list (the old one listed 5 of 14 jobs and missed the ticket pipeline).
+- [0048: The Metrics tab: tools and skills, usage, pipeline results](https://github.com/G-Eskayo/marvin/blob/main/docs/adr/0048-metrics-tab-tools-usage-pipeline.md). Moved tool usage out of Health into Metrics, across both machines.
+- [0053: Activity tab: the "Next up" queue](https://github.com/G-Eskayo/marvin/blob/main/docs/adr/0053-activity-next-up-queue.md). The queue is read-only; labels stay the one way to reorder.
+
+Source: [`dashboard/`](https://github.com/G-Eskayo/marvin/blob/main/dashboard/), [`dashboard/src/lib/tabs.js`](https://github.com/G-Eskayo/marvin/blob/main/dashboard/src/lib/tabs.js), [`dashboard/electron/main/boot_data.js`](https://github.com/G-Eskayo/marvin/blob/main/dashboard/electron/main/boot_data.js), [`dashboard/scripts/rebuild_and_install.sh`](https://github.com/G-Eskayo/marvin/blob/main/dashboard/scripts/rebuild_and_install.sh), [`lib/health_checks.py`](https://github.com/G-Eskayo/marvin/blob/main/lib/health_checks.py), [`lib/dashboard_rebuild.py`](https://github.com/G-Eskayo/marvin/blob/main/lib/dashboard_rebuild.py), [`lib/ticket_queue.py`](https://github.com/G-Eskayo/marvin/blob/main/lib/ticket_queue.py).
+
+Key PRs:
+
+- [#432 Dashboard: celestial-navigation boot sequence with a real health verdict](https://github.com/G-Eskayo/marvin/pull/432)
+- [#434 Boot sequence: hover glow + grow, grace-period hold, click-through to the exact Health check](https://github.com/G-Eskayo/marvin/pull/434)
+- [#437 MARVIN Metrics app icon: celestial-navigation M on pure black](https://github.com/G-Eskayo/marvin/pull/437)
+- [#562 Design: fold the Files tab into Docs](https://github.com/G-Eskayo/marvin/pull/562)
+- [#639 Docs tab: find the private instance so its plans show again](https://github.com/G-Eskayo/marvin/pull/639)
+- [#885 Docs: images in markdown docs load from the doc's own folder, signed in for private repos](https://github.com/G-Eskayo/marvin/pull/885)
+
+## Related features
+
+- [The map](/docs/features/map/)
+- [Ticket pipeline](/docs/features/ticket-pipeline/)
+- [Merge gate](/docs/features/merge-gate/)
+- [Decisions](/docs/features/decisions/)
+- Usage accounting, Proposals, Support link

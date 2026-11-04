@@ -1,0 +1,137 @@
+---
+// Layout for the marketing pages (landing, /why, /waitlist, /about, /roadmap, /changelog, /map).
+// Same tokens and the same theme key as the Starlight docs, so switching theme on one carries to the other.
+import '~/styles/fonts.css';
+import '~/styles/tokens.css';
+import '~/styles/marketing.css';
+import { SITE, NAV, CTA, REPO_URL } from '~/lib/site';
+
+interface Props {
+  title?: string;
+  description?: string;
+  bare?: boolean;
+}
+const { title, description = SITE.description, bare = false } = Astro.props;
+const pageTitle = title ? `${title} | ${SITE.name}` : `${SITE.name}: ${SITE.description}`;
+const here = Astro.url.pathname;
+const canonical = new URL(here, Astro.site);
+---
+
+<!doctype html>
+<html lang="en" data-theme="dark">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>{pageTitle}</title>
+    <meta name="description" content={description} />
+    <link rel="canonical" href={canonical} />
+    <link rel="icon" href="/favicon.svg" type="image/svg+xml" />
+    <meta property="og:title" content={pageTitle} />
+    <meta property="og:description" content={description} />
+    <meta property="og:type" content="website" />
+    <meta property="og:url" content={canonical} />
+    <script is:inline>
+      // Starlight's key, so the docs and these pages agree. Unset = follow the system.
+      (function () {
+        var t = null;
+        try { t = localStorage.getItem('starlight-theme'); } catch (e) {}
+        if (t !== 'light' && t !== 'dark') t = matchMedia('(prefers-color-scheme: light)').matches ? 'light' : 'dark';
+        document.documentElement.dataset.theme = t;
+      })();
+    </script>
+  </head>
+  <body class:list={{ 'm-bare': bare }}>
+    <a class="m-skip" href="#main">Skip to content</a>
+    {
+      !bare && (
+        <header class="m-header">
+          <div class="m-wrap m-header-in">
+            <a class="m-brand" href="/" aria-label={`${SITE.name} home`}>
+              <svg viewBox="160 160 704 704" aria-hidden="true">
+                <polyline points="262,772 262,262 512,560 762,262 762,772" />
+                <circle class="o" cx="512" cy="560" r="118" />
+                <circle cx="262" cy="772" r="50" /><circle cx="262" cy="262" r="50" />
+                <circle cx="762" cy="262" r="50" /><circle cx="762" cy="772" r="50" />
+                <circle cx="512" cy="560" r="72" />
+              </svg>
+              <span>{SITE.name}</span>
+            </a>
+            <nav class="m-nav" aria-label="Site">
+              <ul class="m-links">
+                {NAV.map((l) => (
+                  <li>
+                    <a href={l.href} aria-current={here === l.href ? 'page' : undefined}>
+                      {l.label}
+                    </a>
+                  </li>
+                ))}
+                <li>
+                  <a href={REPO_URL}>GitHub</a>
+                </li>
+              </ul>
+              <details class="m-menu">
+                <summary aria-label="Menu">Menu</summary>
+                <ul>
+                  {NAV.map((l) => (
+                    <li>
+                      <a href={l.href} aria-current={here === l.href ? 'page' : undefined}>
+                        {l.label}
+                      </a>
+                    </li>
+                  ))}
+                  <li>
+                    <a href={REPO_URL}>GitHub</a>
+                  </li>
+                </ul>
+              </details>
+              <button class="m-theme" type="button" aria-label="Switch light or dark theme" title="Light or dark">
+                <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3a9 9 0 1 0 9 9 7 7 0 0 1-9-9Z" /></svg>
+              </button>
+              <a class="m-btn m-btn--primary m-cta" href={CTA.href}>{CTA.label}</a>
+            </nav>
+          </div>
+        </header>
+      )
+    }
+    <main id="main">
+      <slot />
+    </main>
+    {
+      !bare && (
+        <footer class="m-footer">
+          <div class="m-wrap m-footer-in">
+            <div>
+              <p class="m-footer-name">{SITE.name}</p>
+              <p class="m-dim">
+                Open source. Built by <a href="/about/">{SITE.builder}</a>.
+              </p>
+              <p class="m-dim m-small">No cookies, no analytics, no tracking on this site.</p>
+            </div>
+            <ul>
+              <li><a href="/about/">About</a></li>
+              <li><a href="/map/">The map</a></li>
+              <li><a href="/docs/">Docs</a></li>
+              <li><a href="/changelog/">Changelog</a></li>
+              <li><a href="/roadmap/">Roadmap</a></li>
+              <li><a href={REPO_URL}>GitHub</a></li>
+              {SITE.builtWith.map((b) => (
+                <li>
+                  <a href={b.url}>{b.name}</a>
+                </li>
+              ))}
+            </ul>
+          </div>
+        </footer>
+      )
+    }
+    <script is:inline>
+      document.querySelectorAll('.m-theme').forEach(function (b) {
+        b.addEventListener('click', function () {
+          var next = document.documentElement.dataset.theme === 'dark' ? 'light' : 'dark';
+          document.documentElement.dataset.theme = next;
+          try { localStorage.setItem('starlight-theme', next); } catch (e) {}
+        });
+      });
+    </script>
+  </body>
+</html>

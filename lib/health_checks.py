@@ -564,6 +564,13 @@ def check_main_health(path: Path | None = None, now: datetime | None = None) -> 
         return _result(cid, label, "red", f"main @ {d.get('sha', '?')} is failing: {names}. Merges are refused until it is fixed", value=len(d.get("failed", [])))
     if when is None or (now - when).total_seconds() > MAIN_HEALTH_STALE_HOURS * 3600:
         return _result(cid, label, "yellow", f"last check ({d.get('sha', '?')}) is more than a day old")
+    outside = d.get("outside") or []
+    if outside:     # marvin#1047: main's code passes; state outside it (another repo, a local service) has moved
+        from collections import Counter
+        by_what = Counter(o.get("what", "?") for o in outside)
+        named = "; ".join(f"{w} ({n})" for w, n in by_what.items())
+        return _result(cid, label, "yellow", f"main @ {d.get('sha', '?')}: its code passes, but {len(outside)} check(s) "
+                       f"of state outside it fail: {named}. Merges are not held for these", value=len(outside))
     return _result(cid, label, "green", f"main @ {d.get('sha', '?')}: {d.get('summary', 'passing')}")
 
 
@@ -572,6 +579,15 @@ def check_memory_lint() -> dict:
     links, index drift or bad frontmatter. Reports only; memory_lint never edits a note."""
     import memory_lint
     return memory_lint.check()
+
+
+def check_profile_parity() -> dict | None:
+    """The owner's public profile facts (instance config/public-profile.json) match every surface: the live site, the
+    resume PDF, the master resume, GitHub and the product sites (marvin#1038). Amber names the surface and field that
+    drifted; a surface that couldn't be read is never a pass. Nothing to report when the instance keeps no facts file.
+    The surfaces are read at most every few hours (profile_parity.REFRESH_HOURS); between reads the last report shows."""
+    import profile_parity
+    return profile_parity.check()
 
 
 SEAL_BETA_STATUS_PATH = Path.home() / ".claude" / "seal-beta" / "status.json"
@@ -1749,6 +1765,7 @@ def default_checks(reach: dict[str, str] | None = None, reach_results: list[dict
         ("github:gate", "GitHub calls go through the gate", check_gh_gate, CHECK_BUDGET_S),
         ("main:green", "The main branch passes its tests", check_main_health, CHECK_BUDGET_S),
         ("memory:lint", "Memory links and index are sound", check_memory_lint, CHECK_BUDGET_S),
+        ("profile:parity", "Public profile matches everywhere", check_profile_parity, CHECK_BUDGET_S),
         ("seal:beta-ingest", "Seal Speak beta reports are picked up", check_seal_beta_ingest, CHECK_BUDGET_S),
         ("brief:builder", "Morning brief builder", check_brief_builder, CHECK_BUDGET_S),
         ("merge:service", "Merge service reachable", check_merge_service, CROSS_MACHINE_BUDGET_S),
@@ -1866,6 +1883,25 @@ def react_to_low_disk(checks: list[dict], run=None, stamp_path: Path | None = No
     return out
 
 
+def react_to_accounts(sweep=None) -> str:
+    """marvin#974: on this sweep's schedule (no timer of its own), check every account MARVIN depends on, on every
+    machine, write ~/.claude/logs/accounts-status.json and alert once per state change (lib/accounts.py). A one-line
+    summary for the run log. Never raises: an account check failing must not break the health sweep."""
+    try:
+        if sweep is None:
+            import accounts
+            sweep = accounts.sweep_and_alert
+        rows = (sweep() or {}).get("accounts", [])
+    except Exception as exc:  # noqa: BLE001
+        return f"could not check accounts: {type(exc).__name__}: {str(exc)[:160]}"
+    if not rows:
+        return "skipped (a pull-only node; the Mini checks this machine's accounts)"
+    counts: dict[str, int] = {}
+    for r in rows:
+        counts[r.get("state", "?")] = counts.get(r.get("state", "?"), 0) + 1
+    return ", ".join(f"{n} {k}" for k, n in sorted(counts.items()))
+
+
 import job_events  # noqa: E402  (run log shown in the dashboard's Health tab)
 
 
@@ -1893,6 +1929,8 @@ def _cli() -> None:
 
     for aid in react_to_low_disk(out.get("checks", [])):
         job_events.step("Disk first aid", f"{aid['device']}: {'ok' if aid['ok'] else 'failed'}, {aid['detail']}")
+
+    job_events.step("Accounts", react_to_accounts())
 
     if "--json" in sys.argv:
         print(json.dumps(out, indent=2))

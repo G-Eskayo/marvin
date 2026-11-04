@@ -1,0 +1,118 @@
+---
+title: Merge gate
+description: What happens when you press Approve on a pull request in MARVIN, the checks that can refuse it, and where every refusal is written down.
+sidebar:
+  order: 4
+---
+import FeatureStatus from '~/components/FeatureStatus.astro';
+
+<FeatureStatus page="merge-gate" />
+
+## What it does
+
+When you press Approve in the dashboard, the merge server on your Mac doesn't just call `gh pr merge`. It checks the PR is aimed at the right branch, that its ticket wasn't sent back, that a UI change carries current screenshots and that any questions to you are answered. Then it decides whether the PR needs a retest. A PR that's up to date with main, or whose files main hasn't touched since the two split, merges in seconds. Otherwise it's rebased onto main in a throwaway worktree and the required checks run again, limited to the tests the change can affect. A failure caused by the PR goes back to its ticket as a structured comment. A failure that isn't the PR's fault (main already red, a full disk, memory pressure) is refused without touching the ticket. Every refusal carries a reason code and lands in a log.
+
+This is the gate for merges you approve. Merging low-risk PRs with no Approve at all is [auto-merge](#related-features), which is still in shadow mode.
+
+## Why it exists
+
+Approve, merge, and main goes red: that's the failure the gate is for. Two PRs that each passed on their own branch can break each other once they're both on main. The first version of the gate (PR #108, August 2026) rebased and retested every PR before merging. That made every Approve cost a full suite run. The second problem was silence: on 2026-10-07 a PR sat unmergeable for hours and nothing said why, because the refusal lived only in the dashboard's memory. The gate now asks only the questions that matter for this PR, and writes every answer down.
+
+## See it work
+
+Two Approves a minute apart, from the merge server's log on the MacBook, 2026-10-24 (read 2026-11-02, trimmed):
+
+```text
+$ grep -E '#(600|601) ' ~/.claude/logs/dashboard-webhook.log
+[merge] G-Eskayo/marvin#601 fetching done
+[merge] G-Eskayo/marvin#601 rebasing skipped: no retest needed: main changed none of this PR's files
+[merge] G-Eskayo/marvin#601 tests skipped: no retest needed: main changed none of this PR's files
+[merge] G-Eskayo/marvin#601 merging done
+[merge] G-Eskayo/marvin#601 finished: merged after 0:10
+[merge] G-Eskayo/marvin#600 started on MacBook Pro (1 merge ahead in the queue)
+[merge] G-Eskayo/marvin#600 rebasing running: onto main
+[merge] G-Eskayo/marvin#600 installing done
+[merge] G-Eskayo/marvin#600 tests running: Python
+[merge] G-Eskayo/marvin#600 tests failed: GATE_TESTS_FAILED: sent back for rework
+[merge] G-Eskayo/marvin#600 finished: sent back after 1:38 (GATE_TESTS_FAILED: sent back for rework)
+
+$ grep 'approve failed' ~/.claude/logs/dashboard-webhook-error.log | grep marvin/pull/703
+2026-10-27T01:53:42.048Z approve failed: https://github.com/G-Eskayo/marvin/pull/703 NO_UI_EVIDENCE at request:
+  this PR changes how the app looks (dashboard/src/components/HealthDashboard.jsx, ...) but shows no images
+```
+
+On that Mac's logs as of 2026-11-02, the webhook log records 27 finished Approves: 20 merged, 5 refused, 2 sent back for rework (`grep '^\[merge\].*finished'`). The shared failure log, `~/.claude/logs/pipeline-failures.jsonl`, holds 46 merge entries between 2026-10-10 and 2026-10-29 (`grep '"sig": *"merge:'`): 44 refusals and 2 test failures.
+
+## How it works
+
+![The merge gate's questions, from Approve to merged or refused](/diagrams/merge-gate.svg)
+
+The diagram dates from 2026-10-09. Since then the gate gained the screenshot, decisions, disk and memory checks, and the retest runs only the affected tests instead of the full suite. The steps below follow `mergePr` in `dashboard/webhook-server/merge.js` as of 2026-11-02.
+
+1. **Queue.** Approve adds the PR to its repo's merge queue (`merge_queue.js`), which runs one merge at a time per repo through the gate below.
+2. **Cheap refusals first.** Before any machine work: another project needs a profile that allows merging from the dashboard (`NO_MERGE_PROFILE`, `ENV_MISSING`); the PR must target its base (`WRONG_BASE`); its ticket must not be sent back (`SENT_BACK`); a draft is marked ready or refused (`PR_DRAFT`).
+3. **Screenshots.** A PR that changes how an app looks must show images (`NO_UI_EVIDENCE`), pinned to a full commit SHA (`IMAGES_UNPINNED`), and taken after the last UI change (`IMAGES_STALE`). `bin/pr-shots` writes them that way. If GitHub can't be asked, it fails closed (`UI_EVIDENCE_UNCHECKED`).
+4. **Decisions.** Open questions to you block the merge (`DECISIONS_PENDING`, `DECISIONS_UNSTRUCTURED`). See [Decisions](/docs/features/decisions/).
+5. **GitHub CI.** Still running means wait (`CI_PENDING`). Failing sends the PR back to its ticket with the check names (`CI_FAILED`).
+6. **Retest or not** (ADR 0061, amended 2026-10-26). Up to date with main, or behind but main changed none of the PR's files and no test or guard rule: merge directly. Shared files, a changed rule, or an overlap it can't read: retest.
+7. **Machine checks.** Memory pressure at warn or critical queues the Approve to run when it drops (`MEMORY_PRESSURE`). Under 5 GB free, it clears rebuildable files once, then refuses.
+8. **Rebase and retest.** In a scratch worktree, never your checkout. It takes the machine's one test slot (merges go first), then runs each check in `.github/required-checks.json` through `.github/run-check.sh`, the same runner GitHub CI uses. With `MARVIN_BASE` set, a check whose paths didn't change passes as "not affected", and `lib/affected_tests.py` picks the Python tests whose imports reach a changed file. pytest-xdist workers are sized to free memory (512 MB each, `lib/test_slot.py`). The gate has 40 minutes, extended once under load. A hung test dies in 120 s (`pytest.ini`).
+9. **Verdict.** Pass: the rebased branch is pushed with `--force-with-lease`. Tests that also fail on main: `MAIN_RED`, nothing sent back. The machine broke: `GATE_INFRA`, approve again. Otherwise `GATE_TESTS_FAILED`: a comment with the failing test names goes on the PR and ticket, and the ticket is rebuilt.
+10. **Merge and after.** `gh pr merge --merge`, retried on network blips; `MERGE_REFUSED` if GitHub refuses without a conflict. Then the version bump, a dashboard rebuild if `dashboard/` changed, and a `git merge-tree` conflict check of every other open PR (no checkout, no push).
+
+## Use it
+
+Press Approve on a PR in the dashboard's MR Review. The stage strip and the PR card show each step as it runs and the refusal's code and next step if it stops. To see the history on the machine that runs the merge server:
+
+```bash
+# every merge refusal and gate failure, newest last
+grep '"sig": *"merge:' ~/.claude/logs/pipeline-failures.jsonl | tail
+# every refused Approve, with its code and stage
+grep 'approve failed' ~/.claude/logs/dashboard-webhook-error.log | tail
+# which checks a branch would run against main
+MARVIN_BASE=origin/main .github/run-check.sh python --affected
+venv/bin/python lib/affected_tests.py list origin/main
+```
+
+To add screenshots to a UI PR, run `pr-shots image.png::what to look at` in the PR's worktree.
+
+## Configure
+
+| Setting | Where | What it does |
+|---|---|---|
+| Required checks | `.github/required-checks.json` | The checks the gate and GitHub CI both run; `paths` limits a check to changes it covers |
+| Project profile | `config/projects/<name>.json` (instance repo) | `merge_from_dashboard`, `base_branch`, `generated` files, `evidence.ui_paths` for another project |
+| `MARVIN_TEST_WORKER_MB` | environment | Memory per test worker when sizing the pool (default 512) |
+| `MARVIN_UI_EVIDENCE_OK` | environment, one `gh` call | Lets one PR through the `bin/gh` screenshot rule with a logged reason; Approve still checks |
+| `PORT` | environment | The merge server's port (default 7878) |
+| `timeout` | `pytest.ini` | Per-test limit (120 s) |
+
+## Requirements and limitations
+
+- The merge server runs as the launchd job `com.marvin.dashboard-webhook`, so the gate is macOS today. The test slot reads free memory on Linux too, but nothing starts the merge server there.
+- A break between files that don't overlap can still land: two PRs touching different files merge without a retest, and the main-health check catches it after the merge. ADR 0078 (test exactly the commit that lands) is meant to close that and is still Proposed; the merge queue that started it is [Built, in testing](#related-features).
+- The rebase is pushed back to the PR branch with `--force-with-lease`.
+- ADR 0063's mutation check (80% of planted bugs caught) applies to auto-merge, not to a human Approve.
+- **Built, in testing:** the ticket pipeline's own build step now runs its Python tests in parallel, sized to free memory the same way (PR #996, merged 2026-11-02). It has no run evidence yet.
+
+## Design and source
+
+- [ADR 0061: After a merge, check; at Approve, retest only when main changed the PR's files](https://github.com/G-Eskayo/marvin/blob/main/docs/adr/0061-check-after-merge-retest-only-on-overlap.md). Rejected: rebasing and retesting every open PR after each merge (about 8 suite runs per merge, each stale by the next).
+- [ADR 0063: Tests try to break it, enforced at every gate](https://github.com/G-Eskayo/marvin/blob/main/docs/adr/0063-tests-try-to-break-it-enforced-at-every-gate.md)
+- [ADR 0078: Test exactly what lands](https://github.com/G-Eskayo/marvin/blob/main/docs/adr/0078-test-exactly-what-lands.md) (Proposed). Rejected: GitHub's merge queue (not available on a user-owned repo), and retesting every behind PR at Approve.
+- Source: [`merge.js`](https://github.com/G-Eskayo/marvin/blob/main/dashboard/webhook-server/merge.js), [`refusal_log.js`](https://github.com/G-Eskayo/marvin/blob/main/dashboard/webhook-server/refusal_log.js), [`failure.js`](https://github.com/G-Eskayo/marvin/blob/main/dashboard/webhook-server/failure.js), [`ui_evidence.js`](https://github.com/G-Eskayo/marvin/blob/main/dashboard/webhook-server/ui_evidence.js), [`run-check.sh`](https://github.com/G-Eskayo/marvin/blob/main/.github/run-check.sh), [`affected_tests.py`](https://github.com/G-Eskayo/marvin/blob/main/lib/affected_tests.py), [`test_slot.py`](https://github.com/G-Eskayo/marvin/blob/main/lib/test_slot.py), [`pr_shots.py`](https://github.com/G-Eskayo/marvin/blob/main/lib/pr_shots.py)
+- [PR #108: Merge-time gate: rebase + retest before merge, route failures to re-engagement](https://github.com/G-Eskayo/marvin/pull/108)
+- [PR #229: Record every merge refusal with its PR, stage and time](https://github.com/G-Eskayo/marvin/pull/229)
+- [PR #584: Merge gate and main-health run the Python suite in parallel (pytest-xdist -n auto): 327 s → 47 s on the M4](https://github.com/G-Eskayo/marvin/pull/584)
+- [PR #736: UI PRs can't open or merge without current, working screenshots (gh gate + pr-shots)](https://github.com/G-Eskayo/marvin/pull/736)
+- [PR #774: Screenshot gate: check instance-repo images by time, so MARVIN UI PRs can merge](https://github.com/G-Eskayo/marvin/pull/774)
+- [PR #928: Test pipeline: one required-checks list for CI and the gate, rule hooks, affected tests, main-red tickets](https://github.com/G-Eskayo/marvin/pull/928)
+- [PR #955: Merges stop failing on memory pressure: one test run at a time, merges first, keep the promise, a backup Mac](https://github.com/G-Eskayo/marvin/pull/955)
+- [PR #996: Builds run their Python tests in parallel, sized to free memory](https://github.com/G-Eskayo/marvin/pull/996)
+
+## Related features
+
+- [Decisions](/docs/features/decisions/): the questions that block a merge until you answer them.
+- [Ticket pipeline](/docs/features/ticket-pipeline/): where a sent-back PR is rebuilt.
+- [Dashboard](/docs/features/dashboard/): MR Review, the Approve button and the stage strip.
+- Merge queue (Built, in testing), auto-merge (shadow mode), GitHub gate, failure breaker.

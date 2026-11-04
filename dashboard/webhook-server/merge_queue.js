@@ -1,7 +1,7 @@
 import { readFileSync, writeFileSync, mkdirSync, renameSync } from 'fs'
 import os from 'os'
 import path from 'path'
-import { mergeOrder } from './merge_order.js'
+import { mergeOrder, HOLD_UNTIL, holdKey } from './merge_order.js'
 
 // The merge queue (marvin#231): Approve adds the PR to its repo's queue, and one runner per repo merges the queue in
 // the order mergeOrder() works out, one PR at a time, through the existing gate (rebase onto the current main, the
@@ -55,7 +55,7 @@ export function createQueueStore(file = queuePath(), { now = Date.now } = {}) {
       return change(repo, (r) => {
         delete r.failed[url]
         const had = r.items.find((i) => i.url === url)
-        if (had) return { added: false, item: had }
+        if (had) { delete had.hold; return { added: false, item: had } }
         const item = { url, number: prNumber(url), approvedAt: now(), by }
         r.items.push(item)
         return { added: true, item }
@@ -73,6 +73,14 @@ export function createQueueStore(file = queuePath(), { now = Date.now } = {}) {
         r.items = r.items.filter((i) => i.url !== url)
         delete r.failed[url]
         r.lastMerged = prNumber(url)
+      })
+    },
+    // marvin#1097: a temporary refusal: it stays queued, held until `key` changes (or, for "later", until notBefore).
+    hold(repo, url, hold) {
+      return change(repo, (r) => {
+        const it = r.items.find((i) => i.url === url)
+        if (it) it.hold = hold
+        delete r.failed[url]
       })
     },
     // The gate hit a conflict on this commit: it stays queued, held until the resolver (or anyone) pushes a new one.
@@ -102,6 +110,8 @@ export function outcomeFor(outcome) {
   const b = outcome?.body
   const code = r?.code || b?.code || null
   if (CONFLICT_CODES.has(code)) return { kind: 'conflict', code }
+  // marvin#1097: a temporary refusal holds the PR, queued, until what it waits on changes
+  if (HOLD_UNTIL[code]) return { kind: 'hold', code, until: HOLD_UNTIL[code], reason: String(b?.message || r?.reason || code).split('\n')[0].slice(0, 200) }
   const reason = r ? String(r.reason || 'sent back for rework').split('\n').find((l) => l.trim() && !/^\*\*/.test(l.trim())) || code || 'sent back for rework'
     : b?.message || b?.error || 'the merge failed'
   return { kind: 'failed', code, reason: code && r ? `${code}: ${reason}` : reason }
@@ -111,7 +121,9 @@ export function outcomeFor(outcome) {
 // existing gate; `attach` is the Approve that asked for it, when it is still waiting for its answer); afterRun(repo):
 // waits for the merge's after-steps (stacked PRs moved onto main, the others conflict-checked) before deciding again;
 // onWaiting(repo, pr, entry): a queued PR is held by something MARVIN can act on (unbuilt answers, a conflict).
-export function createMergeQueue({ store, load, run, afterRun = async () => {}, onWaiting = () => {}, log = () => {} }) {
+export const HOLD_RETRY_MS = 5 * 60 * 1000   // a "later" hold's back-off (marvin#1097)
+
+export function createMergeQueue({ store, load, run, afterRun = async () => {}, onWaiting = () => {}, log = () => {}, clock = Date.now }) {
   const busy = new Set()
   const again = new Set()
   const running = new Map() // repo -> url
@@ -120,7 +132,7 @@ export function createMergeQueue({ store, load, run, afterRun = async () => {}, 
   async function evaluate(repo) {
     const { openPrs, mainState } = await load(repo)
     const q = store.forRepo(repo)
-    const out = mergeOrder(openPrs, mainState, { items: q.items, failed: q.failed, lastMerged: q.lastMerged, running: running.get(repo) || null })
+    const out = mergeOrder(openPrs, mainState, { items: q.items, failed: q.failed, lastMerged: q.lastMerged, running: running.get(repo) || null, now: clock() })
     out.heads = new Map(openPrs.map((p) => [p.url, p.headRefOid || null]))
     for (const url of out.dropped) {
       // Merged or closed elsewhere (GitHub, the other Mac, by hand): it has nothing left to wait for.
@@ -178,6 +190,13 @@ export function createMergeQueue({ store, load, run, afterRun = async () => {}, 
         const o = outcomeFor(outcome)
         if (o.kind === 'merged') store.merged(repo, url)
         else if (o.kind === 'conflict') store.markConflict(repo, url, out.heads.get(url))
+        else if (o.kind === 'hold') {
+          const v = views.get(repo)
+          const pr = (v?.prs || []).find((p) => p.url === url)
+          const key = holdKey(o.until, pr, v?.main)
+          store.hold(repo, url, { code: o.code, until: o.until, reason: o.reason, key, notBefore: o.until === 'later' || key == null ? clock() + HOLD_RETRY_MS : null, at: clock() })
+          log(`[merge-queue] ${repo}: #${prNumber(url)} held (${o.code}): ${o.reason}`)
+        }
         else if (o.kind === 'failed') {
           store.fail(repo, url, { reason: o.reason, code: o.code })
           log(`[merge-queue] ${repo}: #${prNumber(url)} left the queue: ${o.reason}`)

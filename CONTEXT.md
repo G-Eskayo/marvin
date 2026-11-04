@@ -161,6 +161,12 @@ one job, starting with the history store.
 - **Thread**: the single continuous MARVIN conversation on the phone, shared by Chat and Voice
   (a spoken exchange shows up as text in the same Thread). Proactive messages from MARVIN land
   here too. There is one Thread, not a list of conversations.
+- **Chat tab**: a person's interactive MARVIN session running in a WezTerm pane on a Mac (marvin#1060, PRD #1058).
+  Recorded by its SessionStart hook in the live session list, keyed by (Mac, WezTerm GUI socket, pane) and checked
+  against the pane's tty; the pane owns the record, so /clear or a resume only updates its Claude session id. It is
+  alive while WezTerm still lists the pane with that tty and its claude process runs; nothing ages it out. Helper
+  tabs and one-off `claude -p` runs are not chat tabs. _Avoid_: calling it a "Chat" (the phone's typed surface) or a
+  "Session" (the phone backend's rotations, or the Claude Code session id it carries).
 - **Session** (in the MARVIN Mobile sense): one underlying Claude Code session behind a stretch of
   the Thread. The backend rotates to a fresh Session on topic shift or length, carrying a short
   summary forward; Gil sees one Thread, never the rotations. Every Session is a normal Claude
@@ -492,6 +498,13 @@ ever been closed unmerged. Gil approves almost everything; the wait is the cost.
   or run it on the API credit; at the hard line a big task needs Gil's yes. Nothing is cut off mid-task.
 - **Pace** (of a budget that expires, like the API credit or the weekly plan limit): projected spend to the reset
   date. Under pace, queued work is pulled forward; over pace, it is slowed, so the budget lands near its limit.
+- **Plan reading**: one row of the Claude plan's own meters (5-hour and weekly used %, and when each resets), as
+  Claude Code reports them, in `~/.claude/logs/plan-usage.jsonl` (`lib/plan_usage.py`). A row is written only when a
+  meter changes. No reading means "not enough data", never 0%.
+- **Unused window** (of the 5-hour limit): five whole hours this week when no 5-hour window was running, so a
+  window's worth of the plan could have been used and wasn't. A **nearly unused** window ran but peaked under 10%.
+  When 5-hour windows hit the limit while the week is projected to end under 100%, the 5-hour limit is the
+  **binding limit**: it is costing weekly allowance.
 - **Plan first** (billing, Gil 2026-10-30): every build runs on the Claude plan while it has room, however many run
   at once. A run that hits the plan's usage limit retries at once on the API credit, and that Mac stays on the credit
   for an hour before trying the plan again (`dispatch_concurrency.plan_limited`). A spent credit falls back to waiting
@@ -699,6 +712,21 @@ ever been closed unmerged. Gil approves almost everything; the wait is the cost.
   Notes with no inbound link are counted but stay green. Cost: O(notes + links), about 0.05 s for 164 notes.
 - `node_type` and `modified` are optional fields written by tooling, not required.
 
+## Profile parity (built 2026-11-02, marvin#1038)
+
+- **Public profile facts**: the owner's decided public facts (headline, current title, counts, names that never
+  appear, private values that never go public), each with its source and decision date. They live in one file in the
+  private instance, `config/public-profile.json`, never in the engine.
+- **Surface**: one place those facts show up: live web pages, a PDF, a local file (the master resume), a GitHub
+  profile, or a git branch of a site's source. A surface that can't be read is **couldn't check**, never a pass.
+- **Parity rule**: a test of a surface's text against the facts: `forbid`, `count` (exact or at least), `title_near`
+  (the title nearest an employer must be the real one) and `require`. An unconfirmed fact makes a **question** for the
+  owner, not a plain mismatch. A broken rule is itself a finding.
+- `lib/profile_parity.py` runs every rule on every surface and reports per surface and field; private matches are
+  redacted in every output. **Health check `profile:parity`**: amber naming the surface and field on drift, unknown
+  when nothing could be read, nothing at all when the instance keeps no facts file. Surfaces are re-read at most every
+  6 hours, or as soon as the facts file changes.
+
 ## Memory graph (built 2026-10-26, marvin#696)
 
 - **Memory graph**: `lib/memory_graph.py` follows memory's `[[links]]` instead of grepping for them. It is built
@@ -809,7 +837,8 @@ its ticketing system creates shows up there with drill-down status. Boards live 
   killer-sudoku.
 - **Columns (derived by one pure function, `dashboard/electron/main/board.js`, first match wins):**
   1. **Done** — issue closed.
-  2. **In review / testing** — an open PR closes the ticket (PR body `Closes #n`), or the last
+  2. **In review / testing** — an open PR **names** the ticket (PR body `Closes #n` or `Part of #n`, from this
+     repo or any other onboarded project's: see **Names its ticket** below), or the last
      pipeline stage is verifying/gate/merging. Card shows the PR link and whether the PR carries
      Dev Environment Evidence; clicking the PR opens it in the MR Review tab.
   3. **Blocked** — label `blocked`; or `Blocked by #n` in the body with #n still open; or the
@@ -835,6 +864,17 @@ its ticketing system creates shows up there with drill-down status. Boards live 
   rebuilt and relaunched by the 30-min code-sync cycle (`dashboard_rebuild.py`): a change settles for
   15 min, and a running app is rebuilt once it is >=1h behind (was 2h / 24h, which made a new feature
   take up to a day to show). Trade-off accepted: the relaunch drops unsaved in-tab edits (Portfolio).
+
+- **Names its ticket (2026-11-02, marvin#1004).** An open PR names its ticket as `Closes #n` (it finishes the ticket;
+  GitHub closes it on merge) or `Part of #n` (a step: a mock-up, a stacked slice, a plan, docs; the ticket stays open).
+  Either form takes `owner/repo#n` or the issue URL. The relation index has them as two relations, `closes` and
+  `part-of` ("part of" / "worked on in" in the Related panel); a bare mention or "for #n" is only `mentions`. Both put
+  the ticket's card In review and satisfy the parity check. PRs are matched across repos: every board gets every
+  onboarded project's open PRs (read once per project, the same cached board data the relation index uses), so a
+  marvin-instance PR that closes a marvin ticket moves that card. One parser per language,
+  `dashboard/electron/main/ticket_refs.js` and `lib/pr_ticket_check.py`, both run
+  `dashboard/test/fixtures/pr_ticket_refs_cases.json`. `bin/gh` refuses a PR body that names no ticket
+  (`PR_NAMES_NO_TICKET`; override `MARVIN_NO_TICKET="<reason>"`). The rule: `docs/agents/issue-tracker.md`.
 
 ### Triggers over polling (decided 2026-10-03)
 
@@ -1027,7 +1067,7 @@ nothing connected them. "Where things are" was only the tidy agent's file-filing
   not another button")**: `electron/main/relations.js` reads every ticket and PR body, every doc, and each
   PR's changed files, and derives edges: ticket->ticket (blocked by / mentions), ticket->doc ("ADR 0033"
   resolves to that project's `docs/adr/0033-*.md`, also `CONTEXT.md`/`README.md` and explicit paths),
-  PR->ticket (closes / mentions), PR->doc (changes / mentions), doc->ticket (`#12`, `owner/repo#12`),
+  PR->ticket (closes / part of / mentions), PR->doc (changes / mentions), doc->ticket (`#12`, `owner/repo#12`),
   doc->doc. Edit a doc or a ticket and its relations change with it; nothing to sync. Code fences and
   inline code are ignored. Surfaces: `#12` and `ADR 0033` inside a doc or ticket body are clickable
   (linkify, `dash://` links that stay in the app); a **Related** panel on every doc, ticket and MR lists
@@ -1554,6 +1594,9 @@ Mac has no push channel. Gil applies the hooks on each Mac with `marvin_hooks.py
   and no written answer, need no more work and no reply: the PR can merge. A question that marks no built option only
   counts when its first option, marked Recommended, is the one picked.
 - **Queue line, once**: the line is left out when the card's headline already says the same thing.
+- **One card, both states** (owner, 2026-11-02): a queued PR's card reads "Approved: in the merge queue" with its queue
+  line; when its turn comes the same card becomes the merge pipeline (the stage strip), on every Mac, whichever device
+  approved it, and a Mac that opens mid-merge catches up to where the merge is.
 
 ## clarity-captions app-build check is now required (2026-10-05)
 
@@ -1934,8 +1977,10 @@ MARVIN-as-OS north star).
   except the Macs' code sync. The box's only scheduled job is the **mirror** (pull-only code sync,
   every 10 minutes). Its health is checked from the Macs, which already reach every registered device; Mac-only checks
   skip it. Everything else arrives as dispatched work.
-- **Bot PRs** (built 2026-10-16): PRs by MARVIN-bot-gil always wait for Gil, which is stricter than the 5-PR ramp.
-  A per-author streak can replace that later.
+- **Bot PRs** (built 2026-10-16, ramp 2026-10-30, #952): PRs by MARVIN-bot-gil wait for Gil until the bot's own
+  **author ramp** opens: 5 clean approvals in a row (`ramp_authors` in config/auto_merge.json, `trust_ramp.record_author`).
+  A deny, revert or break resets it to 0; the project's ramp must also be open. Trust is by author only: the `from-box`
+  label (#951) is information and changes no verdict.
 - **Open in this design** (as of 2026-10-16): the box's GitHub identity; sudo scope; Claude Code sign-in on Linux.
 
 ## One "needs a person" state, bot comments don't reset strikes, one plan per run (2026-10-22, #605)
@@ -1999,3 +2044,17 @@ another way.
   that merged and flags tests run on another OS.
 _Avoid_: "failed" for an approval that waits for memory; "idle" meaning the owner is away (here it means the machine
 runs no merge or test of its own and its memory is normal).
+
+## Cold store (built 2026-11-03, marvin#1081)
+
+- **Cold store**: big folders nobody is using, kept on the **cold host** (`config/cold_store.json`, today
+  mac-mini-2012) instead of a Mac. This is placement by role (storage plan section 5), not striping. `lib/cold_store.py`,
+  `bin/marvin-cold`.
+- **Parked**: a folder whose bytes live in the cold store. Its old path holds a **marker** instead (`PARKED.txt` for
+  people, `.marvin-cold.json` for code). The parking Mac keeps the trusted manifest (`var/cold-store/<name>.json`).
+  Bytes coming back from the 2012, which runs untrusted code, are checked against that manifest. Secret and state
+  folders are never parked.
+- **Ensure**: what a caller runs before it reads a folder that may be parked (`marvin-cold ensure PATH [--part SUB]`).
+  When the data is here it returns at once with no network. When the folder is parked it fetches the data back
+  (locked, space-checked, verified) and returns. A path inside a parked folder fetches only that part. This is the
+  trigger: nothing polls.

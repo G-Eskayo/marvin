@@ -1,16 +1,16 @@
 #!/usr/bin/env python3
-"""marvin show: put one thing in front of Gil, inside MARVIN, in that project's own window (marvin#715).
+"""marvin show: put one thing in front of the owner, inside MARVIN, in that project's own window (marvin#715).
 
     marvin-show <file>                         a file in any project's clone, the outbox, or a temp folder
     marvin-show <path> --pr 934 [--repo o/r]   a file on a PR branch (not on main yet), read at the PR's head
     marvin-show <url>                          a web address (a GitHub blob link opens as that file)
     options: --project <id>  --topic <words>  --label <text>  --no-launch  --json
 
-Any session or helper runs it whenever a reply asks Gil to look at something. Never a file card or a temp path.
+Any session or helper runs it whenever a reply asks the owner to look at something. Never a file card or a temp path.
 
 What it does:
 1. A file under /tmp, /private/tmp or /var/folders (a session scratchpad) is copied into
-   ~/.claude/outbox/<project>-<YYYY-MM-DD>-<topic>/ first, so nothing Gil is shown lives only in temp. The folder name
+   ~/.claude/outbox/<project>-<YYYY-MM-DD>-<topic>/ first, so nothing the owner is shown lives only in temp. The folder name
    starts with the project's slug, which is how the Docs tab (deliverables.js) files it under that project.
 2. It asks the running dashboard to show it: POST http://127.0.0.1:7879/show (the local refresh server, the same one
    the webhook pings). The dashboard opens that project's window, or reuses it, and brings it to the front.
@@ -40,7 +40,8 @@ HOME = Path.home()
 OUTBOX = HOME / ".claude" / "outbox"
 CATALOG_DIR = HOME / ".claude" / "catalog"
 TEMP_ROOTS = ("/tmp", "/private/tmp", "/var/folders", "/private/var/folders")
-BUNDLE_ID = "com.gileskayo.marvin-metrics-dashboard"
+# The app id comes from the dashboard's own build config, never written here (no owner name in engine code).
+DASHBOARD_PACKAGE = Path(__file__).resolve().parent.parent / "dashboard" / "package.json"
 DEFAULT_PORT = 7879
 # The outbox syncs between the Macs through git (code_sync), and GitHub refuses files over 100 MB: a bigger copy
 # would wedge the sync. 50 MB is the largest PDF the viewer opens (outbox.js MAX_PDF_BYTES).
@@ -128,7 +129,7 @@ def project_slug(project_id: str, projects: list[dict]) -> str:
 
 
 def check_path(p: str, roots: list[str]) -> str:
-    """The real path of a file Gil may be shown (temp paths are allowed here: they are copied, never shown)."""
+    """The real path of a file the owner may be shown (temp paths are allowed here: they are copied, never shown)."""
     if "\0" in p:
         raise Refused("Bad path")
     if not os.path.lexists(p):
@@ -311,9 +312,21 @@ def post_show(body: dict, port: int, timeout: float = 30) -> tuple[int, dict] | 
         return None
 
 
-def launch_dashboard() -> bool:
+def dashboard_bundle_id(package: Path | None = None) -> str | None:
+    """The dashboard app's bundle id (build.appId in its package.json); None when it can't be read."""
     try:
-        return subprocess.run(["open", "-b", BUNDLE_ID], capture_output=True, timeout=20).returncode == 0
+        app_id = json.loads(Path(package or DASHBOARD_PACKAGE).read_text()).get("build", {}).get("appId")
+    except (OSError, ValueError, AttributeError):
+        return None
+    return app_id if isinstance(app_id, str) and app_id.strip() else None
+
+
+def launch_dashboard() -> bool:
+    bundle_id = dashboard_bundle_id()
+    if not bundle_id:
+        return False
+    try:
+        return subprocess.run(["open", "-b", bundle_id], capture_output=True, timeout=20).returncode == 0
     except (OSError, subprocess.SubprocessError):
         return False
 
@@ -371,7 +384,7 @@ def peer_idle(host: str) -> float | None:
 
 
 def mac_peers() -> dict[str, str]:
-    """{device id: tailscale host} for the other Macs in the registry (a Linux box has no screen for Gil)."""
+    """{device id: tailscale host} for the other Macs in the registry (a Linux box has no screen for the owner)."""
     try:
         sys.path.insert(0, str(Path(__file__).resolve().parent))
         import machine_profile
@@ -382,7 +395,7 @@ def mac_peers() -> dict[str, str]:
 
 
 def pick_mac(local: float | None, peers: dict[str, float | None]) -> str | None:
-    """The Mac Gil is using: the most recent input wins. None = this Mac. A peer that didn't answer (asleep, off) is
+    """The Mac the owner is using: the most recent input wins. None = this Mac. A peer that didn't answer (asleep, off) is
     never picked; this Mac wins a tie and whenever no peer is known to be more recent."""
     known = {h: i for h, i in peers.items() if i is not None}
     if not known:
@@ -474,7 +487,7 @@ def _scp(host: str, src: Path, dest: str) -> bool:
 
 
 def main(argv: list[str] | None = None) -> int:
-    ap = argparse.ArgumentParser(prog="marvin-show", description="Show Gil one thing in its project's MARVIN window.")
+    ap = argparse.ArgumentParser(prog="marvin-show", description="Show the owner one thing in its project's MARVIN window.")
     ap.add_argument("target", help="a file path, a repo path with --pr, or a URL")
     ap.add_argument("--pr", type=int, help="the PR whose branch holds the file")
     ap.add_argument("--repo", help="owner/name (default: this folder's repo)")

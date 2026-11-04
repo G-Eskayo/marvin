@@ -1103,6 +1103,29 @@ describe('merging waits for the repo\'s own CI', () => {
     expect(reengage).not.toHaveBeenCalled()
   })
 
+  // marvin#1099: the gate is the check. GitHub's copy of a check the gate runs itself never holds the merge.
+  it("a cancelled or failed GitHub run of a check the gate runs itself doesn't hold the merge", async () => {
+    const fs = await import('fs')
+    const os = await import('os')
+    const path = await import('path')
+    const clone = fs.mkdtempSync(path.join(os.tmpdir(), 'gate-clone-'))
+    fs.mkdirSync(path.join(clone, '.github'))
+    fs.writeFileSync(path.join(clone, '.github', 'required-checks.json'), JSON.stringify({ checks: [
+      { id: 'core', name: 'CaptionCore unit tests', command: ['true'] }, { id: 'scan', name: 'Secret scan', where: 'ci' }] }))
+    const ctx = { ...CTX3, clone }
+    for (const conclusion of ['CANCELLED', 'FAILURE']) {
+      const exec = execWith([{ __typename: 'CheckRun', name: 'CaptionCore unit tests', status: 'COMPLETED', conclusion }])
+      const result = await mergePr(PR, exec, noopRebuild, noopRedispatch, gate(), vi.fn(), vi.fn(), vi.fn(), { gateContext: async () => ctx })
+      expect(result.merged).toBe(true)
+      // this PR skipped the gate's retest (gate: false), so no "MARVIN gate" status claims a run that never happened
+      expect(exec).not.toHaveBeenCalledWith('gh', ['pr', 'view', PR, '--json', 'headRefOid', '--jq', '.headRefOid'])
+    }
+    // ...while a check the gate does not run still sends it back
+    const exec = execWith([{ __typename: 'CheckRun', name: 'Secret scan', status: 'COMPLETED', conclusion: 'FAILURE' }])
+    const result = await mergePr(PR, exec, noopRebuild, noopRedispatch, gate(), vi.fn(), vi.fn().mockResolvedValue(undefined), vi.fn(), { gateContext: async () => ctx })
+    expect(result).toMatchObject({ merged: false, code: 'CI_FAILED' })
+  })
+
   it('passing checks, or none at all, merge as before', async () => {
     for (const rollup of [[{ __typename: 'CheckRun', name: 'a', status: 'COMPLETED', conclusion: 'SUCCESS' }], []]) {
       const exec = execWith(rollup)

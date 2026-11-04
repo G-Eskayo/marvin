@@ -27,7 +27,7 @@ def world(tmp_path, monkeypatch):
     outbox = home / ".claude" / "outbox"
     outbox.mkdir(parents=True)
     agents = home / ".agents"
-    portfolio = home / "Developer" / "portfolio-website-updater"
+    portfolio = home / "Developer" / "portfolio-site"  # neutral name: the real default lives only in project_catalog._PORTFOLIO_DEFAULT
     for d in (agents / "instance" / "docs" / "plans", portfolio / "docs"):
         d.mkdir(parents=True)
     # tmp_path itself is under /private/var/folders (a temp root): the "home" must not look like temp to the checks.
@@ -182,6 +182,25 @@ def test_a_dashboard_that_never_comes_up_or_is_too_old_says_so():
     assert code == 3 and "older than marvin show" in answer["reason"]
     code, answer = ms.deliver({}, 1, post=lambda b, p: (422, {"ok": False, "reason": "Outside"}))
     assert (code, answer["reason"]) == (2, "Outside")
+
+
+def test_the_dashboard_is_started_by_the_bundle_id_its_own_build_names(tmp_path, monkeypatch):
+    """No owner's app id is written into the engine (lib/tests/test_instance.py): it is read from the dashboard's
+    package.json, so a fork that renames its app still starts its own. A missing or broken one starts nothing."""
+    assert ms.dashboard_bundle_id() == json.loads((LIB.parent / "dashboard" / "package.json").read_text())["build"]["appId"]
+    pkg = tmp_path / "package.json"
+    pkg.write_text(json.dumps({"build": {"appId": "org.example.fork-dashboard"}}))
+    assert ms.dashboard_bundle_id(pkg) == "org.example.fork-dashboard"
+    ran = []
+    monkeypatch.setattr(ms.subprocess, "run", lambda cmd, **k: ran.append(cmd) or type("R", (), {"returncode": 0})())
+    monkeypatch.setattr(ms, "DASHBOARD_PACKAGE", pkg)
+    assert ms.launch_dashboard() is True and ran == [["open", "-b", "org.example.fork-dashboard"]]
+    for broken in ("{not json", json.dumps({"build": {}}), json.dumps([1])):
+        pkg.write_text(broken)
+        ran.clear()
+        assert ms.launch_dashboard() is False and ran == []
+    pkg.unlink()
+    assert ms.dashboard_bundle_id(pkg) is None and ms.launch_dashboard() is False
 
 
 def test_post_show_talks_json_to_a_real_local_server():

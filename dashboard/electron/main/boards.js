@@ -5,6 +5,7 @@ import path from 'path'
 import { buildBoard } from './board.js'
 import { readOverrides } from './catalog.js'
 import { projectIdOf } from '../../src/lib/projects.js'
+import { withOverrides, projectFor } from '../../src/lib/project_names.js'
 import { listTrackedTickets, readStages } from '../../webhook-server/ticket_stages.js'
 import { readDispatchStatus } from './dispatch_status.js'
 
@@ -37,10 +38,15 @@ export function readRegistry(file = REGISTRY_PATH, overrides = readOverrides()) 
 
 // A board's project status (active / recent / dormant / archived) comes from the catalog, so boards of
 // projects nobody is working on can sit out of the way without being deleted. Unknown = recent: never hide.
-export function withProjectStatus(boards, catalog) {
+// Each board's name is its project's one name (overrides.json, marvin#848); the repo stays the board's key.
+export function withProjectStatus(boards, catalog, overrides = null) {
+  const projects = withOverrides(catalog?.projects, overrides)
   const status = Object.fromEntries((catalog?.projects || []).map((p) => [p.id, p.status]))
   const lastActivity = Object.fromEntries((catalog?.projects || []).map((p) => [p.id, p.lastActivity || null]))
-  return boards.map((b) => ({ ...b, status: status[projectIdOf(b.repo)] || 'recent', lastActivity: lastActivity[projectIdOf(b.repo)] }))
+  return boards.map((b) => {
+    const project = projectFor(b.repo, projects)
+    return { ...b, ...(project ? { name: project.name } : {}), status: status[projectIdOf(b.repo)] || 'recent', lastActivity: lastActivity[projectIdOf(b.repo)] }
+  })
 }
 
 // Stage events, keyed by project + ticket number (ticket_stages.js).
@@ -167,9 +173,26 @@ function defaultEvidenceRun(repo) {
 
 export function clearEvidenceCache() { evidenceCache.clear() }
 
-export async function loadBoard(repo, { gh, registryRepos = [], stagesFor = defaultStagesFor, liveNumbers, data, evidence = {} } = {}) {
+// Every other project's open PRs, each tagged with its repo: one read per project (from the same cached board data),
+// so a PR in one repo that closes or is part of a ticket in another moves that ticket's card (marvin#1004).
+// A project that fails to load only loses its own PRs.
+export async function prsOfProjects(repos, getData, except = null) {
+  const others = [...new Set(repos)].filter((r) => r !== except)
+  const lists = await Promise.all(others.map(async (r) => {
+    try {
+      return ((await getData(r)).prs || []).map((p) => ({ ...p, repo: r }))
+    } catch {
+      return []
+    }
+  }))
+  return lists.flat()
+}
+
+export async function loadBoard(repo, { gh, registryRepos = [], stagesFor = defaultStagesFor, liveNumbers, data, evidence = {}, otherPrs = [] } = {}) {
   try {
-    const { issues: ownIssues, prs } = data || (await fetchBoardData(repo, gh))
+    const { issues: ownIssues, prs: ownPrs } = data || (await fetchBoardData(repo, gh))
+    // This repo's PRs plus every other project's (otherPrs): a ticket's PR can live in any project's repo.
+    const prs = [...ownPrs, ...otherPrs.filter((p) => p.repo !== repo)]
     const thisProjectId = projectIdOf(repo)
 
     // Partition own issues: separate those with project:<x> labels where x is not this repo.
@@ -219,7 +242,7 @@ export async function loadBoard(repo, { gh, registryRepos = [], stagesFor = defa
       const foreignBoard = buildBoard({
         repo: foreignRepo,
         issues: foreignIssues,
-        prs: []
+        prs: [...ownPrs.map((p) => ({ ...p, repo })), ...otherPrs]
       })
       foreignBoards.push({ repo: foreignRepo, board: foreignBoard })
     }

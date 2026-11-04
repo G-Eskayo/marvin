@@ -1,4 +1,5 @@
 import { hasEvidenceSchema, parseTicketRef } from './mr_review.js'
+import { ticketLinked } from './ticket_refs.js'
 import { latestRevisit } from '../../src/lib/revisit.js'
 
 // Jira-style project board (CONTEXT.md "Project boards"). A board is never
@@ -35,17 +36,32 @@ export const STALE_CLAIM_MS = 24 * 3600_000
 
 const labelNames = (issue) => (issue.labels || []).map((l) => l.name)
 
-function closingPrs(issue, prs) {
-  return prs
-    .filter((p) => p.state === 'OPEN' && parseTicketRef(p.body || '') === String(issue.number))
-    .map((p) => ({
+// Open PRs that name this ticket, as "Closes #n" or "Part of #n" (ticket_refs.js, marvin#1004), from any repo:
+// `prs` may hold other projects' PRs (each with its `repo`), so a marvin-instance PR that says
+// "Closes G-Eskayo/marvin#623" puts marvin #623 in review. A PR with no `repo` is this board's own.
+// Closing PRs first, so the card's reason names the PR that finishes the ticket.
+function closingPrs(issue, prs, repo) {
+  const linked = []
+  for (const p of prs) {
+    if (p.state !== 'OPEN') continue
+    const relation = ticketLinked(p, repo, issue.number, repo)
+    if (!relation) continue
+    const foreign = p.repo && repo && p.repo.toLowerCase() !== repo.toLowerCase()
+    linked.push({
       number: p.number,
       title: p.title,
       url: p.url,
       isDraft: !!p.isDraft,
+      relation,
+      ...(foreign ? { repo: p.repo } : {}),
       hasDevEvidence: hasEvidenceSchema(p.body) && !/##\s*Dev Environment Evidence\s*\n+\s*N\/A/i.test(p.body)
-    }))
+    })
+  }
+  return [...linked.filter((p) => p.relation === 'closes'), ...linked.filter((p) => p.relation !== 'closes')]
 }
+
+// "PR #6" for this repo's own PR, "PR marvin-instance#6" for another project's.
+const prLabel = (p) => (p.repo ? `PR ${p.repo.split('/')[1]}#${p.number}` : `PR #${p.number}`)
 
 // Dependencies come from either inline "Blocked by #n" or the to-issues
 // template's "## Blocked by" section (bullets of #n refs, or "None ...").
@@ -90,9 +106,9 @@ export function deriveColumn(issue, ctx = {}) {
   return notes.length ? { ...result, reason: `${result.reason} (${notes.join('; ')})` } : result
 }
 
-function deriveColumnCore(issue, { prs = [], events = [], isLive = false, openNumbers = new Set(), heldNumbers = new Set(), notPlannedNumbers = new Set(), now = Date.now() } = {}) {
+function deriveColumnCore(issue, { repo = issue.repo || null, prs = [], events = [], isLive = false, openNumbers = new Set(), heldNumbers = new Set(), notPlannedNumbers = new Set(), now = Date.now() } = {}) {
   const labels = labelNames(issue)
-  const linked = closingPrs(issue, prs)
+  const linked = closingPrs(issue, prs, repo)
   const last = events.length ? events[events.length - 1] : null
   const base = { prs: linked, owner: null }
 
@@ -101,10 +117,10 @@ function deriveColumnCore(issue, { prs = [], events = [], isLive = false, openNu
   if (linked.length && labels.includes('needs-reengagement')) {
     // Denied in review (or failed the merge gate): the PR stays open, but the next move is the agent's, not
     // yours. MR Review shows the same PR as "sent back", so the two views say the same thing.
-    return { ...base, column: 'blocked', reason: `Sent back from review: waiting for rework (PR #${linked[0].number} still open)` }
+    return { ...base, column: 'blocked', reason: `Sent back from review: waiting for rework (${prLabel(linked[0])} still open)` }
   }
   if (linked.length) {
-    return { ...base, column: 'review', reason: `PR #${linked[0].number} open: ${linked[0].title}` }
+    return { ...base, column: 'review', reason: `${prLabel(linked[0])} open${linked[0].relation === 'part-of' ? ' (part of this ticket)' : ''}: ${linked[0].title}` }
   }
   if (last && REVIEW_STAGES.has(last.stage) && last.status !== 'failed') {
     return { ...base, column: 'review', reason: `Pipeline at ${last.stage}` }
@@ -151,7 +167,7 @@ export function buildBoard({ repo, issues, prs, eventsByNumber = {}, liveNumbers
 
   for (const issue of issues) {
     const events = eventsByNumber[issue.number] || []
-    const d = deriveColumn(issue, { prs, events, isLive: liveNumbers.has(issue.number), openNumbers, heldNumbers, notPlannedNumbers, now })
+    const d = deriveColumn(issue, { repo, prs, events, isLive: liveNumbers.has(issue.number), openNumbers, heldNumbers, notPlannedNumbers, now })
     const names = labelNames(issue)
     const created = Date.parse(issue.createdAt)
     // Git is what happened, labels are what was said: surface work that already exists (lib/ticket_evidence.py).

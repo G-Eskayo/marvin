@@ -28,7 +28,9 @@ const COLUMN_STYLE = {
   done: 'border-emerald-700'
 }
 
-function PrChip({ pr, repo, onOpenMr }) {
+function PrChip({ pr, repo: boardRepo, onOpenMr }) {
+  // A PR in another project's repo (it closes or is part of this ticket, marvin#1004) opens in its own repo.
+  const repo = pr.repo || boardRepo
   return (
     <span
       role="button"
@@ -41,7 +43,8 @@ function PrChip({ pr, repo, onOpenMr }) {
       onKeyDown={(e) => e.key === 'Enter' && onOpenMr(`${repo}#${pr.number}`)}
       className="inline-flex items-center gap-1 rounded bg-amber-950 px-1.5 py-0.5 text-xs text-amber-300 hover:bg-amber-900"
     >
-      PR #{pr.number}
+      PR {pr.repo ? `${pr.repo.split('/')[1]}#${pr.number}` : `#${pr.number}`}
+      {pr.relation === 'part-of' ? ' · part of' : ''}
       {pr.isDraft ? ' · draft' : ''}
       {pr.hasDevEvidence ? ' · dev env ✓' : ' · no dev evidence'}
     </span>
@@ -89,7 +92,7 @@ function Freshness({ at }) {
   return <p className={`mb-2 text-[11px] ${mins >= 10 ? 'text-amber-400' : 'text-neutral-600'}`}>Board data read {text}</p>
 }
 
-function Card({ card, repo, onSelect, onOpenMr, activeTags, onTag }) {
+export function Card({ card, repo, onSelect, onOpenMr, activeTags, onTag }) {
   const [cardEvents, setCardEvents] = useState([])
 
   useEffect(() => {
@@ -140,7 +143,7 @@ function Card({ card, repo, onSelect, onOpenMr, activeTags, onTag }) {
           </span>
         ))}
         {card.prs.map((pr) => (
-          <PrChip key={pr.number} pr={pr} repo={repo} onOpenMr={onOpenMr} />
+          <PrChip key={`${pr.repo || ''}#${pr.number}`} pr={pr} repo={repo} onOpenMr={onOpenMr} />
         ))}
         {card.ageDays != null && card.closedAt == null && <span className="ml-auto text-[10px] text-neutral-600">{card.ageDays}d old</span>}
       </div>
@@ -301,7 +304,7 @@ function TicketDrilldown({ repo, card, boardCards, onBack, onOpenMr, onOpenDocs,
           </span>
         ))}
         {card.prs.map((pr) => (
-          <PrChip key={pr.number} pr={pr} repo={repo} onOpenMr={onOpenMr} />
+          <PrChip key={`${pr.repo || ''}#${pr.number}`} pr={pr} repo={repo} onOpenMr={onOpenMr} />
         ))}
       </div>
       {error && <p className="mt-4 text-red-400">Failed to load ticket: {error}</p>}
@@ -357,11 +360,11 @@ function TicketDrilldown({ repo, card, boardCards, onBack, onOpenMr, onOpenDocs,
 // Across ALL projects: where reviews and decisions are waiting on you, so the right board is one click away
 // (the PRs in MR Review belong to whichever project they came from, not necessarily the board you have open).
 // A box to answer a ticket. What sending will do is shown BEFORE you send (same rules the main process applies).
-const labelsOf = (detail, card) => detail.labels?.map((l) => l.name) || card.labels
+export const labelsOf = (detail, card) => detail.labels?.map((l) => l.name) || card.labels
 
 // A ticket marked for the owner says exactly what to do, where, how and what to send back: shown first. If it does not,
 // that is said plainly instead of leaving the question to a chat.
-function HumanTaskPanel({ body, ctx }) {
+export function HumanTaskPanel({ body, ctx }) {
   const t = parseHumanTask(body)
   if (!t.found || t.missing.length > 0) {
     return (
@@ -384,7 +387,7 @@ function HumanTaskPanel({ body, ctx }) {
   )
 }
 
-function TicketReply({ repo, number, labels, state, sendBack, onSent }) {
+export function TicketReply({ repo, number, labels, state, sendBack, onSent }) {
   const [text, setText] = useState('')
   const [busy, setBusy] = useState(false)
   const [result, setResult] = useState(null)

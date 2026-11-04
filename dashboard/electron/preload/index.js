@@ -21,6 +21,8 @@ contextBridge.exposeInMainWorld('api', {
   },
   mr: {
     list: () => ipcRenderer.invoke('mr:list'),
+    projects: () => ipcRenderer.invoke('mr:projects'),
+    helperTabs: () => ipcRenderer.invoke('mr:helperTabs'),
     // Confirmation happens in the main process via a native dialog, not here --
     // see the comment on the mr:approve handler for why.
     approve: (pr) => ipcRenderer.invoke('mr:approve', pr),
@@ -100,7 +102,11 @@ contextBridge.exposeInMainWorld('api', {
   },
   marvin: {
     // Opens a MARVIN session in WezTerm on this Mac: { ticket } for its worktree, or no ticket for home.
-    openSession: (request) => ipcRenderer.invoke('marvin:openSession', request)
+    openSession: (request) => ipcRenderer.invoke('marvin:openSession', request),
+    // marvin#1064: { macs: [{ id, here, status: 'ok'|'wezterm-down'|'unreachable'|'error', chats: [...] }] }
+    listChats: () => ipcRenderer.invoke('marvin:listChats'),
+    // marvin#1067: { ok, why? }; refused unless the chat is idle and no prompt is on its screen
+    sendToChat: (id, text) => ipcRenderer.invoke('marvin:sendToChat', { id, text })
   },
   proposals: {
     list: () => ipcRenderer.invoke('proposals:list'),
@@ -123,6 +129,10 @@ contextBridge.exposeInMainWorld('api', {
     readiness: () => ipcRenderer.invoke('health:readiness'),
     setMergeFromDashboard: (repo, value) => ipcRenderer.invoke('health:setMergeFromDashboard', repo, value),
     setDispatch: (repo, value) => ipcRenderer.invoke('health:setDispatch', repo, value)
+  },
+  accounts: {
+    list: (opts) => ipcRenderer.invoke('accounts:list', opts),
+    renew: (id, machine) => ipcRenderer.invoke('accounts:renew', id, machine)
   },
   instance: {
     features: () => ipcRenderer.invoke('instance:features'),
@@ -161,6 +171,13 @@ contextBridge.exposeInMainWorld('api', {
     image: (src) => ipcRenderer.invoke('show:image', src),
     openInDocs: () => ipcRenderer.invoke('show:openInDocs'),
     openLink: (url) => ipcRenderer.invoke('show:openLink', url),
+    // A shown web page is drawn by the main process in the area this page reserves for it.
+    setWebBounds: (rect) => ipcRenderer.invoke('show:webBounds', rect),
+    onWeb: (callback) => {
+      const listener = (_e, state) => callback(state)
+      ipcRenderer.on('show:web', listener)
+      return () => ipcRenderer.removeListener('show:web', listener)
+    },
     onItem: (callback) => {
       const listener = (_e, item) => callback(item)
       ipcRenderer.on('show:item', listener)
@@ -227,6 +244,7 @@ contextBridge.exposeInMainWorld('api', {
     helpers: () => ipcRenderer.invoke('activity:helpers'),
     overview: () => ipcRenderer.invoke('activity:overview'),
     needsYou: () => ipcRenderer.invoke('activity:needsYou'),
+    openTickets: () => ipcRenderer.invoke('activity:openTickets'),
     progress: () => ipcRenderer.invoke('activity:progress')
   },
   triggers: {

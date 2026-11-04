@@ -12,6 +12,7 @@ import MarvinButton from '@components/MarvinButton.jsx'
 import ActivityHover from '@components/ActivityHover.jsx'
 import SupportTab from '@components/SupportTab.jsx'
 import ItButton from '@components/ItButton.jsx'
+import WorkshopTab, { useWorkshopNow } from '@components/WorkshopTab.jsx'
 import { visibleTabs } from './lib/tabs.js'
 import { ScrollArea, useScrollArea } from '@components/ScrollPlaces.jsx'
 
@@ -50,9 +51,18 @@ export default function App() {
     setNav({ ...target, tab, at: Date.now() })
     setActiveTab(tab)
   }
+  // The Workshop's item page (#863): every cross-tab link to a ticket or a PR opens its one page.
+  const openItem = (repo, number, kind) => navigate('workshop', { item: { repo, [kind]: Number(number) } })
+  const openPrKey = (prKey) => {
+    const m = /^(.+)#(\d+)$/.exec(String(prKey || ''))
+    if (m) openItem(m[1], m[2], 'pr')
+  }
   const [reviewStatus, setReviewStatus] = useState(null)
   const [healthOverall, setHealthOverall] = useState(null)
   const [support, setSupport] = useState({ role: null, badge: 0 })
+  // Workshop ▸ Now (#862): read on triggers, here so the tab's count shows from any tab.
+  const workshop = useWorkshopNow()
+  const yourMove = workshop.now?.count ?? 0
   // Each tab, and each list or item inside it, opens where it was last left, or at its top (#755).
   const main = useScrollArea('main', activeTab)
 
@@ -140,6 +150,9 @@ export default function App() {
               >
                 {dot && <span className={`h-2 w-2 shrink-0 rounded-full ${dotColorMap[dot]}`} />}
                 {tab.label}
+                {tab.id === 'workshop' && yourMove > 0 && (
+                  <span className="rounded-full bg-amber-500 px-1.5 text-xs font-semibold text-black" title="Your move">{yourMove}</span>
+                )}
                 {tab.id === 'support' && support.badge > 0 && (
                   <span className="rounded-full bg-red-600 px-1.5 text-xs font-semibold text-white">{support.badge}</span>
                 )}
@@ -160,17 +173,19 @@ export default function App() {
           {activeTab === 'metrics' ? (
             <MetricsPage />
           ) : activeTab === 'mr-review' ? (
-            <MrReview nav={nav} onOpenDocs={(projectId, path) => navigate('docs', { projectId, path })} onOpenBoard={(repo) => navigate('activity', { repo })} onOpenTicket={(repo, number) => navigate('activity', { repo, ticketNumber: number })} />
+            <MrReview nav={nav} onOpenDocs={(projectId, path) => navigate('docs', { projectId, path })} onOpenBoard={(repo) => navigate('activity', { repo })} onOpenTicket={(repo, number) => openItem(repo, number, 'ticket')} />
           ) : activeTab === 'health' ? (
             <HealthDashboard nav={nav} />
           ) : activeTab === 'docs' ? (
-            <DocsExplorer nav={nav} onOpenBoard={(repo) => navigate('activity', { repo })} onOpenTicket={(repo, number) => navigate('activity', { repo, ticketNumber: number })} onOpenPr={(repo, number) => navigate('mr-review', { prKey: `${repo}#${number}` })} />
+            <DocsExplorer nav={nav} onOpenBoard={(repo) => navigate('activity', { repo })} onOpenTicket={(repo, number) => openItem(repo, number, 'ticket')} onOpenPr={(repo, number) => openItem(repo, number, 'pr')} />
+          ) : activeTab === 'workshop' ? (
+            <WorkshopTab feed={workshop} navigate={navigate} nav={nav} />
           ) : activeTab === 'support' ? (
             <SupportTab nav={nav} />
           ) : activeTab === 'portfolio' ? (
             <PortfolioHubGate />
           ) : (
-            <ActivityBoard nav={nav} onOpenMr={(prKey) => navigate('mr-review', { prKey })} onOpenDocs={(projectId, path) => navigate('docs', { projectId, path })} onOpenTicket={(repo, number) => navigate('activity', { repo, ticketNumber: number })} onOpenProject={(repo) => navigate('activity', { repo })} />
+            <ActivityBoard nav={nav} onOpenMr={openPrKey} onOpenDocs={(projectId, path) => navigate('docs', { projectId, path })} onOpenTicket={(repo, number) => openItem(repo, number, 'ticket')} onOpenProject={(repo) => navigate('activity', { repo })} />
           )}
         </ScrollArea>
       </main>

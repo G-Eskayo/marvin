@@ -63,14 +63,16 @@ export function mainStateFrom({ issues = [], health = null, base = 'main', headS
   const redTickets = open.filter(isRedTicket).map((i) => i.number).sort(byNumber)
   const fixTickets = open.filter(isFixTicket).map((i) => i.number).sort(byNumber)
   const healthRed = healthCountsFor(health, headSha) && health.ok === false
-  return { base, red: redTickets.length > 0 || healthRed, redTickets, fixTickets, healthRed }
+  return { base, red: redTickets.length > 0 || healthRed, redTickets, fixTickets, healthRed, headSha: headSha || null }
 }
 
 // The facts mergeOrder reads off each PR, from what each side already has. One implementation for both.
 //   issues: the repo's open tickets (labels) · unbuilt: Set of PR urls with answered-but-unbuilt Decisions
 //   repairFailed: {"repo#n": headSha} whose conflict repair failed (lib/conflict_repair.py)
 //   rebaseStatus: the post-merge conflict check by url (#225) · sentBack: Set of "repo#ticket" (optional)
-export function enrichForOrder(prs, { repo = null, issues = [], unbuilt = new Set(), repairFailed = {}, rebaseStatus = {}, sentBack = null } = {}) {
+// gateCovers (marvin#1099): names of the checks the merge gate runs itself; GitHub's copy of those doesn't hold a PR.
+export function enrichForOrder(prs, { repo = null, issues = [], unbuilt = new Set(), repairFailed = {}, rebaseStatus = {}, sentBack = null, gateCovers = null } = {}) {
+  const covers = Array.isArray(gateCovers) ? gateCovers.filter((n) => typeof n === 'string') : []
   const sentBackTickets = sentBack || new Set((issues || []).filter((i) => labelNames(i).includes('needs-reengagement')).map((i) => `${repo}#${i.number}`))
   return (prs || []).map((p) => {
     const r = p.repo || repo
@@ -86,7 +88,8 @@ export function enrichForOrder(prs, { repo = null, issues = [], unbuilt = new Se
       decisionsUnbuilt: unbuilt.has(p.url) && !answersAsBuilt(p.body || ''),
       conflict,
       conflictAfter: rbConflict && Number.isFinite(rb.after) ? rb.after : null,
-      repairFailed: !!p.headRefOid && repairFailed?.[`${r}#${p.number}`] === p.headRefOid
+      repairFailed: !!p.headRefOid && repairFailed?.[`${r}#${p.number}`] === p.headRefOid,
+      gateCovers: covers
     }
   })
 }
@@ -102,6 +105,41 @@ const short = (s, max = 80) => {
   return one.length > max ? `${one.slice(0, max - 1)}…` : one
 }
 
+// marvin#1097: a temporary "not yet" holds a queued PR instead of dropping it. Each code says what has to change before
+// trying again is worth it; the key records that thing when the hold starts, and the hold lasts while it is unchanged.
+//   checks: its checks (a check finishing changes the digest) · head: its head commit · main: main's commit
+//   later: nothing to watch (the machine, a blip): tried again on a later trigger, after a back-off
+export const HOLD_UNTIL = {
+  CI_PENDING: 'checks', MAIN_RED: 'main', NO_UI_EVIDENCE: 'head', IMAGES_STALE: 'head', IMAGES_UNPINNED: 'head',
+  GATE_INFRA: 'later', UI_EVIDENCE_UNCHECKED: 'later', DECISIONS_UNCHECKED: 'later'
+}   // MEMORY_PRESSURE has its own resume: the memory queue re-approves when pressure is normal (#940)
+const HOLD_TEXT = { checks: 'waits for its checks to change', head: 'waits for a new commit', main: 'waits for main to change',
+  later: 'tries again shortly' }
+
+export function ciDigest(rollup) {
+  return JSON.stringify((rollup || []).filter(Boolean).map((c) => [c.name || c.context || '', c.status || c.state || '', c.conclusion || '']).sort())
+}
+
+export function holdKey(until, pr, main) {
+  if (until === 'head') return pr?.headRefOid || null
+  if (until === 'checks') return `${pr?.headRefOid || ''}|${ciDigest(pr?.statusCheckRollup)}`
+  if (until === 'main') return main?.headSha || null
+  return null
+}
+
+// Still held? A key-based hold lasts while its key is unchanged (an unknown key never holds); a later-hold lasts until
+// its back-off ends.
+export function stillHeld(hold, pr, main, now = Date.now()) {
+  if (!hold || typeof hold !== 'object' || !HOLD_TEXT[hold.until]) return false
+  // no key to watch ("later", or main's commit unknown): the back-off alone, so a hold can never spin
+  if (hold.until === 'later' || hold.key == null) return Number(hold.notBefore) > now
+  return holdKey(hold.until, pr, main) === hold.key
+}
+
+export function holdReason(hold) {
+  return `${short(hold.reason || hold.code, 70)} · ${HOLD_TEXT[hold.until]}`
+}
+
 // What the PR itself needs before it can merge, whatever else merges first, or null.
 function ownReason(pr, base) {
   const dec = summarizeDecisions(pr.body || '')
@@ -111,7 +149,7 @@ function ownReason(pr, base) {
     return { reason: `${n} Decision${n === 1 ? ' is' : 's are'} waiting for you` }
   }
   if (pr.decisionsUnbuilt) return { reason: "your answers aren't built yet", unbuilt: true }
-  const ci = ciState(pr.statusCheckRollup)
+  const ci = ciState(pr.statusCheckRollup, { ignore: pr.gateCovers })
   if (ci.state === 'failing') return { reason: `checks failing: ${ci.failing.join(', ')}` }
   if (pr.conflict) {
     const after = pr.conflictAfter ? ` after #${pr.conflictAfter}` : ''
@@ -156,10 +194,13 @@ export function mergeOrder(openPrs, mainState, queue) {
   const open = new Set(prs.map((p) => p.url))
   const queuedAt = new Map()
   const heldOn = new Map()
+  const holds = new Map()
+  const now = Number.isFinite(queue?.now) ? queue.now : Date.now()
   for (const i of items) {
     if (!open.has(i.url) || queuedAt.has(i.url)) continue
     queuedAt.set(i.url, Number(i.approvedAt) || 0)
     if (i.conflictHead) heldOn.set(i.url, i.conflictHead)
+    if (i.hold) holds.set(i.url, i.hold)
   }
   const dropped = [...new Set(items.map((i) => i.url))].filter((u) => !open.has(u))
 
@@ -185,6 +226,7 @@ export function mergeOrder(openPrs, mainState, queue) {
       const after = p.conflictAfter ?? (held || p.conflict ? queue?.lastMerged ?? null : null)
       why = ownReason(held ? { ...p, conflict: true, conflictAfter: after } : { ...p, conflictAfter: after }, base)
     }
+    if (!why && holds.has(p.url) && stillHeld(holds.get(p.url), p, main, now)) why = { reason: holdReason(holds.get(p.url)), held: true }
     if (!why && parent.get(p.url)) {
       const up = parent.get(p.url)
       waitsFor = up.number

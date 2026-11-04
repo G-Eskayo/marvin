@@ -131,7 +131,7 @@ Hardware [H]: the MacBook is an M1 with 8 cores, 16 GB RAM and 79 GB free. The M
 ### Linux, Docker and offloading
 
 - **Needs Linux/Docker:** Salome, Code_Aster, probably SU2, and the OpenFOAM fallback. **OrbStack** (cask 2.2.4 [H]) is lighter than Docker Desktop and would suit the Mini. With 19 GB free, the Mini can't hold several 2–5 GB images plus case data, so **free disk first or use an external SSD** [H for the disk figure, M for the image sizes].
-- **Mac Mini as a solver host:** yes. Run long cases with `ssh gils-mac-mini` and `nohup` through a wrapper script (memory: ssh-nohup gotcha). Native OpenFOAM runs in parallel under MPI across its 10 cores. Use the same task-dispatch primitive MARVIN already has.
+- **Mac Mini as a solver host:** yes. Run long cases over ssh to the Mini with `nohup` through a wrapper script (memory: ssh-nohup gotcha). Native OpenFOAM runs in parallel under MPI across its 10 cores. Use the same task-dispatch primitive MARVIN already has.
 - **exo:** not applicable. It shards LLM inference, and MPI solvers don't run through it. Splitting one solver run across both Macs over Tailscale with MPI is possible in principle but not worth the trouble at this scale [L].
 
 ---

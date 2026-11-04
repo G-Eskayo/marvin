@@ -1,4 +1,4 @@
-import { app, BrowserWindow, ipcMain, dialog, session, shell, protocol, net, nativeImage, Notification, powerMonitor } from 'electron'
+import { app, BrowserWindow, ipcMain, dialog, session, shell, protocol, net, nativeImage, Notification, powerMonitor, WebContentsView, screen } from 'electron'
 import { pathToFileURL } from 'url'
 import { instrumentIpc } from './timing.js'
 import { installDevSiteCors } from './dev_site_cors.js'
@@ -27,7 +27,7 @@ import { listTicketActivity, getTicketTimeline } from './activity.js'
 import { getDeviceStatuses } from './devices.js'
 import { getQueue, clearQueueCache } from './queue.js'
 import { getConcurrency, setConcurrency, scanNow } from './dispatch_concurrency.js'
-import { createMergeOps } from './merge_ops.js'
+import { createMergeOps, receiveMergeMessage } from './merge_ops.js'
 import { createApprovalLedger } from './approval_ledger.js'
 import { createApprovalRetry } from './approval_retry.js'
 import { createApproveFlow } from './approve_flow.js'
@@ -116,8 +116,9 @@ function checkMergedElsewhere(repo, only = null) {
     .then((urls) => urls.forEach((u) => pushMergeOp(u, mergeOps.get(u))))
     .catch(() => {})
 }
-import { readRegistry, loadBoard, fetchBoardData, fetchCompletedData, withProjectStatus, defaultStagesFor, defaultLiveNumbers, getEvidence, clearCrossProjectCache, REGISTRY_PATH } from './boards.js'
+import { readRegistry, loadBoard, prsOfProjects, fetchBoardData, fetchCompletedData, withProjectStatus, defaultStagesFor, defaultLiveNumbers, getEvidence, clearCrossProjectCache, REGISTRY_PATH } from './boards.js'
 import { createRelationsService } from './relations_service.js'
+import { machineNames } from './machine_names.js'
 import { summarizeBoard, buildCompleted } from './board.js'
 import { createTriggerHub, createReconciler, refetchesGithub } from './triggers.js'
 import { createMrHistory, mergedPrArgs, readSavedMerged } from './mr_history.js'
@@ -138,6 +139,8 @@ import { createDeliverables } from './deliverables.js'
 import { createThumbs } from './thumbs.js'
 import { docsTextFor, maxNumbers, docsClickHandlers } from './docs_handlers.js'
 import { readCatalog, readMasterDoc, readOverrides, CATALOG_DIR, MASTER_DOC_PATH } from './catalog.js'
+import { readHelperTabs } from './helper_tabs.js'
+import { withOverrides } from '../../src/lib/project_names.js'
 import { STAGES_DIR } from '../../webhook-server/ticket_stages.js'
 import { DISPATCH_STATE_PATH } from './dispatch_status.js'
 import { createHash } from 'crypto'
@@ -164,11 +167,14 @@ import { createMockupWindows } from './mockup_window.js'
 import { createShowWindows } from './show_window.js'
 import { varPath } from './marvin_paths.js'
 import { allowedRoots } from './show.js'
+import { createBoundsStore } from './show_bounds.js'
 import { readFileForView, fileFromBuffer } from './outbox.js'
 import { resolveLocalClone } from './docs_local.js'
 import { resolveServiceDefaults, resolveDeviceId, peerHosts, primaryDeviceId } from './device_identity.js'
 import { createHelpersReader } from './chat_helpers.js'
+import { createChatsReader, createChatSender } from './chat_tabs.js'
 import { isPullOnlyNode, createFeedSource, feedOnlyGh, readNetworkRegistry, assertActsHere as assertPullOnlyActs, canMergeHere, withReadOnlyReason } from './github_feed.js'
+import { createAccounts } from './accounts.js'
 
 // The pipeline's screenshot copy runs unattended beside the real dashboard: log, never show a modal (#384).
 if (isEvidenceCapture(process.env)) installCaptureGuard(process)
@@ -177,6 +183,7 @@ if (isEvidenceCapture(process.env)) installCaptureGuard(process)
 instrumentIpc(ipcMain)
 
 const execFileAsync = promisify(execFile)
+const accountsView = createAccounts({ machine: () => resolveDeviceId(), execFile: execFileAsync })
 
 // marvin#954: a pull-only node (mac-mini-2012, ADR 0069) holds no GitHub credential. Its dashboard reads the open PRs
 // and boards from the Mini's feed (github_feed.js) and every other GitHub read or write here is refused in plain words,
@@ -419,6 +426,13 @@ function registerDispatchHandlers() {
 function registerSessionHandlers() {
   // The MARVIN button (marvin#228): a ready MARVIN session in WezTerm on this Mac.
   ipcMain.handle('marvin:openSession', (_event, request) => openMarvinSession(request))
+  // The live chat tabs on this Mac and the other (marvin#1064): the other Mac's are read-only.
+  let chatPeers = null
+  const readChats = createChatsReader({ peers: () => (chatPeers ||= peerHosts()) })
+  ipcMain.handle('marvin:listChats', () => readChats())
+  // marvin#1067: only the main window may send, never a show window or anything over HTTP
+  const sendToChat = createChatSender({ isMainWindow: (wc) => !!mainWindow && wc === mainWindow.webContents, readChats })
+  ipcMain.handle('marvin:sendToChat', (event, request) => sendToChat(event.sender, request))
   // Support link (ADR 0073). Every action is checked against this install's own support repos in support.js.
   ipcMain.handle('support:config', () => instance.support())
   ipcMain.handle('support:state', () => {
@@ -491,6 +505,10 @@ function registerHealthHandlers() {
     return { ...result, status: readHealthStatus() }
   })
   ipcMain.handle('health:readiness', () => readOnboardingPlans(readRegistry()))
+  // Vitals > Accounts (marvin#974; the card itself waits on Gil's approval, #640): saved view first, then this
+  // machine checked live; Renew opens a helper tab where the person approves or pastes the login.
+  ipcMain.handle('accounts:list', (_event, opts) => accountsView.list({ fresh: !!opts?.fresh }))
+  ipcMain.handle('accounts:renew', (_event, id, machine) => accountsView.renew(String(id || ''), machine ? String(machine) : null))
   ipcMain.handle('health:setMergeFromDashboard', async (_event, repo, value) => {
     if (value === true) {
       const plans = readOnboardingPlans(readRegistry())
@@ -567,16 +585,27 @@ function registerActivityHandlers() {
   const assertRegistered = (repo) => {
     if (!readRegistry().some((b) => b.repo === repo)) throw new Error(`No board registered for ${repo}`)
   }
-  ipcMain.handle('boards:list', () => withProjectStatus(readRegistry(), readCatalog({ deviceId: deviceId() })))
+  // A ticket's PR can be in any project's repo (marvin#1004): every board also gets the other projects' open PRs,
+  // from the same cached board data the relation index reads, so this costs no extra GitHub calls once warm.
+  const boardInputs = async (repo) => {
+    const registryRepos = readRegistry()
+    const [data, evidence, otherPrs] = await Promise.all([
+      getBoardData(repo, ghJson),
+      getEvidence(repo),
+      prsOfProjects(registryRepos.map((b) => b.repo), (r) => getBoardData(r, ghJson), repo)
+    ])
+    return { gh: ghJson, registryRepos, data, evidence, otherPrs }
+  }
+  ipcMain.handle('boards:list', () => withProjectStatus(readRegistry(), readCatalog({ deviceId: deviceId() }), readOverrides()))
   ipcMain.handle('boards:load', async (_event, repo, source = 'poll') => {
     assertRegistered(repo)
-    const board = await loadBoard(repo, { gh: ghJson, registryRepos: readRegistry(), data: await getBoardData(repo, ghJson), evidence: await getEvidence(repo) })
+    const board = await loadBoard(repo, await boardInputs(repo))
     reconciler.observe('activity', repo, boardDigest(board), source)
     return board
   })
   ipcMain.handle('boards:summary', async (_event, repo) => {
     assertRegistered(repo)
-    return summarizeBoard(await loadBoard(repo, { gh: ghJson, registryRepos: readRegistry(), data: await getBoardData(repo, ghJson), evidence: await getEvidence(repo) }))
+    return summarizeBoard(await loadBoard(repo, await boardInputs(repo)))
   })
   // Completed work (all closed tickets + the PRs that closed them): from memory until that repo changes.
   ipcMain.handle('boards:completed', async (_event, repo) => {
@@ -692,6 +721,8 @@ function registerDocsHandlers() {
   ipcMain.handle('mr:parity', () => relations.parity())
   ipcMain.handle('activity:overview', () => relations.overview())
   ipcMain.handle('activity:needsYou', () => relations.needsYou())
+  // Workshop ▸ Now (#862): with each machine's display name for the worker on an in-motion row.
+  ipcMain.handle('activity:openTickets', async () => ({ ...(await relations.openTickets()), machines: machineNames() }))
   // Activity ▸ Projects (marvin#625's progress strip): built from memory and local files only, no GitHub call. Merges
   // are the Merged view's saved list plus the merge server's own record (local HTTP), deduped by URL.
   const progress = createProjectProgress({
@@ -699,7 +730,7 @@ function registerDocsHandlers() {
     overview: () => relations.overview(),
     peekBoards: () => githubState.peek('board'),
     stagesFor: defaultStagesFor,
-    boards: () => withProjectStatus(readRegistry(), readCatalog({ deviceId: deviceId() })),
+    boards: () => withProjectStatus(readRegistry(), readCatalog({ deviceId: deviceId() }), readOverrides()),
     savedMerged: () => readSavedMerged(MR_HISTORY_PATH),
     serverMerges: () =>
       fetch(MR_WEBHOOK_URL.replace(/\/approve$/, '/merge-history'), { signal: AbortSignal.timeout(3000) })
@@ -1004,6 +1035,23 @@ function registerMrReviewHandlers() {
     const res = await fetch(MR_WEBHOOK_URL.replace(/\/approve$/, '/rebase-status'), { signal: AbortSignal.timeout(3000) })
     return res.ok ? res.json() : {}
   }
+  // marvin#231 follow-up: a card the queue says is merging, with no strip here (the app opened mid-merge, or this Mac
+  // was asleep for its events), reads where that merge is from the merge server once: GET /merge-progress. Run when
+  // the list is built (load, and each refresh trigger), never on a timer; one read per PR at a time.
+  const catchingUp = new Set()
+  function catchUpMerges(list) {
+    for (const pr of Array.isArray(list) ? list : []) {
+      if (pr?.mergeQueue?.state !== 'running' || catchingUp.has(pr.url)) continue
+      if (mergeOps.get(pr.url)?.state === 'merging') continue
+      catchingUp.add(pr.url)
+      fetch(`${MR_WEBHOOK_URL.replace(/\/approve$/, '/merge-progress')}?url=${encodeURIComponent(pr.url)}`, { signal: AbortSignal.timeout(3000) })
+        .then((res) => (res.ok ? res.json() : null))
+        .then((body) => { if (body?.merge?.progress) pushMergeOp(pr.url, mergeOps.adopt(pr.url, body.merge.progress)) })
+        .catch(() => { /* the next event or refresh catches it */ })
+        .finally(() => catchingUp.delete(pr.url))
+    }
+  }
+
   // marvin#231: the merge queue lives with the merge server (the Mini); each card's line is worked out from it here.
   const getMergeQueue = async () => {
     const res = await fetch(MR_WEBHOOK_URL.replace(/\/approve$/, '/merge-queue'), { signal: AbortSignal.timeout(3000) })
@@ -1057,9 +1105,16 @@ function registerMrReviewHandlers() {
       .then((prs) => withReadOnlyReason(prs, pullOnly)),
     () => `${githubState.localSeq()}:${githubState._genOf(null)}`
   )
-  ipcMain.handle('mr:list', () => {
+  // MR Review by project (marvin#848): the projects with their one name (overrides.json applied now), and the helper
+  // tabs for the cards' chips. Both read when the list is read, never on a timer of their own.
+  ipcMain.handle('mr:projects', () => withOverrides(readCatalog({ deviceId: deviceId() })?.projects, readOverrides())
+    .map(({ id, name, catalogName, repo, status, aliases }) => ({ id, name, catalogName, repo, status, aliases })))
+  ipcMain.handle('mr:helperTabs', () => readHelperTabs())
+  ipcMain.handle('mr:list', async () => {
     if (!fixturePrs && !pullOnly) listOpenPrs().then((prs) => stackRetarget.check(prs)).catch(() => {})
-    return mrList()
+    const list = await mrList()
+    catchUpMerges(list)
+    return list
   })
 
   // Local-first actions (CONTEXT.md "Dashboard actions render their true result locally at once, and confirm in the
@@ -1242,12 +1297,18 @@ function registerShowHandlers() {
         writeFileSync(`${file}.tmp`, JSON.stringify(obj))
         renameSync(`${file}.tmp`, file)
       }
-    }
+    },
+    // Owner's answers on PR #1029: a web address renders in the window, and a new window opens where the last one
+    // was moved to.
+    WebContentsView,
+    bounds: createBoundsStore(join(app.getPath('userData'), 'show-window-bounds.json')),
+    screenAreas: () => screen.getAllDisplays().map((d) => d.workArea)
   })
   ipcMain.handle('show:current', (event) => showWindows.current(event.sender))
   ipcMain.handle('show:read', (event) => showWindows.read(event.sender))
   ipcMain.handle('show:select', (event, id) => showWindows.select(event.sender, String(id || '')))
   ipcMain.handle('show:image', (event, src) => showWindows.image(event.sender, src))
+  ipcMain.handle('show:webBounds', (event, rect) => showWindows.setWebBounds(event.sender, rect))
   ipcMain.handle('show:openLink', (_event, url) => openLink(String(url || ''), { openExternal: shell.openExternal }))
   // "Open in Docs": the main window comes forward on the Docs tab at this item (an outbox file as its deliverable, a
   // clone file as its doc, anything else at its project).
@@ -1362,7 +1423,9 @@ app.whenReady().then(() => {
       } else if (topic === 'merge') {
         // A merge's stage event from the webhook on this Mac (marvin#568): local state only, never a GitHub read.
         const m = payload.merge
-        if (m && typeof m.url === 'string' && m.url.startsWith('https://github.com/')) pushMergeOp(m.url, mergeOps.event(m.url, m.event))
+        // marvin#231 follow-up: the same message relayed from the merge server on another Mac. Its progress so far is taken
+        // when it is ahead (it fills in events missed, lost or out of order); a message without one is the bare event.
+        if (m && typeof m.url === 'string' && m.url.startsWith('https://github.com/')) pushMergeOp(m.url, receiveMergeMessage(mergeOps, m))
       } else triggerHub.emit(topic, payload.source || 'ping')
     }
   }, { port: DASHBOARD_REFRESH_PORT, host: '127.0.0.1', onShow: (body) => showWindows.show(body) })

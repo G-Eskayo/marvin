@@ -97,7 +97,7 @@ def test_helpers_in_two_windows_converge_on_the_one_with_most_helpers():
 
 def _fake_env(tmp_path):
     fake = tmp_path / "wezterm"
-    fake.write_text(f'#!/bin/sh\nprintf "%s" "$5" > {tmp_path}/title\n')
+    fake.write_text(f'#!/bin/sh\nfor a; do last=$a; done\nprintf "%s" "$last" > {tmp_path}/title\n')  # the title is the last argument
     fake.chmod(0o755)
     return {"WEZTERM_PANE": "7", "PATH": "/usr/bin:/bin", "HOME": str(tmp_path), "HELPER_TAB_WEZTERM": str(fake),
             "HELPER_TAB_QUIET": "1", "HELPER_TAB_JOBS_DIR": str(tmp_path / "jobs")}
@@ -282,3 +282,24 @@ def test_the_helpers_exit_starts_the_next_queued_one_without_changing_its_exit_c
     assert kicks == [1]
     monkeypatch.setattr(memory_guard, "kick", lambda: 1 / 0)
     assert ht.run_helper("G", "w", ["true"]) == 0
+
+
+# ── group names come from the project catalog (marvin#848) ───────────────────
+
+def test_a_project_group_is_named_the_way_the_catalog_names_it(monkeypatch):
+    import project_catalog
+    monkeypatch.setattr(project_catalog, "display_name", lambda term, *a, **k: {"clarity-captions": "Seal Speak"}.get(term, term))
+    seen = []
+    monkeypatch.setattr(ht, "launch", lambda group, title, command, cwd, on_exit=None: seen.append(group) or 0)
+    assert ht.main(["--group", "clarity-captions", "--title", "#60", "--", "true"]) == 0
+    assert ht.main(["--group", "Disk", "--title", "trim", "--", "true"]) == 0
+    assert seen == ["Seal Speak", "Disk"]
+
+
+def test_a_broken_catalog_never_stops_a_helper(monkeypatch):
+    import project_catalog
+    monkeypatch.setattr(project_catalog, "display_name", lambda *a, **k: (_ for _ in ()).throw(OSError("gone")))
+    seen = []
+    monkeypatch.setattr(ht, "launch", lambda group, *a, **k: seen.append(group) or 0)
+    assert ht.main(["--group", "clarity-captions", "--title", "#60", "--", "true"]) == 0
+    assert seen == ["clarity-captions"]

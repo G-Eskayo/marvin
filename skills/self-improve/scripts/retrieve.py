@@ -120,8 +120,12 @@ def bm25_rerank(query, candidates):
         scores = bm25.get_scores(query.lower().split())
         for i, c in enumerate(candidates):
             c["bm25_score"] = float(scores[i])
-    except Exception:
-        pass
+    except ModuleNotFoundError as e:
+        # Keep going on semantic results alone, but loudly: this was silent for weeks on the MacBook (2026-11-02).
+        print(f"  WARN: rank_bm25 not installed ({e}); keyword search is off, semantic only. "
+              f"Install it: ~/.agents/venv/bin/python -m pip install rank-bm25", file=sys.stderr)
+    except Exception as e:
+        print(f"  WARN: keyword (BM25) scoring failed: {e}; using semantic only", file=sys.stderr)
     return candidates
 
 

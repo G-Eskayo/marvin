@@ -132,6 +132,8 @@ def _isolate_board_registry(tmp_path_factory, monkeypatch):
     monkeypatch.setattr(ticket_pipeline, "_discover_boards", lambda: [])  # no real gh calls from tests
     monkeypatch.setattr(ticket_pipeline, "_refresh_catalog", lambda: None)
     monkeypatch.setattr(ticket_pipeline, "_local_busy", lambda: False)  # the real machine may be mid-ticket
+    # the real machine may be mid-scan: its lock made main() skip in tests and main-health go red (2026-11-03)
+    monkeypatch.setattr(ticket_pipeline, "SCAN_LOCK_PATH", tmp_path_factory.mktemp("scan") / "scan.lock")
     monkeypatch.setattr(ticket_pipeline, "_run_ticket_agents", lambda step, summary: None)  # no real gh calls
 
 
@@ -333,3 +335,22 @@ def _full_node_by_default(request, monkeypatch):
         return
     import machine_profile
     monkeypatch.setattr(machine_profile, "pull_only", lambda: False)
+
+
+@pytest.fixture(autouse=True)
+def _mock_disposable_basetemp(request, monkeypatch):
+    # #866: disposable_basetemp() creates unique paths for test isolation, but this breaks
+    # tests that check for command equality (test_build_type_measure's baseline assertions).
+    # Skip mocking for basetemp-specific tests that need real behavior.
+    module_name = request.module.__name__
+    if any(name in module_name for name in ("test_pytest_basetemp_hygiene", "test_cleanup_sweep")):
+        return
+
+    import contextlib
+    import cleanup_sweep
+
+    @contextlib.contextmanager
+    def mock_disposable():
+        yield []
+
+    monkeypatch.setattr(cleanup_sweep, "disposable_basetemp", mock_disposable)

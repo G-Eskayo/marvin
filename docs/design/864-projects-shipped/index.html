@@ -1,0 +1,612 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Workshop Projects and Shipped: mock-up (marvin#864)</title>
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<!-- Mock-up only (marvin#864): the real dashboard is untouched until the owner signs off. Every count, order and line
+     comes from projects_shipped.js, tested in dashboard/test/projects_shipped_proto.test.js; the data is sample_data.js.
+     No server, no build, no network: it opens in MARVIN's mock-up window (#938). Link a state with the hash, e.g.
+     index.html#view=projects&lanes=groups&words=935  ·  #view=shipped&ship=i4  ·  #view=gone -->
+<style>
+  @font-face { font-family: 'Saira Condensed'; font-weight: 600; src: url(fonts/saira-condensed-latin-600-normal.woff2) format('woff2'); }
+  @font-face { font-family: 'Share Tech Mono'; font-weight: 400; src: url(fonts/share-tech-mono-latin-400-normal.woff2) format('woff2'); }
+  * { box-sizing: border-box; }
+  /* Celestial-navigation tokens (#428, the same values as dashboard/src/components/show_window.css and #1041's mock-up).
+     --sky is Now's "MARVIN is on it" blue (WorkshopTab.jsx text-sky-400), the one colour the tokens don't have. */
+  :root {
+    color-scheme: dark;
+    --bg: #05040A; --green: #54ff8a; --amber: #f0b32a; --line: #7a5a14; --orange: #ff6a1f; --red: #ff3b2f;
+    --dim: #6b551f; --moon: #cfd6e6; --panel: #ffffff05; --well: #ffffff09; --mute: #8a8fa0; --sky: #6cc4ff;
+    --done: #2f7d4a; --todo: #ffffff14;
+    --display: 'Saira Condensed', 'Arial Narrow', sans-serif;
+    --mono: 'Share Tech Mono', ui-monospace, Menlo, monospace;
+  }
+  body { margin: 0; background: var(--bg); color: var(--moon); font: 14px/1.45 var(--mono); }
+  button { font: inherit; color: inherit; background: none; border: 0; padding: 0; cursor: pointer; text-align: left; }
+
+  /* The mock-up's own controls: dashed, so they never read as dashboard UI. */
+  .mockbar { display: flex; flex-wrap: wrap; gap: 8px 18px; align-items: center; padding: 10px 16px; border-bottom: 1px dashed #3a3f4f; font-size: 12px; color: var(--mute); }
+  .mockbar .grp { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; }
+  .mockbar button { border: 1px dashed #3a3f4f; color: var(--mute); border-radius: 4px; padding: 3px 8px; }
+  .mockbar button[aria-pressed=true] { border-style: solid; border-color: var(--moon); color: var(--moon); }
+  .mockbar .tag { margin-left: auto; letter-spacing: 2px; text-transform: uppercase; }
+  .caption { margin: 0; padding: 8px 16px; border-bottom: 1px dashed #3a3f4f; color: var(--mute); font-size: 12px; }
+  .caption b { color: var(--moon); font-weight: 400; }
+  .from { display: inline-block; border: 1px dashed #3a3f4f; border-radius: 3px; padding: 0 5px; margin-left: 6px; font-size: 10px; color: var(--mute); letter-spacing: .5px; vertical-align: 1px; white-space: nowrap; }
+  .from.new { border-color: #54ff8a55; color: #9fe8b6; }
+  .from.act { border-color: #6cc4ff55; color: #a9dcff; }
+  .from.mr { border-color: #f0b32a55; color: #f3cf7a; }
+
+  /* App header: the HUD strip with diamond nodes on its edge (show_window.css .show-hud). */
+  .hud { position: relative; display: flex; flex-wrap: wrap; align-items: center; gap: 4px 6px; padding: 10px 16px; border-bottom: 1px solid var(--line);
+         background: repeating-linear-gradient(to bottom, #ffffff07 0 1px, #0000 1px 3px), var(--bg); }
+  .hud::before, .hud::after { content: ''; position: absolute; bottom: -4px; width: 7px; height: 7px; background: var(--bg); border: 1px solid var(--line); transform: rotate(45deg); }
+  .hud::before { left: 10px; } .hud::after { right: 10px; }
+  .brand { font: 600 13px/1 var(--display); letter-spacing: 4px; color: var(--orange); margin-right: 14px; }
+  .tab { font: 600 13px/1 var(--display); letter-spacing: 2px; text-transform: uppercase; color: var(--dim); padding: 7px 10px; border: 1px solid transparent; border-radius: 2px; }
+  .tab.on { color: var(--amber); border-color: var(--line); }
+  .tab.gone { color: var(--red); text-decoration: line-through; opacity: .75; }
+  .badge { display: inline-block; margin-left: 6px; padding: 1px 5px; border-radius: 2px; background: var(--amber); color: var(--bg); font-size: 11px; letter-spacing: 0; }
+
+  main { max-width: 1100px; padding: 18px 16px 60px; }
+  /* Workshop's one control (WorkshopTab.jsx WorkshopControl), in the tokens. */
+  .sub { display: inline-flex; flex-wrap: wrap; gap: 2px; border: 1px solid var(--line); border-radius: 2px; padding: 3px; }
+  .sub button { padding: 5px 11px; font-size: 13px; color: var(--dim); border-radius: 2px; }
+  .sub button.on { color: var(--amber); background: var(--well); }
+  .sub button:hover { color: var(--moon); }
+  .lede { margin: 16px 0 4px; font-size: 13px; color: var(--mute); }
+  .lede b { color: var(--moon); font-weight: 400; }
+  h2.sec { display: flex; justify-content: space-between; flex-wrap: wrap; gap: 4px 12px; margin: 22px 0 8px; font: 600 12px/1.2 var(--display); letter-spacing: 3px; text-transform: uppercase; color: var(--amber); }
+  h2.sec small { font: 12px var(--mono); letter-spacing: 0; text-transform: none; color: var(--dim); }
+  .note { margin-top: 12px; border: 1px solid #7a5a1499; background: #f0b32a0d; color: #f3cf7a; border-radius: 2px; padding: 8px 12px; font-size: 12px; }
+  .note.ok { border-color: #54ff8a44; background: #54ff8a0a; color: #9fe8b6; }
+  .note.bad { border-color: #ff3b2f66; background: #ff3b2f0f; color: #ffb3ad; }
+  .foot { margin-top: 14px; font-size: 12px; color: var(--mute); }
+
+  /* ── Projects ─────────────────────────────────────────────────────────────────────────────── */
+  .proj { margin-top: 12px; border: 1px solid var(--line); border-radius: 2px; background: var(--panel); }
+  .proj.quiet { border-color: #7a5a1466; }
+  .proj.otherp { border-style: dashed; }
+  .ph { display: flex; flex-wrap: wrap; align-items: baseline; gap: 4px 12px; width: 100%; padding: 12px 14px 4px; }
+  .ph .arrow { width: 10px; color: var(--dim); flex: none; }
+  .pname { font: 600 15px/1 var(--display); letter-spacing: 2.5px; text-transform: uppercase; color: var(--moon); }
+  .pmove { font-size: 12px; color: var(--mute); }
+  .pmove .y { color: var(--amber); } .pmove .m { color: var(--sky); } .pmove .s { color: var(--red); }
+  .pstate { margin-left: auto; font-size: 12px; text-align: right; white-space: nowrap; }
+  .pstate .rate { color: var(--dim); margin-left: 8px; }
+  .t-green { color: var(--green); } .t-amber { color: var(--amber); } .t-red { color: var(--red); } .t-dim { color: var(--dim); }
+  .pbody { padding: 0 14px 12px 36px; }
+  .yours { font-size: 12px; color: var(--amber); }
+  .pgoal { margin-top: 3px; font-size: 12px; color: var(--mute); overflow-wrap: anywhere; }
+  .pgoal .g { color: var(--moon); }
+  .pgoal .sig { color: var(--dim); margin-left: 10px; white-space: nowrap; }
+  .why { margin-top: 3px; font-size: 12px; color: var(--mute); }
+
+  /* The life track (macro): every open item on Ticket → Shipped, and the last 14 days of ships. */
+  .macro { display: flex; flex-wrap: wrap; align-items: flex-end; gap: 10px 28px; margin-top: 10px; }
+  .track { position: relative; display: grid; grid-template-columns: repeat(7, minmax(0, 1fr)); width: min(470px, 100%); }
+  .track::before { content: ''; position: absolute; left: 7%; right: 7%; top: 9px; height: 1px; background: var(--line); }
+  .stop { position: relative; display: flex; flex-direction: column; align-items: center; gap: 4px; font-size: 10px; color: var(--dim); }
+  .stop .dot { position: relative; display: grid; place-items: center; min-width: 19px; height: 19px; padding: 0 4px; border: 1px solid var(--line); background: var(--bg); transform: rotate(45deg); }
+  .stop .dot span { transform: rotate(-45deg); font-size: 10px; color: var(--bg); }
+  .stop .dot.empty { width: 9px; height: 9px; min-width: 0; margin: 5px 0; padding: 0; }
+  .stop .dot.yours { background: var(--amber); border-color: var(--amber); }
+  .stop .dot.marvin { background: var(--sky); border-color: var(--sky); }
+  .stop .dot.stuck { background: var(--red); border-color: var(--red); }
+  .stop .dot.next, .stop .dot.waiting { background: #3a3f4f; border-color: #5a5f70; }
+  .stop .dot.next span, .stop .dot.waiting span { color: var(--moon); }
+  .stop .dot.live::after { content: ''; position: absolute; inset: -5px; border: 1px solid var(--sky); animation: ring 2.4s ease-out infinite; }
+  .stop label { white-space: nowrap; letter-spacing: .3px; }
+  .stop .dot.live { margin-bottom: 3px; }
+  @keyframes ring { 0% { opacity: .9; transform: scale(.7); } 100% { opacity: 0; transform: scale(1.5); } }
+  .ships { display: flex; flex-direction: column; gap: 4px; font-size: 10px; color: var(--dim); }
+  .bars { display: flex; align-items: flex-end; gap: 2px; height: 24px; }
+  .bars i { display: block; width: 6px; min-height: 1px; background: var(--done); }
+  .bars i.today { background: var(--green); }
+  .bars.big { height: 40px; } .bars.big i { width: 12px; }
+  .burn svg { display: block; }
+  .lanes { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 10px; font-size: 11px; color: var(--mute); align-items: center; }
+  .lane { border: 1px solid #3a3f4f; border-radius: 2px; padding: 1px 6px; white-space: nowrap; }
+  .lane .y { color: var(--amber); } .lane .m { color: var(--sky); }
+  .items { margin-top: 10px; border-top: 1px solid #7a5a1455; }
+  .ihead { margin: 12px 0 4px; font: 600 11px/1.2 var(--display); letter-spacing: 2.5px; text-transform: uppercase; color: var(--dim); }
+  .lanehead { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 12px; margin: 14px 0 4px; font: 600 12px/1.2 var(--display); letter-spacing: 2px; text-transform: uppercase; color: var(--moon); }
+  .lanehead small { font: 11px var(--mono); letter-spacing: 0; text-transform: none; color: var(--mute); }
+  .pfoot { display: flex; flex-wrap: wrap; gap: 6px 16px; margin-top: 10px; font-size: 12px; }
+  .link { color: var(--amber); }
+  .link:hover { color: var(--green); }
+  .muted { color: var(--dim); }
+  .fold { margin-top: 12px; width: 100%; padding: 10px 14px; border: 1px solid #7a5a1466; border-radius: 2px; font-size: 12px; color: var(--mute); }
+  .restlist { opacity: .6; }
+
+  /* A row: Now's Row (WorkshopTab.jsx), the verb first, in the tokens. Below 1024 px the verb goes above the title. */
+  .row { display: flex; flex-direction: column; gap: 6px; width: 100%; padding: 10px 2px; border-bottom: 1px solid #ffffff0d; }
+  .row:last-child { border-bottom: 0; }
+  .row:hover { background: #ffffff06; }
+  .verb { flex: none; font-size: 13px; }
+  .v-stuck { color: var(--red); } .v-yours { color: var(--amber); } .v-marvin { color: var(--sky); } .v-next { color: var(--moon); } .v-waiting { color: var(--mute); }
+  .rmain { display: flex; gap: 14px; align-items: center; width: 100%; min-width: 0; }
+  .rtext { flex: 1; min-width: 0; }
+  .rtitle { display: block; color: var(--moon); overflow-wrap: anywhere; }
+  .rmeta { display: block; margin-top: 2px; font-size: 12px; color: var(--mute); overflow-wrap: anywhere; }
+  .chip { display: inline-block; margin-right: 6px; border: 1px solid #3a3f4f; border-radius: 2px; padding: 0 5px; font-size: 11px; line-height: 16px; color: var(--moon); }
+  .rright { flex: none; font-size: 12px; color: var(--mute); }
+  .strip { display: flex; gap: 3px; margin-top: 6px; }
+  .strip i { display: block; width: 20px; height: 3px; border-radius: 1px; background: var(--todo); }
+  .strip i.done { background: var(--done); }
+  .strip i.yours { background: var(--amber); } .strip i.stuck { background: var(--red); } .strip i.next, .strip i.waiting { background: #5a5f70; }
+  .strip i.marvin { background: var(--sky); }
+  .strip i.marvin.live { animation: breathe 1.8s ease-in-out infinite; }
+  @keyframes breathe { 50% { opacity: .35; } }
+  @media (min-width: 1024px) {
+    .row { flex-direction: row; align-items: center; gap: 0; padding: 10px 4px; }
+    .verb { width: 170px; }
+  }
+
+  /* The board (ProjectBoard's columns), its In review column holding the item itself. */
+  .back { margin-top: 16px; font-size: 13px; color: var(--mute); }
+  .back:hover { color: var(--moon); }
+  .bhead { margin-top: 10px; }
+  .bhead .pname { font-size: 18px; }
+  .sigs { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 8px; }
+  .sigs span { font-size: 11px; border: 1px solid #3a3f4f; padding: 1px 6px; border-radius: 2px; color: var(--mute); }
+  .cols { display: grid; grid-template-columns: repeat(auto-fill, minmax(190px, 1fr)); gap: 10px; margin-top: 16px; }
+  .col { border: 1px solid #7a5a1477; border-radius: 2px; background: var(--panel); padding: 8px; min-width: 0; }
+  .col h3 { margin: 0 0 8px; font: 600 11px/1.2 var(--display); letter-spacing: 2px; text-transform: uppercase; color: var(--dim); display: flex; justify-content: space-between; }
+  .col.review { border-color: var(--amber); }
+  .col.review h3 { color: var(--amber); }
+  .card { display: block; width: 100%; margin-bottom: 6px; padding: 7px 8px; border: 1px solid #ffffff12; border-radius: 2px; background: #ffffff05; font-size: 12px; }
+  .card:hover { border-color: var(--line); }
+  .card .num { color: var(--dim); }
+  .card .verb { display: block; margin-top: 4px; font-size: 12px; width: auto; }
+  .was { margin-top: 6px; font-size: 11px; color: var(--mute); border-top: 1px dashed #3a3f4f; padding-top: 6px; }
+  .was s { color: var(--red); }
+
+  /* ── Shipped ──────────────────────────────────────────────────────────────────────────────── */
+  .shiptop { display: flex; flex-wrap: wrap; align-items: flex-end; justify-content: space-between; gap: 10px 20px; margin-top: 16px; }
+  .day { margin-top: 18px; }
+  .day h3 { margin: 0 0 4px; font: 600 11px/1.2 var(--display); letter-spacing: 2.5px; text-transform: uppercase; color: var(--dim); }
+  .srow { position: relative; display: grid; grid-template-columns: 18px minmax(0, 1fr); gap: 2px 10px; width: 100%; padding: 8px 4px; border-bottom: 1px solid #ffffff0d; overflow: hidden; }
+  .srow:hover { background: #ffffff06; }
+  .srow .ok { color: var(--green); } .srow .no { color: var(--red); }
+  .srow .st { min-width: 0; overflow-wrap: anywhere; }
+  .srow .st .n { color: var(--dim); }
+  .srow .sm { grid-column: 2; display: flex; flex-wrap: wrap; gap: 2px 12px; font-size: 12px; color: var(--mute); }
+  .rev { margin-left: 8px; border: 1px solid #3a3f4f; border-radius: 9px; padding: 0 6px; font-size: 11px; color: var(--mute); white-space: nowrap; }
+  .live { display: inline-flex; align-items: center; gap: 6px; }
+  .live .mk { width: 7px; height: 7px; transform: rotate(45deg); border: 1px solid var(--green); }
+  .live .mk.on { background: var(--green); }
+  .live .mk.off { border-color: var(--amber); }
+  .live .mk.off.pulse { animation: breathe 1.4s ease-in-out infinite; }
+  @media (min-width: 1024px) {
+    .srow { grid-template-columns: 18px minmax(0, 1fr) auto; align-items: baseline; }
+    .srow .sm { grid-column: 3; flex-wrap: nowrap; justify-content: flex-end; }
+    .srow .sm .proj-c { width: 100px; text-align: right; }
+    .srow .sm .time { width: 64px; text-align: right; }
+    .srow .sm .by { width: 76px; }
+    .srow .sm .livec { width: 230px; }
+  }
+  .pager { display: flex; gap: 10px; align-items: center; margin-top: 14px; font-size: 12px; color: var(--mute); }
+  .pager button { border: 1px solid #3a3f4f; border-radius: 2px; padding: 3px 8px; }
+  .pager button:disabled { opacity: .35; cursor: default; }
+  /* The merge motion (#838) in the tokens: the band crosses the new row, then the tick. */
+  .band { position: absolute; top: 0; bottom: 0; left: 0; width: 0; background: #198fd9; box-shadow: 0 0 8px 2px #66afe999; animation: sweep 1.1s ease-in-out forwards; pointer-events: none; }
+  @keyframes sweep { 0% { width: 0; opacity: .9; } 70% { width: 100%; opacity: .9; } 100% { width: 100%; opacity: 0; } }
+
+  /* ── Now (built, #1030): only where the Auto throttle card (#1041) sits ─────────────────────── */
+  .throttle { margin-top: 16px; border: 1px dashed var(--amber); border-radius: 2px; padding: 12px 14px; display: flex; flex-wrap: wrap; align-items: center; gap: 10px 16px; }
+  .sw { position: relative; flex: none; width: 58px; height: 30px; border-radius: 15px; border: 1px solid var(--green); box-shadow: 0 0 10px #54ff8a40; }
+  .sw::after { content: ''; position: absolute; top: 3px; left: 31px; width: 22px; height: 22px; border-radius: 50%; background: var(--green); }
+  .tname { font: 600 14px/1 var(--display); letter-spacing: 3px; text-transform: uppercase; color: var(--amber); }
+  .ghost { opacity: .55; }
+  .ghost .ihead { color: var(--amber); }
+
+  /* ── Proposals (unchanged) ─────────────────────────────────────────────────────────────────── */
+  .prop { margin-top: 16px; border: 1px solid var(--line); border-radius: 2px; padding: 14px; background: var(--panel); }
+  .prop h3 { margin: 0 0 8px; font-size: 15px; font-weight: 400; color: var(--moon); }
+  .prop p { margin: 4px 0; font-size: 13px; color: var(--mute); }
+  .prop p b { color: var(--moon); font-weight: 400; }
+  .acts { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 10px; }
+  .acts span { border: 1px solid var(--line); color: var(--amber); padding: 4px 8px; border-radius: 2px; font-size: 12px; }
+
+  /* ── What goes away ───────────────────────────────────────────────────────────────────────── */
+  .ba { margin-top: 14px; border: 1px solid #3a3f4f; border-radius: 2px; }
+  .ba > p { margin: 0; padding: 6px 12px; font-size: 11px; letter-spacing: 2px; text-transform: uppercase; color: var(--mute); border-bottom: 1px solid #3a3f4f; }
+  table.inv { width: 100%; border-collapse: collapse; margin-top: 14px; font-size: 12px; }
+  .inv th { text-align: left; font: 600 11px/1.2 var(--display); letter-spacing: 2px; text-transform: uppercase; color: var(--dim); padding: 6px 8px; border-bottom: 1px solid var(--line); }
+  .inv td { padding: 7px 8px; border-bottom: 1px solid #ffffff0d; vertical-align: top; overflow-wrap: anywhere; }
+  .inv td:first-child { color: var(--moon); }
+  .inv td:nth-child(2) { color: var(--mute); }
+  .inv tr.grp td { padding-top: 16px; font: 600 12px/1.2 var(--display); letter-spacing: 2.5px; text-transform: uppercase; color: var(--amber); border-bottom: 1px solid var(--line); }
+  .st-built { color: var(--green); } .st-here { color: var(--amber); } .st-later { color: var(--sky); }
+  @media (max-width: 720px) {
+    .inv thead { display: none; }
+    .inv, .inv tbody, .inv tr, .inv td { display: block; width: 100%; }
+    .inv tr { border-bottom: 1px solid #ffffff14; padding: 6px 0; }
+    .inv td { border: 0; padding: 2px 4px; }
+    .inv td:nth-child(2)::before { content: 'was: '; color: var(--dim); }
+    .inv td:nth-child(3)::before { content: 'now: '; color: var(--dim); }
+    .pbody { padding-left: 14px; }
+    .stop label { display: none; }
+  }
+
+  .toast { position: fixed; left: 50%; bottom: 18px; transform: translateX(-50%); max-width: calc(100% - 32px); padding: 8px 14px; border: 1px dashed var(--moon); border-radius: 4px; background: #0d0c14; color: var(--moon); font-size: 12px; opacity: 0; transition: opacity .2s; pointer-events: none; }
+  .toast.on { opacity: 1; }
+  @media (prefers-reduced-motion: reduce) { * { animation: none !important; transition: none !important; } }
+</style>
+</head>
+<body>
+<div class="mockbar" id="mockbar"></div>
+<p class="caption" id="caption"></p>
+<div id="app"></div>
+<div class="toast" id="toast" role="status"></div>
+<script src="projects_shipped.js"></script>
+<script src="sample_data.js"></script>
+<script>
+(function () {
+  'use strict'
+  const P = globalThis.ProjectsShipped
+  const S = globalThis.Sample864
+  const NOW = new Date(2026, 10, 3, 15, 0).getTime()
+
+  const e = (s) => String(s == null ? '' : s).replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]))
+  const from = (kind, text) => `<span class="from ${kind}">${e(text)}</span>`
+
+  // ── state, linkable through the hash ─────────────────────────────────────────────────────────────────────────────
+  const DEFAULTS = { view: 'projects', scene: 'normal', words: 'now', lanes: 'line', macro: 'track', ship: 'i4', missing: 'say', board: '', page: '0', open: '', closed: '', rest: '0', tags: '1' }
+  const st = { ...DEFAULTS }
+  function readHash() {
+    const h = new URLSearchParams(location.hash.slice(1))
+    for (const k of Object.keys(DEFAULTS)) st[k] = h.get(k) ?? DEFAULTS[k]
+  }
+  function writeHash() {
+    const h = new URLSearchParams()
+    for (const [k, v] of Object.entries(st)) if (v !== DEFAULTS[k]) h.set(k, v)
+    history.replaceState(null, '', `#${h}`)
+  }
+  const set = (patch) => { Object.assign(st, patch); writeHash(); render() }
+  const csv = (s) => (s ? s.split(',').filter(Boolean) : [])
+  let arrived = false
+
+  function toast(msg) {
+    const t = document.getElementById('toast')
+    t.textContent = msg
+    t.classList.add('on')
+    clearTimeout(toast.t)
+    toast.t = setTimeout(() => t.classList.remove('on'), 2600)
+  }
+
+  // ── chrome ──────────────────────────────────────────────────────────────────────────────────────────────────────
+  const allYours = () => S.projects.reduce((n, p) => n + P.countsOf(p).yours, 0)
+  function hud(tabs, on, badge) {
+    return `<div class="hud"><span class="brand">MARVIN</span>${tabs.map(([id, label, cls = '']) =>
+      `<span class="tab ${id === on ? 'on' : ''} ${cls}">${e(label)}${id === 'workshop' && badge ? `<span class="badge">${badge}</span>` : ''}</span>`).join('')}</div>`
+  }
+  const AFTER = [['vitals', 'Vitals'], ['workshop', 'Workshop'], ['docs', 'Docs'], ['portfolio', 'Portfolio']]
+  const BEFORE = [['metrics', 'Metrics'], ['workshop', 'Workshop'], ['mr-review', 'MR Review', 'gone'], ['health', 'Health'], ['docs', 'Docs'], ['activity', 'Activity', 'gone'], ['portfolio', 'Portfolio']]
+  const VIEWS = [['now', 'Now'], ['projects', 'Projects'], ['shipped', 'Shipped'], ['proposals', 'Proposals']]
+  function control() {
+    return `<div class="sub" role="tablist">${VIEWS.map(([id, label]) =>
+      `<button role="tab" data-view="${id}" class="${st.view === id ? 'on' : ''}" aria-selected="${st.view === id}">${label}</button>`).join('')}</div>`
+  }
+
+  function mockbar() {
+    const g = (label, key, opts) => `<span class="grp">${label}${opts.map(([v, t]) => `<button data-set="${key}" data-val="${v}" aria-pressed="${st[key] === v}">${t}</button>`).join('')}</span>`
+    const parts = [g('Show:', 'view', [['projects', 'Projects'], ['shipped', 'Shipped'], ['now', 'Now (throttle)'], ['proposals', 'Proposals'], ['gone', 'What goes away']])]
+    if (st.view === 'projects') {
+      parts.push(g('Scene:', 'scene', [['normal', 'today'], ['edges', 'edge cases']]))
+      parts.push(g('tiers:', 'words', [['now', 'Now’s words'], ['935', '#935’s words']]))
+      parts.push(g('lanes:', 'lanes', [['line', 'line + tags'], ['groups', 'sub-groups'], ['board', 'board only']]))
+      parts.push(g('macro:', 'macro', [['track', 'life track + ships'], ['ships', 'ships only'], ['burnup', 'burn-up']]))
+      parts.push(g('', 'tags', [['1', 'show where each part comes from'], ['0', 'hide']]))
+    }
+    if (st.view === 'shipped') {
+      parts.push(g('Ship steps:', 'ship', [['today', 'today (none yet)'], ['i4', 'once I4 lands']]))
+      parts.push(g('live:', 'missing', [['say', 'say “no ship step yet”'], ['hide', 'leave it blank']]))
+      parts.push(`<span class="grp"><button data-act="arrive">▶ A merge arrives</button></span>`)
+    }
+    parts.push('<span class="tag">Mock-up · sample data</span>')
+    document.getElementById('mockbar').innerHTML = parts.join('')
+  }
+
+  const CAPTIONS = {
+    projects: '<b>Workshop ▸ Projects</b>: one box per project, with #935’s order and folding, Activity’s goal and moving / stuck, and every ticket and PR in it from next_step. The dashed tags say where each part comes from. Tap a project’s name to open or fold it; “Open the board” shows the board.',
+    board: '<b>A project’s board</b>, opened from Projects: the same board as today, but its In review column holds the items themselves, each opening the item page (#863). No “N waiting in MR Review →”.',
+    shipped: '<b>Workshop ▸ Shipped</b>: MR Review ▸ Merged’s history (days, 5 a page, refused approvals, reverted by), plus where each merge is live once its project has a ship step (ADR 0080 I4). Press ▶ A merge arrives to see the merge motion and the ship step running.',
+    now: '<b>Workshop ▸ Now</b> is built (#1030) and unchanged. Shown only for where #1041’s Auto throttle card sits, as its <b>place</b> Decision was answered (Workshop ▸ Now). Its look is #1041’s, not redesigned here.',
+    proposals: '<b>Workshop ▸ Proposals</b>: ProposalsSection, as today (ADR 0068; owner, 2026-10-30). Only its place changes, from MR Review to the Workshop control.',
+    gone: '<b>What goes away</b>: the MR Review and Activity tabs, and where every panel they show lives after. This is the ticket’s “nothing lost” checklist; the build turns it into a test.'
+  }
+
+  // ── Projects ────────────────────────────────────────────────────────────────────────────────────────────────────
+  const tag = (kind, text) => (st.tags === '1' ? from(kind, text) : '')
+  const signalText = (s) => `${s.name} ${s.better === 'down' ? '↓' : '↑'} —`
+
+  function strip(item) {
+    return `<span class="strip" aria-label="life strip">${P.stripOf(item).map((s) => `<i class="${s}${s === 'marvin' && item.liveEvent ? ' live' : ''}"></i>`).join('')}</span>`
+  }
+  function metaOf(item, lanes) {
+    const parts = []
+    if (item.priority && item.section !== 'marvin' && item.section !== 'stuck') parts.push(item.priority)
+    if (item.type === 'pr') { parts.push(`PR #${item.number}`); if (item.ticket) parts.push(`closes #${item.ticket}`) } else parts.push(`#${item.number}`)
+    parts.push(...(item.meta || []))
+    const chip = lanes === 'line' && item.lane ? `<span class="chip">${e(item.lane)}</span>` : ''
+    return chip + e(parts.join(' · '))
+  }
+  function right(item) {
+    if (item.right) return item.right
+    if (item.section === 'yours' && item.waitingMin != null) return `waiting ${item.waitingMin >= 1440 ? `${Math.round(item.waitingMin / 1440)} d` : item.waitingMin >= 60 ? `${Math.round(item.waitingMin / 60)} h` : `${item.waitingMin} min`}`
+    return ''
+  }
+  function row(item, lanes) {
+    return `<button class="row" data-open="${e(item.key)}">
+      <span class="verb v-${e(item.section)}">${e(item.verb)}</span>
+      <span class="rmain"><span class="rtext"><span class="rtitle">${e(item.title)}</span><span class="rmeta">${metaOf(item, lanes)}</span>${strip(item)}</span>
+      <span class="rright">${e(right(item))}</span></span></button>`
+  }
+
+  function track(p) {
+    return `<div class="track" aria-label="life track">${P.trackOf(p).map((s) =>
+      `<div class="stop" title="${e(s.name)}: ${s.count}"><span class="dot ${s.count ? `${s.tone}` : 'empty'}${s.live ? ' live' : ''}">${s.count ? `<span>${s.count}</span>` : ''}</span><label>${e(s.name)}</label></div>`).join('')}</div>`
+  }
+  function bars(rows, big = false) {
+    const days = P.perDay(rows, NOW, 14)
+    const max = Math.max(1, ...days.map((d) => d.n))
+    const h = big ? 40 : 24
+    return `<div class="bars${big ? ' big' : ''}">${days.map((d, i) => `<i class="${i === days.length - 1 ? 'today' : ''}" style="height:${d.n ? Math.max(2, Math.round((d.n / max) * h)) : 1}px" title="${d.key}: ${d.n}"></i>`).join('')}</div>`
+  }
+  function burnup(p) {
+    const o = p.opened30 || []
+    const s = p.shipped30 || []
+    const max = Math.max(1, ...o, ...s)
+    const pts = (a) => a.map((v, i) => `${(i / 29) * 200},${36 - (v / max) * 34}`).join(' ')
+    return `<div class="ships burn"><svg width="200" height="38" viewBox="0 -1 200 38" aria-label="opened vs shipped, 30 days"><polyline points="${pts(o)}" fill="none" stroke="#8a8fa0" stroke-width="1.2"/><polyline points="${pts(s)}" fill="none" stroke="#54ff8a" stroke-width="1.6"/></svg><span>opened <span style="color:var(--mute)">—</span> vs shipped <span style="color:var(--green)">—</span> · 30 days</span></div>`
+  }
+  function macro(p) {
+    const rows = shippedRows().filter((r) => r.project === p.id)
+    const ships = `<div class="ships">${bars(rows, st.macro === 'ships')}<span>${rows.filter((r) => r.kind === 'merged' && r.ago * S.MIN < 14 * S.D).length ? 'ships · last 14 days' : 'no ships in 14 days'}</span></div>`
+    if (st.macro === 'ships') return `<div class="macro">${ships}${tag('new', 'new: ships per day')}</div>`
+    if (st.macro === 'burnup') return `<div class="macro">${burnup(p)}${tag('new', 'new: burn-up')}</div>`
+    return `<div class="macro">${track(p)}${ships}${tag('new', 'new: life track (visuals at every scale)')}</div>`
+  }
+  function lanesLine(p) {
+    if (st.lanes !== 'line') return ''
+    const lanes = P.lanesOf(p)
+    if (!lanes.length || (lanes.length === 1 && lanes[0].name === 'Unsorted')) return ''
+    return `<div class="lanes">Lanes${tag('new', '#1028')}: ${lanes.map((l) => `<span class="lane">${e(l.name)} ${l.yours ? `<span class="y">${l.yours} yours</span> ` : ''}${l.marvin ? `<span class="m">${l.marvin} moving</span> ` : ''}<span class="muted">${l.total}</span></span>`).join('')}</div>`
+  }
+  function itemsOf(p) {
+    const words = st.words
+    if (st.lanes === 'groups') {
+      const lanes = P.lanesOf(p)
+      return lanes.map((l) => {
+        const sub = { items: (p.items || []).filter((it) => (it.lane || 'Unsorted') === l.name) }
+        const list = P.sectionsOf(sub, words).flatMap((s) => s.items)
+        return `<div class="lanehead">${e(l.name)} <small>${l.yours} your move · ${l.marvin} in motion · ${l.total} open</small></div>${list.map((it) => row(it, 'groups')).join('')}`
+      }).join('')
+    }
+    return P.sectionsOf(p, words).map((s) => `<div class="ihead">${e(s.label)} · ${s.items.length}</div>${s.items.map((it) => row(it, st.lanes)).join('')}`).join('')
+  }
+  function moveHtml(p) {
+    const c = P.countsOf(p)
+    const parts = []
+    if (c.stuck) parts.push(`<span class="s">${c.stuck} stuck</span>`)
+    parts.push(`<span class="${c.yours ? 'y' : ''}">${c.yours} your move</span>`, `<span class="${c.marvin ? 'm' : ''}">${c.marvin} in motion</span>`)
+    if (c.next) parts.push(`${c.next} up next`)
+    return parts.join(' · ')
+  }
+  function isOpen(p) {
+    if (csv(st.open).includes(p.id)) return true
+    if (csv(st.closed).includes(p.id)) return false
+    if (st.scene === 'edges' && P.countsOf(p).total) return true
+    return !P.isCollapsed(p, {})
+  }
+  function projectBox(p, first) {
+    const open = isOpen(p) && P.countsOf(p).total > 0
+    const state = P.stateOf(p)
+    const c = P.countsOf(p)
+    const isOther = p.id === P.OTHER
+    const goal = isOther
+      ? `<div class="why">Can’t tell which project: ${e(p.why)}${tag('mr', 'from #935: Other, with why')}</div>`
+      : p.goal
+        ? `<div class="pgoal"><span class="muted">Goal:</span> <span class="g" title="${e(p.goal)}">${e(P.shortGoal(p.goal))}</span>${(p.signals || []).slice(0, 3).map((s) => `<span class="sig" title="not measured yet">${e(signalText(s))}</span>`).join('')}${(p.signals || []).length > 3 ? `<span class="sig">+${p.signals.length - 3}</span>` : ''}${first ? tag('act', 'from Activity: goal + signals') : ''}</div>`
+        : `<div class="pgoal muted">No goal set yet: it goes in the project profile${first ? '' : ''}</div>`
+    const foot = isOther ? '' : `<div class="pfoot">${p.hasBoard ? `<button class="link" data-board="${e(p.id)}">Open the board ▸</button>` : '<span class="muted">No board yet: the hourly scan makes one</span>'}<span class="muted">Docs ▸</span>${p.due ? `<span class="muted">due ${e(p.due)}</span>` : ''}${first ? tag('act', 'from Activity: board cards') : ''}</div>`
+    return `<section class="proj ${open ? '' : 'quiet'} ${isOther ? 'otherp' : ''}" data-project="${e(p.id)}">
+      <button class="ph" data-toggle="${e(p.id)}" aria-expanded="${open}">
+        <span class="arrow">${c.total ? (open ? '▾' : '▸') : '·'}</span>
+        <span class="pname">${e(p.name)}</span>
+        <span class="pmove">${moveHtml(p)}</span>
+        ${first ? tag('mr', 'from #935: name = toggle, saved') : ''}
+        <span class="pstate"><span class="t-${state.tone}">${e(state.text)}</span>${p.mergedWeek ? `<span class="rate">${p.mergedWeek} PRs/wk</span>` : ''}</span>
+      </button>
+      <div class="pbody">
+        ${c.yours ? `<div class="yours">${e(P.yoursLine(p))}${first ? tag('mr', 'from #935: what’s yours') : ''}</div>` : ''}
+        ${goal}
+        ${isOther ? '' : macro(p)}
+        ${isOther ? '' : lanesLine(p)}
+        ${open ? `<div class="items">${itemsOf(p)}</div>` : ''}
+        ${foot}
+      </div>
+    </section>`
+  }
+  function projectsView() {
+    const { active, rest } = P.orderProjects(S.projects)
+    const restOpen = st.rest === '1' || st.scene === 'edges'
+    const stale = st.scene === 'edges'
+    return `${control()}
+      ${stale ? '<p class="note">Can’t read GitHub right now: showing the last known list, as of Nov 3 14:02.' + tag('mr', 'from Now / MR Review') + '</p>' : ''}
+      <p class="lede">${e(P.lede(active))} · <span class="muted">most for you first</span>${tag('mr', 'from #935: order + lede')}</p>
+      ${active.map((p, i) => projectBox(p, i === 0)).join('')}
+      <button class="fold" data-act="rest">${restOpen ? '▾' : '▸'} ${rest.length} parked or done ${tag('act', 'from Activity')}</button>
+      ${restOpen ? `<div class="restlist">${rest.map((p) => `<section class="proj quiet"><div class="ph"><span class="arrow">·</span><span class="pname">${e(p.name)}</span><span class="pmove">${e(p.status[0].toUpperCase() + p.status.slice(1))}</span><span class="pstate t-dim">—</span></div><div class="pbody"><div class="pfoot">${p.hasBoard ? '<span class="link">Open the board ▸</span>' : ''}</div></div></section>`).join('')}</div>` : ''}
+      ${stale
+        ? `<p class="note bad">1 open PR has no project it can be filed under: PR #1020 (Other). Each of the other 18 is paired with its ticket.${tag('mr', 'from MR Review: parity')}</p>`
+        : `<p class="note ok">Matches the boards: each of the 19 open PRs is paired with its ticket, and every ticket under “In review” has its PR.${tag('mr', 'from MR Review: parity')}</p>`}
+      <p class="foot">Machines and helpers’ health: Vitals. Each item’s worker shows on its row.</p>`
+  }
+
+  const COL_OF = (it) => (it.section === 'waiting' && /hold/i.test((it.meta || []).join(' ')) ? 'blocked' : it.stage >= 4 ? 'review' : it.stage === 3 || it.isDraft ? 'progress' : it.section === 'next' ? 'ready' : it.stage <= 0 ? 'backlog' : 'progress')
+  function boardView(p) {
+    const COLS = [['backlog', 'Backlog'], ['ready', 'Ready'], ['blocked', 'Blocked'], ['progress', 'In progress'], ['review', 'In review / testing'], ['done', 'Done']]
+    const done = S.history.filter((r) => r.project === p.id && r.kind === 'merged').slice(0, 3)
+    const cols = COLS.map(([id, label]) => {
+      const cards = id === 'done'
+        ? done.map((r) => `<div class="card"><span class="num">#${r.number}</span> ${e(r.title)}</div>`)
+        : (p.items || []).filter((it) => COL_OF(it) === id).map((it) => `<button class="card" data-open="${e(it.key)}"><span class="num">${it.type === 'pr' ? 'PR ' : ''}#${it.number}</span> ${e(it.title)}${id === 'review' ? `<span class="verb v-${e(it.section)}">${e(it.verb)}</span>${strip(it)}` : ''}</button>`)
+      const was = id === 'review' && cards.length ? `<div class="was">Was: <s>${cards.length} waiting in MR Review →</s>, then the card linked out. Now each card opens the item page.</div>` : ''
+      return `<div class="col ${id}"><h3><span>${label}</span><span>${cards.length}</span></h3>${cards.join('') || '<div class="muted" style="font-size:12px">—</div>'}${was}</div>`
+    }).join('')
+    return `${control()}
+      <button class="back" data-board="">← Projects</button>
+      <div class="bhead"><span class="pname">${e(p.name)}</span>
+        <p class="pgoal"><span class="muted">Goal:</span> <span class="g">${e(p.goal || 'No goal set yet')}</span></p>
+        <div class="sigs">${(p.signals || []).map((s) => `<span title="not measured yet">${e(signalText(s))}</span>`).join('')}</div></div>
+      <div class="cols">${cols}</div>
+      <p class="foot">Tags, freshness (“read 2 min ago”) and the ticket answer box stay as today. The ticket drill-down becomes the item page (#863).</p>`
+  }
+
+  // ── Shipped ─────────────────────────────────────────────────────────────────────────────────────────────────────
+  const NAMES = Object.fromEntries(S.projects.map((p) => [p.id, p.name]))
+  function shippedRows() {
+    const rows = S.history.map((r) => ({ ...r, at: new Date(NOW - r.ago * S.MIN).toISOString() }))
+    if (arrived) rows.push({ ...S.arriving, at: new Date(NOW - 20000).toISOString(), fresh: true })
+    return rows
+  }
+  function liveCell(r, ships) {
+    const ship = ships[r.project]
+    if (!ship && st.missing === 'hide') return ''
+    const l = P.liveLine(r, ship)
+    if (!l) return `<span class="no">refused: ${e(r.reason)}</span>`
+    const pulse = r.shipping ? ' pulse' : ''
+    return `<span class="live">${l.marks.map((m) => `<i class="mk ${m.on ? 'on' : `off${pulse}`}" title="${e(m.name)}"></i>`).join('')}<span class="t-${l.tone}">${e(l.text)}</span></span>`
+  }
+  function shippedView() {
+    const ships = st.ship === 'i4' ? S.shipsI4 : {}
+    const rows = shippedRows()
+    const days = P.shippedDays(rows, NOW)
+    const pg = P.pageOf(days, Number(st.page))
+    const anyStep = Object.keys(ships).length > 0
+    const body = pg.days.map((d) => `<div class="day"><h3>${e(d.label)}</h3>${d.rows.map((r) => {
+      const ok = r.kind === 'merged'
+      const time = new Date(r.t).toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit' })
+      const rev = r.revertedBy ? `<span class="rev">reverted by #${r.revertedBy}</span>` : ''
+      return `<button class="srow" data-ship="${r.number}">${r.fresh ? '<span class="band"></span>' : ''}
+        <span class="${ok ? 'ok' : 'no'}">${ok ? '✓' : '✗'}</span>
+        <span class="st"><span class="n">#${r.number}</span> ${e(r.title)}${rev}</span>
+        <span class="sm"><span class="proj-c">${e(NAMES[r.project] || r.project)}</span><span class="time">${e(time)}</span><span class="by">${ok ? (r.by === 'auto' ? 'auto-merge' : 'you') : ''}</span><span class="livec">${liveCell(r, ships)}</span></span>
+      </button>`
+    }).join('')}</div>`).join('')
+    return `${control()}
+      <div class="shiptop"><p class="lede" style="margin:0"><b>${e(P.shippedLede(rows, ships, NOW))}</b>${tag('mr', 'from MR Review ▸ Merged')}</p>
+        <div class="ships">${bars(rows, true)}<span>ships per day · 14 days, every project${tag('new', 'new')}</span></div></div>
+      ${anyStep ? '' : `<p class="note">No project has a ship step yet (ADR 0080 I4). ${st.missing === 'say' ? 'Until one does, each row says so.' : 'Until one does, the live column stays blank.'}</p>`}
+      <p class="note ok">Auto-merge, in shadow: it would have made the same call as you on 38 of the last 40 merges.${tag('mr', 'from MR Review: shadow report')}</p>
+      ${body}
+      <div class="pager"><button data-page="${pg.page - 1}" ${pg.page === 0 ? 'disabled' : ''}>← Newer</button><span>Page ${pg.page + 1} of ${pg.pages}</span><button data-page="${pg.page + 1}" ${pg.page >= pg.pages - 1 ? 'disabled' : ''}>Older →</button></div>
+      <p class="foot">Each row opens the item page (#863): the ticket, its PRs, and the life strip lit to Shipped.${anyStep ? ' The diamonds are the ship step’s targets: filled = live there.' : ''}</p>`
+  }
+
+  // ── Now (only the throttle's place), Proposals, What goes away ──────────────────────────────────────────────────
+  function nowView() {
+    const all = { items: S.projects.flatMap((p) => p.items || []) }
+    const secs = P.sectionsOf(all, 'now')
+    return `${control()}
+      <div class="throttle"><span class="sw" aria-hidden="true"></span><span class="tname">Auto throttle<small style="display:block;margin-top:4px;font:11px var(--mono);letter-spacing:1px;color:var(--dim);text-transform:none">#1041, as designed there</small></span>
+        <span style="flex:1 1 240px">Full power · up to 4 at once<span style="display:block;font-size:12px;color:var(--mute)">Turning it off: back to the default caps (4 at once, 3 per project)</span></span><span class="muted">Details ▸</span></div>
+      <div class="ghost">${secs.map((s) => `<div class="ihead">▸ ${e(s.label)} · ${s.items.length}</div>`).join('')}</div>
+      <p class="foot">Was: the parallel toggle on Activity. The card’s look and words are #1041’s; this only shows where it lands. Machines and helpers’ health: Vitals.</p>`
+  }
+  function proposalsView() {
+    return `${control()}${S.proposals.map((x) => `<div class="prop"><h3>${e(x.title)}</h3><div class="sigs" style="margin:0 0 8px"><span>${e(x.size)}</span><span>${e(x.star)}</span></div>
+      <p><b>Problem:</b> ${e(x.problem)}</p><p><b>Fix:</b> ${e(x.fix)}</p><p><b>Why it matters:</b> ${e(x.why)}</p>
+      <div class="acts"><span>Make it a ticket</span><span>Snooze</span><span>Ask MARVIN</span><span>Dismiss…</span></div></div>`).join('')}
+      <p class="foot">ProposalsSection as it is today; only its place changes.</p>`
+  }
+  const INV = [
+    ['MR Review tab'],
+    ['Tab dot (unseen PRs, review status)', 'MR Review tab button', 'Workshop’s “your move” badge (counts tickets and PRs)', 'built', '#1030'],
+    ['Open / Merged / Proposals toggle', 'top of MR Review', 'Workshop’s one control: Now · Projects · Shipped · Proposals', 'built', '#1030'],
+    ['Open ▸ By project: groups, order, “N need you”, what’s yours, tiers, collapsed + saved, name = toggle, Other with why', 'MR Review ▸ Open (#935)', 'Projects: one box per project, same order, rules and header', 'here', 'this mock-up'],
+    ['Open ▸ All (every PR, needs-you first)', 'MR Review ▸ Open (#935)', 'Now: one list across projects, tickets too', 'built', '#1030'],
+    ['PR card: title, state line, Approve & Merge, Deny, draft tag', 'MR Review ▸ Open', 'A row in Now / Projects; the buttons on the item page', 'later', '#863'],
+    ['Helper chips (●/✓/✗ + helper tab)', 'under a PR card (#935)', 'The worker on the row (“MacBook · helper tab · 18 min”)', 'built', '#1030'],
+    ['“N pipeline-raised PRs awaiting review” line', 'top of Open', 'Projects’ lede (“8 active projects · 8 your move · …”)', 'here', 'this mock-up'],
+    ['Couldn’t reach GitHub banner', 'top of Open', 'The “as of” line on every Workshop view', 'built', '#1030'],
+    ['Parity: every PR paired with its ticket', 'top of Open', 'Projects’ last line (green / red)', 'here', 'this mock-up'],
+    ['Auto-merge shadow report', 'top of Open', 'Shipped’s top note', 'here', 'this mock-up'],
+    ['GitHub disagreed notice; merge motion; “merged above you” chip', 'Open list', 'The item page and the rows; the motion plays in Shipped as a merge arrives', 'here', 'this mock-up + #863'],
+    ['MR detail (evidence, images, Decisions, Related, ticket context)', 'MrDetail', 'The item page', 'later', '#863'],
+    ['Merged: by day, 5 days a page, refused approvals, reverted by, you / auto-merge', 'MR Review ▸ Merged', 'Shipped, plus where each merge is live', 'here', 'this mock-up'],
+    ['Proposals', 'MR Review ▸ Proposals', 'Workshop ▸ Proposals, unchanged', 'here', 'this mock-up'],
+    ['Activity tab'],
+    ['Banner: pipeline breaker, deploy missing, sync stuck', 'top of Activity', 'Vitals alarms; stuck items in Now ▸ Stuck', 'later', '#861 / Vitals'],
+    ['Device columns (one per Mac)', 'Activity', 'Vitals (decision machines-home)', 'later', '#861'],
+    ['Chat helpers (other Mac’s helpers)', 'Activity', 'Vitals helper health; each item’s worker on its row', 'later', '#861'],
+    ['Parallel toggle', 'Activity', 'The Auto throttle card at the top of Now', 'later', '#1041'],
+    ['Next up queue', 'Activity', 'Now ▸ Up next', 'built', '#1030'],
+    ['Projects progress rows: goal, signals, moving / stuck, PRs/wk, “N parked or done”', 'Activity ▸ Projects (#625)', 'Each Projects box’s header and goal line; the fold at the end', 'here', 'this mock-up'],
+    ['Needs you list (tickets), sort, pages', 'Activity home', 'Now ▸ Your move; per project in Projects', 'built', '#1030'],
+    ['Project cards: open, running now, in review, needs you, due, last active, archived', 'Activity home', 'Projects box (counts, due, state); archived in the fold', 'here', 'this mock-up'],
+    ['Board: columns, tags, freshness, goal header', 'Activity ▸ a board', 'Projects ▸ Open the board, the same board', 'here', 'this mock-up'],
+    ['Board’s “N waiting in MR Review →” and PR chips that leave the tab', 'In review column', 'The items themselves, each opening the item page', 'here', 'this mock-up'],
+    ['Waiting on you box; other projects tally', 'top of a board', 'Now ▸ Your move; the Projects list itself', 'built', '#1030'],
+    ['Ticket drill-down: pipeline history, human task, reply box, Related', 'ProjectBoard', 'The item page', 'later', '#863'],
+    ['Scroll places and “← All projects”', 'Activity', 'Each Workshop view keeps its place; the board is a history step', 'here', 'this mock-up'],
+    ['Cross-links'],
+    ['navigate(“mr-review”, { prKey }) from Docs, Related, boot, Mobile', 'MR Review detail', 'Workshop item page by the item key', 'later', '#864 build'],
+    ['navigate(“activity”, { repo }) / { repo, ticketNumber }', 'Activity board / ticket', 'Workshop ▸ Projects ▸ board / the item page', 'later', '#864 build'],
+    ['navigate(“mr-review”, { view: “merged” | “proposals” })', 'MR Review views', 'Workshop ▸ Shipped / Proposals', 'later', '#864 build']
+  ]
+  function goneView() {
+    const cls = { built: 'st-built', here: 'st-here', later: 'st-later' }
+    const word = { built: 'built', here: 'this mock-up', later: 'later' }
+    return `<div class="ba"><p>Before</p>${hud(BEFORE, 'workshop', 0)}</div>
+      <div class="ba"><p>After</p>${hud(AFTER, 'workshop', allYours())}</div>
+      <table class="inv"><thead><tr><th>Panel</th><th>Was</th><th>Lives in after</th><th>Where it’s done</th></tr></thead><tbody>
+      ${INV.map((r) => (r.length === 1 ? `<tr class="grp"><td colspan="4">${e(r[0])}</td></tr>` : `<tr><td>${e(r[0])}</td><td>${e(r[1])}</td><td>${e(r[2])}</td><td class="${cls[r[3]]}">${e(r[4])}</td></tr>`)).join('')}
+      </tbody></table>
+      <p class="foot">Green: already built. Amber: shown in this mock-up. Blue: another ticket, named. Retired with the tabs: ActivityBoard, ActivityBanner, DeviceColumns, ChatHelpers, ParallelToggle, NextUpQueue, ProjectGoals’ ProjectsProgress, DashboardHome, NeedsYouList, MrReview, MrHistory’s list (its rows move to Shipped).</p>`
+  }
+
+  // ── render + events ─────────────────────────────────────────────────────────────────────────────────────────────
+  function render() {
+    mockbar()
+    const board = st.view === 'projects' && st.board ? S.projects.find((p) => p.id === st.board) : null
+    document.getElementById('caption').innerHTML = CAPTIONS[board ? 'board' : st.view]
+    const views = { projects: projectsView, shipped: shippedView, now: nowView, proposals: proposalsView }
+    const main = st.view === 'gone' ? goneView() : board ? boardView(board) : views[st.view]()
+    document.getElementById('app').innerHTML = (st.view === 'gone' ? '' : hud(AFTER, 'workshop', allYours())) + `<main>${main}</main>`
+  }
+  document.addEventListener('click', (ev) => {
+    const b = ev.target.closest('button')
+    if (!b) return
+    if (b.dataset.set) return set({ [b.dataset.set]: b.dataset.val, ...(b.dataset.set === 'view' ? { board: '' } : {}) })
+    if (b.dataset.view) return set({ view: b.dataset.view, board: '' })
+    if (b.dataset.toggle) {
+      const id = b.dataset.toggle
+      const p = S.projects.find((x) => x.id === id)
+      if (!P.countsOf(p).total) return toast('Nothing open in this project: there is nothing to unfold.')
+      const open = isOpen(p)
+      const o = csv(st.open).filter((x) => x !== id)
+      const c = csv(st.closed).filter((x) => x !== id)
+      ;(open ? c : o).push(id)
+      return set({ open: o.join(','), closed: c.join(',') })
+    }
+    if (b.dataset.board !== undefined) { window.scrollTo(0, 0); return set({ board: b.dataset.board }) }
+    if (b.dataset.open) return toast('Opens the item page (#863): the ticket and its PRs on one page, with Approve and the Decisions.')
+    if (b.dataset.ship) return toast('Opens the item page (#863), its life strip lit to Shipped.')
+    if (b.dataset.page) return set({ page: b.dataset.page })
+    if (b.dataset.act === 'rest') return set({ rest: st.rest === '1' ? '0' : '1' })
+    if (b.dataset.act === 'arrive') { arrived = true; set({ view: 'shipped', page: '0' }); return }
+  })
+  window.addEventListener('hashchange', () => { readHash(); render() })
+  readHash()
+  if (new URLSearchParams(location.hash.slice(1)).get('arrive') === '1') arrived = true
+  render()
+  window.__ready = true
+})()
+</script>
+</body>
+</html>

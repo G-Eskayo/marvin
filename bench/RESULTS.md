@@ -1211,3 +1211,175 @@ hit@5 by question kind:
   sample.
 - rg here is a single pass. A real agent greps iteratively, so this understates rg.
 - graphify was called with its defaults (BFS depth 2, about 2k token budget). Larger budgets weren't tried.
+
+---
+
+## Run 31 — 2026-11-02 (marvin#645): does MARVIN cut the cost of AI-assisted work?
+
+**Answer: no, not per task. On the five tasks plain Claude Code can do, MARVIN costs 54% more per
+successful task (95% bootstrap interval +40% to +68%), with the same success rate.** MARVIN's one
+clear win is a task plain Claude Code can't do: answering from MARVIN's own knowledge base (3/3
+against 0/3). Of the levers MARVIN uses, routing a simple question to Haiku is the only big saving
+(−67%), and on the knowledge-base question Haiku failed 3/3. The "~73%" (Run 16) is caveman's cut in
+output tokens on one verbose answer. Today it measured −11% on a short answer and −39% on a coding
+answer, and output tokens are a small share of the bill either way.
+
+### Setup
+
+- **Same model in every main cell:** `claude-opus-5-5`. That's plain Claude Code's default on this
+  account, and MARVIN's `opus[1m]` setting resolves to the same model; checked against each run's init event
+  (`model_used`, new in this run). Claude Code 2.1.316, engine `023618e6`, MacBook Pro, 13:45–14:35
+  MST.
+- **Cells:** `clean` = plain Claude Code (no CLAUDE.md, skills, hooks or memory). `marvin` = the live
+  `~/.claude` setup. `lean` was dropped: `~/.claude-lean` no longer exists, so that profile is
+  empty.
+- **N = 3 per cell**, LLM judge on every run (`--judge`, given each task's ground truth).
+- **New: hidden checks.** The four coding tasks now have a `check/` folder of pytest files the agent
+  never sees. They're copied in after the run (`run_hidden_check`). Each check fails on the
+  task's starting files and passes on a reference fix (both tested). **A run succeeds only if the
+  hidden tests pass AND the judge passes**; for the two question tasks, the judge alone decides.
+- **Cost per successful task** = total cost of all runs in the cell ÷ successful runs, so a failed run
+  still counts. Cost is Claude Code's `total_cost_usd` (the API-price equivalent). The runs drew on
+  the plan's usage, not on API credit.
+- **Tasks:** 013 LRU bug (one file), 017 holiday SLA (code plus a data file), 015 feature flag
+  (match another module), 012 protocol v3 (change two files, keep v1/v2 working), 004 explain a
+  concept in a paragraph, 014 answer three questions from MARVIN's qa-knowledge KB.
+
+### Bench bug found first: the Q&A tasks weren't measuring plain Claude Code
+
+Q&A tasks ran with `cwd` = `~` (004) or `~/.agents` (014). From home, Claude Code reads
+`~/.claude/CLAUDE.md` and `~/.claude/settings.json` as the **project's** files. So the "clean"
+profile loaded MARVIN's instructions and hooks: its answers began with the `MARVIN active` banner,
+and on 014 it found the KB script inside the repo and scored 3/3. Those 12 runs are set aside in
+`results/run31-contaminated/` and not used here. Fix: a task can set `"cwd": "tmp"` (a fresh empty
+folder outside home); 004, 014 and 018 now do. **Older Q&A results with `cwd: "~"` (Runs 1–16
+task-002/004/007/011) may carry the same contamination of `clean`.** The coding tasks were never
+affected: they always ran in a temp folder, and no clean coding run printed the banner.
+
+### Main result: plain Claude Code against MARVIN
+
+| Task | Cell | N | Success | Cost $ mean (sd) | Input tok mean | Output tok mean (sd) | Wall s mean (sd) | $ per success |
+|---|---|---|---|---|---|---|---|---|
+| 013 LRU bug | clean | 3 | 3/3 | 0.146 (0.002) | 69,987 | 1,267 (98) | 13 (1) | $0.146 |
+| 013 LRU bug | marvin | 3 | 3/3 | 0.240 (0.068) | 162,741 | 2,377 (422) | 37 (9) | $0.240 |
+| 017 holiday SLA | clean | 3 | 3/3 | 0.171 (0.002) | 71,284 | 2,095 (86) | 19 (0) | $0.171 |
+| 017 holiday SLA | marvin | 3 | 3/3 | 0.279 (0.077) | 180,281 | 3,545 (429) | 50 (9) | $0.279 |
+| 015 feature flag | clean | 3 | 3/3 | 0.161 (0.006) | 70,939 | 1,737 (248) | 20 (5) | $0.161 |
+| 015 feature flag | marvin | 3 | 3/3 | 0.241 (0.042) | 149,733 | 2,463 (416) | 40 (6) | $0.241 |
+| 012 protocol v3 | clean | 3 | 3/3 | 0.194 (0.006) | 73,125 | 2,642 (177) | 31 (5) | $0.194 |
+| 012 protocol v3 | marvin | 3 | 3/3 | 0.279 (0.062) | 166,759 | 3,493 (113) | 47 (4) | $0.279 |
+| 004 explain | clean | 3 | 3/3 | 0.082 (0.001) | 20,413 | 351 (50) | 6 (1) | $0.082 |
+| 004 explain | marvin | 3 | 3/3 | 0.123 (0.001) | 39,063 | 527 (47) | 14 (1) | $0.123 |
+| 014 KB question | clean | 3 | **0/3** | 0.152 (0.044) | 87,320 | 690 (111) | 12 (5) | never succeeded |
+| 014 KB question | marvin | 3 | **3/3** | 0.198 (0.056) | 118,140 | 1,030 (119) | 21 (3) | $0.198 |
+
+Input tokens = fresh + cache writes + cache reads.
+
+| Task | clean $/success | marvin $/success | change | 95% bootstrap interval |
+|---|---|---|---|---|
+| 013 LRU bug | $0.146 | $0.240 | +64% | +32% to +116% |
+| 017 holiday SLA | $0.171 | $0.279 | +63% | +35% to +114% |
+| 015 feature flag | $0.161 | $0.241 | +50% | +30% to +76% |
+| 012 protocol v3 | $0.194 | $0.279 | +44% | +22% to +79% |
+| 004 explain | $0.082 | $0.123 | +50% | +49% to +52% |
+| **geometric mean, 5 tasks** | | | **+54%** | **+40% to +68%** |
+| 014 KB question | never succeeded | $0.198 | MARVIN only | — |
+
+Wall time follows cost: MARVIN took 2–3× as long on every coding task.
+
+### Where MARVIN's extra cost comes from
+
+A trivial prompt (`Reply with just: ok`, two runs per profile, empty folder) isolates the fixed
+cost of starting a session:
+
+| | context at start | written to cache on the 2nd run | output tokens | cost of the 2nd run |
+|---|---|---|---|---|
+| clean | 20.5k tokens | 0 | 4 | $0.004 |
+| marvin | 39.1k tokens | 13.4k | 304 | $0.119 |
+
+1. **About 18.6k more tokens of standing context** (CLAUDE.md, the skill list, the session-start
+   report).
+2. **That context changes every session**, so about 13k tokens are rewritten to cache each time
+   instead of read from it. Plain Claude Code's start-up is fully cached from the second session on.
+3. **Session-start output:** about 300 tokens before any work (the banner, plus warnings like
+   "Sync for ~/.claude is blocked" that turned up in one explain answer).
+4. **Behaviour on coding:** the TDD default writes and runs extra test files: 3.3–5.7 turns
+   against 3.0 for clean, and 1.3–1.8× the output tokens. All of clean's fixes passed the hidden
+   tests anyway, so on these small tasks the extra testing bought no success.
+
+### Levers, one at a time (everything else held constant)
+
+| Lever | Task | Before | After | Change in $/success | Quality |
+|---|---|---|---|---|---|
+| **Route to Haiku** (route.py: recall/research → Haiku) | 004 explain | marvin $0.123 | marvin@haiku $0.040 | **−67%** (−69% to −66%) | 3/3 → 3/3 |
+| Route to Haiku | 014 KB question | marvin $0.198, 3/3 | marvin@haiku, **0/3** | fails | Haiku never invoked the KB skill |
+| **Caveman** (opt-in trigger) | 004 explain | marvin 527 output tok | 470 (−11%) | +26% (−1% to +79%) | 3/3 → 3/3 |
+| Caveman | 013 LRU bug | marvin 2,377 output tok | 1,457 (**−39%**) | −12% (−36% to +23%) | 3/3 → 3/3 |
+| **Memory vs re-pasting** | KB questions | marvin + KB lookup (014) $0.198, 3/3 | clean + notes pasted in (018) $0.134, 3/3 | pasting is 32% cheaper | both 3/3 |
+
+- **Routing to Haiku is the real saving**, but only on tasks Haiku can do. It also doesn't happen
+  by itself: `auto_route_hook.py` suggests a profile and model, and Gil has to start the routed
+  session. On the KB task Haiku searched for a tool, didn't find the skill, and asked for help.
+- **Caveman doesn't reproduce Run 16.** Run 16's baseline answer was 1,207 output tokens
+  (Sonnet, July). Today's MARVIN baseline is 527 (Opus 5.5, and the current CLAUDE.md already asks
+  for plain, short prose), which leaves little to cut. On coding it cut output tokens by 39%, but
+  output is a small part of the cost (input and cache dominate), so the cost change was −12% and
+  within noise.
+- **Memory vs re-pasting:** with a 1.4k-token notes file pasted in (all 18 `marvin-bench` KB
+  entries), plain Claude Code answered 3/3, cheaper than MARVIN's lookup. The KB's value is that you
+  don't have to know which notes to paste. That grows with the size of the notes, and this test
+  doesn't measure it.
+
+### Headline (for copy)
+
+- **Not supported:** "MARVIN cuts costs by ~73%" or any MARVIN-wide cost cut. At the same model, MARVIN
+  costs **+54% per successful task** (5 tasks, N=3 each, 95% interval +40% to +68%).
+- **Supported, worded exactly:** "Routing a simple question to a smaller model cut its cost by 67%
+  with no loss in quality (one explain task, N=3)." "On a question about its own past work, MARVIN
+  answered correctly 3 of 3 times; plain Claude Code, 0 of 3."
+- **Supported, but no longer current:** "Caveman mode cut a verbose answer's output tokens by 72.8%
+  (Run 16)." Today it's 11–39% depending on the task. Don't use 73% as a current figure.
+
+### Cost of this measurement
+
+65 judged runs: the 51 reported here, the 12 set aside as contaminated and a 2-run pilot. They
+cost **$11.08** at API prices. The 65 judge calls, 4 overhead probes and the quota checks add about
+$5, so the total is **about $16**. All of it came from the plan's usage: the seven-day window went from 52%
+to 57% and the five-hour window from 17% to 63%. Other sessions were running at the same time, so
+those deltas are upper bounds. The new `--stop-above 0.75` budget stop never fired.
+
+### Reproduce
+
+```bash
+cd ~/.agents/bench
+bash profiles/setup.sh
+bash cost_validation.sh results/cost-$(date +%Y%m%d)      # every cell above, N=3, judged, budget-stopped
+~/.agents/venv/bin/python cost_report.py results/cost-<date> --base clean --treat marvin
+~/.agents/venv/bin/python cost_report.py results/cost-<date> --base marvin --treat marvin@haiku --treat marvin+caveman
+```
+
+Run 31's raw JSON is in `results/run31/` (gitignored, on the MacBook). The cell-by-cell commands
+are in `cost_validation.sh`.
+
+### Caveats
+
+- **N = 3.** A bootstrap over three runs understates the spread, so read the intervals as rough. The
+  direction is solid: on all five tasks, MARVIN's cheapest run cost more than plain Claude Code's
+  most expensive one. MARVIN's dearest run in each cell was the first, before its cache was warm.
+- **Small, well-specified tasks.** Every clean run succeeded on them, so MARVIN's testing habit and
+  memory had nothing to rescue. A long, ambiguous task, or one spread over many sessions where
+  re-explaining context costs real tokens, could come out differently. That's the next run to
+  design (#28), not something this run shows.
+- **One session per task.** MARVIN's overhead is paid per session; on a long interactive session
+  it's a smaller share. These numbers are for one `claude -p` task per session.
+- **API-price dollars.** On the subscription, cost shows up as usage of the five-hour and seven-day
+  limits rather than dollars, but the ratios carry over.
+- The judge runs on the account default model under the clean profile with no tools (Runs 14–15).
+
+### Next bench priorities
+
+- Cut MARVIN's per-session overhead and re-measure: keep the changing parts of the session-start
+  report out of the cached prefix, trim the standing context, and drop the start-up output in
+  headless runs. This is the fastest way to make the cost claim go the other way.
+- A multi-session task where MARVIN's memory replaces re-explaining a large context.
+- Re-check the older Q&A results (`cwd: "~"`) now that `cwd: "tmp"` exists.
