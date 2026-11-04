@@ -1,5 +1,7 @@
 # Changelog
 
+- Wire MR Review by project into the real tab (#767), with one set of project names everywhere ([#935](https://github.com/G-Eskayo/marvin/pull/935))
+
 - Merge queue: a PR set aside as CI_PENDING comes back by itself when its checks finish ([#1109](https://github.com/G-Eskayo/marvin/pull/1109))
 
 - Accounts: live checks, expiry warnings, one alert per change, and renewal for every MARVIN credential (backend for #640) ([#977](https://github.com/G-Eskayo/marvin/pull/977))
