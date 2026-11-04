@@ -1,22 +1,173 @@
 {
   "name": "MARVIN WezTerm palette (celestial navigation, accessible)",
   "notes": "Decided with Gil 2026-11-03 (PRD #1058, rule in marvin#1062). Text is MARVIN Term, so the pixel level (7:1) applies. The AAA fixes replace red #ff3b2f (5.8), secondary #6b551f (2.9) and labels #8a7030 (4.3).",
-  "levels": {"text": 4.5, "large": 3.0, "ui": 3.0, "pixel": 7.0},
+  "levels": {
+    "text": 4.5,
+    "large": 3.0,
+    "ui": 3.0,
+    "pixel": 7.0
+  },
   "pairs": [
-    {"what": "main text (amber)", "fg": "#f0b32a", "bg": "#05040A", "level": "pixel"},
-    {"what": "ok / phosphor green", "fg": "#54ff8a", "bg": "#05040A", "level": "pixel"},
-    {"what": "light text (moon)", "fg": "#cfd6e6", "bg": "#05040A", "level": "pixel"},
-    {"what": "in progress (orange)", "fg": "#ff6a1f", "bg": "#05040A", "level": "pixel"},
-    {"what": "errors (red, AAA fix)", "fg": "#ff645a", "bg": "#05040A", "level": "pixel"},
-    {"what": "blue", "fg": "#8fb4ff", "bg": "#05040A", "level": "pixel"},
-    {"what": "cyan", "fg": "#7fe0c8", "bg": "#05040A", "level": "pixel"},
-    {"what": "secondary text, ANSI bright black (AAA fix)", "fg": "#b89235", "bg": "#05040A", "level": "pixel"},
-    {"what": "inactive tab labels (AAA fix)", "fg": "#b6933f", "bg": "#05040A", "level": "pixel"},
-    {"what": "active tab label on amber", "fg": "#05040A", "bg": "#f0b32a", "level": "pixel"},
-    {"what": "focused glass (60%) over a mid-grey window", "fg": "#f0b32a", "bg": "#05040A", "opacity": 0.6, "backdrop": "#808080", "level": "text"},
-    {"what": "focused glass (60%) over a white window", "fg": "#f0b32a", "bg": "#05040A", "opacity": 0.6, "backdrop": "#ffffff", "level": "text",
-     "exception": "Gil chose 30% unfocused / 60% focused glass on 2026-11-03 knowing it falls below AA over a white window; the glass/solid toggle (#1073) is the escape hatch"},
-    {"what": "unfocused glass (30%) over a white window", "fg": "#f0b32a", "bg": "#05040A", "opacity": 0.3, "backdrop": "#ffffff", "level": "text",
-     "exception": "Gil chose 30% unfocused glass on 2026-11-03; unfocused text is glanced at, the toggle (#1073) gives solid when reading"}
-  ]
+    {
+      "what": "main text (amber)",
+      "fg": "#f0b32a",
+      "bg": "#05040A",
+      "level": "pixel"
+    },
+    {
+      "what": "ok / phosphor green",
+      "fg": "#54ff8a",
+      "bg": "#05040A",
+      "level": "pixel"
+    },
+    {
+      "what": "light text (moon)",
+      "fg": "#cfd6e6",
+      "bg": "#05040A",
+      "level": "pixel"
+    },
+    {
+      "what": "in progress (orange)",
+      "fg": "#ff6a1f",
+      "bg": "#05040A",
+      "level": "pixel"
+    },
+    {
+      "what": "errors (red, AAA fix)",
+      "fg": "#ff645a",
+      "bg": "#05040A",
+      "level": "pixel"
+    },
+    {
+      "what": "blue",
+      "fg": "#8fb4ff",
+      "bg": "#05040A",
+      "level": "pixel"
+    },
+    {
+      "what": "cyan",
+      "fg": "#7fe0c8",
+      "bg": "#05040A",
+      "level": "pixel"
+    },
+    {
+      "what": "secondary text, ANSI bright black (AAA fix)",
+      "fg": "#b89235",
+      "bg": "#05040A",
+      "level": "pixel"
+    },
+    {
+      "what": "inactive tab labels (AAA fix)",
+      "fg": "#b6933f",
+      "bg": "#05040A",
+      "level": "pixel"
+    },
+    {
+      "what": "active tab label on amber",
+      "fg": "#05040A",
+      "bg": "#f0b32a",
+      "level": "pixel"
+    },
+    {
+      "what": "focused glass (60%) over a mid-grey window",
+      "fg": "#f0b32a",
+      "bg": "#05040A",
+      "opacity": 0.6,
+      "backdrop": "#808080",
+      "level": "text"
+    },
+    {
+      "what": "focused glass (60%) over a white window",
+      "fg": "#f0b32a",
+      "bg": "#05040A",
+      "opacity": 0.6,
+      "backdrop": "#ffffff",
+      "level": "text",
+      "exception": "Gil chose 30% unfocused / 60% focused glass on 2026-11-03 knowing it falls below AA over a white window; the glass/solid toggle (#1073) is the escape hatch"
+    },
+    {
+      "what": "unfocused glass (30%) over a white window",
+      "fg": "#f0b32a",
+      "bg": "#05040A",
+      "opacity": 0.3,
+      "backdrop": "#ffffff",
+      "level": "text",
+      "exception": "Gil chose 30% unfocused glass on 2026-11-03; unfocused text is glanced at, the toggle (#1073) gives solid when reading"
+    },
+    {
+      "what": "terminal colour #ff7a70",
+      "fg": "#ff7a70",
+      "bg": "#05040A",
+      "level": "pixel"
+    },
+    {
+      "what": "terminal colour #8affb0",
+      "fg": "#8affb0",
+      "bg": "#05040A",
+      "level": "pixel"
+    },
+    {
+      "what": "terminal colour #ffd36a",
+      "fg": "#ffd36a",
+      "bg": "#05040A",
+      "level": "pixel"
+    },
+    {
+      "what": "terminal colour #b5ccff",
+      "fg": "#b5ccff",
+      "bg": "#05040A",
+      "level": "pixel"
+    },
+    {
+      "what": "terminal colour #ff9a5f",
+      "fg": "#ff9a5f",
+      "bg": "#05040A",
+      "level": "pixel"
+    },
+    {
+      "what": "terminal colour #aef0de",
+      "fg": "#aef0de",
+      "bg": "#05040A",
+      "level": "pixel"
+    },
+    {
+      "what": "terminal colour #ffffff",
+      "fg": "#ffffff",
+      "bg": "#05040A",
+      "level": "pixel"
+    }
+  ],
+  "terminal": {
+    "background": "#05040A",
+    "foreground": "#f0b32a",
+    "cursor": "#54ff8a",
+    "selection_bg": "#7a5a14",
+    "selection_fg": "#05040A",
+    "ansi": [
+      "#05040A",
+      "#ff645a",
+      "#54ff8a",
+      "#f0b32a",
+      "#8fb4ff",
+      "#ff6a1f",
+      "#7fe0c8",
+      "#cfd6e6"
+    ],
+    "brights": [
+      "#b89235",
+      "#ff7a70",
+      "#8affb0",
+      "#ffd36a",
+      "#b5ccff",
+      "#ff9a5f",
+      "#aef0de",
+      "#ffffff"
+    ],
+    "tab_active_bg": "#f0b32a",
+    "tab_active_fg": "#05040A",
+    "tab_inactive_fg": "#b6933f",
+    "glass_focused": 0.6,
+    "glass_unfocused": 0.3,
+    "blur": 24
+  }
 }
