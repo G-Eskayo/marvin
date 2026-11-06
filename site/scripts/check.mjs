@@ -20,7 +20,7 @@ import { parse } from 'yaml';
 
 const SITE = resolve(import.meta.dirname, '..');
 const ROOT = resolve(SITE, '..');
-const STATUSES = ['released', 'testing', 'planned', 'retired'];
+const STATUSES = ['released', 'testing', 'progress', 'planned', 'retired'];
 
 export function checkFeatures(data, { exists, adrFiles, pageFile }) {
   const errs = [];
@@ -33,11 +33,12 @@ export function checkFeatures(data, { exists, adrFiles, pageFile }) {
     seen.add(f.id);
     if (!areas.has(f.area)) errs.push(`${at}: unknown area "${f.area}"`);
     if (!STATUSES.includes(f.status)) errs.push(`${at}: unknown status "${f.status}"`);
-    if (f.status === 'released' || f.status === 'testing') {
+    if (f.status === 'released' || f.status === 'testing' || f.status === 'progress') {
       if (!f.evidence?.length) errs.push(`${at}: ${f.status} needs evidence`);
       if (!f.verified_on) errs.push(`${at}: ${f.status} needs verified_on`);
     }
-    if (f.status === 'testing' && !f.why_testing) errs.push(`${at}: testing needs why_testing`);
+    if ((f.status === 'testing' || f.status === 'progress') && !f.why_testing) errs.push(`${at}: ${f.status} needs why_testing`);
+    if (f.status === 'progress' && f.page) errs.push(`${at}: in-progress features live on the roadmap only, never a docs page`);
     if (f.status === 'planned') {
       if (f.page) errs.push(`${at}: planned features live on the roadmap only, never a docs page`);
       if (!f.ticket && !f.adrs?.length) errs.push(`${at}: planned needs a ticket or an ADR to link`);
