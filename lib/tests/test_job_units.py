@@ -348,3 +348,35 @@ def test_site_demo_job_is_a_keep_alive_service_with_no_machine_paths():
 def test_install_refuses_an_os_it_has_no_adapter_for(tmp_path):
     with pytest.raises(ju.JobError, match="windows"):
         ju.install(["usage-scan"], os_name="windows", home=tmp_path, run=FakeRun())
+
+
+# ── tidy-agent runs on the venv Python (marvin#1123 0.6) ────────────────────────────────────────────────────────────
+# macOS privacy (TCC) checks a launchd job by its interpreter. /usr/bin/python3 lost Full Disk Access on the Mini and
+# tidy-agent failed every night from 2026-10-15 with PermissionError on ~/Desktop; the venv Python (Homebrew's
+# Python.app) holds the grant on both Macs (probed with `launchctl submit`, 2026-11-04).
+
+def test_tidy_agent_runs_the_organizer_daily_on_the_venv_python():
+    job = ju.load("tidy-agent")
+    assert job["command"] == ["~/.agents/venv/bin/python", "~/.claude/organize/tidy_agent.py"]
+    assert job["schedule"] == {"calendar": {"hour": 3, "minute": 0}}
+    plist = plistlib.loads(ju.render_plist(job, MAC_HOME))
+    assert plist["Label"] == "com.marvin.tidy-agent"
+    assert plist["ProgramArguments"][0] == f"{MAC_HOME}/.agents/venv/bin/python"
+    assert plist["StandardErrorPath"] == f"{MAC_HOME}/.claude/logs/tidy-agent-error.log"
+
+
+def test_no_job_definition_runs_the_system_python():
+    # /usr/bin/python3 is the xcode-select shim: TCC needs its own grant for it, separate from the venv's, and it is
+    # the one that broke. Any job that names it fails the same way on a Mac without that grant.
+    for name in ju.available():
+        assert ju.load(name)["command"][0] not in ("/usr/bin/python3", "python3", "/usr/bin/python"), name
+
+
+def test_the_catalog_and_cron_health_read_tidy_agents_new_logs():
+    import cron_health
+    import job_catalog
+    entry = job_catalog.JOBS["tidy-agent"]
+    assert entry.get("label", "com.marvin.tidy-agent") == "com.marvin.tidy-agent"
+    assert entry["reporter"] == "~/.claude/logs/tidy-agent-error.log"
+    _, logs = cron_health.JOBS["tidy-agent"]
+    assert logs == [".claude/logs/tidy-agent.log", ".claude/logs/tidy-agent-error.log"]
