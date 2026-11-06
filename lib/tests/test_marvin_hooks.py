@@ -270,3 +270,19 @@ def test_wired_scripts_gives_real_paths_for_home_relative_hooks(tmp_path):
     paths = [r["path"] for r in mh.wired_scripts([user])]
     assert str(mh.GATE_SCRIPT) in paths
     assert not [p for p in paths if "$HOME" in p]
+
+
+def test_showing_gil_things_is_enforced_for_every_kind(tmp_path):
+    # marvin#715: the temp-file guard had dropped out of settings.json, so a file card from /private/tmp reached Gil
+    # (2026-11-02). It is in the table now, with the temp-deliverable reminder, for every launch kind (helpers too).
+    by = {(h.event, Path(h.command[1]).name): h for h in mh.HOOKS if len(h.command) > 1}
+    guard = by[("PreToolUse", "deliverable_location_guard.py")]
+    assert guard.kinds == {"all"} and "SendUserFile" in guard.matcher and "Artifact" in guard.matcher
+    assert by[("PostToolUse", "temp_deliverable_hook.py")].matcher == "Write|Edit|MultiEdit|Bash"
+    for event in ("Stop", "SubagentStop"):
+        h = by[(event, "temp_deliverable_hook.py")]
+        assert h.kinds == {"all"} and h.command[-1] == "stop" and h.timeout <= 5
+    # Other Stop hooks come first (session_work.py's chat state, #1060), so find this one rather than take the first.
+    stops = [h["command"] for g in mh.settings_hooks()["Stop"] for h in g["hooks"]]
+    stop = [c for c in stops if "temp_deliverable_hook.py stop" in c]
+    assert len(stop) == 1 and "gate all -- " in stop[0]

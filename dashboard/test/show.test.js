@@ -132,6 +132,14 @@ describe('projectFor: one window per project', () => {
     expect(projectFor({ kind: 'file' }, { real: `${FAKE}/Developer/portfolio-website-updater2/x.md`, projects: PROJECTS }).id).toBe(UNSORTED.id)
   })
 
+  it('a file the other Mac sent is filed by the project it named, not as MARVIN\'s for sitting in ~/.agents', () => {
+    const real = `${FAKE}/.agents/var/show-inbox/1793-1/shot.png`
+    const inboxRoot = `${FAKE}/.agents/var/show-inbox`
+    expect(projectFor({ kind: 'file', project: 'clarity-captions' }, { real, inboxRoot, projects: PROJECTS }).id).toBe('clarity-captions')
+    expect(projectFor({ kind: 'file', outboxName: 'portfolio-website-updater-2026-11-02-x' }, { real, inboxRoot, projects: PROJECTS, matchOutboxName: match }).id).toBe('portfolio-website-updater')
+    expect(projectFor({ kind: 'file' }, { real, inboxRoot, projects: PROJECTS }).id).toBe(UNSORTED.id)
+  })
+
   it('a PR file goes to its repo\'s project; a named project is the last resort; else Unsorted', () => {
     expect(projectFor({ kind: 'pr', repo: 'g-eskayo/clarity-captions' }, { projects: PROJECTS }).id).toBe('clarity-captions')
     expect(projectFor({ kind: 'url', project: 'marvin' }, { projects: PROJECTS }).id).toBe('marvin')
