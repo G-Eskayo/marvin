@@ -418,3 +418,30 @@ def test_missing_model_failures_without_a_log_are_zero(tmp_path):
 def test_missing_model_probe_is_registered_with_a_zero_threshold():
     fn, limit, what = pm.PROBES["missing-bundled-model"]
     assert limit == 0.0 and "#1114" in what
+
+
+def test_the_verify_timeouts_probe_counts_marvin_verify_timeouts_in_the_window(tmp_path):
+    """#1152: the pipeline's verify ran the whole suite and timed out 103 times on the Mini. Counts marvin's
+    verify-timeout failures over the window (another project's, other signatures, old rows and junk don't count)."""
+    import json
+    from datetime import datetime, timedelta, timezone
+    now = datetime(2026, 11, 6, 18, tzinfo=timezone.utc)
+    log = tmp_path / "pipeline-failures.jsonl"
+    rows = [
+        {"t": (now - timedelta(hours=2)).isoformat(), "kind": "failure", "ticket": 1151, "project": "G-Eskayo/marvin",
+         "sig": "verify-timeout", "reason": "timed out after 1200s running ......"},
+        {"t": (now - timedelta(hours=3)).isoformat(), "kind": "failure", "ticket": 983, "sig": "verify-timeout",
+         "reason": "timed out after 1200s running ....s...."},
+        {"t": (now - timedelta(hours=4)).isoformat(), "kind": "failure", "ticket": 12, "project": "G-Eskayo/seal-speak",
+         "sig": "verify-timeout", "reason": "timed out after 1200s running xcodebuild"},
+        {"t": (now - timedelta(days=9)).isoformat(), "kind": "failure", "ticket": 900, "project": "G-Eskayo/marvin",
+         "sig": "verify-timeout", "reason": "timed out after 1200s running ...."},
+        {"t": (now - timedelta(hours=1)).isoformat(), "kind": "failure", "ticket": 989, "project": "G-Eskayo/marvin",
+         "sig": "slot-busy", "reason": "waited 7200s for the test slot"},
+        {"t": (now - timedelta(hours=1)).isoformat(), "kind": "release", "ticket": 1151, "sig": "verify-timeout"},
+    ]
+    log.write_text("\n".join(json.dumps(r) for r in rows) + "\nnot json\n[1]\n")
+    assert pm._marvin_verify_timeouts(days=7, path=log, now=now) == 2.0
+    assert pm._marvin_verify_timeouts(days=7, path=tmp_path / "missing.jsonl", now=now) == 0.0
+    fn, limit, what = pm.PROBES["verify-timeouts"]
+    assert limit >= 0 and "1152" in what
