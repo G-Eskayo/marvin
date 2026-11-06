@@ -1,5 +1,7 @@
 # Changelog
 
+- Dispatch wrapper: a SIGTERM that lands as bash starts the command waits for the command (seen on Linux CI under load) ([#1149](https://github.com/G-Eskayo/marvin/pull/1149))
+
 - Pipeline and merge gate: Seal Speak worktrees get the app's models from one sha-checked cache per machine, so the app builds there ([#1119](https://github.com/G-Eskayo/marvin/pull/1119))
 
 - Main is red at e46bda3: fix forward ([#1147](https://github.com/G-Eskayo/marvin/pull/1147))
