@@ -1,5 +1,7 @@
 # Changelog
 
+- Pipeline verify runs the whole Python suite on every marvin ticket and times out; run the affected tests, same set before and after ([#1153](https://github.com/G-Eskayo/marvin/pull/1153))
+
 - Site ship step: the live link on each shipped ticket, and an alarm when a publish fails ([#1145](https://github.com/G-Eskayo/marvin/pull/1145))
 
 - Dispatch wrapper: a SIGTERM that lands as bash starts the command waits for the command (seen on Linux CI under load) ([#1149](https://github.com/G-Eskayo/marvin/pull/1149))
