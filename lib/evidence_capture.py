@@ -207,7 +207,7 @@ def run_timed(cmd: list[str], cwd=None, env: dict | None = None, timeout_s: floa
     return proc.returncode, output()
 
 
-def capture_test_results(worktree_path: Path, test_command: list[str], timeout_s: int = 1200) -> dict:
+def capture_test_results(worktree_path: Path, test_command: list[str], timeout_s: int = 1200, env: dict | None = None) -> dict:
     """Run the ticket's real test command inside worktree_path and parse
     its output. `test_command` is caller-supplied (e.g.
     ["pytest", "-q"] or ["npx", "vitest", "run"]) since different
@@ -215,8 +215,8 @@ def capture_test_results(worktree_path: Path, test_command: list[str], timeout_s
     which one a given ticket needs.
 
     Raises TestTimedOut if the tests run longer than timeout_s (time spent waiting for the test slot not counted),
-    SlotWaitTimedOut if the wait for the slot passes SLOT_WAIT_CAP_S."""
-    _rc, output = run_timed(test_command, cwd=worktree_path, timeout_s=timeout_s, slot_wait_cap_s=SLOT_WAIT_CAP_S,
+    SlotWaitTimedOut if the wait for the slot passes SLOT_WAIT_CAP_S. `env` replaces the inherited environment."""
+    _rc, output = run_timed(test_command, cwd=worktree_path, env=env, timeout_s=timeout_s, slot_wait_cap_s=SLOT_WAIT_CAP_S,
                             preexec_fn=_raise_nofile_limit)
     parsed = parse_test_output(" ".join(test_command), output)
     parsed["output_tail"] = output[-600:]
