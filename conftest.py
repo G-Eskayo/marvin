@@ -10,6 +10,10 @@
    that need gh behaviour mock it.
 3. Only the selected tests are collected when $MARVIN_SELECTED_TESTS names a file (marvin#826, lib/affected_tests.py):
    a PR runs what its change can affect, and files it can't are never imported.
+4. Chromadb's ONNX model download is serialized with fcntl.flock (marvin#1156). Under -n auto (pytest-xdist), workers
+   are separate OS processes sharing one real ~/.cache/chroma, so concurrent first calls race on the single tar.gz file.
+   lib/chroma_onnx_lock.protect() wraps ONNXMiniLM_L6_V2._download_model_if_not_exists to prevent TOCTOU races, making
+   all test outcomes deterministic even on cold CI runners (main green means green).
 """
 import atexit
 import os
@@ -44,6 +48,14 @@ if not os.environ.get("MARVIN_MERGE_GATE") and not os.environ.get("MARVIN_PORTFO
 
 TEST_HOME = real_home_guard.make_test_home(REAL_HOME)
 os.environ["HOME"] = str(TEST_HOME)
+# marvin#1156: serialize chromadb's ONNX model download to prevent TOCTOU race under -n auto.
+try:
+    from chromadb.utils.embedding_functions.onnx_mini_lm_l6_v2 import ONNXMiniLM_L6_V2
+except ImportError:
+    pass
+else:
+    import chroma_onnx_lock
+    chroma_onnx_lock.protect(ONNXMiniLM_L6_V2)
 # marvin#845: the memory guard reads this Mac's live pressure before heavy work starts. Pinned to normal so no test
 # passes or fails with the machine's memory (the Mini runs the suite while it is busy); test_memory_guard unpins it.
 os.environ["MARVIN_MEMORY_PRESSURE_LEVEL"] = "normal"
