@@ -535,7 +535,7 @@ def execute_ticket(
             if baseline and baseline != recorded:
                 mr.record(subsystem, baseline)
                 recorded = baseline
-        comparison = mr.compare(subsystem, baseline, current)
+        comparison = _with_real_change(mr.compare(subsystem, baseline, current), worktree_path, base_branch, ticket_ref)
 
         if comparison["passing"]:
             # ADR 0063 gate 2 (#336): code that changed without a test changing doesn't pass, whatever the metrics say
@@ -573,6 +573,27 @@ def execute_ticket(
             f"(max_iterations). Final verdict: {comparison['verdict'] if comparison else 'none'}."
         ),
     }
+
+
+def _with_real_change(comparison: dict, worktree: Path, base: str, ticket_ref: str) -> dict:
+    """An "unchanged" reading moves on to the test rule and review when the build really changed something, and says
+    "nothing changed" when it didn't (#1157, ADR 0084). compare() also reads "unchanged" with no metric on both sides,
+    and for a build broken before and after: neither is a reading to pass on. A tree git can't read fails closed."""
+    metrics = comparison["metrics"]
+    broken = any(k.endswith("build_ok") and not m["current"] for k, m in metrics.items())
+    if comparison["verdict"] != "unchanged" or not metrics or broken:
+        return comparison
+    plan_files = {str(p.relative_to(worktree)) for p in (_design_doc_path(worktree, ticket_ref),
+                                                         _task_list_path(worktree, ticket_ref))}
+    try:
+        changes = test_change_rule.changes_in(worktree, base)
+    except (subprocess.SubprocessError, OSError):
+        return comparison
+    if test_change_rule.real_changes([c for c in changes if c["path"] not in plan_files], _test_rules(ticket_ref)):
+        return {**comparison, "passing": True, "verdict": "changed, tests steady"}
+    return {**comparison, "verdict": "nothing changed",
+            "tests": "No real change in this tree: no file differs from the base apart from the plan. Make the change "
+                     "the ticket asks for here; if it belongs on another branch, say so in a comment on the ticket."}
 
 
 def _default_reviewer(worktree: Path, base: str) -> dict:
