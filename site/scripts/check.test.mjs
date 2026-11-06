@@ -40,6 +40,18 @@ test('a planned feature with nothing to link is refused', () => {
   assert.ok(run([{ id: 'p', title: 'P', area: 'a', status: 'planned', summary: 's' }]).some((e) => e.includes('ticket or an ADR')));
 });
 
+test('in progress needs a reason, evidence and a verified date', () => {
+  const errs = run([{ ...ok, status: 'progress', evidence: undefined, verified_on: undefined }]);
+  assert.ok(errs.some((e) => e.includes('progress needs why_testing')));
+  assert.ok(errs.some((e) => e.includes('progress needs evidence')));
+  assert.ok(errs.some((e) => e.includes('progress needs verified_on')));
+});
+
+test('in progress lives on the roadmap only, never a docs page', () => {
+  assert.ok(run([{ ...ok, status: 'progress', why_testing: 'w', page: 'x' }]).some((e) => e.includes('roadmap only')));
+  assert.deepEqual(run([{ ...ok, status: 'progress', why_testing: 'w' }]), []);
+});
+
 test('testing needs a reason it is not released', () => {
   assert.ok(run([{ ...ok, status: 'testing' }]).some((e) => e.includes('why_testing')));
 });
