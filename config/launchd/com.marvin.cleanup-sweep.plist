@@ -10,6 +10,10 @@
     <key>ProgramArguments</key>
     <array>
         <string>/Users/gileskayo/.agents/venv/bin/python</string>
+        <string>/Users/gileskayo/.agents/lib/job_report.py</string>
+        <string>cleanup-sweep</string>
+        <string>--</string>
+        <string>/Users/gileskayo/.agents/venv/bin/python</string>
         <string>/Users/gileskayo/.agents/lib/cleanup_sweep.py</string>
     </array>
     <key>EnvironmentVariables</key>
