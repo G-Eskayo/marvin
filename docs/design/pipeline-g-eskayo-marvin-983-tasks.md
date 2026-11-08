@@ -1,0 +1,8 @@
+1. Create a local branch tracking `origin/ticket/932-box-trial` (tip `7b12dc71`) in a dedicated worktree.
+2. Merge current `origin/main` into it; resolve the single real conflict in `brain-map/scripts/test_generate.py` by replacing the ad hoc `@pytest.mark.skipif(not Path("/usr/bin/plutil").exists(), ...)` with main's `@pytest.mark.macos_only("plutil reads the plist that Python's parser refuses")`.
+3. Write/modify the eight tests above in `lib/tests/test_box_trial.py` first (red).
+4. Delete `SECURITY_TOOLS` and the `if argv[0] not in SECURITY_TOOLS` check from `security_command()` in `lib/box_trial.py`; update its module docstring/comment that currently explains the closed-list rationale, since that rationale no longer applies.
+5. Run `lib/tests/test_box_trial.py`, `lib/tests/test_dispatch_fallback.py`, and `brain-map/scripts/test_generate.py` (plus `lib/tests/test_tool_requirements.py`) locally; confirm green.
+6. Commit with a message referencing both decisions and #941/#983; push to `ticket/932-box-trial`.
+7. Post a reply comment on PR #941 (not a new "## Decisions" heading — this only reports) stating: `security-tools` built (list dropped, commit SHA); `retrieval-graph` already matched the chosen option, no change needed; the stray main-conflict found and resolved (merge commit SHA); no screenshots in this PR to retake (backend/CLI only — nothing visual changed); ending with `<!-- marvin:decisions-addressed -->`.
+8. `marvin-show` the diff/PR to Gil rather than leaving it as a bare commit reference.
