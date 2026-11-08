@@ -1,0 +1,7 @@
+1. On `ticket/933-gate-box-runner` (fetch, create a local tracking branch): write the tests above in `lib/tests/test_box_runner.py`, confirm they fail (functions don't exist yet).
+2. In `lib/box_runner.py`: add `import proposals` (after the existing `task_dispatch` import pattern), `TRUST_NEEDED = 20`, and `_agreement_streak()`, `_streak_already_proposed()`, `propose_trust()`, `check_trust_proposal()` as designed above.
+3. Call `check_trust_proposal()` from inside `compare()`'s existing locked block, right after `_append(out)`, before the lock releases — no new call sites, no change to `run()`/`verdict()`/`merge.js`.
+4. Run the new tests plus the full existing `test_box_runner.py` (36 tests) to confirm no regression, then the full Python suite scoped to affected tests per `lib/affected_tests.py`.
+5. Commit on `ticket/933-gate-box-runner` and push (so it lands inside PR #942, not a new PR — the code it extends only exists on this branch).
+6. Post a reply comment on PR #942 via `~/.agents/bin/gh` carrying `<!-- marvin:decisions-addressed -->`, stating: `box-runs-shown` needed no change (already built, cited above); `box-trust` is now implemented at commit `<sha>` — streak tracked in the existing `box-runs.jsonl`, a Proposal opens once 20 clean gates land in a row, nothing auto-promotes; no screenshots retaken (backend-only change, no UI).
+7. Let issue #982 close itself per its own filer (`lib/owner_decisions.py`) once the addressed reply lands — no manual close.
