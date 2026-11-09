@@ -98,3 +98,12 @@ concrete for ticket builds:
   `vm_run.py sweep` removes any VM or disk a killed run left.
 - **Trust.** Box PRs are labelled `from-box` (information only) and are authored by the bot, whose own trust ramp
   (ADR 0064, `trust_ramp.record_author`) keeps them waiting for Gil until 5 clean approvals.
+- **What a VM knows, and what comes next** (Gil, 2026-10-30, PR #981). A build VM gets the repo and the ticket, and no
+  private memory, work rules or lexicon. Next, once the default build's installer exists (#648, `setup.sh --new`):
+  - the `marvin-build` image is made from the default build (a fresh engine clone and an empty instance), not from
+    `provision.sh`'s own engine and venv steps, so a box build tests the MARVIN a stranger installs;
+  - each run then sets up the tools its ticket's project needs, from the project's profile (`setup`/`verify`
+    `requires`) and one engine catalog of install recipes. A tool not in the catalog is a refusal (no strike), and
+    routing only sends a ticket whose tools are all in the image or the catalog.
+
+  Until then only marvin opts in (`linux_ok`), and the image built by `provision.sh` already holds all of marvin's tools.
