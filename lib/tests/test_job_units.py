@@ -350,6 +350,42 @@ def test_install_refuses_an_os_it_has_no_adapter_for(tmp_path):
         ju.install(["usage-scan"], os_name="windows", home=tmp_path, run=FakeRun())
 
 
+# ── a weekly calendar slot (#1165: DoD publishes SBIR topics on Wednesdays) ─────────────────────────────────────
+
+def _weekly(day, hour=9, minute=30):
+    return ju.validate({"name": "x", "command": ["x"],
+                        "schedule": {"calendar": {"weekday": day, "hour": hour, "minute": minute}}})
+
+
+def test_a_weekday_makes_it_weekly_on_both_hosts():
+    job = _weekly(3)                                                  # Wednesday (0 = Sunday, as launchd counts)
+    assert plistlib.loads(ju.render_plist(job, MAC_HOME))["StartCalendarInterval"] == {"Weekday": 3, "Hour": 9, "Minute": 30}
+    timer = _unit(ju.render_systemd(job, BOX_HOME)[1])
+    assert timer["OnCalendar"] == ["Wed *-*-* 09:30:00"] and timer["Persistent"] == ["true"]
+
+
+@pytest.mark.parametrize("day,name", [(0, "Sun"), (1, "Mon"), (6, "Sat")])
+def test_every_weekday_maps_to_systemds_name(day, name):
+    assert _unit(ju.render_systemd(_weekly(day), BOX_HOME)[1])["OnCalendar"] == [f"{name} *-*-* 09:30:00"]
+
+
+@pytest.mark.parametrize("bad", [7, -1, True, "3", 3.0, None])
+def test_a_weekday_outside_0_to_6_is_refused(bad):
+    with pytest.raises(ju.JobError):
+        _weekly(bad)
+
+
+def test_a_daily_calendar_is_unchanged():
+    job = ju.validate({"name": "x", "command": ["x"], "schedule": {"calendar": {"hour": 4, "minute": 15}}})
+    assert plistlib.loads(ju.render_plist(job, MAC_HOME))["StartCalendarInterval"] == {"Hour": 4, "Minute": 15}
+    assert _unit(ju.render_systemd(job, BOX_HOME)[1])["OnCalendar"] == ["*-*-* 04:15:00"]
+
+
+def test_other_calendar_keys_are_still_refused():
+    with pytest.raises(ju.JobError):
+        ju.validate({"name": "x", "command": ["x"], "schedule": {"calendar": {"day": 1, "hour": 4, "minute": 15}}})
+
+
 # ── tidy-agent runs on the venv Python (marvin#1123 0.6) ────────────────────────────────────────────────────────────
 # macOS privacy (TCC) checks a launchd job by its interpreter. /usr/bin/python3 lost Full Disk Access on the Mini and
 # tidy-agent failed every night from 2026-10-15 with PermissionError on ~/Desktop; the venv Python (Homebrew's
