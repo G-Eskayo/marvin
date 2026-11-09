@@ -118,3 +118,162 @@ def test_main_no_ops_on_invalid_stdin_json(tmp_path, monkeypatch, capsys):
     monkeypatch.setattr(sys, "stdin", io.StringIO("not json"))
     arh.main()
     assert capsys.readouterr().out == ""
+
+
+# ── fast path: keyword-only first pass, skips embed when confident ───────────
+
+def test_fast_path_skips_embed_when_keyword_hits_meet_threshold(monkeypatch):
+    """A prompt with many keyword hits must return the message without calling resolve_intent."""
+    sys.path.insert(0, str(Path.home() / ".agents" / "skills" / "route" / "scripts"))
+    import route  # noqa: E402
+
+    def should_not_call(prompt):
+        raise AssertionError("resolve_intent should not be called when fast path is confident")
+
+    monkeypatch.setattr(arh, "_resolve_intent", should_not_call)
+    prompt = "fix the bug in utils.py and refactor the code and debug the error"
+    result = arh.classify(prompt)
+    assert result is not None
+    assert "coding" in result.lower()
+
+
+def test_slow_path_falls_through_to_embed_when_keyword_hits_below_threshold(monkeypatch):
+    """A prompt with <threshold keyword hits must call resolve_intent (embed path)."""
+    sys.path.insert(0, str(Path.home() / ".agents" / "skills" / "route" / "scripts"))
+    import route  # noqa: E402
+
+    called = {}
+
+    def track_call(prompt):
+        called["embed"] = True
+        return "architecture"  # Default intent is silent
+
+    monkeypatch.setattr(arh, "_resolve_intent", track_call)
+    prompt = "should we redesign this module"
+    result = arh.classify(prompt)
+    assert called.get("embed") is True
+    assert result is None
+
+
+def test_fast_path_threshold_boundary(monkeypatch):
+    """Off-by-one guard: hits == threshold-1 goes slow, hits == threshold goes fast."""
+    sys.path.insert(0, str(Path.home() / ".agents" / "skills" / "route" / "scripts"))
+    import route  # noqa: E402
+
+    embed_called = {}
+
+    def track_call(prompt):
+        embed_called["called"] = True
+        return "architecture"
+
+    monkeypatch.setattr(arh, "_resolve_intent", track_call)
+
+    # Below threshold: should call embed
+    prompt_below = "fix this"  # Only 1 "fix" keyword, below threshold
+    result = arh.classify(prompt_below)
+    assert embed_called.get("called") is True
+
+    # At/above threshold: should not call embed
+    embed_called.clear()
+
+    def no_call(prompt):
+        raise AssertionError("embed should not be called")
+
+    monkeypatch.setattr(arh, "_resolve_intent", no_call)
+    prompt_above = "fix the bug and refactor the code and debug it"
+    result = arh.classify(prompt_above)
+    assert result is not None
+
+
+def test_fast_path_stays_silent_for_confident_architecture_without_calling_embed(monkeypatch):
+    """Fast path recognizes architecture intent and stays silent without embed cost."""
+    sys.path.insert(0, str(Path.home() / ".agents" / "skills" / "route" / "scripts"))
+    import route  # noqa: E402
+
+    def no_call(prompt):
+        raise AssertionError("embed should not be called for confident architecture")
+
+    monkeypatch.setattr(arh, "_resolve_intent", no_call)
+    # Craft a prompt with multiple architecture keywords to hit threshold
+    prompt = "should we redesign the architecture and restructure the approach considering the strategy and trade-offs"
+    result = arh.classify(prompt)
+    assert result is None
+
+
+def test_fast_path_message_comes_from_same_messages_table(monkeypatch):
+    """Fast-pathed message is identical to route.py's INTENTS mapping."""
+    sys.path.insert(0, str(Path.home() / ".agents" / "skills" / "route" / "scripts"))
+    import route  # noqa: E402
+
+    def no_call(prompt):
+        raise AssertionError("embed should not be called")
+
+    monkeypatch.setattr(arh, "_resolve_intent", no_call)
+    prompt = "fix the bug and refactor the code and debug the error"
+    result = arh.classify(prompt)
+    # Should match the message for coding intent
+    assert result == arh.MESSAGES.get("coding")
+
+
+def test_fast_path_truncates_before_keyword_scoring(monkeypatch):
+    """A 6MB prompt with keywords only past truncation point must NOT fast-path."""
+    sys.path.insert(0, str(Path.home() / ".agents" / "skills" / "route" / "scripts"))
+    import route  # noqa: E402
+
+    embed_called = {}
+
+    def track_call(prompt):
+        embed_called["called"] = True
+        return "coding"
+
+    monkeypatch.setattr(arh, "_resolve_intent", track_call)
+
+    # Create a huge prompt where only keywords beyond MAX_PROMPT_CHARS exist
+    junk = "a" * 25000
+    prompt = junk + " fix the bug refactor debug"
+    result = arh.classify(prompt)
+    # Should have called resolve_intent because truncated prompt lacks keywords
+    assert embed_called.get("called") is True
+
+
+def test_fast_path_min_hits_is_not_below_route_min_hits(monkeypatch):
+    """Regression guard: FAST_PATH_MIN_HITS >= route.MIN_HITS."""
+    sys.path.insert(0, str(Path.home() / ".agents" / "skills" / "route" / "scripts"))
+    import route  # noqa: E402
+
+    assert arh.FAST_PATH_MIN_HITS >= route.MIN_HITS
+
+
+def test_fast_path_bypasses_ollama_when_confident(monkeypatch):
+    """Confident prompt returns message without touching requests/embed."""
+    sys.path.insert(0, str(Path.home() / ".agents" / "skills" / "route" / "scripts"))
+    import route  # noqa: E402
+
+    def no_requests(url, json, timeout):
+        raise AssertionError("requests.post should not be called in fast path")
+
+    monkeypatch.setattr("requests.post", no_requests)
+
+    prompt = "fix the bug in utils.py and refactor and debug the error"
+    result = arh.classify(prompt)
+    assert result is not None
+    assert "coding" in result.lower()
+
+
+def test_slow_path_still_keyword_falls_back_when_ollama_down_and_keyword_unconfident(monkeypatch):
+    """Unconfident prompt still reaches keyword-fallback path unchanged."""
+    sys.path.insert(0, str(Path.home() / ".agents" / "skills" / "route" / "scripts"))
+    import route  # noqa: E402
+
+    fallback_called = {}
+
+    def track_fallback(prompt):
+        fallback_called["called"] = True
+        return "architecture"
+
+    monkeypatch.setattr(arh, "_resolve_intent", track_fallback)
+
+    prompt = "hello world"  # No strong keyword signal
+    result = arh.classify(prompt)
+    assert fallback_called.get("called") is True
+    assert result is None

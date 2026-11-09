@@ -22,7 +22,6 @@ import sys
 from pathlib import Path
 
 sys.path.insert(0, str(Path.home() / ".agents" / "lib"))
-import intent_classify  # noqa: E402
 import model_scope  # noqa: E402
 import model_registry  # noqa: E402
 
@@ -157,6 +156,7 @@ def resolve_intent(description: str, use_embed: bool) -> tuple[str, float | int,
         intent, hits = classify(description)
         return intent, hits, "keyword"
 
+    import intent_classify  # noqa: E402
     result = intent_classify.classify(description)
     if result["status"] == "ok":
         return result["intent"], result["score"], "embed"
