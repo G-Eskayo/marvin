@@ -23,9 +23,21 @@ marvin-show <url>                           any web address, drawn in the window
 - A web page loads in the window, in its own in-memory session with no access to the app, this Mac's files or the
   local network (a local address you show, like a dev server, is the one exception). "Open in browser" is always in
   the header; if the page can't be drawn, the window shows the link card with the reason.
+- A strip under the title lists that project's earlier items; a click shows one again.
+- It opens on the Mac Gil is using (the most recent keyboard or mouse input). An asleep or unreachable Mac is skipped,
+  and if the other Mac can't take it, it opens here. `--here` keeps it on this Mac.
 - HTML runs in a sandboxed frame: clickable, but no network, no pop-ups, no access to the app.
 - Refused: anything outside the outbox, `~/.agents`, the project clones and `~/Developer`, and anything that looks
   like a secret. Exit codes: 0 shown, 2 refused, 3 the dashboard can't be reached.
 - The dashboard not running: it is started. If it can't be reached, say so and give the outbox path; don't fall back
   to a file card.
 - Put the command in your reply too (`marvin show <path>`), so Gil can run it again.
+
+## Enforced, not only remembered
+
+- `deliverable_location_guard.py` (PreToolUse, every session and helper): a file card (SendUserFile) or artifact from
+  a temp folder is refused, with `marvin-show` named as the way.
+- `temp_deliverable_hook.py` (PostToolUse + Stop/SubagentStop, every session and helper): writing an image, PDF or
+  HTML file under a temp folder puts a one-line reminder in context; a reply that points Gil at a temp-only file it
+  never showed gets a reminder before the turn ends. How strict is `config/show_rule.json` `mode`: `note`, `nudge`
+  (default: one reminder, then the session may stop), `hold`.
