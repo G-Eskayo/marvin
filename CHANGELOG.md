@@ -1,5 +1,23 @@
 # Changelog
 
+- Main is red at 6adae14: fix forward ([#1187](https://github.com/G-Eskayo/marvin/pull/1187))
+
+- Box builds: frozen marvin-build golden image and VM sweep ([#969](https://github.com/G-Eskayo/marvin/pull/969))
+
+- auto_route_hook.py reads wrong payload key ("user_prompt" vs "prompt") — hook has never fired since 2026-08-13 ([#1118](https://github.com/G-Eskayo/marvin/pull/1118))
+
+- Merge gate: mac-mini-2012 as a parallel, non-blocking extra test runner (never the verdict) ([#942](https://github.com/G-Eskayo/marvin/pull/942))
+
+- SBIR desk 1: topic monitor that scores new SBIR/STTR topics against a product's capability profile ([#1178](https://github.com/G-Eskayo/marvin/pull/1178))
+
+- Pipeline: a model run hitting its time limit ends the whole ticket run (3% of calls; #1156 and the decisions follow-ups parked) ([#1182](https://github.com/G-Eskayo/marvin/pull/1182))
+
+- Box trial work: the five trial types runnable on mac-mini-2012, with its prerequisites and the retrieval question file handed in per run ([#941](https://github.com/G-Eskayo/marvin/pull/941))
+
+- Main is red at cc83048: fix forward ([#1163](https://github.com/G-Eskayo/marvin/pull/1163))
+
+- Pipeline verify: an unchanged reading passes when the build made a real change; an empty build says nothing changed ([#1159](https://github.com/G-Eskayo/marvin/pull/1159))
+
 - Pipeline verify runs the whole Python suite on every marvin ticket and times out; run the affected tests, same set before and after ([#1153](https://github.com/G-Eskayo/marvin/pull/1153))
 
 - Site ship step: the live link on each shipped ticket, and an alarm when a publish fails ([#1145](https://github.com/G-Eskayo/marvin/pull/1145))

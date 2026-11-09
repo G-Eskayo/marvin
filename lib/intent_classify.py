@@ -11,21 +11,34 @@ Fixed similarity threshold for v1 (per ADR 0023) -- no calibration loop yet,
 unlike safety-monitor/calibrate.py, because routing has no existing labeling
 mechanism to feed one.
 
+Two ways to classify, same scoring:
+  classify()       ChromaDB query. Used by route.py.
+  classify_fast()  Plain-Python cosine against a JSON cache of the reference
+                   vectors (VECTORS_FILE), under a caller-set Ollama timeout. Used
+                   by the UserPromptSubmit hook, where importing chromadb alone
+                   costs ~1.2 s before the first reply (PR #1118, latency decision).
+chromadb is imported only when classify()/build_collection() need it.
+
 CLI usage:
-    python3 intent_classify.py --seed          # (re)build the intent-routing collection
-    python3 intent_classify.py "fix the bug"   # classify a task description
+    python3 intent_classify.py --seed           # (re)build the collection AND the vector cache
+    python3 intent_classify.py --build-vectors  # (re)build only the vector cache
+    python3 intent_classify.py "fix the bug"    # classify a task description
 """
 from __future__ import annotations
 
 import argparse
+import hashlib
+import json
+import math
+import os
 import sys
 from pathlib import Path
 
-import chromadb
 import requests
 
 HOME = Path.home()
 CHROMA_PATH = HOME / ".claude" / "chroma"
+VECTORS_FILE = HOME / ".claude" / "intent-routing-vectors.json"
 OLLAMA_URL = "http://localhost:11434/api/embed"
 EMBED_MODEL = "nomic-embed-text"
 COLLECTION_NAME = "intent-routing"
@@ -235,7 +248,16 @@ REFERENCE_EXAMPLES: dict[str, list[str]] = {
 }
 
 
-def embed_text(text: str, task: str = "query") -> list[float] | None:
+def __getattr__(name: str):
+    # `ic.chromadb` stays reachable (tests and callers patch it) without paying
+    # the ~1.2 s import for code that never touches the collection.
+    if name == "chromadb":
+        import chromadb
+        return chromadb
+    raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
+
+
+def embed_text(text: str, task: str = "query", timeout: float = 10) -> list[float] | None:
     """Embed via Ollama nomic-embed-text. task='query' for classify() input,
     'document' for reference examples -- nomic-embed is trained on this
     asymmetric prefix convention (matches rebuild-embeddings.py's usage)."""
@@ -244,7 +266,7 @@ def embed_text(text: str, task: str = "query") -> list[float] | None:
         resp = requests.post(
             OLLAMA_URL,
             json={"model": EMBED_MODEL, "input": f"{prefix}{text}"},
-            timeout=10,
+            timeout=timeout,
         )
         resp.raise_for_status()
         return resp.json()["embeddings"][0]
@@ -253,6 +275,7 @@ def embed_text(text: str, task: str = "query") -> list[float] | None:
 
 
 def _get_collection():
+    import chromadb
     client = chromadb.PersistentClient(path=str(CHROMA_PATH))
     return client.get_or_create_collection(
         COLLECTION_NAME, metadata={"hnsw:space": "cosine"}
@@ -312,15 +335,117 @@ def classify(description: str) -> dict:
     return {"status": "ok", "intent": best_intent, "score": round(best_score, 4)}
 
 
+# ── fast path: cached reference vectors, no chromadb ────────────────────────
+
+def reference_key() -> str:
+    """Identifies the reference set a vector cache was built from: any change to
+    the examples or the embedding model makes an old cache stale."""
+    blob = json.dumps([EMBED_MODEL, REFERENCE_EXAMPLES], sort_keys=True)
+    return hashlib.sha256(blob.encode()).hexdigest()
+
+
+def _unit(vec) -> list[float] | None:
+    """Normalised copy of vec, or None if it isn't a usable non-zero vector."""
+    if not isinstance(vec, list) or not vec:
+        return None
+    if not all(isinstance(x, (int, float)) and not isinstance(x, bool) for x in vec):
+        return None
+    if not all(math.isfinite(x) for x in vec):
+        return None
+    norm = math.sqrt(sum(x * x for x in vec))
+    if norm == 0:
+        return None
+    return [x / norm for x in vec]
+
+
+def build_vector_cache(path: Path | None = None) -> int:
+    """Embed every reference example and write VECTORS_FILE atomically. All or
+    nothing: one failed embed, or a dimension mismatch, writes nothing and returns
+    0, leaving any existing cache in place. Returns the number of vectors written."""
+    path = VECTORS_FILE if path is None else path
+    vectors, dim = [], None
+    for intent, examples in REFERENCE_EXAMPLES.items():
+        for example in examples:
+            vec = embed_text(example, task="document")
+            if _unit(vec) is None or (dim is not None and len(vec) != dim):
+                return 0
+            dim = len(vec)
+            vectors.append({"intent": intent, "vec": vec})
+    path.parent.mkdir(parents=True, exist_ok=True)
+    tmp = path.with_name(f"{path.name}.{os.getpid()}.tmp")
+    try:
+        tmp.write_text(json.dumps({"key": reference_key(), "model": EMBED_MODEL,
+                                   "vectors": vectors}))
+        os.replace(tmp, path)
+    finally:
+        tmp.unlink(missing_ok=True)
+    return len(vectors)
+
+
+def load_vector_cache(path: Path | None = None) -> list[tuple[str, list[float]]] | None:
+    """[(intent, unit_vector), ...], or None if the cache is missing, unreadable,
+    stale (built from other examples or another model) or malformed in any way."""
+    path = VECTORS_FILE if path is None else path
+    try:
+        data = json.loads(path.read_text())
+    except (OSError, ValueError):
+        return None
+    if not isinstance(data, dict) or data.get("key") != reference_key() \
+            or data.get("model") != EMBED_MODEL or not isinstance(data.get("vectors"), list):
+        return None
+    refs, dim = [], None
+    for entry in data["vectors"]:
+        if not isinstance(entry, dict) or entry.get("intent") not in REFERENCE_EXAMPLES:
+            return None
+        unit = _unit(entry.get("vec"))
+        if unit is None or (dim is not None and len(unit) != dim):
+            return None
+        dim = len(unit)
+        refs.append((entry["intent"], unit))
+    return refs or None
+
+
+def classify_fast(description: str, timeout: float = 1.5, path: Path | None = None) -> dict:
+    """classify()'s contract and scoring without chromadb. Extra status
+    "no_cache": there's no usable vector cache yet (nothing was embedded)."""
+    refs = load_vector_cache(path)
+    if refs is None:
+        return {"status": "no_cache", "intent": None, "score": None}
+    unavailable = {"status": "unavailable", "intent": None, "score": None}
+    q = _unit(embed_text(description, task="query", timeout=timeout))
+    if q is None or len(q) != len(refs[0][1]):
+        return unavailable
+    # chroma's cosine distance is 1 - cos; classify() scores 1 - distance/2
+    cos, intent = max((sum(a * b for a, b in zip(q, vec)), i) for i, vec in refs)
+    score = 1.0 - (1.0 - cos) / 2.0
+    if score < THRESHOLD:
+        return {"status": "no_match", "intent": None, "score": round(score, 4)}
+    return {"status": "ok", "intent": intent, "score": round(score, 4)}
+
+
 def main() -> None:
     ap = argparse.ArgumentParser(description=__doc__)
     ap.add_argument("description", nargs="?", default="", help="task description to classify")
-    ap.add_argument("--seed", action="store_true", help="(re)build the intent-routing collection")
+    ap.add_argument("--seed", action="store_true",
+                    help="(re)build the intent-routing collection and the vector cache")
+    ap.add_argument("--build-vectors", action="store_true",
+                    help="(re)build only the vector cache classify_fast() reads")
     args = ap.parse_args()
 
     if args.seed:
         n = build_collection()
         print(f"intent-routing: seeded {n} reference examples")
+        v = build_vector_cache()
+        print(f"intent-routing: cached {v} reference vectors" if v
+              else "intent-routing: vector cache NOT written (an embed failed)")
+        return
+
+    if args.build_vectors:
+        v = build_vector_cache()
+        if not v:
+            print("intent-routing: vector cache NOT written (an embed failed)", file=sys.stderr)
+            sys.exit(1)
+        print(f"intent-routing: cached {v} reference vectors")
         return
 
     if not args.description:
