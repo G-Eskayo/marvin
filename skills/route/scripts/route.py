@@ -198,7 +198,7 @@ def launch_model(prompt) -> tuple[str, str | None]:
     if not isinstance(prompt, str) or not prompt.strip():
         return DEFAULT_INTENT, None
     try:
-        result = intent_classify.classify(prompt.strip()[:MAX_ROUTE_CHARS])
+        result = _intent_classify().classify(prompt.strip()[:MAX_ROUTE_CHARS])
     except Exception:
         return DEFAULT_INTENT, None
     if not isinstance(result, dict) or result.get("status") != "ok" or result.get("intent") not in INTENTS:

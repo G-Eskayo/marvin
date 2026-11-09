@@ -148,6 +148,18 @@ def _embed(monkeypatch, result):
     return calls
 
 
+def test_launch_model_goes_through_the_lazy_loader(monkeypatch):
+    """#1185: launch_model called the bare global `intent_classify`, which only the module __getattr__ serves
+    (outside access, never a lookup inside the module). The NameError was swallowed and nothing ever routed.
+    Patch the loader itself, not `route.intent_classify`, so a bare-global call fails here."""
+    class Fake:
+        @staticmethod
+        def classify(desc):
+            return {"status": "ok", "intent": "research", "score": 0.9}
+    monkeypatch.setattr(route, "_intent_classify", lambda: Fake)
+    assert route.launch_model("explain how prompt caching works") == ("research", route.INTENTS["research"]["model"])
+
+
 def test_launch_model_sends_a_confident_research_prompt_to_haiku(monkeypatch):
     _embed(monkeypatch, {"status": "ok", "intent": "research", "score": 0.8})
     intent, model = route.launch_model("explain how prompt caching works")
