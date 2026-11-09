@@ -51,6 +51,13 @@ A task.json `"check": {"files": "check"}` names hidden pytest files that are cop
 workdir after the run, so a coding task is graded by whether the code works, not by a substring.
 Run bench.py with `~/.agents/venv/bin/python` so the hidden checks have pytest.
 
+Working folders (PR #1125): by default each (task, cell) gets one stable folder under the temp area
+(`$TMPDIR/marvin-bench-work/<task>--<profile>--<model>[--<prefix hash>]`), emptied before and after every
+run, with that folder's Claude Code auto memory cleared, as a person working in one repo has. Under Claude
+Code 2.1.318 a fresh folder per run made plain Claude Code rewrite its whole prompt every run, which flattered
+MARVIN. `--workdir fresh` restores the old one-temp-folder-per-run behaviour (Run 31 and before); each run's
+JSON records `workdir_mode`, so results from the two modes are never pooled by mistake.
+
 Results print a comparison table and save to `results/<task>-<stamp>.json`.
 `--repeat N` saves all N raw runs to JSON; the table shows mean ± σ across them.
 `--judge` calls claude as an LLM judge after each run; failing runs print the

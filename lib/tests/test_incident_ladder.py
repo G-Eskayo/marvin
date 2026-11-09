@@ -546,7 +546,7 @@ def test_the_regression_notification_uses_every_channel_and_never_raises(monkeyp
     import mr_notification as mn
     sent = []
     monkeypatch.setattr(mn, "desktop_notify", lambda t, m, open_target=None: sent.append(("desktop", m)))
-    monkeypatch.setattr(mn, "push_notify", lambda m: (_ for _ in ()).throw(OSError("no session")))
+    monkeypatch.setattr(mn, "phone_notify", lambda t, m, o: (_ for _ in ()).throw(OSError("no session")))  # #958's slot
     monkeypatch.setattr(mn, "dashboard_refresh_ping", lambda: sent.append(("ping", None)))
     out = mn.notify_regression("MARVIN fixed a regression itself", "x\n" * 400, "https://example.com/1")
     assert out["desktop_sent"] and not out["push_succeeded"] and len(sent[0][1]) <= 300 and "\n" not in sent[0][1]

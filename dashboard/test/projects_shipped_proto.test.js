@@ -159,6 +159,17 @@ describe('liveLine: where the work is live (ADR 0080 I4)', () => {
     expect(P.liveLine(merged({ state: 'live' }), { kind: 'pages', where: 'gh-pages' }).text).toBe('live on gh-pages')
     expect(P.liveLine(merged({ state: 'shipping' }), { kind: 'pages' }).text).toBe('publishing to the site')
   })
+  it('handles a site its Actions deploy publishes (marvin#1122): the live link, the deploy running, never a bad link', () => {
+    const actions = { kind: 'pages', via: 'actions', where: 'marvin.gileskayo.me' }
+    const live = P.liveLine(merged({ state: 'live', url: 'https://marvin.gileskayo.me/' }), actions)
+    expect(live).toMatchObject({ text: 'live on marvin.gileskayo.me', tone: 'green', url: 'https://marvin.gileskayo.me/' })
+    expect(P.liveLine(merged({ state: 'shipping' }), actions)).toMatchObject({ text: 'GitHub Pages deploy running', tone: 'amber' })
+    expect(P.liveLine(merged({}), actions).text).toBe('not on marvin.gileskayo.me yet')
+    expect(P.liveLine(merged({ state: 'failed', reason: 'deploy failed' }), actions).tone).toBe('red')
+    for (const bad of ['javascript:alert(1)', 'http://marvin.gileskayo.me/', 42, '']) {
+      expect(P.liveLine(merged({ state: 'live', url: bad }), actions).url).toBeNull()
+    }
+  })
   it('shows a failed ship in red with its reason, and nothing for a refused approve', () => {
     expect(P.liveLine(merged({ state: 'failed', reason: 'upload rejected' }), { kind: 'testflight' })).toEqual({ text: 'ship failed: upload rejected', tone: 'red', marks: [] })
     expect(P.liveLine({ kind: 'refused' }, macs)).toBeNull()

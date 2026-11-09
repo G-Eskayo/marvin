@@ -186,8 +186,9 @@ def fake_gh(tmp_path, registry):
     called = tmp_path / "called"
     (bindir / "gh").write_text(f"#!/bin/sh\necho \"$@\" >> {called}\necho '[]'\n")
     (bindir / "gh").chmod(0o755)
+    # MARVIN_PULL_ONLY=0: about a full node, as every Mac is; an unregistered Linux machine (CI, #1117) is pull-only.
     env = {**os.environ, "HOME": str(home), "PATH": f"{bindir}:/usr/bin:/bin", "MARVIN_UI_EVIDENCE_OK": "test",
-           "MARVIN_DECISIONS_OK": "test"}
+           "MARVIN_DECISIONS_OK": "test", "MARVIN_PULL_ONLY": "0"}
     env.pop("MARVIN_GH_GATE_INSIDE", None)
     env.pop("MARVIN_NO_TICKET", None)
     return env, called

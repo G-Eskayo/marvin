@@ -1,5 +1,33 @@
 # Changelog
 
+- Merge gate: mac-mini-2012 as a parallel, non-blocking extra test runner (never the verdict) ([#942](https://github.com/G-Eskayo/marvin/pull/942))
+
+- SBIR desk 1: topic monitor that scores new SBIR/STTR topics against a product's capability profile ([#1178](https://github.com/G-Eskayo/marvin/pull/1178))
+
+- Pipeline: a model run hitting its time limit ends the whole ticket run (3% of calls; #1156 and the decisions follow-ups parked) ([#1182](https://github.com/G-Eskayo/marvin/pull/1182))
+
+- Box trial work: the five trial types runnable on mac-mini-2012, with its prerequisites and the retrieval question file handed in per run ([#941](https://github.com/G-Eskayo/marvin/pull/941))
+
+- Main is red at cc83048: fix forward ([#1163](https://github.com/G-Eskayo/marvin/pull/1163))
+
+- Pipeline verify: an unchanged reading passes when the build made a real change; an empty build says nothing changed ([#1159](https://github.com/G-Eskayo/marvin/pull/1159))
+
+- Pipeline verify runs the whole Python suite on every marvin ticket and times out; run the affected tests, same set before and after ([#1153](https://github.com/G-Eskayo/marvin/pull/1153))
+
+- Site ship step: the live link on each shipped ticket, and an alarm when a publish fails ([#1145](https://github.com/G-Eskayo/marvin/pull/1145))
+
+- Dispatch wrapper: a SIGTERM that lands as bash starts the command waits for the command (seen on Linux CI under load) ([#1149](https://github.com/G-Eskayo/marvin/pull/1149))
+
+- Pipeline and merge gate: Seal Speak worktrees get the app's models from one sha-checked cache per machine, so the app builds there ([#1119](https://github.com/G-Eskayo/marvin/pull/1119))
+
+- Main is red at e46bda3: fix forward ([#1147](https://github.com/G-Eskayo/marvin/pull/1147))
+
+- GitHub's Python tests run on Linux: start at once, and Mac-only tests skip there with a reason ([#1135](https://github.com/G-Eskayo/marvin/pull/1135))
+
+- Pipeline verify timeout counts the wait for the test slot, so builds behind merges are parked without running a test ([#1120](https://github.com/G-Eskayo/marvin/pull/1120))
+
+- Publish the MARVIN site to marvin.gileskayo.me on GitHub Pages from main ([#1126](https://github.com/G-Eskayo/marvin/pull/1126))
+
 - Wire MR Review by project into the real tab (#767), with one set of project names everywhere ([#935](https://github.com/G-Eskayo/marvin/pull/935))
 
 - Merge queue: a PR set aside as CI_PENDING comes back by itself when its checks finish ([#1109](https://github.com/G-Eskayo/marvin/pull/1109))

@@ -10,7 +10,7 @@ const cutoff = new Date(`${updated}T00:00:00Z`);
 cutoff.setUTCDate(cutoff.getUTCDate() - 30);
 const area = (id: string) => AREAS.find((a) => a.id === id)?.title ?? id;
 
-const now = FEATURES.filter((f) => f.status === 'testing');
+const now = FEATURES.filter((f) => f.status === 'testing' || f.status === 'progress');
 const next = FEATURES.filter((f) => f.status === 'planned');
 const done = FEATURES.filter((f) => f.status === 'released' && f.shipped && new Date(`${f.shipped}T00:00:00Z`) >= cutoff).sort(
   (a, b) => b.shipped!.localeCompare(a.shipped!),
@@ -37,8 +37,8 @@ const doneLink = (f: (typeof FEATURES)[number]) =>
 
   <div class="m-wrap m-bands">
     <section class="m-band">
-      <h2><span class="m-band-k">Now</span> Built, in testing</h2>
-      <p class="m-dim">Merged and running, not yet proven in daily use.</p>
+      <h2><span class="m-band-k">Now</span> Built, in testing, or in progress</h2>
+      <p class="m-dim">Merged and running but not yet proven in daily use, or partly built and not yet usable end to end.</p>
       <ul>
         {
           now.map((f) => (
@@ -48,7 +48,7 @@ const doneLink = (f: (typeof FEATURES)[number]) =>
               <p>{f.summary}</p>
               <p class="m-dim m-small">Why it's not released yet: {f.why_testing}</p>
               <p class="m-item-links">
-                <StatusBadge status="testing" small />
+                <StatusBadge status={f.status} small />
                 {f.evidence?.[0] && <a href={evidenceHref(f.evidence[0])}>Evidence</a>}
               </p>
             </li>

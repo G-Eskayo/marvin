@@ -1383,3 +1383,51 @@ are in `cost_validation.sh`.
   headless runs. This is the fastest way to make the cost claim go the other way.
 - A multi-session task where MARVIN's memory replaces re-explaining a large context.
 - Re-check the older Q&A results (`cwd: "~"`) now that `cwd: "tmp"` exists.
+
+---
+
+## Run 32 — 2026-11-04 (marvin#1116): does the prototype skill's aesthetics guidance make better pages?
+
+**Question.** `skills/prototype/AESTHETICS.md` Mode 2 ("new design", adapted from Anthropic's cookbook *Prompting for
+frontend aesthetics*) is appended to a fixed frontend-engineer system prompt. Do the pages look better than with the
+same prompt and no guidance? The cookbook's own evidence is side-by-side screenshots only.
+
+**Setup** (`bench/aesthetics_ab.py`). Three briefs: a landing page (Tidepool, a sea-kayak conditions app), a dashboard
+card (one household's electricity today) and a note app's settings screen. Three generations per brief per arm on
+`sonnet`, `claude -p` under the clean profile with the system prompt replaced and no tools. The treatment text is read
+from the shipped skill file, so the test can't drift from it. Rendered at 1280x900 (first screen) with headless
+Chrome via playwright-core. Judge: `opus`, shown two screenshots named `A.png` and `B.png` in a fresh temp folder.
+The question was neutral ("better design for this brief overall", readability and usability counted, length not
+rewarded), not the guidance's own criteria. Each pair was judged twice with sides swapped, and a pair counts as a win
+only when both orders agree.
+
+| Brief | Guidance wins | No guidance wins | Split / tie |
+|---|---|---|---|
+| Landing page | 3 | 0 | 0 |
+| Dashboard card | 3 | 0 | 0 |
+| Settings screen | 1 | 2 | 0 |
+| **All** | **7** | **2** | **0** |
+
+- **No position bias:** every pair got the same verdict in both orders (A picked 9 times, B 9 times).
+- **Sign test:** 7 of 9, one-sided p ≈ 0.09 overall. On the two expressive briefs it's 6 of 6 (p ≈ 0.016). This is a
+  small N, so read it as direction, not a proven effect size.
+- **Where it loses:** on the settings screen the judge preferred the plainer page twice. Its reasons were "more
+  polished and easier to use", and one treatment page had a stretched avatar and ruled lines behind body text. Ornament
+  costs more on a utility screen.
+- **The defaults it targets:** body font Inter, DM Sans or none in the control. Generic (Inter/system/none) on 6 of 9
+  control pages and 1 of 9 treatment pages. Distinct body fonts: 3 control, 8 treatment. **Purple gradients: 0 in
+  both arms.** The current model no longer does the cookbook's headline failure, so that line of the guidance is
+  cheap insurance, not a measured fix.
+- **Cost:** the guidance is 547 input tokens (measured on `sonnet`). Treatment pages are longer: 11.8k output tokens
+  on average vs 7.1k (+66%), $1.08 vs $0.66 for nine pages. Judge: 18 calls, $0.93. Whole run: **$2.67**.
+- **Blind for Gil:** the same nine pairs, sides shuffled per pair, in `~/.claude/outbox/aesthetics-ab-1116/sheet/`
+  (key kept beside it, not in the sheet). `aesthetics_ab.py unblind <picks>` scores his answers.
+
+**Verdict.** Keep the guidance, since it wins overall and on every expressive brief. It is loaded only when the
+prototype skill's UI branch runs. The settings result is an open Decision on the PR: add a utility-screen restraint
+line and re-run only that brief.
+
+**Found on the way.** Claude Code gives the model the account's email even under the clean profile with the system
+prompt replaced. Five of the six settings pages put Gil's real email and a garbled form of his name on the account
+row. They were redacted before anything was shown or pinned. The base prompt now says to invent every name and
+contact detail, which applies to later runs; this run was generated without that line.

@@ -130,6 +130,10 @@ contextBridge.exposeInMainWorld('api', {
     setMergeFromDashboard: (repo, value) => ipcRenderer.invoke('health:setMergeFromDashboard', repo, value),
     setDispatch: (repo, value) => ipcRenderer.invoke('health:setDispatch', repo, value)
   },
+  alerts: {
+    status: () => ipcRenderer.invoke('alerts:status'),
+    test: () => ipcRenderer.invoke('alerts:test')
+  },
   accounts: {
     list: (opts) => ipcRenderer.invoke('accounts:list', opts),
     renew: (id, machine) => ipcRenderer.invoke('accounts:renew', id, machine)
