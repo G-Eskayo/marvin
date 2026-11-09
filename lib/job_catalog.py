@@ -107,7 +107,7 @@ JOBS: dict[str, dict] = {
                                  "consumer": "the website map (#189)"},
     "open-loops": {"machine": "none", "goal": None, "reporter": None, "healthy": None, "consumer": None,
                    "review": "off until the goal tracker links loops to project goals (approved 2026-10-26)"},
-    "tidy-agent": {"label": "com.giles.tidy-agent", "machine": "both", "goal": "ns3",
+    "tidy-agent": {"label": "com.giles.tidy-agent", "machine": "mini", "goal": "ns3",
                    "reporter": "~/.claude/organize/agent.err.log", "healthy": "last run exit 0",
                    "consumer": "the owner's Downloads and Desktop"},
 }

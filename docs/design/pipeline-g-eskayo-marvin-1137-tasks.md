@@ -1,0 +1,9 @@
+1. Fetch and check out `phase0/tidy-agent-venv` in this worktree.
+2. Re-read PR #1129's current body and Decisions comment to confirm nothing changed since filing (repeat the check done above at commit time).
+3. Edit `lib/job_catalog.py`: change `tidy-agent`'s `"machine": "both"` to `"machine": "mini"`.
+4. Edit `lib/tests/test_job_catalog.py`: add a test asserting `jc.JOBS["tidy-agent"]["machine"] == "mini"` and that `hc.evaluate_job_placement(["tidy-agent"], "laptop")` comes back `"yellow"` naming `tidy-agent`.
+5. Run `lib/tests/test_job_catalog.py`, `lib/tests/test_job_units.py`, `lib/tests/test_health_checks.py` on the venv Python; confirm green.
+6. Edit PR #1129's description "After merge (each Mac)" section via `bin/gh pr edit`: Mini gets `job_units.py install tidy-agent` + bootout/trash of the old `com.giles.tidy-agent` plist; laptop gets only the bootout/trash step, no new job installed.
+7. Commit the two file changes on `phase0/tidy-agent-venv` (message references #1137 and the chosen Decision option), push to origin.
+8. Post a reply comment on PR #1129 via `bin/gh pr comment` carrying `<!-- marvin:decisions-addressed -->`: states the commit, that `machine` is now `"mini"` and the laptop install step was dropped from the PR body; answers "could we consider this on the 2012?" with "no" and the three concrete reasons above; states no screenshots were retaken because nothing visual changed (config/lib/tests only).
+9. Confirm the comment clears `bin/gh`'s decisions gate (no unstructured question heading in it) and that ticket #1137 is positioned to self-close per `lib/owner_decisions.py` once PR #1129 is addressed.

@@ -40,6 +40,15 @@ def test_jobs_that_were_unplaced_are_now_placed():
         assert n in hc.JOB_PLACEMENT
 
 
+def test_tidy_agent_runs_on_mini_only():
+    # The owner chose to run tidy-agent on the Mini only to avoid contention with the laptop (#1137)
+    assert jc.JOBS["tidy-agent"]["machine"] == "mini"
+    # A person's mistake (e.g., old muscle memory installing it on the laptop) should be caught
+    sev, detail = hc.evaluate_job_placement(["tidy-agent"], "laptop")
+    assert sev == "yellow", f"Expected yellow but got {sev}: {detail}"
+    assert "tidy-agent" in detail, f"Detail should name tidy-agent: {detail}"
+
+
 def test_a_switched_off_job_is_never_reported_missing():
     # open-loops stays off until goals exist (Gil, 2026-10-26)
     assert jc.JOBS["open-loops"]["machine"] == "none"
