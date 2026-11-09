@@ -1,5 +1,7 @@
 # Changelog
 
+- Main is red at cc83048: fix forward ([#1163](https://github.com/G-Eskayo/marvin/pull/1163))
+
 - Pipeline verify: an unchanged reading passes when the build made a real change; an empty build says nothing changed ([#1159](https://github.com/G-Eskayo/marvin/pull/1159))
 
 - Pipeline verify runs the whole Python suite on every marvin ticket and times out; run the affected tests, same set before and after ([#1153](https://github.com/G-Eskayo/marvin/pull/1153))
