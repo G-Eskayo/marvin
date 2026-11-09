@@ -8,6 +8,7 @@ A job is defined once in config/jobs/<name>.json, with no machine's paths in it 
     command       argv, run directly (no shell)
     schedule      {"every_s": N, "at_load": bool}  every N seconds, and once when loaded if at_load
                   {"calendar": {"hour": H, "minute": M}}  daily at H:M local time, caught up after sleep or power-off
+                  {"calendar": {"weekday": D, "hour": H, "minute": M}}  weekly instead (D: 0 = Sunday .. 6 = Saturday)
                   {"keep_alive": true}  a long-running service (a server): started at load, restarted if it exits,
                                         at most once every RESTART_S seconds (launchd KeepAlive; systemd Restart=always)
     env           optional environment
@@ -38,6 +39,7 @@ import host_os  # noqa: E402
 
 JOBS_DIR = Path(__file__).resolve().parent.parent / "config" / "jobs"
 NAME_RE = re.compile(r"^[a-z0-9][a-z0-9-]*$")
+WEEKDAYS = ("Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat")   # launchd counts 0 = Sunday; systemd takes names
 KEYS = {"name", "description", "command", "schedule", "env", "low_priority", "log"}
 NICE = 10
 RESTART_S = 30  # a keep-alive service that keeps dying is retried this often, never in a tight loop
@@ -97,9 +99,11 @@ def validate(job: dict) -> dict:
         raise JobError(f"{name}: at_load must be true or false")
     if "calendar" in sched:
         cal = sched["calendar"]
-        if not isinstance(cal, dict) or set(cal) != {"hour", "minute"}:
-            raise JobError(f"{name}: calendar needs exactly hour and minute")
-        for k, top in (("hour", 23), ("minute", 59)):
+        if not isinstance(cal, dict) or not {"hour", "minute"} <= set(cal) <= {"weekday", "hour", "minute"}:
+            raise JobError(f"{name}: calendar needs hour and minute, and optionally weekday")
+        for k, top in (("weekday", 6), ("hour", 23), ("minute", 59)):
+            if k not in cal:
+                continue
             v = cal[k]
             if isinstance(v, bool) or not isinstance(v, int) or not 0 <= v <= top:
                 raise JobError(f"{name}: calendar {k} must be 0..{top}: {v!r}")
@@ -163,7 +167,9 @@ def plist_dict(job: dict, home: str) -> dict:
     if "keep_alive" in sched:
         out.update({"RunAtLoad": True, "KeepAlive": True, "ThrottleInterval": RESTART_S})
     elif "calendar" in sched:
-        out["StartCalendarInterval"] = {"Hour": sched["calendar"]["hour"], "Minute": sched["calendar"]["minute"]}
+        cal = sched["calendar"]
+        out["StartCalendarInterval"] = ({"Weekday": cal["weekday"]} if "weekday" in cal else {}) | {
+            "Hour": cal["hour"], "Minute": cal["minute"]}
     else:
         out["StartInterval"] = sched["every_s"]
         if sched.get("at_load"):
@@ -214,7 +220,8 @@ def render_systemd(job: dict, home: str) -> tuple[str, str | None]:
     tmr =["[Unit]", f"Description=Schedule for MARVIN {name}", "", "[Timer]", f"Unit={unit_name(name)}.service"]
     if "calendar" in sched:
         c = sched["calendar"]
-        tmr += [f"OnCalendar=*-*-* {c['hour']:02d}:{c['minute']:02d}:00", "Persistent=true"]
+        day = f"{WEEKDAYS[c['weekday']]} " if "weekday" in c else ""
+        tmr += [f"OnCalendar={day}*-*-* {c['hour']:02d}:{c['minute']:02d}:00", "Persistent=true"]
     else:
         n = sched["every_s"]
         tmr += [f"OnActiveSec={'0' if sched.get('at_load') else f'{n}s'}", f"OnUnitActiveSec={n}s"]
