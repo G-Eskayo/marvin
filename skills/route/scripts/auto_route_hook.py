@@ -17,10 +17,20 @@ The prompt arrives as payload["prompt"] (Claude Code hooks reference,
 UserPromptSubmit input). Until #560 this read "user_prompt", which no real payload
 carries, so the hook returned early on every prompt from 2026-08-13 on. The old key
 is still read as a fallback so an older caller can't silently break it again.
+
+Speed (PR #1118, owner's latency decision: "only if it can be made faster first").
+The first version took ~4 s: ~1.2 s importing chromadb, the rest the embed. Now:
+  1. keyword first pass (route.classify): 2+ keyword hits decide it, with no
+     network and no chromadb;
+  2. otherwise intent_classify.classify_fast: same scoring as route.py's embed
+     classifier, in plain Python against a JSON cache of the reference vectors,
+     with Ollama given EMBED_TIMEOUT seconds at most;
+  3. no cache yet: stay silent and build it once in the background.
 """
 from __future__ import annotations
 
 import json
+import subprocess
 import sys
 import time
 from pathlib import Path
@@ -29,6 +39,9 @@ HERE = Path(__file__).resolve().parent
 STATE_FILE = Path.home() / ".claude" / "auto-route-state.json"
 KEEP_SECONDS = 86400          # a session's mark only matters while that session runs
 MAX_PROMPT_CHARS = 4000       # classify the opening, not a 6 MB paste
+EMBED_TIMEOUT = 1.5           # seconds Ollama gets; a cold model load costs one silent session
+BUILD_MARKER = Path.home() / ".claude" / "intent-routing-vectors.building"
+BUILD_MARKER_FRESH = 600      # a build younger than this is still running: don't start another
 
 ROUTED = ("recall", "coding", "research")  # architecture = the current profile is right: say nothing
 
@@ -88,9 +101,45 @@ def _mark_fired(session_id: str, now: float | None = None) -> None:
             fcntl.flock(lock, fcntl.LOCK_UN)
 
 
+def _spawn_vector_build() -> None:
+    """Build the reference-vector cache in a detached process, so this prompt
+    isn't held up by ~90 embeds."""
+    script = HERE.parents[2] / "lib" / "intent_classify.py"
+    subprocess.Popen([sys.executable, str(script), "--build-vectors"],
+                     stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL,
+                     stderr=subprocess.DEVNULL, start_new_session=True)
+
+
+def _build_vectors_once() -> None:
+    """Start a background build unless one started within BUILD_MARKER_FRESH.
+    Any failure is swallowed: the cost is one more silent session."""
+    try:
+        if time.time() - BUILD_MARKER.stat().st_mtime < BUILD_MARKER_FRESH:
+            return
+    except OSError:
+        pass
+    try:
+        BUILD_MARKER.parent.mkdir(parents=True, exist_ok=True)
+        BUILD_MARKER.touch()
+        _spawn_vector_build()
+    except Exception:
+        pass
+
+
 def _resolve_intent(prompt: str) -> str:
-    intent, _hits, _method = _route().resolve_intent(prompt, use_embed=True)
-    return intent
+    route = _route()
+    intent, hits = route.classify(prompt)          # 1. keyword first pass
+    if hits >= route.MIN_HITS:
+        return intent
+    try:                                           # 2. fast embed
+        result = route.intent_classify.classify_fast(prompt, timeout=EMBED_TIMEOUT)
+    except Exception:
+        return route.DEFAULT_INTENT
+    if result.get("status") == "ok":
+        return result["intent"]
+    if result.get("status") == "no_cache":         # 3. first run: build, stay silent
+        _build_vectors_once()
+    return route.DEFAULT_INTENT
 
 
 def classify(prompt: str) -> str | None:

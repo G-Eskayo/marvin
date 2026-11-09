@@ -141,8 +141,9 @@ def _offline_classifier(monkeypatch):
     """Use the real route.py, with the embedding service reported down so the
     real keyword classifier answers: deterministic, no Ollama needed."""
     import route
-    monkeypatch.setattr(route.intent_classify, "classify",
-                        lambda text: {"status": "unavailable", "intent": None, "score": None})
+    down = {"status": "unavailable", "intent": None, "score": None}
+    monkeypatch.setattr(route.intent_classify, "classify", lambda text: down)
+    monkeypatch.setattr(route.intent_classify, "classify_fast", lambda text, **kw: down)
 
 
 def test_real_payload_produces_a_suggestion_end_to_end(tmp_path, monkeypatch, capsys):
@@ -279,3 +280,131 @@ def test_hook_script_exits_zero_on_garbage_stdin(tmp_path):
                            env={"HOME": str(tmp_path), "PATH": "/usr/bin:/bin"}, timeout=60)
         assert r.returncode == 0, r.stderr
         assert r.stdout == b""
+
+
+# ── PR #1118 latency decision: keyword first pass, then a fast embed ───────
+# Owner: "Only if it can be made faster first (for example, a keyword-only first
+# pass)". A confident keyword hit answers with no network and no chromadb; only an
+# inconclusive prompt is embedded, against the cached vectors, under a time budget.
+
+def _ic():
+    import route
+    return route.intent_classify
+
+
+def _no_embed(monkeypatch):
+    def boom(*a, **kw):
+        raise AssertionError("a confident keyword hit must not embed")
+    monkeypatch.setattr(_ic(), "classify_fast", boom)
+    monkeypatch.setattr(_ic(), "classify", boom)
+
+
+def test_confident_keyword_hit_skips_the_embed(monkeypatch):
+    _no_embed(monkeypatch)
+    assert arh._resolve_intent("do you remember what we decided last session?") == "recall"
+    assert arh._resolve_intent("fix the failing bug in this function") == "coding"
+
+
+def test_confident_architecture_keywords_stay_silent_without_embedding(monkeypatch):
+    _no_embed(monkeypatch)
+    assert arh._resolve_intent("should we compare the design trade-off here?") == "architecture"
+    assert arh.classify("should we compare the design trade-off here?") is None
+
+
+def test_inconclusive_prompt_uses_the_fast_embed_with_a_budget(monkeypatch):
+    seen = {}
+    monkeypatch.setattr(_ic(), "classify_fast",
+                        lambda text, **kw: seen.update(text=text, **kw) or
+                        {"status": "ok", "intent": "research", "score": 0.81})
+    monkeypatch.setattr(_ic(), "classify",
+                        lambda text: (_ for _ in ()).throw(AssertionError("slow path used")))
+    assert arh._resolve_intent("hmm, tell me something") == "research"
+    assert 0 < seen["timeout"] <= arh.EMBED_TIMEOUT
+    assert seen["text"] == "hmm, tell me something"
+
+
+def test_embed_no_match_or_down_is_silent(monkeypatch):
+    for status in ("no_match", "unavailable"):
+        monkeypatch.setattr(_ic(), "classify_fast",
+                            lambda text, _s=status, **kw: {"status": _s, "intent": None, "score": None})
+        monkeypatch.setattr(arh, "_spawn_vector_build", lambda: (_ for _ in ()).throw(AssertionError))
+        assert arh.classify("hmm, tell me something") is None
+
+
+def test_embed_that_raises_is_silent(monkeypatch):
+    def boom(text, **kw):
+        raise RuntimeError("ollama exploded")
+    monkeypatch.setattr(_ic(), "classify_fast", boom)
+    assert arh._resolve_intent("hmm, tell me something") == "architecture"
+
+
+def test_missing_cache_builds_it_in_the_background_once(tmp_path, monkeypatch):
+    monkeypatch.setattr(arh, "BUILD_MARKER", tmp_path / "building")
+    monkeypatch.setattr(_ic(), "classify_fast",
+                        lambda text, **kw: {"status": "no_cache", "intent": None, "score": None})
+    spawned = []
+    monkeypatch.setattr(arh, "_spawn_vector_build", lambda: spawned.append(1))
+    assert arh.classify("hmm, tell me something") is None     # silent this time
+    assert arh.classify("hmm, tell me something else") is None
+    assert len(spawned) == 1   # a second session meanwhile doesn't start a second build
+
+
+def test_a_stale_build_marker_lets_a_new_build_start(tmp_path, monkeypatch):
+    import os
+    marker = tmp_path / "building"
+    marker.write_text("")
+    old = 1_000_000.0
+    os.utime(marker, (old, old))
+    monkeypatch.setattr(arh, "BUILD_MARKER", marker)
+    monkeypatch.setattr(_ic(), "classify_fast",
+                        lambda text, **kw: {"status": "no_cache", "intent": None, "score": None})
+    spawned = []
+    monkeypatch.setattr(arh, "_spawn_vector_build", lambda: spawned.append(1))
+    arh.classify("hmm")
+    assert spawned == [1]
+
+
+def test_a_build_that_cannot_start_is_still_silent(tmp_path, monkeypatch):
+    monkeypatch.setattr(arh, "BUILD_MARKER", tmp_path / "no-such-dir" / "x" / "building")
+    monkeypatch.setattr(_ic(), "classify_fast",
+                        lambda text, **kw: {"status": "no_cache", "intent": None, "score": None})
+
+    def cannot(*a, **kw):
+        raise OSError("no fork for you")
+    monkeypatch.setattr(arh.subprocess, "Popen", cannot)
+    assert arh.classify("hmm") is None
+
+
+def test_spawned_build_is_detached_and_runs_the_build_flag(tmp_path, monkeypatch):
+    seen = {}
+
+    class _P:
+        def __init__(self, cmd, **kw):
+            seen.update(cmd=cmd, **kw)
+
+    monkeypatch.setattr(arh.subprocess, "Popen", _P)
+    arh._spawn_vector_build()
+    assert seen["cmd"][-1] == "--build-vectors"
+    assert seen["cmd"][-2].endswith("intent_classify.py")
+    assert Path(seen["cmd"][-2]).is_file()      # the real lib/ copy, not a guessed path
+    assert seen["start_new_session"] is True
+    assert seen["stdin"] is arh.subprocess.DEVNULL and seen["stdout"] is arh.subprocess.DEVNULL
+
+
+def test_hook_is_fast_and_never_loads_chromadb(tmp_path):
+    """The point of the decision: a whole hook run, real interpreter, keyword prompt."""
+    import subprocess
+    import time
+    code = ("import sys, io, json; sys.path.insert(0, sys.argv[1]); import auto_route_hook as a; "
+            "sys.stdin = io.StringIO(json.dumps({'session_id': 's', 'prompt': sys.argv[2]})); "
+            "a.main(); print('chromadb' in sys.modules)")
+    t = time.monotonic()
+    r = subprocess.run([sys.executable, "-c", code, str(SCRIPTS),
+                        "do you remember what we decided last session?"],
+                       capture_output=True, text=True, timeout=60,
+                       env={"HOME": str(tmp_path), "PATH": "/usr/bin:/bin"})
+    elapsed = time.monotonic() - t
+    assert r.returncode == 0, r.stderr
+    assert "claude-recall" in r.stdout
+    assert r.stdout.strip().endswith("False")
+    assert elapsed < 1.5, elapsed     # was ~4 s; typically ~0.2 s now
