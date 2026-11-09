@@ -1,5 +1,7 @@
 # Changelog
 
+- Main is red at 6adae14: fix forward ([#1187](https://github.com/G-Eskayo/marvin/pull/1187))
+
 - Box builds: frozen marvin-build golden image and VM sweep ([#969](https://github.com/G-Eskayo/marvin/pull/969))
 
 - auto_route_hook.py reads wrong payload key ("user_prompt" vs "prompt") — hook has never fired since 2026-08-13 ([#1118](https://github.com/G-Eskayo/marvin/pull/1118))
