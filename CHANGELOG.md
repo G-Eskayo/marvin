@@ -1,5 +1,7 @@
 # Changelog
 
+- MARVIN shows what it's talking about: opens the document in a Docs sub-window and works on it with you ([#1032](https://github.com/G-Eskayo/marvin/pull/1032))
+
 - Merge queue: a PR built on a squash-merged base conflicts on rebase and is held silently ([#1186](https://github.com/G-Eskayo/marvin/pull/1186))
 
 - Main is red at 6adae14: fix forward ([#1187](https://github.com/G-Eskayo/marvin/pull/1187))
