@@ -16,6 +16,8 @@
 - **One window**: the first press opens a window; later presses add a tab to that window while it's still open
   (marvin#375). The window is remembered with the WezTerm process that owns it, because window ids restart at 0
   when WezTerm restarts and an old id could now be one of Gil's own windows.
+- **No duplicates**: if a chat tab for that ticket is already open on this Mac (in its worktree, or on a branch naming
+  the ticket), it is focused and raised instead of opening a second one (marvin#1063).
 - **This machine only**: it opens WezTerm on the machine that runs it. The phone's backend never calls it.
 """
 from __future__ import annotations
@@ -35,6 +37,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 from marvin_launcher import KIND_ENV  # noqa: E402
 from sandbox_orchestration import WORKTREES_ROOT  # noqa: E402
 import proposals  # noqa: E402
+import wezterm_cli  # noqa: E402  every wezterm cli call goes through it (marvin#1059)
 
 HOME = Path.home()
 WEZTERM_CANDIDATES = (HOME / ".local/bin/wezterm", Path("/Applications/WezTerm.app/Contents/MacOS/wezterm"),
@@ -83,7 +86,7 @@ def session_dir(clone: Path, ticket: int | None, title: str | None) -> Path:
     return path
 
 
-def shell_script(directory: Path, prompt_file: Path | None = None) -> str:
+def shell_script(directory: Path, prompt_file: Path | None = None, resume: str | None = None) -> str:
     """The session's shell. A prompt (Ask MARVIN about a proposal) is read from a file at run time, so its text,
     which came from a feed or a model, never becomes shell code."""
     return "\n".join([
@@ -92,47 +95,31 @@ def shell_script(directory: Path, prompt_file: Path | None = None) -> str:
         f"export VIRTUAL_ENV={shlex.quote(str(HOME / '.agents/venv'))}",
         f"export {KIND_ENV}=interactive",
         f'[ -f {shlex.quote(str(GH_TOKEN_FILE))} ] && export GH_TOKEN="$(cat {shlex.quote(str(GH_TOKEN_FILE))})"',
-        f'exec claude "$(cat {shlex.quote(str(prompt_file))})"' if prompt_file else "exec claude",
+        f"exec claude --resume {shlex.quote(resume)}" if resume  # marvin#1086: back onto a new version, same chat
+        else f'exec claude "$(cat {shlex.quote(str(prompt_file))})"' if prompt_file else "exec claude",
     ])
 
 
 def find_wezterm() -> str:
-    for candidate in WEZTERM_CANDIDATES:
-        if candidate.exists():
-            return str(candidate)
-    found = shutil.which("wezterm")
-    if found:
-        return found
-    raise SessionError("WezTerm isn't installed on this Mac (looked in ~/.local/bin, /Applications and Homebrew)")
-
-
-def _start_detached(cmd: list[str]) -> None:
-    subprocess.Popen(cmd, stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
-                     start_new_session=True)
+    try:
+        return wezterm_cli.find_binary(candidates=WEZTERM_CANDIDATES, which=shutil.which)
+    except wezterm_cli.WeztermError as exc:
+        raise SessionError(str(exc)) from exc
 
 
 def gui_identity(run: Callable = subprocess.run) -> str | None:
-    """The running WezTerm GUI as "pid start-time", which changes whenever WezTerm restarts; None if not found."""
-    try:
-        out = run(["/bin/ps", "-axo", "pid=,lstart=,comm="], capture_output=True, text=True, timeout=10)
-    except (OSError, subprocess.TimeoutExpired):
-        return None
-    if out.returncode != 0:
-        return None
-    for line in out.stdout.splitlines():
-        fields = line.split()
-        if len(fields) >= 7 and fields[-1].endswith("/wezterm-gui"):
-            return " ".join(fields[:6])
-    return None
+    """The WezTerm GUI sessions open in, as "pid start-time" (changes whenever WezTerm restarts); None if none runs.
+    The same GUI wezterm_cli.main_gui picks, so the identity and the socket calls go to always agree."""
+    gui = wezterm_cli.main_gui(run=run)
+    return gui.identity if gui else None
 
 
-def _windows(wezterm: str, run: Callable) -> dict[int, int]:
-    """pane id -> window id for every pane in the running WezTerm (empty if it can't be asked)."""
+def _windows(wez: "wezterm_cli.Wezterm") -> dict[int, int]:
+    """pane id -> window id for every pane in that WezTerm (empty if it can't be asked)."""
     try:
-        out = run([wezterm, "cli", "list", "--format", "json"], capture_output=True, text=True, timeout=15)
-        rows = json.loads(out.stdout) if out.returncode == 0 else []
+        rows = wez.list() or []
         return {int(r["pane_id"]): int(r["window_id"]) for r in rows}
-    except (OSError, subprocess.TimeoutExpired, ValueError, TypeError, KeyError):
+    except (wezterm_cli.WeztermError, ValueError, TypeError, KeyError):
         return {}
 
 
@@ -150,42 +137,41 @@ def _saved_window(state_file: Path, gui: str | None, live: set[int]) -> int | No
     return window
 
 
-def _spawn(wezterm: str, where: list[str], directory: Path, program: list[str], run: Callable):
-    return run([wezterm, "cli", "spawn", *where, "--cwd", str(directory), "--", *program],
-               capture_output=True, text=True, timeout=15)
+def _try_spawn(wez: "wezterm_cli.Wezterm", directory: Path, program: list[str], **where) -> int | None:
+    try:
+        return wez.spawn(directory, program, **where)
+    except wezterm_cli.WeztermError:
+        return None
 
 
 def open_in_wezterm(directory: Path, wezterm: str | None = None, run: Callable = subprocess.run,
-                    start: Callable[[list[str]], None] = _start_detached, state_file: Path = WINDOW_STATE,
+                    start: Callable[[list[str]], None] | None = None, state_file: Path = WINDOW_STATE,
                     identity: Callable[[Callable], str | None] = gui_identity, prompt_file: Path | None = None) -> None:
     """A new tab in the window an earlier press opened if it's still open, else a new window in the running
-    WezTerm; if its mux isn't reachable, start WezTerm with the session."""
-    wezterm = wezterm or find_wezterm()
+    WezTerm; if no WezTerm GUI answers, start WezTerm with the session (never a hidden mux server: marvin#1059)."""
+    wez = wezterm_cli.Wezterm.for_gui(wezterm_cli.main_gui(run=run), binary=wezterm or find_wezterm(), run=run,
+                                      start=start)
     program = ["/bin/zsh", "-c", shell_script(directory, prompt_file)]
     state_file.parent.mkdir(parents=True, exist_ok=True)
     with open(state_file.with_suffix(".lock"), "w") as lock:
         fcntl.flock(lock, fcntl.LOCK_EX)  # two quick presses must not both decide "no window yet"
         gui = identity(run)
-        window = _saved_window(state_file, gui, set(_windows(wezterm, run).values()))
-        spawned = _spawn(wezterm, ["--window-id", str(window)], directory, program, run) if window is not None \
-            else None
-        if spawned is None or spawned.returncode != 0:  # no window yet, or it closed since we looked
-            spawned = _spawn(wezterm, ["--new-window"], directory, program, run)
-        if spawned.returncode == 0:
-            _remember(state_file, gui, spawned.stdout, wezterm, run)
+        window = _saved_window(state_file, gui, set(_windows(wez).values()))
+        pane = _try_spawn(wez, directory, program, window_id=window) if window is not None else None
+        if pane is None:  # no window yet, or it closed since we looked
+            pane = _try_spawn(wez, directory, program, new_window=True)
+        if pane is not None:
+            _remember(state_file, gui, pane, wez)
             return
         state_file.unlink(missing_ok=True)  # a freshly started WezTerm has none of the old windows
     try:
-        start([wezterm, "start", "--cwd", str(directory), "--", *program])
-    except OSError as exc:
+        wez.start(directory, program)
+    except wezterm_cli.WeztermError as exc:
         raise SessionError(f"WezTerm isn't running and couldn't be started: {exc}") from exc
 
 
-def _remember(state_file: Path, gui: str | None, spawn_stdout: str, wezterm: str, run: Callable) -> None:
-    try:
-        window = _windows(wezterm, run).get(int(spawn_stdout.strip()))
-    except ValueError:
-        window = None
+def _remember(state_file: Path, gui: str | None, pane: int, wez: "wezterm_cli.Wezterm") -> None:
+    window = _windows(wez).get(pane)
     if gui is None or window is None:
         state_file.unlink(missing_ok=True)
         return
@@ -241,17 +227,75 @@ def _proposal_record(pid: str) -> dict:
     raise SessionError(f"no open proposal {pid[:60]!r}")
 
 
-def open_session(ticket: int | None, repo: str = "G-Eskayo/marvin", proposal: str | None = None) -> Path:
+# ── an open chat for the ticket is focused, never duplicated (marvin#1063) ─────────────────────
+
+def _live_chats() -> list[dict]:
+    """This Mac's live chat tabs (session_work's records joined with WezTerm, marvin#1060)."""
+    import session_work
+    here = session_work._mac()
+    return [c for c in session_work.list_chats() if c.get("mac") == here]
+
+
+def _inside(path, root: Path) -> bool:
+    try:
+        p, r = Path(str(path)).resolve(), Path(root).resolve()
+    except (OSError, ValueError, TypeError):
+        return False
+    return p == r or r in p.parents
+
+
+def find_chat(chats: list[dict], directory: Path, repo: str, ticket: int) -> dict | None:
+    """The ticket's chat: one working in its worktree (or a folder inside it, so a chat opened by hand counts), or one
+    on a branch naming the same ticket in the same repo. With several, the one seen most recently."""
+    match = [c for c in chats if isinstance(c, dict) and isinstance(c.get("pane"), int) and (
+        _inside(c.get("cwd") or "", directory) or (c.get("ticket") == ticket and c.get("repo") == repo))]
+    return max(match, key=lambda c: c.get("seen_at") or 0) if match else None
+
+
+def _raise_gui(pid: int) -> None:
+    """Bring that WezTerm process forward, onto its Space if it lives on another (best effort)."""
+    subprocess.run(["/usr/bin/osascript", "-e", "tell application \"System Events\" to set frontmost of "
+                    f"(first process whose unix id is {int(pid)}) to true"], capture_output=True, timeout=5)
+
+
+def focus_chat(chat: dict, raise_app: Callable[[int], None] = _raise_gui) -> None:
+    """Activate the chat's pane on its own WezTerm, then raise that WezTerm. Raises WeztermError if the pane is gone."""
+    wezterm_cli.Wezterm(socket=chat.get("socket") or None).activate_pane(chat["pane"])
+    m = re.search(r"gui-sock-(\d+)$", chat.get("socket") or "")
+    if m:
+        try:
+            raise_app(int(m.group(1)))
+        except (OSError, subprocess.TimeoutExpired):
+            pass
+
+
+def _open(ticket: int | None, repo: str, proposal: str | None, chats, focus) -> tuple[Path, dict | None]:
     if proposal is not None:
         if ticket is not None:
             raise SessionError("open a ticket or a proposal, not both")
         directory = HOME
         open_in_wezterm(directory, prompt_file=write_prompt(_proposal_record(proposal), PROMPT_DIR))
-        return directory
+        return directory, None
     clone = _clone_for(repo) if ticket is not None else HOME
     directory = session_dir(clone, ticket, _ticket_title(repo, ticket) if ticket is not None else None)
+    if ticket is not None:
+        try:
+            chat = find_chat((chats or _live_chats)(), directory, repo, ticket)
+        except Exception:  # noqa: BLE001 -- the chat list is a nicety; a session must still open
+            chat = None
+        if chat is not None:
+            try:
+                (focus or focus_chat)(chat)
+                return directory, chat
+            except (wezterm_cli.WeztermError, ValueError, KeyError):
+                pass  # it closed a moment ago: open a fresh one
     open_in_wezterm(directory)
-    return directory
+    return directory, None
+
+
+def open_session(ticket: int | None, repo: str = "G-Eskayo/marvin", proposal: str | None = None,
+                 chats: Callable[[], list[dict]] | None = None, focus: Callable[[dict], None] | None = None) -> Path:
+    return _open(ticket, repo, proposal, chats, focus)[0]
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -262,11 +306,14 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--proposal")
     args = parser.parse_args(argv)
     try:
-        directory = open_session(args.ticket, args.repo, args.proposal)
+        directory, chat = _open(args.ticket, args.repo, args.proposal, None, None)
     except (SessionError, subprocess.TimeoutExpired) as exc:
         print(json.dumps({"ok": False, "error": str(exc)}))
         return 1
-    print(json.dumps({"ok": True, "dir": str(directory)}))
+    out = {"ok": True, "dir": str(directory), "focused": chat is not None}
+    if chat is not None:
+        out["pane"] = chat["pane"]
+    print(json.dumps(out))
     return 0
 
 

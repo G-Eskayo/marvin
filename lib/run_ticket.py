@@ -20,7 +20,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 import functools  # noqa: E402
 import machine_profile  # noqa: E402
 import project_profile as pp  # noqa: E402
-from build_type_measure import measure, test_command_for  # noqa: E402
+from build_type_measure import PairedMeasure, test_command_for  # noqa: E402
 from evidence_capture import capture_dev_evidence, capture_test_results, ticket_touches_ui, TestTimedOut  # noqa: E402
 from mr_raiser import raise_mr  # noqa: E402
 from sandbox_orchestration import execute_ticket, _default_executor, TaskListTooVague, ModelRunFailed  # noqa: E402
@@ -281,6 +281,7 @@ def build(issue_number: int, repo: str = REPO) -> tuple[dict, list[str]]:
     profile = pp.load_profile(repo) if other else None
     subsystem = f"ticket-{issue_number}" if not other else f"{repo.split('/')[-1].lower()}-ticket-{issue_number}"
     measurer = None
+    marvin_measure = None
     worktree_path = None
     findings: list[str] = []  # the last must-fix review findings, for the park comment
 
@@ -289,7 +290,9 @@ def build(issue_number: int, repo: str = REPO) -> tuple[dict, list[str]]:
             outcome = {"raised": False, "pr_url": None, "reason": f"{repo} has no execution profile (config/projects/), so the pipeline cannot run its tickets"}
         else:
             if profile is None:
-                result = execute_ticket(ticket_ref, subsystem, measure)
+                # marvin#1152: the tests the change can affect, the same set on the base and on the change
+                marvin_measure = PairedMeasure()
+                result = execute_ticket(ticket_ref, subsystem, marvin_measure)
             else:
                 clone = pp.resolve_clone(profile, _load_catalog(), ensure=True)
                 if clone is None:
@@ -307,8 +310,11 @@ def build(issue_number: int, repo: str = REPO) -> tuple[dict, list[str]]:
             dev_evidence = None
             if result["passing"]:
                 if measurer is None:
-                    command = test_command_for(worktree_path)
-                    test_results = capture_test_results(worktree_path, command)
+                    # The verify reading already ran the affected tests; running them again (or the whole suite, as
+                    # test_command_for does while the change is uncommitted) is the timeout #1152 removed.
+                    test_results = marvin_measure.test_results() if marvin_measure is not None else None
+                    if test_results is None:
+                        test_results = capture_test_results(worktree_path, test_command_for(worktree_path))
                     dev_evidence = capture_dev_evidence(worktree_path, ticket_touches_ui(worktree_path))
                 else:
                     test_results, dev_evidence = measurer.evidence(worktree_path)

@@ -1,0 +1,44 @@
+/* Celestial navigation: "mission control at night" (tokens from docs/design/celestial-navigation, marvin#428).
+   Dark is the identity. Light is the same chart printed on paper: same hues, darkened until body text and accents
+   pass contrast. Pages switch with data-theme on <html> (Starlight's own key, so docs and marketing agree). */
+:root,
+:root[data-theme='dark'] {
+  --m-bg: #05040a;
+  --m-bg-raise: #0d0b16;
+  --m-bg-panel: #110e1c;
+  --m-ink: #ece6d6;
+  --m-ink-dim: #a99f88;
+  --m-ink-faint: #6f6754;
+  --m-amber: #f0b32a;
+  --m-line: #7a5a14;
+  --m-hair: rgba(240, 179, 42, 0.22);
+  --m-orange: #ff6a1f;
+  --m-red: #ff3b2f;
+  --m-green: #54ff8a;
+  --m-moon: #cfd6e6;
+  --m-on-accent: #05040a;
+  --m-glow: 0 0 18px rgba(84, 255, 138, 0.35);
+  --m-font-display: 'Saira Condensed', 'Arial Narrow', system-ui, sans-serif;
+  --m-font-mono: 'Share Tech Mono', ui-monospace, 'SF Mono', Menlo, monospace;
+  --m-font-body: system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif;
+  color-scheme: dark;
+}
+
+:root[data-theme='light'] {
+  --m-bg: #f5f0e3;
+  --m-bg-raise: #ece5d2;
+  --m-bg-panel: #fffaf0;
+  --m-ink: #1a1822;
+  --m-ink-dim: #4f4a3d;
+  --m-ink-faint: #7c745f;
+  --m-amber: #8a5d00;
+  --m-line: #c9b27a;
+  --m-hair: rgba(138, 93, 0, 0.25);
+  --m-orange: #b33f05;
+  --m-red: #b3261b;
+  --m-green: #0b6b33;
+  --m-moon: #3a4152;
+  --m-on-accent: #fffaf0;
+  --m-glow: none;
+  color-scheme: light;
+}

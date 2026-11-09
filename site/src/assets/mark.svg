@@ -1,0 +1,10 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="160 160 704 704" fill="none">
+  <!-- The constellation M (icon R6, marvin#428): five stars, four lines, the centre star is MARVIN. -->
+  <polyline points="262,772 262,262 512,560 762,262 762,772" stroke="#f0b32a" stroke-width="30" stroke-linejoin="round" stroke-linecap="round"/>
+  <circle cx="512" cy="560" r="118" stroke="#ff6a1f" stroke-width="16" stroke-dasharray="34 26"/>
+  <g fill="#54ff8a">
+    <circle cx="262" cy="772" r="50"/><circle cx="262" cy="262" r="50"/>
+    <circle cx="762" cy="262" r="50"/><circle cx="762" cy="772" r="50"/>
+    <circle cx="512" cy="560" r="72"/>
+  </g>
+</svg>

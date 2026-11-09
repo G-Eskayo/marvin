@@ -420,7 +420,19 @@ fi
   # every git call in the run and leaves repo and global config alone.
   export GIT_CONFIG_COUNT=2 GIT_CONFIG_KEY_0=credential.helper GIT_CONFIG_VALUE_0= GIT_CONFIG_KEY_1=credential.helper GIT_CONFIG_VALUE_1="!gh auth git-credential"
 fi
+# #1139: the job runs in the background under `wait`, because bash runs no trap while it waits on a foreground command.
+# A signal that reached this wrapper but not its job (forked just after the group was signalled, or only the wrapper was
+# signalled) used to wait the job out, 30 s on Linux CI, or leave it running on macOS's bash 3.2. A signal now ends the
+# wait at once; the job and its own children get SIGTERM (background jobs ignore SIGINT without job control), and the
+# EXIT trap above cleans up. `<&0` keeps the wrapper's stdin for the job; `wait` returns the job's own exit code.
+_marvin_end() {{ trap - TERM INT HUP; if [ -n "$!" ]; then pkill -TERM -P "$!" 2>/dev/null; kill -TERM "$!" 2>/dev/null; fi; exit "$1"; }}
+trap '_marvin_end 143' TERM
+trap '_marvin_end 130' INT
+trap '_marvin_end 129' HUP
+(
 {command}
+) <&0 &
+wait "$!"
 """
 
 

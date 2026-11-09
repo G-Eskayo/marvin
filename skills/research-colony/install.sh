@@ -1,25 +1,7 @@
 #!/usr/bin/env bash
-# Install MARVIN research colony as a launchd agent (runs daily at 09:00).
+# Install the research colony's launchd job for this Mac: the primary (the Mini) gets com.marvin.research-colony at
+# 09:00, every other Mac gets com.marvin.research-colony-fallback, which runs only if the Mini went quiet. The other half
+# of the pair is booted out and removed (#1123: the laptop used to get the primary plist and skip every day).
 set -euo pipefail
-
-PLIST_SRC="$HOME/.agents/skills/research-colony/com.marvin.research-colony.plist"
-PLIST_DEST="$HOME/Library/LaunchAgents/com.marvin.research-colony.plist"
-LOG_DIR="$HOME/.claude/logs"
-
-mkdir -p "$LOG_DIR"
-mkdir -p "$HOME/.claude/research-digest"
-mkdir -p "$HOME/.claude/research-feed"
-
-# Unload first if already installed (allows re-install)
-if launchctl list | grep -q "com.marvin.research-colony"; then
-    launchctl unload "$PLIST_DEST" 2>/dev/null || true
-    echo "Unloaded existing agent."
-fi
-
-cp "$PLIST_SRC" "$PLIST_DEST"
-launchctl load "$PLIST_DEST"
-
-echo "✓ com.marvin.research-colony installed."
-echo "  Runs daily at 09:00. Logs → $LOG_DIR/research-colony.log"
-echo "  To run immediately: ~/.agents/venv/bin/python ~/.agents/skills/research-colony/scripts/run_colony.py"
-echo "  To uninstall:       launchctl unload $PLIST_DEST && rm $PLIST_DEST"
+mkdir -p "$HOME/.claude/logs" "$HOME/.claude/research-digest" "$HOME/.claude/research-feed"
+exec "$HOME/.agents/venv/bin/python" "$HOME/.agents/lib/brief_fallback.py" install research-colony

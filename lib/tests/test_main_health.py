@@ -208,9 +208,9 @@ def test_the_suite_runs_niced_so_it_never_starves_the_merge_gate(monkeypatch):
     class R:
         returncode, stdout, stderr = 0, "5 passed in 1s\n", ""
     monkeypatch.setattr(mh.subprocess, "run", lambda cmd, **k: seen.append(cmd) or R())
-    ok, failed, summary = mh._run_suite()
+    ok, failed, summary, outside = mh._run_suite()
     suite = [c for c in seen if "pytest" in c][0]
-    assert suite[:3] == ["nice", "-n", "10"] and ok is True and summary == "5 passed in 1s"
+    assert suite[:3] == ["nice", "-n", "10"] and ok is True and summary == "5 passed in 1s" and outside == []
 
 
 # ---- parallel suite (pytest-xdist) ----

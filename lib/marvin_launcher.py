@@ -35,6 +35,11 @@ MEMORY_DIR = host_os.memory_dir()
 LEXICON = Path.home() / ".claude" / "lexicon.md"
 LAUNCH_LOG = Path.home() / ".claude" / "logs" / "launches.jsonl"
 KIND_ENV = "MARVIN_LAUNCH_KIND"
+# `claude setup-token`'s long-lived token (bin/marvin-renew claude-setup-token; Vitals > Accounts checks it). A launchd
+# job can't use the keychain login: when that expired on the Mini (2026-11-01) every background run failed while this
+# file stayed valid (marvin#1123 0.5). task_dispatch's builders already export it the same way.
+SETUP_TOKEN_FILE = Path.home() / ".claude" / ".oauth-token"
+TOKEN_ENV = "CLAUDE_CODE_OAUTH_TOKEN"
 
 
 @dataclass(frozen=True)
@@ -140,6 +145,21 @@ def _record(log_path: Path, record: dict) -> None:
         pass
 
 
+def _with_setup_token(env: dict) -> dict:
+    """`env` plus the setup-token, unless the run already has a login of its own: a token the caller set, or the API
+    key a run switched to the monthly credit carries (dispatch_concurrency.credit_env drops the token on purpose).
+    The token is read at the moment of use and only ever put in the child's environment, never argv or a log."""
+    if env.get(TOKEN_ENV) or env.get("ANTHROPIC_API_KEY"):
+        return env
+    try:
+        tok = SETUP_TOKEN_FILE.read_text().strip()
+    except (OSError, UnicodeDecodeError):
+        return env
+    if not tok or any(c.isspace() for c in tok):
+        return env
+    return {**env, TOKEN_ENV: tok}
+
+
 def launch(kind: str, prompt: str, *, cwd: Path | None = None, model: str | None = None,
            allowed_tools: str | None = None, disallowed_tools: str | None = None, tools: str | None = None,
            permission_mode: str | None = "dontAsk", timeout: float | None = None, env: dict | None = None,
@@ -159,7 +179,7 @@ def launch(kind: str, prompt: str, *, cwd: Path | None = None, model: str | None
         if value is not None:
             cmd += [flag, value]
     cmd += ["--output-format", "json"]
-    run_env = {**(env if env is not None else os.environ), KIND_ENV: kind}
+    run_env = _with_setup_token({**(env if env is not None else os.environ), KIND_ENV: kind})
     scratch = tempfile.TemporaryDirectory(prefix="marvin-judge-") if kind == "judge" and cwd is None else None
     run_cwd = scratch.name if scratch else cwd
     started = time.monotonic()

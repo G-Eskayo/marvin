@@ -3,6 +3,8 @@ import json
 import sys
 from pathlib import Path
 
+import pytest
+
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 import portfolio_layouts as pl  # noqa: E402
 import project_catalog  # noqa: E402
@@ -51,6 +53,7 @@ def test_a_repeated_category_section_is_one_zone_whatever_the_number_of_categori
     assert pl.skeleton(wrap(section(2) * 2)) == pl.skeleton(wrap(section(3) * 3)) == pl.skeleton(wrap(section(1) * 5))
 
 
+@pytest.mark.outside_state("the portfolio repo's captured elements")
 def test_the_captured_layouts_record_which_pages_follow_them():
     for lid in ("layout-project-page", "layout-hub-page", "layout-all-projects-page"):
         f = PROJECT / "templates" / "elements" / f"{lid}.json"

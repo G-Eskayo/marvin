@@ -142,7 +142,8 @@ def test_the_executor_is_told_how_to_reach_a_screen_when_mac_capture_is_on():
 HELPER = Path(__file__).resolve().parents[2] / "config/onboarding/macos-screenshot/MarvinScreenshot.swift"
 
 
-@pytest.mark.skipif(not shutil.which("swift") or sys.platform != "darwin", reason="needs Swift on a Mac")
+@pytest.mark.macos_only("draws a SwiftUI app")
+@pytest.mark.skipif(not shutil.which("swift"), reason="needs Swift")
 def test_the_reference_helper_really_draws_a_swiftui_app_into_a_png(tmp_path):
     """No fakes: a real SwiftPM app using the helper we hand to projects, built and captured by the real pipeline code."""
     (tmp_path / "Sources/Demo").mkdir(parents=True)

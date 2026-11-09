@@ -22,6 +22,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import re
 import shlex
 import sys
 import time
@@ -38,9 +39,16 @@ QUARANTINE_CMD_S = 300   # default limit for the command inside the quarantine V
 SECURITY_TIMEOUT_S = 600
 # 3x the first measured run on the box: 158 s for graph update + the 30-question eval (2026-10-30, #932).
 RETRIEVAL_TIMEOUT_S = 480
-# Kali tools the security trial may run on the box host. A closed list keeps "security" from being a back door for
-# arbitrary commands (or a ticket build) on the box.
-SECURITY_TOOLS = frozenset({"nmap", "dig", "whois", "traceroute", "sslscan", "nikto", "whatweb", "tshark"})
+# Owner, PR #941 security-tools: any Kali tool runs, with no list; the `security` tag is the guard. Ticket builds still
+# never go to the box (the trial-work decision), so what can't be a security tool is anything that runs other code:
+# agents, shells, interpreters and command launchers. Compared lower-case and with any version suffix dropped.
+NOT_SECURITY_TOOLS = frozenset({
+    "claude", "codex", "aider", "gemini", "cursor", "opencode",                     # coding agents
+    "sh", "bash", "zsh", "dash", "fish", "ksh", "csh", "tcsh", "busybox",            # shells
+    "python", "python3", "node", "deno", "bun", "perl", "ruby", "php", "lua", "osascript",  # interpreters
+    "env", "sudo", "doas", "su", "xargs", "nohup", "timeout", "nice", "exec", "eval", "setsid", "script",  # launchers
+})
+_TOOL_NAME = re.compile(r"[A-Za-z0-9][A-Za-z0-9._+-]{0,63}")
 
 # A throwaway worktree of the box's own checkout, in a subshell so its EXIT trap never replaces the dispatch
 # wrapper's own (which clears the task record and busy flag).
@@ -78,8 +86,11 @@ def quarantine_command(cmd: list[str], cmd_timeout: int = QUARANTINE_CMD_S) -> s
 def security_command(argv: list[str]) -> str:
     if not argv:
         raise ValueError("security needs a tool and its arguments (after --)")
-    if argv[0] not in SECURITY_TOOLS:
-        raise ValueError(f"'{argv[0]}' is not on the security trial's tool list: {', '.join(sorted(SECURITY_TOOLS))}")
+    tool = argv[0]
+    if not _TOOL_NAME.fullmatch(tool):
+        raise ValueError(f"{tool!r} is not a plain command name (no paths, spaces or shell characters)")
+    if re.sub(r"[\d.]+$", "", tool.lower()) in NOT_SECURITY_TOOLS:
+        raise ValueError(f"'{tool}' runs other code, so it can't be a security tool: ticket builds never go to the box")
     return " ".join(shlex.quote(a) for a in argv)
 
 

@@ -1600,3 +1600,42 @@ def test_step_timeouts_scale_only_within_one_to_four(monkeypatch, value, expecte
     else:
         monkeypatch.setenv(so.STEP_SCALE_ENV, value)
     assert so.step_timeout(900) == expected
+
+
+# ── a paired measure: the baseline comes from the same tests as each reading (marvin#1152) ─
+
+class _PairedFake:
+    """Like build_type_measure.PairedMeasure: the first call (the untouched worktree) only pins the base, and each
+    later reading names the baseline measured on the same tests."""
+
+    def __init__(self, readings):
+        self.readings = list(readings)   # [(baseline, current), ...]
+        self.calls = 0
+        self._paired = None
+
+    def __call__(self, wt):
+        self.calls += 1
+        if self.calls == 1:
+            return {}
+        self._paired, current = self.readings.pop(0)
+        return current
+
+    def paired_baseline(self):
+        return self._paired
+
+
+def test_a_paired_measure_is_compared_with_its_own_baseline_not_the_first_call(git_repo, metrics_dir):
+    pm = _PairedFake([({"tests_passed": _metric(2)}, {"tests_passed": _metric(3)})])
+    result = so.execute_ticket("TICKET-1", "test-subsystem", measure=pm, executor=_noop_executor, repo_path=git_repo,
+                               reviewer=lambda wt, base: {"clean": True})
+    assert result["final_comparison"]["metrics"]["tests_passed"] == {"baseline": 2, "current": 3, "delta": 1,
+                                                                    "direction": "improved"}
+    assert mr.latest("test-subsystem")["tests_passed"]["value"] == 2   # the empty pin is never recorded
+
+
+def test_a_paired_measure_whose_baseline_matches_reads_unchanged_not_improved(git_repo, metrics_dir):
+    # The trap this design exists for: an empty "before" against some tests "after" must never read as improved.
+    pm = _PairedFake([({"tests_passed": _metric(5)}, {"tests_passed": _metric(5)})] * 3)
+    result = so.execute_ticket("TICKET-1", "test-subsystem", measure=pm, executor=_noop_executor, repo_path=git_repo)
+    assert result["passing"] is False
+    assert result["final_comparison"]["verdict"] == "unchanged"

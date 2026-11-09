@@ -62,7 +62,42 @@ def test_run_calls_execute_ticket_with_the_right_ticket_ref_and_subsystem(monkey
 
     assert captured["ticket_ref"] == "G-Eskayo/marvin#20"
     assert captured["subsystem"] == "ticket-20"
-    assert captured["measure_fn"] is rt.measure
+    # marvin#1152: the affected tests, the same set before and after, a fresh measure per run (never shared state)
+    assert isinstance(captured["measure_fn"], rt.PairedMeasure)
+
+
+def test_each_run_gets_its_own_paired_measure(monkeypatch):
+    seen = []
+    monkeypatch.setattr(rt, "execute_ticket", lambda ref, sub, m: seen.append(m) or _passing_result())
+    monkeypatch.setattr(rt, "test_command_for", lambda wt: ["pytest", "-q"])
+    monkeypatch.setattr(rt, "capture_test_results", lambda wt, cmd: {"suite": "pytest", "passed": 1, "failed": 0, "total": 1})
+    monkeypatch.setattr(rt, "ticket_touches_ui", lambda wt: False)
+    monkeypatch.setattr(rt, "capture_dev_evidence", lambda wt, touches_ui: {"na": True, "reason": "no UI"})
+    monkeypatch.setattr(rt, "raise_mr", lambda *a, **kw: {"raised": True, "pr_url": "http://fake-pr", "reason": None})
+    monkeypatch.setattr(rt, "_trigger_redispatch", lambda: None)
+    rt.run(20)
+    rt.run(21)
+    assert seen[0] is not seen[1]
+
+
+def test_the_pr_reports_the_verify_reading_instead_of_running_the_whole_suite_again(monkeypatch):
+    class Measured(rt.PairedMeasure):
+        def test_results(self):
+            return {"suite": "pytest (3 test files)", "passed": 7, "failed": 0, "total": 7}
+
+    monkeypatch.setattr(rt, "PairedMeasure", Measured)
+    monkeypatch.setattr(rt, "execute_ticket", lambda *a: _passing_result())
+    ran = []
+    monkeypatch.setattr(rt, "capture_test_results", lambda wt, cmd: ran.append(cmd) or {})
+    monkeypatch.setattr(rt, "ticket_touches_ui", lambda wt: False)
+    monkeypatch.setattr(rt, "capture_dev_evidence", lambda wt, touches_ui: {"na": True, "reason": "no UI"})
+    captured = {}
+    monkeypatch.setattr(rt, "raise_mr", lambda ref, res, test_results=None, dev_evidence=None:
+                        captured.update(tr=test_results) or {"raised": True, "pr_url": "http://fake-pr", "reason": None})
+    monkeypatch.setattr(rt, "_trigger_redispatch", lambda: None)
+    rt.run(20)
+    assert ran == []
+    assert captured["tr"]["passed"] == 7
 
 
 def test_run_captures_test_results_and_dev_evidence_on_a_passing_result(monkeypatch):
@@ -1263,3 +1298,18 @@ def test_a_breaker_log_that_cannot_be_written_never_stops_the_run_from_releasing
     monkeypatch.setattr(rt.failure_breaker, "record_failure", unwritable)
     out = rt.run(20)
     assert out["raised"] is False and released == [20]
+
+
+def test_a_profile_projects_verify_is_untouched_by_the_paired_measure(monkeypatch):
+    """marvin#1152 changes marvin's measure only: a project with its own profile verify keeps pp.Measurer, which keeps
+    execute_ticket's single up-front baseline (no paired_baseline) and never gets a MARVIN_BASE."""
+    import project_profile as pp
+    _profile_run_setup(monkeypatch)
+    seen = {}
+    monkeypatch.setattr(rt, "execute_ticket", lambda ref, sub, measure, **kw: seen.update(m=measure) or _passing_result())
+    monkeypatch.setattr(rt, "raise_mr", lambda *a, **kw: {"raised": True, "pr_url": "http://pr", "reason": None})
+    rt.run(7, repo=CC)
+    assert isinstance(seen["m"], FakeMeasurer) and not isinstance(seen["m"], rt.PairedMeasure)
+    assert not hasattr(pp.Measurer, "paired_baseline")
+    monkeypatch.delenv("MARVIN_BASE", raising=False)
+    assert "MARVIN_BASE" not in pp.build_env({"verify": []})

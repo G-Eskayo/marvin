@@ -1,5 +1,57 @@
 # Changelog
 
+- Pipeline verify runs the whole Python suite on every marvin ticket and times out; run the affected tests, same set before and after ([#1153](https://github.com/G-Eskayo/marvin/pull/1153))
+
+- Site ship step: the live link on each shipped ticket, and an alarm when a publish fails ([#1145](https://github.com/G-Eskayo/marvin/pull/1145))
+
+- Dispatch wrapper: a SIGTERM that lands as bash starts the command waits for the command (seen on Linux CI under load) ([#1149](https://github.com/G-Eskayo/marvin/pull/1149))
+
+- Pipeline and merge gate: Seal Speak worktrees get the app's models from one sha-checked cache per machine, so the app builds there ([#1119](https://github.com/G-Eskayo/marvin/pull/1119))
+
+- Main is red at e46bda3: fix forward ([#1147](https://github.com/G-Eskayo/marvin/pull/1147))
+
+- GitHub's Python tests run on Linux: start at once, and Mac-only tests skip there with a reason ([#1135](https://github.com/G-Eskayo/marvin/pull/1135))
+
+- Pipeline verify timeout counts the wait for the test slot, so builds behind merges are parked without running a test ([#1120](https://github.com/G-Eskayo/marvin/pull/1120))
+
+- Publish the MARVIN site to marvin.gileskayo.me on GitHub Pages from main ([#1126](https://github.com/G-Eskayo/marvin/pull/1126))
+
+- Wire MR Review by project into the real tab (#767), with one set of project names everywhere ([#935](https://github.com/G-Eskayo/marvin/pull/935))
+
+- Merge queue: a PR set aside as CI_PENDING comes back by itself when its checks finish ([#1109](https://github.com/G-Eskayo/marvin/pull/1109))
+
+- Accounts: live checks, expiry warnings, one alert per change, and renewal for every MARVIN credential (backend for #640) ([#977](https://github.com/G-Eskayo/marvin/pull/977))
+
+- Workshop: one item page for a ticket and its PRs ([#1053](https://github.com/G-Eskayo/marvin/pull/1053))
+
+- Chat tabs restart onto a new Claude Code version on their own, by resume, only while idle on your turn ([#1096](https://github.com/G-Eskayo/marvin/pull/1096))
+
+- Send into a chat, safely: dashboard only, idle only, never onto a permission prompt ([#1095](https://github.com/G-Eskayo/marvin/pull/1095))
+
+- Chat list data for the dashboard: both Macs, the other Mac read-only, honest when WezTerm is down ([#1093](https://github.com/G-Eskayo/marvin/pull/1093))
+
+- Main red: the gate progress test pins the check list from before the gate ran the secret scan ([#1104](https://github.com/G-Eskayo/marvin/pull/1104))
+
+- Open session focuses the existing chat instead of opening a duplicate ([#1090](https://github.com/G-Eskayo/marvin/pull/1090))
+
+- MARVIN's WezTerm config: synced, guarded, installed on both Macs, accessible palette ([#1092](https://github.com/G-Eskayo/marvin/pull/1092))
+
+- Chat state hooks: working, waiting on you, your turn, done, without ever slowing a chat ([#1085](https://github.com/G-Eskayo/marvin/pull/1085))
+
+- Chat records: each MARVIN chat tab recorded in the existing session store, with a read-only `marvin chats list` ([#1084](https://github.com/G-Eskayo/marvin/pull/1084))
+
+- WezTerm wrapper: one place for every wezterm cli call, aimed at the right WezTerm when two run ([#1082](https://github.com/G-Eskayo/marvin/pull/1082))
+
+- Contrast checker: every MARVIN colour pair measured against the accessibility rule ([#1091](https://github.com/G-Eskayo/marvin/pull/1091))
+
+- Main red on the Mini: pipeline handover tests read live claims and runs ([#1089](https://github.com/G-Eskayo/marvin/pull/1089))
+
+- Profile parity: one facts file and one check across the site, resume, GitHub, LinkedIn and the product sites ([#1039](https://github.com/G-Eskayo/marvin/pull/1039))
+
+- Main red on the Mini: portfolio dev-site drift (brand redesign) fails main-health; outside-state checks should be named, not block merges ([#1049](https://github.com/G-Eskayo/marvin/pull/1049))
+
+- Main red on the Mini: a marvin show test hard-codes the portfolio folder the catalog guard reserves ([#1048](https://github.com/G-Eskayo/marvin/pull/1048))
+
 - Merge gate: a test the PR doesn't touch that fails once sends a good PR back, silently (#892) ([#968](https://github.com/G-Eskayo/marvin/pull/968))
 
 - Main is red at f5b194d: fix forward ([#1008](https://github.com/G-Eskayo/marvin/pull/1008))

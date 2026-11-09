@@ -1,0 +1,73 @@
+/* Starlight mapped onto the celestial-navigation tokens. The docs use the calmer "flat" reading treatment: no glow,
+   system body text, the display face only for headings. */
+:root,
+:root[data-theme='dark'] {
+  --sl-color-accent-low: #2a1f05;
+  --sl-color-accent: #f0b32a;
+  --sl-color-accent-high: #ffd97a;
+  --sl-color-white: #f4efe2;
+  --sl-color-gray-1: #e2dccb;
+  --sl-color-gray-2: #c4bca6;
+  --sl-color-gray-3: #8f8670;
+  --sl-color-gray-4: #4d4636;
+  --sl-color-gray-5: #2a2519;
+  --sl-color-gray-6: #13101b;
+  --sl-color-black: #05040a;
+  --sl-color-bg-nav: #08070f;
+  --sl-color-bg-sidebar: #08070f;
+  --sl-color-hairline: #2c2414;
+  --sl-color-hairline-light: #3d3220;
+  --sl-font: var(--m-font-body);
+  --sl-font-mono: var(--m-font-mono);
+}
+
+:root[data-theme='light'] {
+  --sl-color-accent-low: #f3e2b5;
+  --sl-color-accent: #8a5d00;
+  --sl-color-accent-high: #4d3400;
+  --sl-color-white: #1a1822;
+  --sl-color-gray-1: #2b2833;
+  --sl-color-gray-2: #45413a;
+  --sl-color-gray-3: #6b6452;
+  --sl-color-gray-4: #a39a82;
+  --sl-color-gray-5: #ddd3ba;
+  --sl-color-gray-6: #ece5d2;
+  --sl-color-gray-7: #f5f0e3;
+  --sl-color-black: #fbf7ee;
+  --sl-color-bg-nav: #f5f0e3;
+  --sl-color-bg-sidebar: #f5f0e3;
+  --sl-color-hairline: #e1d6bb;
+  --sl-color-hairline-light: #ebe2cc;
+}
+
+.site-title {
+  font-family: var(--m-font-display);
+  font-weight: 800;
+  letter-spacing: 0.08em;
+  color: var(--sl-color-white);
+}
+
+.sl-markdown-content h1,
+.sl-markdown-content h2,
+.sl-markdown-content h3,
+h1#_top {
+  font-family: var(--m-font-display);
+  font-weight: 600;
+  letter-spacing: 0.02em;
+}
+
+.sl-markdown-content h2 {
+  border-bottom: 1px solid var(--sl-color-hairline-light);
+  padding-bottom: 0.25rem;
+}
+
+.sl-markdown-content img[src$='.svg'] {
+  background: #fff;
+  border-radius: 6px;
+  padding: 0.75rem;
+  border: 1px solid var(--sl-color-hairline-light);
+}
+
+.sl-markdown-content table {
+  font-size: var(--sl-text-sm);
+}

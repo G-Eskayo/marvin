@@ -360,11 +360,11 @@ function TicketDrilldown({ repo, card, boardCards, onBack, onOpenMr, onOpenDocs,
 // Across ALL projects: where reviews and decisions are waiting on you, so the right board is one click away
 // (the PRs in MR Review belong to whichever project they came from, not necessarily the board you have open).
 // A box to answer a ticket. What sending will do is shown BEFORE you send (same rules the main process applies).
-const labelsOf = (detail, card) => detail.labels?.map((l) => l.name) || card.labels
+export const labelsOf = (detail, card) => detail.labels?.map((l) => l.name) || card.labels
 
 // A ticket marked for the owner says exactly what to do, where, how and what to send back: shown first. If it does not,
 // that is said plainly instead of leaving the question to a chat.
-function HumanTaskPanel({ body, ctx }) {
+export function HumanTaskPanel({ body, ctx }) {
   const t = parseHumanTask(body)
   if (!t.found || t.missing.length > 0) {
     return (
@@ -387,7 +387,7 @@ function HumanTaskPanel({ body, ctx }) {
   )
 }
 
-function TicketReply({ repo, number, labels, state, sendBack, onSent }) {
+export function TicketReply({ repo, number, labels, state, sendBack, onSent }) {
   const [text, setText] = useState('')
   const [busy, setBusy] = useState(false)
   const [result, setResult] = useState(null)
