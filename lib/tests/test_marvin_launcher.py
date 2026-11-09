@@ -281,6 +281,15 @@ def test_classify_survives_non_string_input():
     assert ml.classify_exit(0, None, None) == "ok"
 
 
+@pytest.mark.parametrize("kind", sorted(ml.KINDS))
+def test_a_machine_without_the_private_claude_folder_still_builds_every_kind(kind, tmp_path, monkeypatch):
+    # A box build VM gets no ~/.claude (ADR 0069 amendment 2): no memory, work rules or lexicon, but the run goes on.
+    monkeypatch.setattr(ml, "MEMORY_DIR", tmp_path / "no-memory")
+    monkeypatch.setattr(ml, "LEXICON", tmp_path / "no-lexicon.md")
+    text = ml.assemble_context(kind)
+    assert "memory index" not in text and "Lexicon" not in text and "Work rules" not in text
+
+
 # ── background runs sign in with the setup-token (marvin#1123 0.5) ──────────────────────────────────────────────
 # A launchd job can't use the keychain login: on the Mini it expired 2026-11-01 ("OAuth session expired and could not
 # be refreshed") and architecture review failed daily, while ~/.claude/.oauth-token (`claude setup-token`, about a year)
