@@ -1,0 +1,3 @@
+#!/bin/bash
+# marvin-chats: the MARVIN chat tabs open in WezTerm on this Mac (marvin#1060). --json for machines.
+exec "$HOME/.agents/venv/bin/python" "$HOME/.agents/lib/session_work.py" chats "$@"

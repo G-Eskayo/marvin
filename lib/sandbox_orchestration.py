@@ -502,7 +502,13 @@ def execute_ticket(
         state_setup(worktree_path)
 
     baseline = measure(worktree_path)
-    mr.record(subsystem, baseline)
+    # A paired measure (build_type_measure.PairedMeasure, marvin#1152) measures the base on the same tests as each
+    # reading, since which tests a change can affect isn't known until the change exists; its first call only pins
+    # the base. Any other measure keeps this one up-front baseline.
+    paired = getattr(measure, "paired_baseline", None)
+    recorded = None
+    if paired is None:
+        mr.record(subsystem, baseline)
 
     feedback = None
     comparison = None
@@ -524,6 +530,11 @@ def execute_ticket(
         _stage(ticket_ref, "verifying", "started", f"iteration {iteration}/{max_iterations}")
 
         current = measure(worktree_path)
+        if paired is not None:
+            baseline = paired() or {}
+            if baseline and baseline != recorded:
+                mr.record(subsystem, baseline)
+                recorded = baseline
         comparison = mr.compare(subsystem, baseline, current)
 
         if comparison["passing"]:

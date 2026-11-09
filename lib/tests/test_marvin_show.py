@@ -27,13 +27,16 @@ def world(tmp_path, monkeypatch):
     outbox = home / ".claude" / "outbox"
     outbox.mkdir(parents=True)
     agents = home / ".agents"
-    portfolio = home / "Developer" / "portfolio-website-updater"
+    portfolio = home / "Developer" / "portfolio-site"  # neutral name: the real default lives only in project_catalog._PORTFOLIO_DEFAULT
     for d in (agents / "instance" / "docs" / "plans", portfolio / "docs"):
         d.mkdir(parents=True)
-    # tmp_path itself is under /private/var/folders (a temp root): the "home" must not look like temp to the checks.
-    scratch = Path("/private/tmp") / f"marvin-show-test-{os.getpid()}-{tmp_path.name}"
+    # The "home" must not look like temp to the checks, but tmp_path is under a temp root on both systems
+    # (/private/var/folders on macOS, /tmp on Linux, #1117). So the only temp root is a folder of the test's own, under
+    # the real temp dir (realpath: macOS's /tmp is /private/tmp), and the home sits outside it.
+    root = Path(os.path.realpath("/tmp")) / f"marvin-show-test-{os.getpid()}-{tmp_path.name}"
+    scratch = root / "scratch"
     scratch.mkdir(parents=True, exist_ok=True)
-    monkeypatch.setattr(ms, "TEMP_ROOTS", ("/private/tmp", "/tmp"))
+    monkeypatch.setattr(ms, "TEMP_ROOTS", (str(root),))
     projects = [
         {"id": "marvin", "name": "MARVIN", "repo": "G-Eskayo/marvin", "localPaths": [str(agents)]},
         {"id": "marvin-instance", "name": "MARVIN instance", "repo": "G-Eskayo/marvin-instance", "localPaths": [str(agents / "instance")]},
@@ -41,7 +44,7 @@ def world(tmp_path, monkeypatch):
     ]
     yield {"home": home, "outbox": outbox, "agents": agents, "portfolio": portfolio, "scratch": scratch, "projects": projects}
     import shutil
-    shutil.rmtree(scratch, ignore_errors=True)
+    shutil.rmtree(root, ignore_errors=True)
 
 
 def build(w, target, cwd=None, **kw):

@@ -1,0 +1,87 @@
+---
+// The docs hub's feature index: every Released and Built-in-testing feature, grouped by area, with its badge.
+// Planned features live on the roadmap only (status labels, plan §1.4 R2).
+import StatusBadge from './StatusBadge.astro';
+import { AREAS, FEATURES, pageHref, fmtDate } from '~/lib/site';
+
+const shown = FEATURES.filter((f) => f.status === 'released' || f.status === 'testing');
+const groups = AREAS.map((a) => ({ ...a, items: shown.filter((f) => f.area === a.id) })).filter((g) => g.items.length);
+const released = shown.filter((f) => f.status === 'released').length;
+const testing = shown.filter((f) => f.status === 'testing').length;
+const latest = shown.map((f) => f.verified_on ?? '').sort().at(-1);
+---
+
+<div class="m-fi not-content">
+  <p class="m-fi-sum">
+    {released} released, {testing} built and in testing{latest && <>, all verified on or before {fmtDate(latest)}</>}.
+    Planned work is on the <a href="/roadmap/">roadmap</a>.
+  </p>
+  {
+    groups.map((g) => (
+      <section>
+        <h3>{g.title}</h3>
+        <ul>
+          {g.items.map((f) => (
+            <li>
+              <div class="m-fi-top">
+                {f.page ? <a href={pageHref(f.page)}>{f.title}</a> : <span class="m-fi-name">{f.title}</span>}
+                <StatusBadge status={f.status} small />
+              </div>
+              <p>{f.summary}</p>
+            </li>
+          ))}
+        </ul>
+      </section>
+    ))
+  }
+</div>
+
+<style>
+  .m-fi section {
+    margin-top: 1.75rem;
+  }
+  .m-fi h3 {
+    font-family: var(--m-font-display);
+    font-size: var(--sl-text-h4);
+    letter-spacing: 0.04em;
+    text-transform: uppercase;
+    color: var(--sl-color-gray-2);
+    border-bottom: 1px solid var(--sl-color-hairline-light);
+    padding-bottom: 0.3rem;
+  }
+  .m-fi ul {
+    list-style: none;
+    padding: 0;
+    margin: 0.5rem 0 0;
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(17rem, 1fr));
+    gap: 0.75rem;
+  }
+  .m-fi li {
+    border: 1px solid var(--sl-color-hairline-light);
+    padding: 0.7rem 0.85rem;
+    background: var(--sl-color-gray-6);
+  }
+  .m-fi-top {
+    display: flex;
+    justify-content: space-between;
+    gap: 0.5rem;
+    align-items: start;
+  }
+  .m-fi-top a,
+  .m-fi-name {
+    font-weight: 600;
+    color: var(--sl-color-white);
+  }
+  .m-fi-top a {
+    color: var(--sl-color-accent);
+  }
+  .m-fi li p {
+    margin: 0.4rem 0 0;
+    font-size: var(--sl-text-sm);
+    color: var(--sl-color-gray-2);
+  }
+  .m-fi-sum {
+    color: var(--sl-color-gray-2);
+  }
+</style>

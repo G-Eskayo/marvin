@@ -1,0 +1,143 @@
+---
+title: Decisions
+description: How a MARVIN pull request or ticket asks the owner to choose, with tickable options in the dashboard, and how the merge server and the gh wrapper hold it to that.
+sidebar:
+  order: 5
+---
+import FeatureStatus from '~/components/FeatureStatus.astro';
+
+<FeatureStatus page="decisions" />
+
+## What it does
+
+When a PR or ticket needs you to choose something, it asks in one **Decisions** section with a fixed Markdown format: a `<!-- marvin:decisions -->` marker, one `### id: question` per question, and `- [ ]` options under each. The dashboard turns that into option buttons, a note box per question and text boxes for written answers. **Submit decisions** ticks your choices in the description itself and posts a *Decisions from the owner* comment with the answers as JSON. Approve stays disabled until every required question is answered, and the merge server refuses the PR if anything tries to merge it first. A question asked in prose instead ("A, B or C?", an "Open questions" heading) is called out as *Too vague: needs options*, refused by the merge server, and stopped earlier by the `gh` wrapper before it reaches GitHub. Once you've answered, the next move is MARVIN's, and a scan files a follow-up ticket if nothing happens.
+
+For a plain yes or no on the whole PR, use Approve or Deny. Decisions are for choices inside the work.
+
+## Why it exists
+
+A question buried in a PR's prose is a question the owner never sees. Agents were told the format in their prompts and still wrote prose lists, so the dashboard showed nothing to answer and the owner was asked nothing (ADR 0080). The reverse gap hurt too: on PR #577 the owner submitted answers, the record comment asked an open question, and nothing reacted, because the pipeline only dispatches tickets (`lib/owner_decisions.py`). A rule in a prompt is advice. This one is held in code at the three places every path passes: the `gh` wrapper, the dashboard, and the merge server.
+
+## See it work
+
+A real answered block, from PR #839 (the owner's choices on the test pipeline plan), read 2026-11-02, trimmed to two of four questions:
+
+```text
+$ gh pr view 839 -R G-Eskayo/marvin --json body -q .body | awk '/marvin:decisions/{f=1} f'
+<!-- marvin:decisions -->
+### protect-main: Protect main on both repos so a website merge also needs the required checks?
+- [x] Yes, required checks on main, and admins (you) included (Recommended)
+- [ ] Yes, but let you override it as admin
+- [ ] No
+
+### main-red: When main is already red, what happens to a PR that adds no new failures?
+- [ ] Merge it, and attach it to the open main-red ticket (Recommended)
+- [x] Keep refusing until main is fixed (today's behaviour)
+```
+
+The `gh` wrapper's rule run on a prose ask, 2026-11-02 (the body is a two-line sample; the message is the real one):
+
+```text
+$ printf '## Open questions\n- Should the cache live in /tmp or ~/.cache?\n' > body.md
+$ venv/bin/python -c 'import sys; sys.path.insert(0,"lib"); import decisions_check as d; print(d.refusal(open("body.md").read()))'
+DECISIONS_NOT_ASKABLE: "## Open questions" asks the owner to choose, but there is no <!-- marvin:decisions -->
+block, so the dashboard shows no questions and he is asked nothing. Put the marker under the heading, each question
+as "### some-id: question" and its options as "- [ ] option" lines (docs/agents/decisions-format.md). A heading that
+only reports ("## Decisions recorded") isn't an ask.
+```
+
+And a real merge-server refusal, from the MacBook's webhook error log:
+
+```text
+$ grep DECISIONS ~/.claude/logs/dashboard-webhook-error.log
+2026-10-27T00:55:48.194Z approve failed: https://github.com/G-Eskayo/marvin/pull/688 DECISIONS_UNSTRUCTURED at request:
+  this PR asks you to choose something but gives no options to answer ("## Decisions" asks for a choice)
+```
+
+## How it works
+
+```text
+ agent writes PR/ticket ──► bin/gh (rule I2) ──refuse──► DECISIONS_NOT_ASKABLE / DECISIONS_UNPARSED
+            │ ok
+            ▼
+ dashboard parses the block ──► option buttons ──► Submit: ticks boxes in the body + record comment
+            │                                              │
+            ▼                                              ▼
+ Approve disabled until answered          hourly scan: answered, not acted on for 4 h?
+            │                                    └─► follow-up ticket "Act on owner decisions on PR #N"
+            ▼
+ merge server: DECISIONS_PENDING / DECISIONS_UNSTRUCTURED, else on to the merge gate
+```
+
+1. **One parser.** `dashboard/webhook-server/decisions.js` reads the block: ids, choice or `(pick any)` or `(text)`, `(optional)`, ticked boxes, `> **Answer:**` and `> **Note:**` lines. Everything else calls it, including Python through `decisions_cli.js`, so there's no second copy to drift.
+2. **At write time.** `bin/gh` runs `lib/decisions_check.py` on every `pr create|edit|comment` and `issue create|edit|comment` that sets a body. A heading that asks with no block is `DECISIONS_NOT_ASKABLE`; a block that doesn't parse is `DECISIONS_UNPARSED`. It fails open with a note if node isn't there, because the merge server still holds the line. The pre-commit rule check also flags committed Markdown whose block doesn't parse.
+3. **In the dashboard.** MR Review shows *Answer the decisions first* while required questions are open, and *Too vague: needs options* for a prose ask, with one click that sends the PR back for options through the Deny feedback path (ADR 0025).
+4. **On submit.** The description is the source of truth: choices are ticked in place, then a *Decisions from the owner* comment is posted with a `marvin-decisions` JSON block. On a ticket labelled `needs-info`, answering every required question moves it to `ready-for-agent`.
+5. **At merge.** `decisions_gate.js` reads the PR body. Required questions open: `DECISIONS_PENDING`. A prose ask: `DECISIONS_UNSTRUCTURED`. GitHub unreachable: `DECISIONS_UNCHECKED`. It fails closed, since a refused Approve costs one click.
+6. **After you answer.** `lib/owner_decisions.py` runs inside the hourly ticket scan. A PR whose latest owner answers have no reply carrying `<!-- marvin:decisions-addressed -->` and no completed follow-up gets one follow-up ticket after the grace period, labelled `ready-for-agent` and `owner-decisions`. It closes when the PR is addressed or closed. A commit alone doesn't count as an answer.
+
+## Use it
+
+Write questions in this shape in a PR or issue body:
+
+```markdown
+## Decisions
+<!-- marvin:decisions -->
+### storage: Where should the cache live?
+- [ ] /tmp
+- [ ] ~/.cache
+
+### extras: Also cache thumbnails? (pick any) (optional)
+- [ ] Small
+- [ ] Large
+
+### notes: Anything else? (text) (optional)
+```
+
+No flag means one answer, required. Each choice question needs at least two options. Don't tick boxes for the owner. The full rules are in [`docs/agents/decisions-format.md`](https://github.com/G-Eskayo/marvin/blob/main/docs/agents/decisions-format.md).
+
+Common tasks:
+
+```bash
+# PRs whose decisions are answered and still waiting on MARVIN
+venv/bin/python lib/owner_decisions.py waiting
+# what the hourly scan would file or close, without doing it
+venv/bin/python lib/owner_decisions.py scan --dry-run
+```
+
+After acting on an answer, reply on the PR with `<!-- marvin:decisions-addressed -->` in the comment.
+
+## Configure
+
+| Setting | Where | What it does |
+|---|---|---|
+| `MARVIN_DECISIONS_OK="<reason>"` | environment, one `gh` call | Lets one body through rule I2 when a person agrees it isn't a question to the owner; logged to `~/.claude/logs/gh-calls.jsonl` |
+| `MARVIN_DECISIONS_GRACE_HOURS` | environment | Hours before an unaddressed answer becomes a follow-up ticket (default 4, accepted range above 0 up to 168) |
+| `MARVIN_NODE` | environment | Path to node when it isn't on `PATH` (the rule needs it to run the parser) |
+| Format | `docs/agents/decisions-format.md` | The block's syntax and flags |
+
+## Requirements and limitations
+
+- The `gh` rule needs node to run the parser. Without it the rule lets the call through with a note.
+- The rule only sees bodies passed as `--body` or `--body-file`. A body on stdin goes straight to `gh`.
+- The dashboard merges through its own server, not `bin/gh`, so the merge server has its own check (`decisions_gate.js`) built on the same parser.
+- The write-time rule can be overridden, and overrides do happen. On 2026-11-02 the `gh` call log on the MacBook held 5, all from one session adding a ticket link to PR bodies whose Decisions were unchanged (`grep decisions_override ~/.claude/logs/gh-calls.jsonl`; the log rotates at 5 MB, so older ones are gone).
+- The follow-up scan runs on the machine doing the hourly ticket scan. On a second Mac it only files when the primary is quiet.
+
+## Design and source
+
+- [ADR 0080: The work loop is one system](https://github.com/G-Eskayo/marvin/blob/main/docs/adr/0080-the-work-loop-is-one-system.md): rule I2 (every question is machine-readable) and I3 (every answer is acted on and replied to). Rejected: keeping each rule on the surface where the problem was seen, which left copies that drifted.
+- [ADR 0025: Deny action, two buttons, structured feedback](https://github.com/G-Eskayo/marvin/blob/main/docs/adr/0025-deny-action-two-button-structured-feedback.md): the send-back path *Too vague* uses. Rejected: a third "adjust" button.
+- [ADR 0037: Answering a waiting ticket from the dashboard](https://github.com/G-Eskayo/marvin/blob/main/docs/adr/0037-owner-reply-on-a-ticket.md): the reply box and the `needs-info` to `ready-for-agent` move.
+- Source: [`decisions.js`](https://github.com/G-Eskayo/marvin/blob/main/dashboard/webhook-server/decisions.js), [`decisions_gate.js`](https://github.com/G-Eskayo/marvin/blob/main/dashboard/webhook-server/decisions_gate.js), [`decisions_check.py`](https://github.com/G-Eskayo/marvin/blob/main/lib/decisions_check.py), [`bin/gh`](https://github.com/G-Eskayo/marvin/blob/main/bin/gh), [`owner_decisions.py`](https://github.com/G-Eskayo/marvin/blob/main/lib/owner_decisions.py), [`decisions_submit.js`](https://github.com/G-Eskayo/marvin/blob/main/dashboard/electron/main/decisions_submit.js), [`Decisions.jsx`](https://github.com/G-Eskayo/marvin/blob/main/dashboard/src/components/Decisions.jsx)
+- [PR #608: Owner decisions on a PR no longer go unanswered: flag them, file a follow-up after N hours](https://github.com/G-Eskayo/marvin/pull/608)
+- [PR #744: bin/gh refuses Decisions the dashboard can't read (rule I2)](https://github.com/G-Eskayo/marvin/pull/744)
+- [PR #760: Dashboard: back/forward history for two-finger swipes, Decisions before wiring](https://github.com/G-Eskayo/marvin/pull/760)
+- [PR #839: Test pipeline plan: your four decisions](https://github.com/G-Eskayo/marvin/pull/839), the example above
+
+## Related features
+
+- [Merge gate](/docs/features/merge-gate/): the decisions check is one of its first refusals.
+- [Dashboard](/docs/features/dashboard/): MR Review and the ticket page, where you answer.
+- [Ticket pipeline](/docs/features/ticket-pipeline/): builds the follow-up tickets.
+- GitHub gate (`bin/gh`), failure breaker.

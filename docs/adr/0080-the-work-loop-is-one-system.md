@@ -70,5 +70,12 @@ A rule written in a prompt or a memory note is advice. A rule held by one surfac
 - **Ship step (I4):** each project profile names its own ship step (Seal Speak: bump the build and upload to
   TestFlight; the Seal site: publish to gh-pages; MARVIN: both Macs pull and restart), and the ticket closes with a
   link to where the work is live.
+  - **A site that publishes through Actions** (the MARVIN site, marvin#1122) is shipped when GitHub's Pages
+    deployment for that merge succeeds at the site's own domain. site.yml's `report` job (lib/site_deploy.py) then
+    comments the live link once on every ticket closed by a site-changing merge the publish carried; a cancelled
+    publish (a newer merge replaced it) leaves that to the newer run. A failed publish opens one `site-deploy-failed`
+    ticket through main_red's path (never main-red or p0, so it never holds a merge), adds nothing for a re-run of
+    the same commit, and closes when a later publish succeeds. Health's "The site is published" reads the
+    deployments too, so a publish that never ran still shows.
 - **Order:** as in `docs/life-of-a-ticket.md`, section "The rules that always hold": I1 → I2 → the loop test → I4 → I5
   → I6.

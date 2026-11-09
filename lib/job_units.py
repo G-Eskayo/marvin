@@ -8,6 +8,8 @@ A job is defined once in config/jobs/<name>.json, with no machine's paths in it 
     command       argv, run directly (no shell)
     schedule      {"every_s": N, "at_load": bool}  every N seconds, and once when loaded if at_load
                   {"calendar": {"hour": H, "minute": M}}  daily at H:M local time, caught up after sleep or power-off
+                  {"keep_alive": true}  a long-running service (a server): started at load, restarted if it exits,
+                                        at most once every RESTART_S seconds (launchd KeepAlive; systemd Restart=always)
     env           optional environment
     low_priority  optional: yields CPU and disk to real work (launchd Background + LowPriorityIO + Nice 10;
                   systemd Nice=10 + idle IO)
@@ -38,6 +40,7 @@ JOBS_DIR = Path(__file__).resolve().parent.parent / "config" / "jobs"
 NAME_RE = re.compile(r"^[a-z0-9][a-z0-9-]*$")
 KEYS = {"name", "description", "command", "schedule", "env", "low_priority", "log"}
 NICE = 10
+RESTART_S = 30  # a keep-alive service that keeps dying is retried this often, never in a tight loop
 
 
 class JobError(ValueError):
@@ -76,10 +79,16 @@ def validate(job: dict) -> dict:
     sched = job.get("schedule")
     if not isinstance(sched, dict) or not sched:
         raise JobError(f"{name}: schedule is required")
-    if set(sched) - {"every_s", "at_load", "calendar"}:
-        raise JobError(f"{name}: unknown schedule key(s) {sorted(set(sched) - {'every_s', 'at_load', 'calendar'})}")
-    if ("every_s" in sched) == ("calendar" in sched):
-        raise JobError(f"{name}: schedule needs exactly one of every_s or calendar")
+    kinds = {"every_s", "at_load", "calendar", "keep_alive"}
+    if set(sched) - kinds:
+        raise JobError(f"{name}: unknown schedule key(s) {sorted(set(sched) - kinds)}")
+    if sum(k in sched for k in ("every_s", "calendar", "keep_alive")) != 1:
+        raise JobError(f"{name}: schedule needs exactly one of every_s, calendar or keep_alive")
+    if "keep_alive" in sched:
+        if sched["keep_alive"] is not True:
+            raise JobError(f"{name}: keep_alive can only be true")
+        if "at_load" in sched:
+            raise JobError(f"{name}: a keep_alive service always starts at load; drop at_load")
     if "every_s" in sched:
         n = sched["every_s"]
         if isinstance(n, bool) or not isinstance(n, int) or n < 1:
@@ -151,7 +160,9 @@ def plist_dict(job: dict, home: str) -> dict:
     if job.get("low_priority"):
         out.update({"ProcessType": "Background", "LowPriorityIO": True, "Nice": NICE})
     sched = job["schedule"]
-    if "calendar" in sched:
+    if "keep_alive" in sched:
+        out.update({"RunAtLoad": True, "KeepAlive": True, "ThrottleInterval": RESTART_S})
+    elif "calendar" in sched:
         out["StartCalendarInterval"] = {"Hour": sched["calendar"]["hour"], "Minute": sched["calendar"]["minute"]}
     else:
         out["StartInterval"] = sched["every_s"]
@@ -181,21 +192,26 @@ def _sd_word(arg: str) -> str:
     return '"' + a.replace("\\", "\\\\").replace('"', '\\"') + '"'
 
 
-def render_systemd(job: dict, home: str) -> tuple[str, str]:
-    """(service, timer) unit text for a systemd --user manager."""
+def render_systemd(job: dict, home: str) -> tuple[str, str | None]:
+    """(service, timer) unit text for a systemd --user manager. A keep_alive service has no timer (None): it is
+    wanted at login and restarted when it exits."""
     name, sched = job["name"], job["schedule"]
     out_log, err_log = _logs(job, home)
     desc = _sd_escape(job.get("description", name))
+    keep = "keep_alive" in sched
     svc = ["[Unit]", f"Description=MARVIN {name}: {desc}",
            f"# Rendered by lib/job_units.py from config/jobs/{name}.json (marvin#911); edit that, not this.",
-           "", "[Service]", "Type=oneshot"]
+           "", "[Service]", "Type=simple" if keep else "Type=oneshot"]
     for k, v in job.get("env", {}).items():
         svc.append(f'Environment="{k}={_sd_escape(_expand(v, home))}"')
     svc.append("ExecStart=" + " ".join(_sd_word(_expand(a, home)) for a in job["command"]))
     if job.get("low_priority"):
         svc += [f"Nice={NICE}", "IOSchedulingClass=idle"]
     svc += [f"StandardOutput=append:{_sd_escape(out_log)}", f"StandardError=append:{_sd_escape(err_log)}"]
-    tmr = ["[Unit]", f"Description=Schedule for MARVIN {name}", "", "[Timer]", f"Unit={unit_name(name)}.service"]
+    if keep:
+        svc += ["Restart=always", f"RestartSec={RESTART_S}", "", "[Install]", "WantedBy=default.target"]
+        return "\n".join(svc) + "\n", None
+    tmr =["[Unit]", f"Description=Schedule for MARVIN {name}", "", "[Timer]", f"Unit={unit_name(name)}.service"]
     if "calendar" in sched:
         c = sched["calendar"]
         tmr += [f"OnCalendar=*-*-* {c['hour']:02d}:{c['minute']:02d}:00", "Persistent=true"]
@@ -227,11 +243,15 @@ def _install_linux(job: dict, home: Path, run: Callable[[list[str]], int]) -> di
     service, timer = render_systemd(job, str(home))
     u = unit_name(job["name"])
     changed = _write_if_changed(d / f"{u}.service", service.encode())
-    changed = _write_if_changed(d / f"{u}.timer", timer.encode()) or changed
+    if timer is not None:
+        changed = _write_if_changed(d / f"{u}.timer", timer.encode()) or changed
     ok = True
     if changed:
         ok = run(["systemctl", "--user", "daemon-reload"]) == 0
-    ok = run(["systemctl", "--user", "enable", "--now", f"{u}.timer"]) == 0 and ok
+    unit = f"{u}.timer" if timer is not None else f"{u}.service"
+    if changed and timer is None:
+        run(["systemctl", "--user", "restart", unit])   # a running service picks up its new definition
+    ok = run(["systemctl", "--user", "enable", "--now", unit]) == 0 and ok
     return {"job": job["name"], "changed": changed, "ok": ok}
 
 
@@ -293,7 +313,9 @@ def main(argv: list[str]) -> int:
         job = load(rest[0])
         if os_name == "linux":
             service, timer = render_systemd(job, home)
-            print(f"# {unit_name(job['name'])}.service\n{service}\n# {unit_name(job['name'])}.timer\n{timer}", end="")
+            print(f"# {unit_name(job['name'])}.service\n{service}", end="")
+            if timer is not None:
+                print(f"\n# {unit_name(job['name'])}.timer\n{timer}", end="")
         else:
             sys.stdout.write(render_plist(job, home).decode())
         return 0

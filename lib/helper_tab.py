@@ -18,7 +18,6 @@ import json
 import os
 import re
 import shlex
-import shutil
 import subprocess
 import sys
 import time
@@ -26,8 +25,9 @@ from pathlib import Path
 
 SEP = " · "
 MARKS = {"running": "●", "done": "✓", "failed": "✗"}
-WEZTERM = os.environ.get("HELPER_TAB_WEZTERM") or shutil.which("wezterm") or "/opt/homebrew/bin/wezterm"
 HERE = Path(__file__).resolve()
+sys.path.insert(0, str(HERE.parent))
+import wezterm_cli  # noqa: E402  every wezterm cli call goes through it (marvin#1059)
 PY = Path.home() / ".agents" / "venv" / "bin" / "python"
 LUA = HERE.parents[1] / "config" / "wezterm" / "helper_tabs_marvin.lua"
 WEZTERM_CONFIG = Path.home() / ".config" / "wezterm" / "wezterm.lua"
@@ -89,7 +89,8 @@ def run_helper(group: str, title: str, command: list[str], on_exit: str | None =
     jobs_dir = Path(os.environ["HELPER_TAB_JOBS_DIR"]) if os.environ.get("HELPER_TAB_JOBS_DIR") else None
     rc = 1
     try:
-        env = {**os.environ, "MARVIN_DOWNLOAD_CACHE": str(download_cache.cache_dir())}
+        env = {**os.environ, "MARVIN_DOWNLOAD_CACHE": str(download_cache.cache_dir()),
+               "MARVIN_HELPER_TAB": "1"}  # a helper is never recorded as a chat tab (marvin#1060)
         with job_events.job_run(job_name(group, title), f"{group}: {title}", jobs_dir) as run:
             rc = subprocess.run(command, env=env).returncode
             if rc:
@@ -107,9 +108,12 @@ def run_helper(group: str, title: str, command: list[str], on_exit: str | None =
         pass
     state = "done" if rc == 0 else "failed"
     pane = os.environ.get("WEZTERM_PANE")
-    if pane:
-        subprocess.run([WEZTERM, "cli", "set-tab-title", "--pane-id", pane, tab_title(group, title, state)],
-                       capture_output=True)
+    if pane and pane.isdigit():
+        try:  # this pane's own WezTerm, named by the socket WezTerm gave the pane
+            wezterm_cli.Wezterm(socket=os.environ.get("WEZTERM_UNIX_SOCKET")).set_tab_title(
+                int(pane), tab_title(group, title, state))
+        except (wezterm_cli.WeztermError, ValueError):
+            pass  # a title is cosmetic: never let it change the helper's result
     if not os.environ.get("HELPER_TAB_QUIET"):
         import notify
         notify.notify(f"{group}: {'finished' if rc == 0 else 'failed'}", title)
@@ -119,10 +123,14 @@ def run_helper(group: str, title: str, command: list[str], on_exit: str | None =
     return rc
 
 
+def _wezterm() -> "wezterm_cli.Wezterm":
+    """The GUI helpers go to: this pane's own when launched from inside WezTerm, else the oldest running one."""
+    return wezterm_cli.Wezterm.for_gui(wezterm_cli.main_gui())
+
+
 def _list_panes() -> list[dict] | None:
     """Panes of the running WezTerm GUI, or None when no GUI is running."""
-    r = subprocess.run([WEZTERM, "cli", "--no-auto-start", "list", "--format", "json"], capture_output=True, text=True)
-    return json.loads(r.stdout) if r.returncode == 0 and r.stdout.strip() else None
+    return _wezterm().list()
 
 
 DISK_REFUSED_RC = 2
@@ -190,10 +198,8 @@ def launch(group: str, title: str, command: list[str], cwd: str, on_exit: str | 
             print("helper-tab: WezTerm started but no new pane appeared within 30 s", file=sys.stderr)
             return 1
     else:
-        r = subprocess.run([WEZTERM, "cli", "spawn", "--window-id", str(window), "--cwd", cwd, "--", *argv],
-                           capture_output=True, text=True, check=True)
-        pane_id = int(r.stdout.strip())
-    subprocess.run([WEZTERM, "cli", "set-tab-title", "--pane-id", str(pane_id), running], check=True)
+        pane_id = _wezterm().spawn(Path(cwd), argv, window_id=window)
+    _wezterm().set_tab_title(pane_id, running)
     print(pane_id)
     return 0
 
@@ -212,6 +218,18 @@ def install_wezterm(config: Path = WEZTERM_CONFIG, lua: Path = LUA) -> str:
     config.parent.mkdir(parents=True, exist_ok=True)
     config.write_text(text[:idx] + block.lstrip("\n") + "\n" + text[idx:])
     return "installed"
+
+
+def group_name(group: str) -> str:
+    """A project's group is its one name from the catalog (marvin#848): `--group clarity-captions` and `--group Seal
+    Speak` make the same tab. Anything that isn't a project (Disk, Research) stays as given; so does every group when
+    the catalog can't be read, because a helper must never fail over a name."""
+    try:
+        sys.path.insert(0, str(HERE.parent))
+        import project_catalog
+        return project_catalog.display_name(group) or group
+    except Exception:  # noqa: BLE001
+        return group
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -233,6 +251,7 @@ def main(argv: list[str] | None = None) -> int:
     try:
         if internal:
             return run_helper(a.group, a.title, command, a.on_exit)
+        a.group = group_name(a.group)
         return launch(a.group, a.title, command, str(Path(a.cwd).expanduser().resolve()), a.on_exit)
     except ValueError as e:
         ap.error(str(e))

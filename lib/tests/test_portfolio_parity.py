@@ -54,6 +54,7 @@ ELEMENT_IDS = ["project-card", "button-github", "site-header", "page-title-bar",
 
 
 @pytest.mark.parametrize("element_id", ELEMENT_IDS)
+@pytest.mark.outside_state("the portfolio dev site against the portfolio repo's captured elements")
 @pytest.mark.skipif(not shutil.which("node") or not _has_playwright() or not _live(), reason="needs node, playwright and the running dev site")
 def test_the_dashboard_preview_of_every_captured_element_matches_the_live_site(element_id):
     if not (PROJECT / "templates" / "elements" / f"{element_id}.json").exists():
@@ -91,3 +92,33 @@ def test_dev_site_drift_names_a_file_the_site_serves_differently_and_how_to_fix_
 
 def test_dev_site_drift_says_nothing_when_there_is_no_synced_copy_to_compare(tmp_path):
     assert pp.dev_site_drift(tmp_path / "absent", "http://dev", fetch=lambda u: None) == []
+
+
+# ── the site moved on after the elements were captured (marvin#1047) ──
+# Found 2026-11-03: the Mini's dev site served the in-progress brand redesign, deployed the afternoon after the elements
+# were captured. The site served the synced folder (no #585 drift), so parity listed a dozen differences with no cause.
+
+def _styled(tmp_path, when):
+    import os
+    f = tmp_path / "wp-content" / "brand" / "brand.css"; f.parent.mkdir(parents=True, exist_ok=True)
+    f.write_text("body{}")
+    os.utime(f, (when, when))
+    return tmp_path
+
+
+def test_a_site_restyled_after_the_capture_is_named_as_the_cause(tmp_path):
+    from datetime import datetime, timezone
+    captured = datetime(2026, 11, 2, 17, 19, tzinfo=timezone.utc)
+    dev = _styled(tmp_path, captured.timestamp() + 4 * 3600)
+    out = pp.restyled_since_capture({"captured_at": captured.isoformat()}, dev)
+    assert len(out) == 1 and "wp-content/brand/brand.css" in out[0] and "re-capture" in out[0]
+    assert "2026-11-02 17:19" in out[0]
+
+
+def test_nothing_is_said_when_the_site_is_older_than_the_capture_or_the_capture_has_no_date(tmp_path):
+    from datetime import datetime, timezone
+    captured = datetime(2026, 11, 2, 17, 19, tzinfo=timezone.utc)
+    dev = _styled(tmp_path, captured.timestamp() - 3600)
+    assert pp.restyled_since_capture({"captured_at": captured.isoformat()}, dev) == []
+    assert pp.restyled_since_capture({}, dev) == []
+    assert pp.restyled_since_capture({"captured_at": captured.isoformat()}, tmp_path / "absent") == []

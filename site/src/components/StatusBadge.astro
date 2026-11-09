@@ -1,0 +1,62 @@
+---
+import { STATUS_LABEL, type Status } from '~/lib/site';
+interface Props {
+  status: Status;
+  small?: boolean;
+}
+const { status, small = false } = Astro.props;
+---
+
+<span class:list={['m-badge', `m-badge--${status}`, { 'm-badge--small': small }]}>{STATUS_LABEL[status]}</span>
+
+<style>
+  .m-badge {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.4em;
+    font-family: var(--m-font-mono);
+    font-size: 0.8rem;
+    letter-spacing: 0.04em;
+    text-transform: uppercase;
+    padding: 0.15em 0.6em;
+    border: 1px solid currentColor;
+    border-radius: 2px;
+    white-space: nowrap;
+    line-height: 1.5;
+  }
+  .m-badge::before {
+    content: '';
+    width: 0.5em;
+    height: 0.5em;
+    transform: rotate(45deg);
+    background: currentColor;
+  }
+  .m-badge--small {
+    font-size: 0.7rem;
+  }
+  .m-badge--released {
+    color: var(--m-green);
+  }
+  .m-badge--testing {
+    color: var(--m-orange);
+  }
+  .m-badge--progress {
+    color: var(--m-orange);
+    border-style: dashed;
+  }
+  .m-badge--progress::before {
+    background: transparent;
+    border: 1px solid currentColor;
+  }
+  .m-badge--planned {
+    color: var(--m-ink-dim);
+  }
+  .m-badge--planned::before {
+    background: transparent;
+    border: 1px solid currentColor;
+  }
+  .m-badge--retired {
+    color: var(--m-ink-faint);
+    text-decoration: line-through;
+  }
+</style>

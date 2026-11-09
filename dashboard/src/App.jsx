@@ -51,6 +51,12 @@ export default function App() {
     setNav({ ...target, tab, at: Date.now() })
     setActiveTab(tab)
   }
+  // The Workshop's item page (#863): every cross-tab link to a ticket or a PR opens its one page.
+  const openItem = (repo, number, kind) => navigate('workshop', { item: { repo, [kind]: Number(number) } })
+  const openPrKey = (prKey) => {
+    const m = /^(.+)#(\d+)$/.exec(String(prKey || ''))
+    if (m) openItem(m[1], m[2], 'pr')
+  }
   const [reviewStatus, setReviewStatus] = useState(null)
   const [healthOverall, setHealthOverall] = useState(null)
   const [support, setSupport] = useState({ role: null, badge: 0 })
@@ -167,19 +173,19 @@ export default function App() {
           {activeTab === 'metrics' ? (
             <MetricsPage />
           ) : activeTab === 'mr-review' ? (
-            <MrReview nav={nav} onOpenDocs={(projectId, path) => navigate('docs', { projectId, path })} onOpenBoard={(repo) => navigate('activity', { repo })} onOpenTicket={(repo, number) => navigate('activity', { repo, ticketNumber: number })} />
+            <MrReview nav={nav} onOpenDocs={(projectId, path) => navigate('docs', { projectId, path })} onOpenBoard={(repo) => navigate('activity', { repo })} onOpenTicket={(repo, number) => openItem(repo, number, 'ticket')} />
           ) : activeTab === 'health' ? (
             <HealthDashboard nav={nav} />
           ) : activeTab === 'docs' ? (
-            <DocsExplorer nav={nav} onOpenBoard={(repo) => navigate('activity', { repo })} onOpenTicket={(repo, number) => navigate('activity', { repo, ticketNumber: number })} onOpenPr={(repo, number) => navigate('mr-review', { prKey: `${repo}#${number}` })} />
+            <DocsExplorer nav={nav} onOpenBoard={(repo) => navigate('activity', { repo })} onOpenTicket={(repo, number) => openItem(repo, number, 'ticket')} onOpenPr={(repo, number) => openItem(repo, number, 'pr')} />
           ) : activeTab === 'workshop' ? (
-            <WorkshopTab feed={workshop} navigate={navigate} />
+            <WorkshopTab feed={workshop} navigate={navigate} nav={nav} />
           ) : activeTab === 'support' ? (
             <SupportTab nav={nav} />
           ) : activeTab === 'portfolio' ? (
             <PortfolioHubGate />
           ) : (
-            <ActivityBoard nav={nav} onOpenMr={(prKey) => navigate('mr-review', { prKey })} onOpenDocs={(projectId, path) => navigate('docs', { projectId, path })} onOpenTicket={(repo, number) => navigate('activity', { repo, ticketNumber: number })} onOpenProject={(repo) => navigate('activity', { repo })} />
+            <ActivityBoard nav={nav} onOpenMr={openPrKey} onOpenDocs={(projectId, path) => navigate('docs', { projectId, path })} onOpenTicket={(repo, number) => openItem(repo, number, 'ticket')} onOpenProject={(repo) => navigate('activity', { repo })} />
           )}
         </ScrollArea>
       </main>

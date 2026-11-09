@@ -1,0 +1,41 @@
+---
+// Docs header: the same top-level links as the marketing pages, then Starlight's own GitHub icon.
+import Default from '@astrojs/starlight/components/SocialIcons.astro';
+import { NAV, CTA } from '~/lib/site';
+---
+
+<nav class="m-docs-nav" aria-label="Site">
+  {NAV.filter((l) => l.href !== '/docs/').map((l) => <a href={l.href}>{l.label}</a>)}
+  <a class="m-docs-cta" href={CTA.href}>{CTA.label}</a>
+</nav>
+<Default />
+
+<style>
+  .m-docs-nav {
+    display: flex;
+    gap: 1.1rem;
+    align-items: center;
+    margin-inline-end: 0.5rem;
+    font-size: var(--sl-text-sm);
+  }
+  .m-docs-nav a {
+    color: var(--sl-color-gray-2);
+    text-decoration: none;
+    white-space: nowrap;
+  }
+  .m-docs-nav a:hover {
+    color: var(--sl-color-white);
+  }
+  .m-docs-nav .m-docs-cta {
+    color: var(--sl-color-black);
+    background: var(--sl-color-accent);
+    padding: 0.3rem 0.7rem;
+    border-radius: 3px;
+    font-weight: 600;
+  }
+  @media (max-width: 72rem) {
+    .m-docs-nav a:not(.m-docs-cta) {
+      display: none;
+    }
+  }
+</style>
