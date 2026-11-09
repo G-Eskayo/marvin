@@ -31,7 +31,7 @@ import model_registry  # noqa: E402
 INTENTS: dict[str, dict] = {
     "recall": {
         "profile":    "marvin",
-        "model":      "claude-haiku-4-5-20251001",
+        "model":      None,
         "config_dir": "~/.claude",
         "alias":      "claude-recall",
         "keywords": [
@@ -41,8 +41,8 @@ INTENTS: dict[str, dict] = {
             "from last time", "stored", "you know", "what was the",
         ],
         "why": "Memory retrieval — MARVIN's ChromaDB holds the answer. "
-               "Haiku handles recall at ~60% Sonnet cost (bench Run 8).",
-        "savings": "~60% vs MARVIN + Sonnet",
+               "Uses the session model (no routing overhead).",
+        "savings": "baseline (recall stays on session model; no cost change)",
     },
     "research": {
         "profile":    "marvin",

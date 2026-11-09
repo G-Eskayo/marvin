@@ -23,7 +23,7 @@ COMMON=(--repeat 3 --judge --out-dir "$OUT" --stop-above 0.75)
   --profiles clean,marvin "${COMMON[@]}"
 
 # 2. Levers, one at a time, everything else held constant.
-#    Model routing: route.py sends recall and research to Haiku.
+#    Model routing: route.py sends research to Haiku; recall now stays on the session model (PR #1125).
 "$PY" bench.py tasks/task-004-caveman tasks/task-014-kb-lookup --profiles marvin \
   --model claude-haiku-4-5-20251001 "${COMMON[@]}"
 #    Caveman: the opt-in trigger, on an explain task and a coding task.

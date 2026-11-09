@@ -19,6 +19,7 @@ comparison table prints to stdout. Run profiles/setup.sh first.
 """
 from __future__ import annotations
 import argparse
+import hashlib
 import json
 import os
 import re
@@ -218,6 +219,114 @@ def run_once_ollama(task: dict, profile: str, ollama_model: str,
     }
 
 
+def _slug(text: str) -> str:
+    """Convert text to a short slug (alphanumeric + dash)."""
+    # replace spaces and special chars with dashes, keep only alnum + dash
+    text = re.sub(r'[^a-z0-9]+', '-', text.lower()).strip('-')
+    # limit length; use hash of original if too long
+    if len(text) > 20:
+        h = hashlib.sha256(text.encode()).hexdigest()[:8]
+        return h
+    return text
+
+
+def _deterministic_workdir(task_id: str, profile: str, model: str | None,
+                           prompt_prefix: str) -> Path:
+    """Generate a deterministic path for an fs task workdir, keyed on task params.
+
+    The path is under the system temp root and based on a hash of:
+    (task_id, profile, model or "default", slug(prompt_prefix))
+    """
+    model_key = model or "default"
+    prefix_slug = _slug(prompt_prefix)
+    key = f"{task_id}_{profile}_{model_key}_{prefix_slug}"
+    h = hashlib.sha256(key.encode()).hexdigest()[:12]
+    return Path(tempfile.gettempdir()) / f"mb-{h}"
+
+
+def _prepare_workdir(workdir: Path) -> None:
+    """Safely prepare a deterministic workdir for reuse.
+
+    Creates the directory with mode 0700 if needed, rejects symlinks and
+    files not owned by the current user, and empties (not deletes) the
+    directory if it already exists. Fails loudly on any violation.
+
+    Raises:
+        ValueError: if the path is a symlink, a plain file, or not owned by current user
+        RuntimeError: if the directory cannot be emptied
+    """
+    import os
+    import stat as stat_module
+
+    my_uid = os.getuid()
+
+    # Check if the path already exists
+    if workdir.exists() or workdir.is_symlink():
+        # Reject symlinks (both working and broken)
+        if workdir.is_symlink():
+            raise ValueError(f"workdir path is a symlink (security: symlink attack): {workdir}")
+
+        # Reject plain files
+        if workdir.is_file():
+            raise ValueError(f"workdir path exists as a plain file (must be directory): {workdir}")
+
+        # Check ownership for existing directories
+        if workdir.is_dir():
+            st = workdir.stat()
+            if st.st_uid != my_uid:
+                raise ValueError(
+                    f"workdir directory not owned by current user "
+                    f"(owner uid={st.st_uid}, current uid={my_uid}): {workdir}"
+                )
+            # Empty (not delete) the directory
+            for item in workdir.iterdir():
+                if item.is_symlink():
+                    # Unlink symlinks; fail loudly if it doesn't work
+                    try:
+                        item.unlink()
+                    except OSError as e:
+                        raise RuntimeError(f"failed to unlink symlink {item}: {e}") from e
+                elif item.is_dir():
+                    # Use rmtree for directories, but fail if it returns non-zero
+                    try:
+                        shutil.rmtree(item)
+                    except OSError as e:
+                        raise RuntimeError(f"failed to remove directory {item}: {e}") from e
+                else:
+                    # Plain files: unlink
+                    try:
+                        item.unlink()
+                    except OSError as e:
+                        raise RuntimeError(f"failed to unlink file {item}: {e}") from e
+
+            # Verify the directory is now empty
+            try:
+                remaining = list(workdir.iterdir())
+                if remaining:
+                    raise RuntimeError(
+                        f"workdir not fully emptied; leftover items: {[str(r) for r in remaining]}"
+                    )
+            except OSError as e:
+                raise RuntimeError(f"failed to verify workdir is empty: {e}") from e
+    else:
+        # Create the directory with secure permissions
+        try:
+            workdir.mkdir(parents=True, mode=0o700, exist_ok=False)
+        except FileExistsError:
+            # Race condition: another process created it. Verify it's safe.
+            if workdir.is_symlink():
+                raise ValueError(f"workdir path is a symlink (race condition): {workdir}")
+            if workdir.is_file():
+                raise ValueError(f"workdir path is a file (race condition): {workdir}")
+            st = workdir.stat()
+            if st.st_uid != my_uid:
+                raise ValueError(
+                    f"workdir directory not owned by current user (race): {workdir}"
+                )
+        except OSError as e:
+            raise RuntimeError(f"failed to create workdir: {e}") from e
+
+
 def load_task(task_dir: Path) -> dict:
     cfg = json.loads((task_dir / "task.json").read_text())
     cfg["dir"] = task_dir
@@ -265,11 +374,17 @@ def run_once(task: dict, profile: str, capture_snapshot: bool = False, model: st
     # MARVIN's instructions and hooks; cwd = ~/.agents loads the repo's CLAUDE.md and
     # skills. A qa task that compares profiles should set "cwd": "tmp" — a fresh empty
     # folder outside home, so only the profile decides what is loaded.
-    if is_fs or task.get("cwd") == "tmp":
-        workdir = Path(tempfile.mkdtemp(prefix=f"mb-{task['id']}-{profile}-"))
-        if is_fs and (task["dir"] / "files").exists():
-            shutil.copytree(task["dir"] / "files", workdir, dirs_exist_ok=True)
-        cleanup = True
+    if is_fs:
+        workdir = _deterministic_workdir(task["id"], profile, model, prompt_prefix)
+        _prepare_workdir(workdir)
+        task_files = Path(task["dir"]) / "files"
+        if task_files.exists():
+            shutil.copytree(task_files, workdir, dirs_exist_ok=True)
+        cleanup = False  # deterministic workdir is not deleted; it's emptied on next run
+    elif task.get("cwd") == "tmp":
+        workdir = _deterministic_workdir(task["id"], profile, model, prompt_prefix)
+        _prepare_workdir(workdir)
+        cleanup = False
     else:
         workdir = Path(task.get("cwd", str(Path.home()))).expanduser()
         cleanup = False

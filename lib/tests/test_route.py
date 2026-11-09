@@ -120,3 +120,21 @@ def test_check_skill_cli_flag_is_registered():
     args = ap.parse_args(["--check-skill", "grill-with-docs", "--model", "haiku"])
     assert args.check_skill == "grill-with-docs"
     assert args.model == "haiku"
+
+
+# ── recall intent: model routing ───────────────────────────────────────────
+
+def test_recall_intent_has_none_model():
+    """Recall now stays on the session model, not routed to Haiku."""
+    assert route.INTENTS["recall"]["model"] is None
+
+
+def test_recall_intent_savings_field_reflects_baseline():
+    """Savings description should indicate baseline cost."""
+    assert "baseline" in route.INTENTS["recall"]["savings"].lower()
+
+
+def test_recall_intent_why_field_mentions_session_model():
+    """Why description should explain recall stays on session model."""
+    why = route.INTENTS["recall"]["why"].lower()
+    assert "session model" in why
