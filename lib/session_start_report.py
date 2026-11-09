@@ -34,6 +34,16 @@ HOME = Path.home()
 CLAUDE_DIR = HOME / ".claude"
 HOOK_NAME = "session_start_report"
 
+# Claude Code caps hook stdout at 10,000 characters. Over that it saves the output to a file and puts only the
+# path and the first 2,000 characters in context, and never asks Claude to read the file (hooks reference,
+# "Over the limit"). The report was 12.8-15.4 KB, so the lexicon's tail and the whole handoff never arrived
+# (marvin#1037). BUDGET leaves room for the other commands in the same SessionStart chain (code_sync, the
+# remote-session check), whose stdout counts toward the same cap.
+INLINE_LIMIT = 10_000
+BUDGET = 8_000
+BRIEF_MAX = 3_500  # the morning brief is shown first (marvin#306); this keeps room for the checklist below it
+FULL_REPORT = HOME / ".agents" / "var" / "session-start-report.md"  # everything, for whatever had to be cut
+
 
 def _now() -> datetime:
     return datetime.now(timezone.utc)
@@ -97,7 +107,12 @@ def check_handoff() -> str | None:
     age = _now() - datetime.fromtimestamp(latest.stat().st_mtime, tz=timezone.utc)
     if age > timedelta(days=7):
         return None
-    return f"## Most recent handoff — {latest.name} ({age.days}d old)\n\n{latest.read_text()}"
+    title = next((ln.lstrip("# ").strip() for ln in latest.read_text(errors="replace").splitlines()
+                  if ln.startswith("#")), "")
+    where = str(latest).replace(str(HOME), "~", 1)
+    return (f"## Most recent handoff — {latest.name} ({age.days}d old)\n\n"
+            + (f"{title}. " if title else "")
+            + f"Read `{where}` before resuming that work.")
 
 
 def check_suggestions() -> str | None:
@@ -111,10 +126,18 @@ def check_suggestions() -> str | None:
 
 
 def load_lexicon() -> str | None:
+    """Full lexicon definitions every session. After removing the MCP glossary to its own reference-mcp memory,
+    the full text fits within the session-start report budget even with the `fit()` truncation machinery. Keeps
+    binary-safety guard (errors="replace") and terms-detection check from marvin#1037; the `fit()` system handles
+    any oversized section (marvin#1141 decision)."""
     f = CLAUDE_DIR / "lexicon.md"
     if not f.exists():
         return None
-    return f"## Lexicon\n\n{f.read_text()}"
+    text = f.read_text(errors="replace")
+    # Check that file has actual term entries (marked with **term**)
+    if not re.findall(r"^\s*- \*\*(.+?)\*\*", text, re.MULTILINE):
+        return None
+    return f"## Lexicon\n\n{text}"
 
 
 def check_improvement_queue() -> str | None:
@@ -404,7 +427,93 @@ def main() -> None:
     if handoff:
         sections.append(handoff)
 
-    print("\n\n".join(sections))
+    _safe(lambda: _save_full_report("\n\n".join(sections)))
+    # The brief stays first (marvin#306) but can't take the room the checklist needs (marvin#1037).
+    shown = [_cap(sec, BRIEF_MAX) if sec.startswith("## Morning brief") else sec for sec in sections]
+    print(fit(shown, BUDGET))
+
+
+def _save_full_report(text: str) -> None:
+    FULL_REPORT.parent.mkdir(parents=True, exist_ok=True)
+    tmp = FULL_REPORT.with_name(FULL_REPORT.name + ".tmp")
+    tmp.write_text(text + "\n")
+    tmp.replace(FULL_REPORT)
+
+
+def _cap(text: str, limit: int) -> str:
+    if len(text) <= limit:
+        return text
+    note = f"\n…(cut to fit Claude Code's hook limit; the full report is at `{FULL_REPORT}`)"
+    head = text[: max(0, limit - len(note))]
+    head = head[: head.rfind("\n")] if "\n" in head else head
+    return head + note
+
+
+def fit(sections: list[str], budget: int) -> str:
+    """Join sections in order (most important first) without passing `budget` characters. A section that doesn't
+    fit is cut at a line break and says so; sections after it that don't fit are named in one closing line.
+    The first section (the banner) is always kept."""
+    if not sections:
+        return ""
+    sep = "\n\n"
+    where = str(FULL_REPORT)
+
+    # Reserve room for separators and the closing "Left out" line
+    prefix = "Left out to fit Claude Code's hook limit ("
+    suffix = f"): read `{where}`."
+    closing_line_base = prefix + suffix  # minimum closing line with no titles
+
+    # The first section gets room to breathe, but must leave space for seps and closing line
+    # Minimum reserve: one sep before the closing line + the closing line itself
+    reserve = len(sep) + len(closing_line_base) + 20  # 20 chars for at least some dropped title(s)
+    first_section_limit = max(100, budget - reserve)
+    out: list[str] = [sections[0][:first_section_limit]]
+    used = len(out[0])
+    dropped: list[str] = []
+
+    for sec in sections[1:]:
+        # Check if this section fits with a separator
+        if used + len(sep) + len(sec) <= budget - (len(sep) + len(closing_line_base) + 20):
+            out.append(sec)
+            used += len(sep) + len(sec)
+            continue
+
+        # Section doesn't fit. Try to cut it if it's the first to be dropped
+        title = sec.splitlines()[0].lstrip("# ").strip()[:60]
+        note = f"\n…(cut to fit Claude Code's hook limit; the full report is at `{where}`)"
+        room = budget - used - len(sep) - len(note) - (len(sep) + len(closing_line_base) + 20)
+
+        if not dropped and room >= 400:
+            head = sec[:room]
+            head = head[: head.rfind("\n")] if "\n" in head else head
+            out.append(head + note)
+            used += len(sep) + len(head) + len(note)
+        else:
+            dropped.append(title)
+
+    if dropped:
+        # Build the closing line, ensuring it fits
+        titles_str = ", ".join(dropped)
+        # Calculate how much room we have for titles in the closing line
+        closing_budget = budget - used - len(sep)
+        available_for_titles = closing_budget - len(prefix) - len(suffix)
+
+        if len(titles_str) > available_for_titles and available_for_titles >= 10:
+            # Truncate titles to fit
+            titles_str = titles_str[:max(0, available_for_titles - 3)] + "..."
+        elif available_for_titles < 10:
+            # Not enough room even for "..."; use minimal placeholder
+            titles_str = "..."
+
+        line = prefix + titles_str + suffix
+        # Final safety check: ensure the line itself doesn't exceed budget
+        if len(out) > 0 and used + len(sep) + len(line) > budget:
+            # Remove the entire closing line if it doesn't fit; at least keep the main sections
+            pass
+        else:
+            out.append(line)
+
+    return sep.join(out)
 
 
 if __name__ == "__main__":
