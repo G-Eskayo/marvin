@@ -1,5 +1,7 @@
 # Changelog
 
+- Box builds: frozen marvin-build golden image and VM sweep ([#969](https://github.com/G-Eskayo/marvin/pull/969))
+
 - auto_route_hook.py reads wrong payload key ("user_prompt" vs "prompt") — hook has never fired since 2026-08-13 ([#1118](https://github.com/G-Eskayo/marvin/pull/1118))
 
 - Merge gate: mac-mini-2012 as a parallel, non-blocking extra test runner (never the verdict) ([#942](https://github.com/G-Eskayo/marvin/pull/942))
