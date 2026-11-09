@@ -1,8 +1,8 @@
 # Cutting MARVIN's per-session overhead (#1037): what the cost really is, and the levers left
 
 Status: design, measured 2026-11-04 on the MacBook (Claude Code 2.1.318, `claude-opus-5-5`). Part a (the
-session-start report) is built in its own PR. Parts b and c need Gil's decisions (see the PR's Decisions) before
-anything else is built.
+session-start report) is built in its own PR. Gil answered the decisions on 2026-11-04; §5 records them and what
+was built.
 
 ## 1. Where a session's tokens actually go
 
@@ -129,3 +129,27 @@ Two things to check before applying it:
 - In one probe (1 of 2) the model left out the banner under this wording. Keep the original wording of the
   banner rule ("headless launches (no session report in context) skip this") if it's applied.
 - "Load ~/.claude/lexicon.md every session" is gone. The report now lists every term and points at the file.
+
+## 5. Decisions recorded (Gil, 2026-11-04) and what was built
+
+- **bench-folders: a stable folder per (task, cell), emptied between runs.** Built: `bench.py --workdir stable` is
+  the default (`prepare_workdir`, `finish_workdir`); the folder sits in the same temp area as before, so it's still
+  outside home. The cell's Claude Code auto memory is cleared between runs too, since a stable folder would
+  otherwise carry one run's notes into the next. `--workdir fresh` keeps the Run 31 behaviour, and every run records
+  `workdir_mode`. This moves the baseline against Run 31: compare a re-run with a re-run, not with Run 31.
+- **rerun: not until #1037's task set exists (3 or more tasks per type), then once.** Nothing to build yet. Gil's
+  note asks for semi-regular runs to keep it current; how often is a new decision in the PR.
+- **skill-listing: none chosen; route skills to the chats that need them, from what is used, never slash-only, and
+  drop deprecated tools.** Usage (`lib/tool_usage.py`, 30 days, MacBook): 12 of 29 skills used, 17 never. The
+  per-chat skill sets are #1179 (Load only the skills a chat needs). The dead `self-optimize` command link (its skill
+  folder was gone) was removed; which other deprecated tools go is a new decision in the PR.
+- **claude-md: leave `~/.claude/CLAUDE.md` as it is.** Not applied. §4 stays as a record.
+- **routing: A, route at launch where the prompt is known first.** Built: `route.launch_model(prompt)` (confident
+  embedding match only: keyword fallback, no match, bad output or a classifier failure keep the session model; only
+  `research` changes model) and `bin/marvin-ask "<question>"`, which opens an interactive session on that model.
+  The phone Thread's backend and a prompt-carrying dispatch don't exist yet; when they're built they call
+  `launch_model()`. Typed sessions keep the suggestion.
+- **recall-model: keep recall on the session model.** Built: `route.INTENTS["recall"]["model"]` is `None`, and the
+  first-prompt hook no longer suggests switching for recall. Gil's note asks whether Haiku is still the best pick;
+  the table still pins Haiku 4.5 while Haiku 5.5 is out, so which Haiku research uses is a new decision, and #1087
+  (model usage by kind of work, against quality) is where the ongoing answer lives.
