@@ -1,0 +1,12 @@
+1. Edit `~/.claude/lexicon.md`: remove the ~40-term "## MCP (Model Context Protocol)" block, replace it with a 2-line pointer to the new file; leave Meta, `replacement cost`, `Workshop` untouched.
+2. Create `~/.claude/mcp-glossary.md` holding the removed MCP terms verbatim under their original heading.
+3. Edit `~/.claude/.gitignore`: add `!/mcp-glossary.md` to the allow-list (ADR 0022) so the new file actually syncs; verify with `git check-ignore -v`.
+4. Commit and push those three `~/.claude` changes through the existing self-hosted sync (no GitHub PR exists for this repo — commit directly, let the push hook/cron carry it to the other Mac).
+5. On branch `ticket/1037-session-overhead`: rewrite `load_lexicon()` in `lib/session_start_report.py` to return the lexicon's full text (minus its H1/intro) under one `## Lexicon` heading, instead of names-only + pointer; update its docstring (drop the "Full Memory" shape framing the owner rejected).
+6. Update `docs/session-start-checklist.md` row 3 ("Lexicon") to describe full definitions, not names-plus-pointer, and note the MCP glossary now lives in `~/.claude/mcp-glossary.md`, not loaded at session start.
+7. Update `skills/lexicon/SKILL.md`'s "Adding an Entry"/"Sections" guidance: generic protocol/vendor glossaries go in `~/.claude/mcp-glossary.md`, not `lexicon.md`, so the bloat this ticket is fixing doesn't recur.
+8. Apply the tests-first changes above to `lib/tests/test_session_start_report_budget.py` (items 1–9), run the full file plus the five related suites, confirm green.
+9. Run the real script against live `~/.claude`, record the new live byte count.
+10. Update PR #1124's description: tick the chosen Decision option (already done by the owner's comment), rewrite the "What changes"/"Live size" prose to match the actual full-definitions implementation, drop the now-inaccurate "Term names every session" framing.
+11. Commit the `lib/`/`docs/` changes on `ticket/1037-session-overhead` and push.
+12. Post a reply comment on PR #1124 carrying `<!-- marvin:decisions-addressed -->`: states the chosen option was carried out, names the commit, and notes no screenshots were retaken because nothing visual changed (this is a backend text-generation change).
