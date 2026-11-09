@@ -132,16 +132,28 @@ describe('merge queue runner', () => {
     expect(queue.view(REPO).entries[url(941)].reason).toBe('waits for #936 (it failed: GATE_TESTS_FAILED: test_box_trial failed)')
   })
 
-  it('a refusal (a thrown failure body) also leaves with its message; approving again clears it', async () => {
+  it('a refusal (a thrown failure body) leaves with its message; approving again clears it', async () => {
     const w = world([{ number: 5 }])
-    w.outcome = () => ({ body: { code: 'GATE_INFRA', message: "The Mac mini's disk is nearly full" } })
+    w.outcome = () => ({ body: { code: 'DECISIONS_PENDING', message: '1 Decision is waiting for you' } })
     const { queue, store } = make(w)
     await queue.approve(REPO, url(5))
-    expect(store.forRepo(REPO).failed[url(5)]).toMatchObject({ code: 'GATE_INFRA', reason: "The Mac mini's disk is nearly full" })
+    expect(store.forRepo(REPO).failed[url(5)]).toMatchObject({ code: 'DECISIONS_PENDING', reason: '1 Decision is waiting for you' })
     w.outcome = () => ({ result: { merged: true } })
     await queue.approve(REPO, url(5))
     expect(w.merged).toEqual([5])
     expect(store.forRepo(REPO).failed[url(5)]).toBeUndefined()
+  })
+
+  it('a disk-full gate (GATE_INFRA) is held, not dropped (#1097); approving again still forces a try', async () => {
+    const w = world([{ number: 7 }])
+    w.outcome = () => ({ body: { code: 'GATE_INFRA', message: "The Mac mini's disk is nearly full" } })
+    const { queue, store } = make(w)
+    await queue.approve(REPO, url(7))
+    expect(store.forRepo(REPO).failed[url(7)]).toBeUndefined()
+    expect(store.forRepo(REPO).items[0].hold).toMatchObject({ code: 'GATE_INFRA', until: 'later', reason: "The Mac mini's disk is nearly full" })
+    w.outcome = () => ({ result: { merged: true } })
+    await queue.approve(REPO, url(7))
+    expect(w.merged).toEqual([7])
   })
 
   it('a run that throws is a failure, not a crash of the runner', async () => {
@@ -300,5 +312,118 @@ describe('answered-but-unbuilt facts', () => {
     fail = true
     await c.refresh()
     expect([...c.get()]).toEqual(['a'])
+  })
+})
+
+// marvin#1097: a temporary "not yet" keeps the PR queued, held until what it waits on changes. Before, every refusal
+// but a conflict removed the PR and only an Approve brought it back (four stalls on 2026-11-03/04).
+describe('temporary refusals hold, they never drop the PR', () => {
+  const refuse = (code, message = code) => ({ body: { code, message } })
+  const stored = () => createQueueStore(file).forRepo(REPO)
+
+  it('outcomeFor sorts temporary refusals from real failures', () => {
+    expect(outcomeFor(refuse('CI_PENDING'))).toMatchObject({ kind: 'hold', until: 'checks' })
+    expect(outcomeFor(refuse('MAIN_RED'))).toMatchObject({ kind: 'hold', until: 'main' })
+    for (const c of ['NO_UI_EVIDENCE', 'IMAGES_STALE', 'IMAGES_UNPINNED']) expect(outcomeFor(refuse(c))).toMatchObject({ kind: 'hold', until: 'head' })
+    expect(outcomeFor(refuse('GATE_INFRA'))).toMatchObject({ kind: 'hold', until: 'later' })
+    expect(outcomeFor(refuse('MEMORY_PRESSURE')).kind).toBe('failed')   // the memory queue resumes it (#940)
+    for (const c of ['GATE_TESTS_FAILED', 'CI_FAILED', 'SENT_BACK', 'DECISIONS_PENDING', 'WRONG_BASE', 'PR_DRAFT']) expect(outcomeFor(refuse(c)).kind).toBe('failed')
+    expect(outcomeFor({ result: { merged: false, code: 'GATE_TESTS_FAILED', reason: 'x' } }).kind).toBe('failed')
+  })
+
+  it('checks still running: the PR stays queued and merges by itself once they change, with no second Approve', async () => {
+    const w = world([{ number: 1093 }])
+    w.outcome = (n) => (w.prs.get(n).statusCheckRollup === green ? refuse('CI_PENDING', "GitHub's checks are still running: Secret scan") : { result: { merged: true } })
+    const { queue } = make(w)
+    await queue.approve(REPO, url(1093))
+    expect(w.merged).toEqual([])
+    expect(stored().items.map((i) => i.number)).toEqual([1093])
+    expect(stored().failed[url(1093)]).toBeUndefined()
+    expect(stored().items[0].hold).toMatchObject({ code: 'CI_PENDING', until: 'checks' })
+    await queue.kick(REPO)                                   // nothing changed: still held, not retried
+    expect(w.runs.length).toBe(1)
+    w.prs.get(1093).statusCheckRollup = [{ __typename: 'CheckRun', name: 'Secret scan', status: 'COMPLETED', conclusion: 'SUCCESS' }]
+    await queue.kick(REPO)                                   // the check watch's kick after the checks finished
+    expect(w.merged).toEqual([1093])
+  })
+
+  it('a held PR is not retried in a loop within one pass', async () => {
+    const w = world([{ number: 1 }])
+    w.outcome = () => refuse('CI_PENDING')
+    const { queue } = make(w)
+    await queue.approve(REPO, url(1))
+    expect(w.runs.length).toBe(1)
+  })
+
+  it('stale images: held until a new commit, then retried', async () => {
+    const w = world([{ number: 2 }])
+    w.outcome = (n) => (w.prs.get(n).headRefOid === 'sha2' ? refuse('IMAGES_STALE') : { result: { merged: true } })
+    const { queue } = make(w)
+    await queue.approve(REPO, url(2))
+    await queue.kick(REPO)
+    expect(w.runs.length).toBe(1)
+    w.prs.get(2).headRefOid = 'sha2-new'
+    await queue.kick(REPO)
+    expect(w.merged).toEqual([2])
+  })
+
+  it('main red: held until main moves', async () => {
+    let mainSha = 'main1'
+    const w = world([{ number: 3 }])
+    w.load = async () => ({ openPrs: enrichForOrder([...w.prs.values()].map((p) => ({ ...p })), { repo: REPO }), mainState: mainStateFrom({ headSha: mainSha }) })
+    w.outcome = () => (mainSha === 'main1' ? refuse('MAIN_RED') : { result: { merged: true } })
+    const { queue } = make(w)
+    await queue.approve(REPO, url(3))
+    await queue.kick(REPO)
+    expect(w.runs.length).toBe(1)
+    mainSha = 'main2'
+    await queue.kick(REPO)
+    expect(w.merged).toEqual([3])
+  })
+
+  it('infrastructure trouble: tried again on a later trigger, not before its back-off', async () => {
+    let now = 1000
+    const w = world([{ number: 4 }])
+    w.outcome = () => (now < 1000 + 300_000 ? refuse('GATE_INFRA') : { result: { merged: true } })
+    const { queue } = make(w, { clock: () => now })
+    await queue.approve(REPO, url(4))
+    await queue.kick(REPO)
+    expect(w.runs.length).toBe(1)
+    now += 300_001
+    await queue.kick(REPO)
+    expect(w.merged).toEqual([4])
+  })
+
+  it('a real failure still leaves the queue with its reason', async () => {
+    const w = world([{ number: 5 }])
+    w.outcome = () => ({ result: { merged: false, code: 'GATE_TESTS_FAILED', reason: 'Failing tests (1)' } })
+    const { queue } = make(w)
+    await queue.approve(REPO, url(5))
+    expect(stored().items).toEqual([])
+    expect(stored().failed[url(5)].code).toBe('GATE_TESTS_FAILED')
+  })
+
+  it("a held PR's line says what it waits for, and an Approve forces a fresh try", async () => {
+    const w = world([{ number: 6 }])
+    w.outcome = () => refuse('CI_PENDING', "GitHub's checks are still running: Secret scan")
+    const { queue } = make(w)
+    await queue.approve(REPO, url(6))
+    await queue.kick(REPO)
+    expect(queue.view(REPO).entries[url(6)]).toMatchObject({ state: 'waiting', queued: true })
+    expect(queue.view(REPO).entries[url(6)].reason).toMatch(/checks/)
+    await queue.approve(REPO, url(6))
+    expect(w.runs.length).toBe(2)
+  })
+
+  it('stacked on a held PR: the child waits for it, and both merge once it clears', async () => {
+    const w = world([{ number: 10 }, { number: 11, baseRefName: 'b10' }])
+    w.outcome = (n) => (n === 10 && w.prs.get(10).statusCheckRollup === green ? refuse('CI_PENDING') : { result: { merged: true } })
+    const { queue } = make(w)
+    await queue.approve(REPO, url(11))
+    await queue.approve(REPO, url(10))
+    expect(w.merged).toEqual([])
+    w.prs.get(10).statusCheckRollup = [{ __typename: 'CheckRun', name: 'x', status: 'COMPLETED', conclusion: 'SUCCESS' }]
+    await queue.kick(REPO)
+    expect(w.merged).toEqual([10, 11])
   })
 })

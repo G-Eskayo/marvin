@@ -20,7 +20,8 @@ def main() -> int:
     # Check if this machine should build (primary always builds; standby only after deadline)
     today = date.today().isoformat()
     digest_path = Path.home() / ".claude" / "research-digest" / f"{today}.md"
-    decision = brief_fallback.should_run(local_path=digest_path, usual_hour=9, usual_minute=0)
+    uh, um = brief_fallback.usual_time("research-colony")  # the primary plist's own schedule
+    decision = brief_fallback.should_run(local_path=digest_path, usual_hour=uh, usual_minute=um)
     if not decision.should_build:
         print(f"[colony] {decision.reason} — skipping", file=sys.stderr)
         return 0

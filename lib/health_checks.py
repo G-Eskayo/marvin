@@ -564,7 +564,30 @@ def check_main_health(path: Path | None = None, now: datetime | None = None) -> 
         return _result(cid, label, "red", f"main @ {d.get('sha', '?')} is failing: {names}. Merges are refused until it is fixed", value=len(d.get("failed", [])))
     if when is None or (now - when).total_seconds() > MAIN_HEALTH_STALE_HOURS * 3600:
         return _result(cid, label, "yellow", f"last check ({d.get('sha', '?')}) is more than a day old")
+    outside = d.get("outside") or []
+    if outside:     # marvin#1047: main's code passes; state outside it (another repo, a local service) has moved
+        from collections import Counter
+        by_what = Counter(o.get("what", "?") for o in outside)
+        named = "; ".join(f"{w} ({n})" for w, n in by_what.items())
+        return _result(cid, label, "yellow", f"main @ {d.get('sha', '?')}: its code passes, but {len(outside)} check(s) "
+                       f"of state outside it fail: {named}. Merges are not held for these", value=len(outside))
     return _result(cid, label, "green", f"main @ {d.get('sha', '?')}: {d.get('summary', 'passing')}")
+
+
+def check_site_published(gh=None, git=None) -> dict | None:
+    """Is main's latest site change live on GitHub Pages (marvin#1122)? Read from the Pages deployments, so a publish
+    that never ran shows too. Red never holds a merge (the gate reads main-red tickets and main-health.json only).
+    Nothing to report for an instance with no site."""
+    import site_deploy
+    if not site_deploy.SITE_CONFIG.exists() or not site_deploy.WORKFLOW.exists():
+        return None
+    cid, label = "site:published", "The site is published"
+    repo = json.loads(site_deploy.SITE_CONFIG.read_text()).get("repo", "")
+    kw = {k: v for k, v in (("gh", gh), ("git", git)) if v is not None}
+    r = site_deploy.health(repo, **kw)
+    if r["severity"] == UNKNOWN:
+        return _unknown(cid, label, r["detail"])
+    return _result(cid, label, r["severity"], r["detail"])
 
 
 def check_memory_lint() -> dict:
@@ -572,6 +595,15 @@ def check_memory_lint() -> dict:
     links, index drift or bad frontmatter. Reports only; memory_lint never edits a note."""
     import memory_lint
     return memory_lint.check()
+
+
+def check_profile_parity() -> dict | None:
+    """The owner's public profile facts (instance config/public-profile.json) match every surface: the live site, the
+    resume PDF, the master resume, GitHub and the product sites (marvin#1038). Amber names the surface and field that
+    drifted; a surface that couldn't be read is never a pass. Nothing to report when the instance keeps no facts file.
+    The surfaces are read at most every few hours (profile_parity.REFRESH_HOURS); between reads the last report shows."""
+    import profile_parity
+    return profile_parity.check()
 
 
 SEAL_BETA_STATUS_PATH = Path.home() / ".claude" / "seal-beta" / "status.json"
@@ -1749,6 +1781,8 @@ def default_checks(reach: dict[str, str] | None = None, reach_results: list[dict
         ("github:gate", "GitHub calls go through the gate", check_gh_gate, CHECK_BUDGET_S),
         ("main:green", "The main branch passes its tests", check_main_health, CHECK_BUDGET_S),
         ("memory:lint", "Memory links and index are sound", check_memory_lint, CHECK_BUDGET_S),
+        ("profile:parity", "Public profile matches everywhere", check_profile_parity, CHECK_BUDGET_S),
+        ("site:published", "The site is published", check_site_published, CHECK_BUDGET_S),
         ("seal:beta-ingest", "Seal Speak beta reports are picked up", check_seal_beta_ingest, CHECK_BUDGET_S),
         ("brief:builder", "Morning brief builder", check_brief_builder, CHECK_BUDGET_S),
         ("merge:service", "Merge service reachable", check_merge_service, CROSS_MACHINE_BUDGET_S),
@@ -1866,33 +1900,59 @@ def react_to_low_disk(checks: list[dict], run=None, stamp_path: Path | None = No
     return out
 
 
+def react_to_accounts(sweep=None) -> str:
+    """marvin#974: on this sweep's schedule (no timer of its own), check every account MARVIN depends on, on every
+    machine, write ~/.claude/logs/accounts-status.json and alert once per state change (lib/accounts.py). A one-line
+    summary for the run log. Never raises: an account check failing must not break the health sweep."""
+    try:
+        if sweep is None:
+            import accounts
+            sweep = accounts.sweep_and_alert
+        rows = (sweep() or {}).get("accounts", [])
+    except Exception as exc:  # noqa: BLE001
+        return f"could not check accounts: {type(exc).__name__}: {str(exc)[:160]}"
+    if not rows:
+        return "skipped (a pull-only node; the Mini checks this machine's accounts)"
+    counts: dict[str, int] = {}
+    for r in rows:
+        counts[r.get("state", "?")] = counts.get(r.get("state", "?"), 0) + 1
+    return ", ".join(f"{n} {k}" for k, n in sorted(counts.items()))
+
+
 import job_events  # noqa: E402  (run log shown in the dashboard's Health tab)
+
+HEALTH_ALERT_STATE = HOME / ".claude" / "logs" / "health-alerted.json"
+ALERT_BATCH_OVER = 3  # more than this many changes in one sweep go out as one summary banner
+
+
+def alert_red_checks(checks: list[dict], path: Path | None = None, fire=None, today=None) -> str:
+    """One alert path (mr_notification.alert_on_change) over every check: turned red, still red (daily), cleared."""
+    import mr_notification
+    items = [{"key": c["id"], "state": c.get("severity"), "title": f"MARVIN: {c.get('label') or c['id']} is red",
+              "message": str(c.get("detail") or "")[:300]}
+             for c in checks if isinstance(c, dict) and isinstance(c.get("id"), str)]
+    due = mr_notification.alert_on_change(items, path or HEALTH_ALERT_STATE, bad=("red",), fire=fire, today=today,
+                                          batch_over=ALERT_BATCH_OVER)
+    if not due:
+        return "nothing changed"
+    counts: dict[str, int] = {}
+    for d in due:
+        counts[d["why"]] = counts.get(d["why"], 0) + 1
+    return ", ".join(f"{n} {why}" for why, n in counts.items())
 
 
 @job_events.reported("health-check", "Health check sweep")
 def _cli() -> None:
     out = write_status()
 
-    # Notify on red disk:headroom (once per device per day)
-    for result in out.get("checks", []):
-        if result.get("id", "").startswith("disk:headroom") and result.get("severity") == "red":
-            try:
-                import disk_forecast_notify as dfn  # noqa: E402
-                device = result["id"].split("@")[1] if "@" in result["id"] else machine_profile.registry_id()
-                # Extract days forecast from detail (rough parse: "N days forecast...")
-                detail = result.get("detail", "")
-                days = 0.0
-                if "forecast" in detail:
-                    import re
-                    match = re.search(r"(\d+\.?\d*)d", detail)
-                    if match:
-                        days = float(match.group(1))
-                dfn.notify_red_headroom(device, days, detail)
-            except Exception:
-                pass
+    # Tell the owner when a check turns red, once a day while it stays red, and when it clears (#1123, ADR 0083).
+    # It replaced the disk forecast's own three-channel notifier: disk:headroom is one of these checks.
+    job_events.step("Alerts", alert_red_checks(out.get("checks", [])))
 
     for aid in react_to_low_disk(out.get("checks", [])):
         job_events.step("Disk first aid", f"{aid['device']}: {'ok' if aid['ok'] else 'failed'}, {aid['detail']}")
+
+    job_events.step("Accounts", react_to_accounts())
 
     if "--json" in sys.argv:
         print(json.dumps(out, indent=2))

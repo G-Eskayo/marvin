@@ -1,0 +1,72 @@
+---
+// The map, full screen. It embeds the privacy-checked public snapshot (brain-map/export_snapshot.py, ADR 0050), never
+// the raw generator output. The old g-eskayo.github.io/marvin URL now redirects to this site (GitHub Pages forwards a project page to its custom domain).
+import Marketing from '~/layouts/Marketing.astro';
+import { SITE } from '~/lib/site';
+---
+
+<Marketing title="The map" description={`A 3D map of ${SITE.name}, drawn from the real system.`} bare>
+  <div class="m-mapbar">
+    <a href="/" class="m-back">← {SITE.name}</a>
+    <span class="m-mapbar-t m-mono">Live map · a privacy-checked snapshot of the real system</span>
+    <span class="m-mapbar-links">
+      <a href="/docs/features/map/">How it's made</a>
+      <a href={SITE.mapUrl}>Open on its own</a>
+    </span>
+  </div>
+  <iframe class="m-mapframe" src={SITE.mapUrl} title={`3D map of ${SITE.name}`} allow="fullscreen"></iframe>
+</Marketing>
+
+<style>
+  :global(body.m-bare) {
+    height: 100dvh;
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
+    background: #05040a;
+    color: #ece6d6;
+  }
+  :global(body.m-bare main) {
+    flex: 1;
+    display: flex;
+    flex-direction: column;
+    min-height: 0;
+  }
+  .m-mapbar {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    justify-content: space-between;
+    gap: 0.4rem 1rem;
+    padding: 0.5rem 1rem;
+    border-bottom: 1px solid rgba(240, 179, 42, 0.25);
+    font-size: 0.9rem;
+  }
+  .m-mapbar a {
+    color: #f0b32a;
+    min-height: 44px;
+    display: inline-flex;
+    align-items: center;
+  }
+  .m-mapbar-t {
+    color: #54ff8a;
+    font-size: 0.78rem;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+  }
+  .m-mapbar-links {
+    display: flex;
+    gap: 1.2rem;
+  }
+  .m-mapframe {
+    flex: 1;
+    width: 100%;
+    border: 0;
+    min-height: 0;
+  }
+  @media (max-width: 40rem) {
+    .m-mapbar-t {
+      display: none;
+    }
+  }
+</style>

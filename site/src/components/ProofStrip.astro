@@ -1,0 +1,71 @@
+---
+// The numbers, each with what it counts and when. Source: src/data/facts.json (regenerate with `npm run facts`).
+import { FACTS, fmtDate } from '~/lib/site';
+const ids = ['pipeline_prs', 'tests', 'adrs', 'skills', 'machines', 'merged_prs'];
+const items = ids.map((id) => FACTS.items.find((f) => f.id === id)!).filter(Boolean);
+---
+
+<div class="m-proof">
+  <ul>
+    {
+      items.map((f) => (
+        <li>
+          <span class="m-proof-v">{f.value}</span>
+          <span class="m-proof-l">{f.label}</span>
+          <span class="m-proof-d">{f.detail}</span>
+        </li>
+      ))
+    }
+  </ul>
+  <p class="m-source">
+    Counted on {fmtDate(FACTS.counted_on)} from the repos and the machines that run it.{' '}
+    <a href="/why/#how-we-counted">How each number was counted</a>.
+  </p>
+</div>
+
+<style>
+  .m-proof ul {
+    list-style: none;
+    padding: 0;
+    margin: 1.5rem 0 1rem;
+    display: grid;
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+    border-top: 1px solid var(--m-line);
+    border-left: 1px solid var(--m-line);
+  }
+  @media (max-width: 52rem) {
+    .m-proof ul {
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+    }
+  }
+  @media (max-width: 26rem) {
+    .m-proof ul {
+      grid-template-columns: 1fr;
+    }
+  }
+  .m-proof li {
+    padding: 1.1rem 1rem 1.2rem;
+    border-right: 1px solid var(--m-line);
+    border-bottom: 1px solid var(--m-line);
+    display: grid;
+    gap: 0.2rem;
+    align-content: start;
+  }
+  .m-proof-v {
+    font-family: var(--m-font-mono);
+    font-size: clamp(2rem, 4vw, 2.6rem);
+    line-height: 1.1;
+    color: var(--m-green);
+    text-shadow: var(--m-glow);
+  }
+  .m-proof-l {
+    font-family: var(--m-font-display);
+    font-weight: 600;
+    font-size: 1.1rem;
+    letter-spacing: 0.02em;
+  }
+  .m-proof-d {
+    font-size: 0.85rem;
+    color: var(--m-ink-dim);
+  }
+</style>

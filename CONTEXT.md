@@ -161,6 +161,12 @@ one job, starting with the history store.
 - **Thread**: the single continuous MARVIN conversation on the phone, shared by Chat and Voice
   (a spoken exchange shows up as text in the same Thread). Proactive messages from MARVIN land
   here too. There is one Thread, not a list of conversations.
+- **Chat tab**: a person's interactive MARVIN session running in a WezTerm pane on a Mac (marvin#1060, PRD #1058).
+  Recorded by its SessionStart hook in the live session list, keyed by (Mac, WezTerm GUI socket, pane) and checked
+  against the pane's tty; the pane owns the record, so /clear or a resume only updates its Claude session id. It is
+  alive while WezTerm still lists the pane with that tty and its claude process runs; nothing ages it out. Helper
+  tabs and one-off `claude -p` runs are not chat tabs. _Avoid_: calling it a "Chat" (the phone's typed surface) or a
+  "Session" (the phone backend's rotations, or the Claude Code session id it carries).
 - **Session** (in the MARVIN Mobile sense): one underlying Claude Code session behind a stretch of
   the Thread. The backend rotates to a fresh Session on topic shift or length, carrying a short
   summary forward; Gil sees one Thread, never the rotations. Every Session is a normal Claude
@@ -492,6 +498,13 @@ ever been closed unmerged. Gil approves almost everything; the wait is the cost.
   or run it on the API credit; at the hard line a big task needs Gil's yes. Nothing is cut off mid-task.
 - **Pace** (of a budget that expires, like the API credit or the weekly plan limit): projected spend to the reset
   date. Under pace, queued work is pulled forward; over pace, it is slowed, so the budget lands near its limit.
+- **Plan reading**: one row of the Claude plan's own meters (5-hour and weekly used %, and when each resets), as
+  Claude Code reports them, in `~/.claude/logs/plan-usage.jsonl` (`lib/plan_usage.py`). A row is written only when a
+  meter changes. No reading means "not enough data", never 0%.
+- **Unused window** (of the 5-hour limit): five whole hours this week when no 5-hour window was running, so a
+  window's worth of the plan could have been used and wasn't. A **nearly unused** window ran but peaked under 10%.
+  When 5-hour windows hit the limit while the week is projected to end under 100%, the 5-hour limit is the
+  **binding limit**: it is costing weekly allowance.
 - **Plan first** (billing, Gil 2026-10-30): every build runs on the Claude plan while it has room, however many run
   at once. A run that hits the plan's usage limit retries at once on the API credit, and that Mac stays on the credit
   for an hour before trying the plan again (`dispatch_concurrency.plan_limited`). A spent credit falls back to waiting
@@ -698,6 +711,21 @@ ever been closed unmerged. Gil approves almost everything; the wait is the cost.
 - **Health check `memory:lint`**: red on conflict markers; yellow on broken links, index drift or bad frontmatter.
   Notes with no inbound link are counted but stay green. Cost: O(notes + links), about 0.05 s for 164 notes.
 - `node_type` and `modified` are optional fields written by tooling, not required.
+
+## Profile parity (built 2026-11-02, marvin#1038)
+
+- **Public profile facts**: the owner's decided public facts (headline, current title, counts, names that never
+  appear, private values that never go public), each with its source and decision date. They live in one file in the
+  private instance, `config/public-profile.json`, never in the engine.
+- **Surface**: one place those facts show up: live web pages, a PDF, a local file (the master resume), a GitHub
+  profile, or a git branch of a site's source. A surface that can't be read is **couldn't check**, never a pass.
+- **Parity rule**: a test of a surface's text against the facts: `forbid`, `count` (exact or at least), `title_near`
+  (the title nearest an employer must be the real one) and `require`. An unconfirmed fact makes a **question** for the
+  owner, not a plain mismatch. A broken rule is itself a finding.
+- `lib/profile_parity.py` runs every rule on every surface and reports per surface and field; private matches are
+  redacted in every output. **Health check `profile:parity`**: amber naming the surface and field on drift, unknown
+  when nothing could be read, nothing at all when the instance keeps no facts file. Surfaces are re-read at most every
+  6 hours, or as soon as the facts file changes.
 
 ## Memory graph (built 2026-10-26, marvin#696)
 
@@ -1170,7 +1198,9 @@ untouched (it is the "legacy profile"); only repos with a profile file use the p
   (cloning killer-sudoku from GitHub took 0.7s; the same repo from the iCloud-synced `~/Documents` copy hung for
   minutes, and a person's working copy should not be the pipeline's base anyway); `setup` steps (run once per
   fresh worktree, skipped when their `creates` path exists; a failed step is an error, a missing tool is
-  EnvMissing); a `vitest` parser; `executor.denied_tools` (finance-os forbids reading
+  EnvMissing; a gitignored model a build needs comes from `lib/model_cache.py link`: one copy per machine under
+  `~/.agents-pipeline-cache/models/<project>/<name>/<key>`, keyed by a hash of the fetch script and manifest,
+  fetched once under a lock, checked by file sizes on every run and linked into the worktree, #1114); a `vitest` parser; `executor.denied_tools` (finance-os forbids reading
   `~/Library/Application Support/FinanceOS` and `~/Documents/Money-and-Admin`). killer-sudoku: `swift test` at the
   repo root (102 tests, Swift Testing, 13s). finance-os: SETUP.md's two-step install (`npm install
   --ignore-scripts`, then Electron's binary, then `@electron/rebuild -f -w better-sqlite3`, because Node 25/26
@@ -1572,7 +1602,7 @@ Mac has no push channel. Gil applies the hooks on each Mac with `marvin_hooks.py
 
 ## clarity-captions app-build check is now required (2026-10-05)
 
-The profile's `spike-app` tier (xcodegen + `xcodebuild` for the iOS Simulator SDK, signing off) is enabled and **required**, so both the pipeline's verification and the dashboard merge gate fail a PR that breaks the app build, not just CaptionCore's `swift test`. Selftest on main: build ok, 85 tests, about 3.5 min. Needs `xcodegen` (Homebrew, installed on the mini) and the 234 MB Sortformer model, which the `diarizer-model` setup step links into each worktree from `~/.agents-pipeline-cache/clarity-captions/` (fetched once, self-healing if missing). Build output goes to a shared `DerivedData` in that cache dir. Only `mac-mini-1` has these; a machine without them releases the claim without a strike.
+The profile's `spike-app` tier (xcodegen + `xcodebuild` for the iOS Simulator SDK, signing off) is enabled and **required**, so both the pipeline's verification and the dashboard merge gate fail a PR that breaks the app build, not just CaptionCore's `swift test`. Selftest on main: build ok, 85 tests, about 3.5 min. Needs `xcodegen` (Homebrew, installed on the mini) and the 234 MB Sortformer model, which the `diarizer-model` setup step links into each worktree, and the 484 MB Parakeet Ultra model (`asr-model`), both through `lib/model_cache.py` (fetched once per machine, refetched if the cached copy is incomplete; #1114). Build output goes to a shared `DerivedData` in that cache dir. Only `mac-mini-1` has these; a machine without them releases the claim without a strike.
 
 ## Base-branch rule (2026-10-05, from finance-os #8)
 
@@ -2016,3 +2046,29 @@ another way.
   that merged and flags tests run on another OS.
 _Avoid_: "failed" for an approval that waits for memory; "idle" meaning the owner is away (here it means the machine
 runs no merge or test of its own and its memory is normal).
+
+## Cold store (built 2026-11-03, marvin#1081)
+
+- **Cold store**: big folders nobody is using, kept on the **cold host** (`config/cold_store.json`, today
+  mac-mini-2012) instead of a Mac. This is placement by role (storage plan section 5), not striping. `lib/cold_store.py`,
+  `bin/marvin-cold`.
+- **Parked**: a folder whose bytes live in the cold store. Its old path holds a **marker** instead (`PARKED.txt` for
+  people, `.marvin-cold.json` for code). The parking Mac keeps the trusted manifest (`var/cold-store/<name>.json`).
+  Bytes coming back from the 2012, which runs untrusted code, are checked against that manifest. Secret and state
+  folders are never parked.
+- **Ensure**: what a caller runs before it reads a folder that may be parked (`marvin-cold ensure PATH [--part SUB]`).
+  When the data is here it returns at once with no network. When the folder is parked it fetches the data back
+  (locked, space-checked, verified) and returns. A path inside a parked folder fetches only that part. This is the
+  trigger: nothing polls.
+
+## Loops (ADR 0083, marvin#1123, 2026-11-04)
+
+- **Loop**: a feedback cycle that works only when all four steps run: **notice → act → verify → remember**. Each one
+  is an entry in `config/loops.json`, read only by `lib/loops.py`.
+- **Loop status**: derived, never stored. **Closed**: a full cycle within its limit. **Stalled**: no full cycle within
+  `cycle_days`. **Broken**: its signal or its verify is red, or its job failed 3 runs in a row. **Not wired**: its
+  action doesn't run or doesn't report yet.
+- **Full cycle**: a passed run of the loop's action while its verify signal isn't red.
+- **Alert path**: `mr_notification._fire`, the one way MARVIN tells Gil (desktop, dashboard, and the phone once #958
+  lands). An alert fires on a change to bad, then once a day while it stays bad, and once when it clears.
+- **Inbox**: one JSON file per item per pile (`lib/inbox.py`), replacing the separate markdown piles one at a time.

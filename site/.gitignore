@@ -1,0 +1,7 @@
+node_modules/
+dist/
+.astro/
+# Copied from the engine's docs/diagrams at build time (scripts/copy-diagrams.mjs), so they never drift.
+public/diagrams/
+# Generated from ../CHANGELOG.md (scripts/changelog.mjs).
+src/data/changelog.json

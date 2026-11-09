@@ -1,0 +1,4 @@
+#!/bin/sh
+# site-demo: build and serve the private website demo on this machine's Tailscale address (marvin#1007).
+# See lib/site_demo.py. Typical use, after pushing the site branch: `site-demo build` on the machine that serves it.
+exec "$HOME/.agents/venv/bin/python" "$(dirname "$(readlink -f "$0")")/../lib/site_demo.py" "$@"

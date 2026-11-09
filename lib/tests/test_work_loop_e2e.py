@@ -42,8 +42,9 @@ def github(tmp_path):
 
 
 def _gh(tmp_path, realbin, *args, env_extra=None):
+    # MARVIN_PULL_ONLY=0: about a full node, as every Mac is; an unregistered Linux machine (CI, #1117) is pull-only.
     env = {"PATH": f"{GATE.parent}:{realbin}:/usr/bin:/bin", "HOME": str(tmp_path), "GH_GATE_NO_BUDGET": "1",
-           "MARVIN_INSTANCE_DIR": str(tmp_path / "instance"), **(env_extra or {})}
+           "MARVIN_INSTANCE_DIR": str(tmp_path / "instance"), "MARVIN_PULL_ONLY": "0", **(env_extra or {})}
     return subprocess.run([str(GATE), *args], capture_output=True, text=True, env=env, timeout=60)
 
 

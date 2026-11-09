@@ -17,6 +17,7 @@ GIT = ["git", "-c", "user.email=t@t", "-c", "user.name=t", "-c", "commit.gpgsign
 @pytest.fixture(autouse=True)
 def log(tmp_path, monkeypatch):
     monkeypatch.setattr(br, "LOG", tmp_path / "logs" / "box-runs.jsonl")
+    monkeypatch.setattr(br, "PROPOSALS_ROOT", tmp_path / "proposals")   # no test ever writes a real Proposal
     return tmp_path / "logs" / "box-runs.jsonl"
 
 
@@ -309,3 +310,85 @@ def test_verdict_cli_reads_failures_from_stdin(log, monkeypatch, capsys):
     monkeypatch.setattr(sys, "stdin", io.StringIO("FAILED a.py::t - x\n"))
     br.main(["verdict", "--sha", "s6", "--outcome", "failed"])
     assert lines(log)[0]["failing"] == ["a.py::t"]
+
+
+# ── trust: 20 agreeing gates in a row propose a second required runner (owner, PR #942 box-trust) ─────────────
+
+@pytest.fixture
+def proposals(tmp_path, monkeypatch):
+    root = tmp_path / "proposals"
+    monkeypatch.setattr(br, "PROPOSALS_ROOT", root)
+    return root
+
+
+def gates(n, start=0, outcome="passed", box=None):
+    for i in range(start, start + n):
+        sha = f"{i:040x}"
+        br.verdict(sha, outcome)
+        box_line(sha, box or outcome)
+
+
+def proposed(root):
+    return sorted(json.loads(p.read_text())["title"] for p in root.glob("*.json")) if root.exists() else []
+
+
+def test_nineteen_in_a_row_is_not_enough_and_the_twentieth_proposes_once(proposals):
+    gates(19)
+    assert proposed(proposals) == []
+    gates(1, start=19)
+    (title,) = proposed(proposals)
+    assert "second required test runner" in title
+
+
+def test_a_longer_streak_still_proposes_only_once(proposals):
+    gates(45)
+    assert len(proposed(proposals)) == 1
+
+
+def test_a_disagreement_starts_the_count_again(proposals):
+    gates(15)
+    br.verdict(f"{99:040x}", "passed")
+    box_line(f"{99:040x}", "failed", ["a.py::t"])            # the box saw a failure the Mac didn't
+    gates(19, start=100)
+    assert proposed(proposals) == []
+    gates(1, start=119)
+    assert len(proposed(proposals)) == 1
+
+
+@pytest.mark.parametrize("outcome", ["timeout", "offline", "error"])
+def test_a_box_with_no_result_neither_counts_nor_breaks_the_streak(proposals, outcome):
+    gates(10)
+    gates(3, start=50, box=outcome)
+    gates(9, start=60)
+    assert proposed(proposals) == []                          # 19 real agreements so far
+    gates(1, start=69)
+    assert len(proposed(proposals)) == 1
+
+
+def test_a_new_streak_after_a_disagreement_can_propose_again(proposals):
+    gates(20)
+    br.verdict(f"{500:040x}", "failed", "FAILED a.py::t\n")
+    box_line(f"{500:040x}", "passed")
+    gates(20, start=600)
+    assert len(proposed(proposals)) == 2
+
+
+def test_agreeing_reds_count_too(proposals):
+    for i in range(20):
+        sha = f"{i:040x}"
+        br.verdict(sha, "failed", "FAILED a.py::t\n")
+        box_line(sha, "failed", ["a.py::t"])
+    assert len(proposed(proposals)) == 1
+
+
+def test_a_broken_proposals_store_never_reaches_the_gate(tmp_path, monkeypatch):
+    blocker = tmp_path / "not-a-dir"
+    blocker.write_text("x")                                   # a file where the folder should be
+    monkeypatch.setattr(br, "PROPOSALS_ROOT", blocker / "proposals")
+    gates(20)                                                 # must not raise
+    assert any(l["event"] == "trust" and l.get("error") for l in lines(br.LOG))
+
+
+def test_show_says_how_far_the_streak_has_got(proposals):
+    gates(7)
+    assert "7 of 20" in br.show()

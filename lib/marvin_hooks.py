@@ -84,6 +84,17 @@ HOOKS: list[Hook] = [
     Hook("UserPromptSubmit", (*_py("lib/session_work.py"), "hook", "prompt"), _ALL),
     Hook("PostToolUse", (*_py("lib/session_work.py"), "hook", "post"), _ALL, _EDITS),
     Hook("PreToolUse", (*_py("lib/session_work.py"), "hook", "pre"), _INTERACTIVE, _EDITS),
+    # A person's chat in a WezTerm tab records which tab it is (marvin#1060, PRD #1058), so the dashboard and the
+    # other slices can name, find and focus it. Silent, capped at 5 s, and it never fails a session.
+    Hook("SessionStart", (*_py("lib/session_work.py"), "hook", "start"), _INTERACTIVE, None, 5),
+    # ...and keeps its state (marvin#1061): working, waiting on you (a permission or a question), your turn, done.
+    *(Hook(event, (*_py("lib/session_work.py"), "hook", step), _INTERACTIVE, matcher, 5) for event, matcher, step in (
+        ("Stop", None, "stop"),
+        ("Notification", None, "notify"),
+        ("PreToolUse", "AskUserQuestion", "ask"),
+        ("PostToolUse", None, "tool"),
+        ("SessionEnd", None, "end"),
+    )),
     # Helpers a chat starts with the Agent tool get a run log the Activity tab shows (#612). A person's chats only:
     # the pipeline's own subagents are already its run. Capped at 5 s here and 3 s inside the script.
     *(Hook(event, (*_py("lib/chat_helpers.py"), "hook", step), _INTERACTIVE, matcher, 5) for event, matcher, step in (
@@ -157,9 +168,16 @@ def wired_scripts(paths=(USER_SETTINGS, LOCAL_SETTINGS)) -> list[dict]:
     found: dict[str, dict] = {}
     for path in paths:
         try:
-            hooks = json.loads(Path(path).read_text(encoding="utf-8")).get("hooks", {})
+            settings = json.loads(Path(path).read_text(encoding="utf-8"))
+            hooks = settings.get("hooks", {})
         except (OSError, ValueError, AttributeError):
             continue
+        status = settings.get("statusLine")  # the status line runs a script too (plan_usage, #872)
+        if isinstance(status, dict) and status.get("type") == "command":
+            for script in _scripts_in(status.get("command") or ""):
+                triggers = found.setdefault(script, {"path": script, "triggers": []})["triggers"]
+                if "statusLine" not in triggers:
+                    triggers.append("statusLine")
         for event, entries in hooks.items() if isinstance(hooks, dict) else ():
             for entry in entries if isinstance(entries, list) else ():
                 if not isinstance(entry, dict):
@@ -190,6 +208,8 @@ def install(user_path: Path = USER_SETTINGS, local_path: Path = LOCAL_SETTINGS,
     user = _load(user_path)
     user["hooks"] = settings_hooks()
     user["autoMemoryDirectory"] = _portable_memory(memory_dir)
+    import plan_usage  # the status line records the plan's 5-hour and weekly meters, wrapping any existing one (#872)
+    user["statusLine"] = plan_usage.statusline_setting(user.get("statusLine"))
     _save(user_path, user)
     local = _load(local_path)
     if "hooks" in local:
@@ -215,8 +235,15 @@ if __name__ == "__main__":
         print("commit check:", commit_check.install_hook(AGENTS))
         import rule_checks  # the repo's rules before each commit (marvin#826): secrets, instance split, Decisions
         print("rule checks:", rule_checks.install_hook(AGENTS))
+        import wezterm_look  # MARVIN's WezTerm look on this Mac (marvin#1069): one guarded loader in wezterm.lua
+        try:
+            print("wezterm look:", wezterm_look.install())
+        except (OSError, ValueError) as exc:
+            print("wezterm look: not installed:", exc)
         strays = stray_memories()
         print(f"hooks installed in {USER_SETTINGS}; memory -> {MAIN_MEMORY}")
+        import chat_restart  # chat tabs move onto a new Claude Code when it lands (marvin#1086): a WatchPaths job
+        print("claude update watch:", chat_restart.install_watch())
         if strays:
             print(f"{len(strays)} note(s) in other memory folders, merge them into the main memory:")
             print("\n".join(f"  {p}" for p in strays))

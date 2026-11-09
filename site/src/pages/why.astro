@@ -1,0 +1,131 @@
+---
+import Marketing from '~/layouts/Marketing.astro';
+import Velocity from '~/components/Velocity.astro';
+import { SITE, FACTS, REPO_URL, blob, fmtDate } from '~/lib/site';
+const n = SITE.name;
+---
+
+<Marketing title={`Why ${n}`} description={`Why ${n} exists, what it has measured, and where it's going.`}>
+  <header class="m-pagehead m-narrow">
+    <p class="m-eyebrow">Why {n}</p>
+    <h1>I wanted Claude Code to remember, and to keep working when I walk away.</h1>
+    <p>
+      So I built that around it. This page is the case for it: the problem, how {n} goes at it, what I've measured, and
+      where it's heading. Every number links to how it was counted.
+    </p>
+  </header>
+
+  <article class="m-narrow m-prose">
+    <h2>The problem</h2>
+    <p>
+      Claude Code is a great pair programmer with no memory. Every session starts cold. You re-explain the project, the
+      decision you made last week, the mistake you already fixed. Then the session ends and it's gone again.
+    </p>
+    <p>
+      Letting an agent run on its own is the other half. Left alone, agents ship junk: changes nobody measured, tests
+      that pass because they test nothing, PRs that merge on top of a broken main. Speed without checks just makes more
+      to clean up.
+    </p>
+
+    <h2>The approach</h2>
+    <ul>
+      <li>
+        <strong>Choose the context.</strong> Memory, decisions and a shared vocabulary live outside the model. A session
+        loads the ones the task needs, and skills load only when they're called. <a href="/docs/features/memory/">Memory</a>,{' '}
+        <a href="/docs/features/skills/">skills</a>.
+      </li>
+      <li>
+        <strong>Gate every change.</strong> The pipeline works in its own worktree, measures its result, and keeps it only
+        if nothing got worse. Nothing reaches main without my Approve and a gate that re-checks it.{' '}
+        <a href="/docs/features/ticket-pipeline/">Pipeline</a>, <a href="/docs/features/merge-gate/">merge gate</a>.
+      </li>
+      <li>
+        <strong>Measure every claim.</strong> If {n} says something helps, there's a bench run or a count behind it, with the
+        method in the repo. When a measurement says I was wrong, the default changes.
+      </li>
+    </ul>
+
+    <h2>What I've measured</h2>
+    <p>
+      {n} runs <a href={blob('bench/SCORECARD.md')}>a bench</a> against plain Claude Code on the same model, with
+      known answers. A result only goes on this page when it holds across a set of tasks. Results from a single task,
+      like memory recall or routing simple questions to a smaller model, stay in the bench write-up with their scope,
+      because one task doesn't show they generalise.
+    </p>
+
+    <h3>I measured my own tools, and dropped one</h3>
+    <p>
+      I added a code knowledge graph and told every session to search it first. Then I tested it: 30 real questions with
+      known answers, scored without an AI judge. Plain keyword search put the answer in the top five 67% of the time.
+      The graph managed 38%. On questions that need two files, keyword search found 3 of 4 and the graph found none. So
+      the rule flipped to keyword search first, and the graph kept the structure questions it's good at.{' '}
+      <a href={blob('bench/RESULTS.md')}>Results, 26 Oct 2026</a>.
+    </p>
+
+    <h2>It ships</h2>
+    <Velocity />
+    <p>
+      Green is code the pipeline wrote on its own, then I reviewed and merged. Amber is work done in a session with
+      me. Most of the pipeline's count landed in one week in early October (64 PRs). Since then most merges have come
+      from sessions with me, a lot of it tightening the gates the pipeline has to pass.
+    </p>
+    <p>
+      The proof that counts most is outside this repo. <a href={SITE.builtWith[0].url}>{SITE.builtWith[0].name}</a> is a
+      live-captioning app for iPhone that I built with {n}. It went from first commit to the App Store in 50 days, and
+      19 of its merged PRs came from the pipeline.
+    </p>
+
+    <h2>Open engine, optional add-ons</h2>
+    <p>
+      The engine is open source and stays free: memory, skills, the pipeline, the gates, the dashboard. Each person's own
+      state lives in their own private repo, never in the engine. Later, optional add-ons will sit on top for people who
+      want more, each in its own repo. The rule I hold myself to: the free engine has to be good on its own. An add-on
+      earns its place by doing something new, not by taking something away.
+    </p>
+
+    <h2>Where it's going</h2>
+    <p>These are the north stars every change gets checked against, in plain words:</p>
+    <ol>
+      <li><strong>Do more with less.</strong> A change only counts if quality holds at the same or lower cost in tokens, compute and time.</li>
+      <li><strong>Be reachable from anywhere.</strong> Phone, laptop, any machine, working offline, and never breaking silently.</li>
+      <li><strong>Leave people more capable, not more passive.</strong> If doing a thing yourself makes you better at it, {n} should coach, not take over.</li>
+      <li><strong>Be the best tool for making tools.</strong> Work that makes {n} better at building and shipping things beats work that builds one thing.</li>
+    </ol>
+    <p>
+      What's being built now and next is on the <a href="/roadmap/">roadmap</a>. What changed recently is in the{' '}
+      <a href="/changelog/">changelog</a>.
+    </p>
+
+    <h2 id="how-we-counted">How each number was counted</h2>
+    <p class="m-dim">All counted on {fmtDate(FACTS.counted_on)}.</p>
+    <div class="m-table-wrap">
+      <table>
+        <thead><tr><th>Number</th><th>What it counts</th><th>How</th></tr></thead>
+        <tbody>
+          {
+            FACTS.items.map((f) => (
+              <tr>
+                <td><strong>{f.value}</strong> {f.label}</td>
+                <td>{f.detail}</td>
+                <td><code>{f.command}</code></td>
+              </tr>
+            ))
+          }
+        </tbody>
+      </table>
+    </div>
+
+    <h2>Who builds it</h2>
+    <p>
+      I'm {SITE.builder}. I build {n} for my own work first and use it every day. More on the <a href="/about/">about page</a>.
+      The code is on <a href={REPO_URL}>GitHub</a>.
+    </p>
+  </article>
+</Marketing>
+
+<style>
+  .m-prose code {
+    font-size: 0.78rem;
+    word-break: break-word;
+  }
+</style>

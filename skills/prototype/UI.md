@@ -3,6 +3,9 @@
 Goal: answer "what should this look like?" by putting several radically different visual
 directions in front of the user on one route, not by polishing a single guess.
 
+**Before the first variant, read [AESTHETICS.md](AESTHETICS.md)** and pick its mode: brand lock (Seal Speak, MARVIN,
+gileskayo.me: the brand's tokens, never varied) or new design (a distinct look per variant).
+
 ## Shape
 
 One route in the project's existing routing convention (don't invent a new top-level structure),

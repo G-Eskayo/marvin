@@ -132,6 +132,8 @@ def _isolate_board_registry(tmp_path_factory, monkeypatch):
     monkeypatch.setattr(ticket_pipeline, "_discover_boards", lambda: [])  # no real gh calls from tests
     monkeypatch.setattr(ticket_pipeline, "_refresh_catalog", lambda: None)
     monkeypatch.setattr(ticket_pipeline, "_local_busy", lambda: False)  # the real machine may be mid-ticket
+    # the real machine may be mid-scan: its lock made main() skip in tests and main-health go red (2026-11-03)
+    monkeypatch.setattr(ticket_pipeline, "SCAN_LOCK_PATH", tmp_path_factory.mktemp("scan") / "scan.lock")
     monkeypatch.setattr(ticket_pipeline, "_run_ticket_agents", lambda step, summary: None)  # no real gh calls
 
 
@@ -352,3 +354,16 @@ def _mock_disposable_basetemp(request, monkeypatch):
         yield []
 
     monkeypatch.setattr(cleanup_sweep, "disposable_basetemp", mock_disposable)
+
+
+@pytest.fixture(autouse=True)
+def _no_real_alerts(tmp_path_factory, monkeypatch):
+    # The one alert path (mr_notification._fire, #1123) shows a real banner, pings the real dashboard and writes the
+    # real ~/.claude/logs/jobs/alerts.json. No test may do any of that: channels are inert and run logs go to tmp.
+    # A test that checks a channel sets its own fake after this.
+    import job_events
+    import mr_notification
+    monkeypatch.setattr(job_events, "JOBS_DIR", tmp_path_factory.mktemp("jobs"))
+    monkeypatch.setattr(mr_notification, "desktop_notify", lambda *a, **k: None)
+    monkeypatch.setattr(mr_notification, "dashboard_refresh_ping", lambda: None)
+    monkeypatch.setattr(mr_notification, "phone_notify", None)
