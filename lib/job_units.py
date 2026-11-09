@@ -14,6 +14,12 @@ A job is defined once in config/jobs/<name>.json, with no machine's paths in it 
     low_priority  optional: yields CPU and disk to real work (launchd Background + LowPriorityIO + Nice 10;
                   systemd Nice=10 + idle IO)
     log           stdout to ~/.claude/logs/<log>.log, stderr to <log>-error.log (untracked logs, ADR 0069)
+    os            optional: "macos" or "linux", the only OS it is installed on (tidy-agent files the Macs' iCloud
+                  Desktop, which the Linux box doesn't have)
+
+Which Mac a job runs on is lib/job_catalog.py's `machine` ("both", "mini", "laptop", "none"), the table Health's
+placement check reads. On macOS, install honours it: a job placed on the other Mac is not installed, and a copy
+already installed here is unloaded and removed. The catalog only describes the two Macs, so Linux ignores it.
 
 render_plist() writes launchd's form for the Macs and render_systemd() systemd's for Linux (mac-mini-2012), with the
 same command, schedule, environment and logs. host_os's rule: a portable core plus thin host adapters, never a fork.
@@ -38,7 +44,8 @@ import host_os  # noqa: E402
 
 JOBS_DIR = Path(__file__).resolve().parent.parent / "config" / "jobs"
 NAME_RE = re.compile(r"^[a-z0-9][a-z0-9-]*$")
-KEYS = {"name", "description", "command", "schedule", "env", "low_priority", "log"}
+KEYS = {"name", "description", "command", "schedule", "env", "low_priority", "log", "os"}
+OSES = ("linux", "macos")
 NICE = 10
 RESTART_S = 30  # a keep-alive service that keeps dying is retried this often, never in a tight loop
 
@@ -115,6 +122,8 @@ def validate(job: dict) -> dict:
         raise JobError(f"{name}: log must be a file-safe name: {log!r}")
     if "description" in job:
         _str(job["description"], f"{name}: description")
+    if "os" in job and (not isinstance(job["os"], str) or job["os"] not in OSES):
+        raise JobError(f"{name}: os must be one of {', '.join(OSES)}: {job['os']!r}")
     return job
 
 
@@ -222,6 +231,41 @@ def render_systemd(job: dict, home: str) -> tuple[str, str | None]:
     return "\n".join(svc) + "\n", "\n".join(tmr) + "\n"
 
 
+# ── placement: which machine a job belongs on ─────────────────────────
+
+def machine_role() -> str | None:
+    """"laptop" or "mini" for a registered Mac (its marvin-network.json `kind`), else None: Linux, or a machine the
+    registry doesn't know. Never guessed from the hostname."""
+    import machine_profile
+    if host_os.os_name() != "macos":
+        return None
+    kind = (machine_profile._load_registry().get(machine_profile.registry_id()) or {}).get("kind")
+    return {"laptop": "laptop", "desktop": "mini"}.get(kind)
+
+
+def mac_placement(name: str) -> str:
+    """The catalog's `machine` for a job; "both" when it isn't catalogued (no restriction)."""
+    import job_catalog
+    return job_catalog.JOBS.get(name, {}).get("machine", "both")
+
+
+def _skip_reason(job: dict, os_name: str, role: str | None) -> str | None:
+    """Why this job doesn't belong on this machine, or None when it does. Raises when it can't tell."""
+    if job.get("os", os_name) != os_name:
+        return f"runs on {job['os']} only"
+    if os_name != "macos":
+        return None
+    where = mac_placement(job["name"])
+    if where == "both":
+        return None
+    if where == "none":
+        return "switched off in the job catalog"
+    if role is None:
+        raise JobError(f"{job['name']}: placed on the {where} only, and this machine's registry entry doesn't say "
+                       "which Mac it is (marvin-network.json kind); nothing installed")
+    return None if where == role else f"placed on the {where} only"
+
+
 # ── install (the thin host adapters) ────────────────────────────────────
 
 def _default_run(cmd: list[str]) -> int:
@@ -271,20 +315,60 @@ def _install_macos(job: dict, home: Path, run: Callable[[list[str]], int], uid: 
     return {"job": job["name"], "changed": True, "ok": ok}
 
 
+def _remove_linux(job: dict, home: Path, run: Callable[[list[str]], int]) -> bool:
+    d, u = home / ".config" / "systemd" / "user", unit_name(job["name"])
+    units = [d / f"{u}.timer", d / f"{u}.service"]
+    present = [p for p in units if p.exists()]
+    if not present:
+        return False
+    run(["systemctl", "--user", "disable", "--now", present[0].name])   # fails harmlessly when it wasn't enabled
+    for p in present:
+        p.unlink()
+    run(["systemctl", "--user", "daemon-reload"])
+    return True
+
+
+def _remove_macos(job: dict, home: Path, run: Callable[[list[str]], int], uid: int) -> bool:
+    label = launchd_label(job["name"])
+    path = home / "Library" / "LaunchAgents" / f"{label}.plist"
+    if not path.exists():
+        return False
+    run(["launchctl", "bootout", f"gui/{uid}/{label}"])   # fails harmlessly when it wasn't loaded
+    path.unlink()   # rendered from the repo, so cheap to put back: `install` on the right machine
+    return True
+
+
+_DETECT = object()
+
+
 def install(names: list[str], os_name: str | None = None, home: Path | None = None,
-            run: Callable[[list[str]], int] | None = None, uid: int | None = None) -> list[dict]:
-    """Install each job for this OS. Every definition is loaded first, so one bad name installs nothing."""
+            run: Callable[[list[str]], int] | None = None, uid: int | None = None,
+            role: str | None | object = _DETECT) -> list[dict]:
+    """Install each job for this OS and, on a Mac, only where the job catalog places it; a job that doesn't belong
+    here is skipped and any copy installed here removed. Every definition and placement is checked first, so one bad
+    name, or a placed job on a Mac the registry can't name, installs nothing."""
     os_name = os_name or host_os.os_name()
-    if os_name not in ("linux", "macos"):
+    if os_name not in OSES:
         raise JobError(f"no scheduler adapter for {os_name!r} (have: linux, macos)")
     jobs = [load(n) for n in names]
+    if role is _DETECT:
+        needs_role = os_name == "macos" and any(mac_placement(j["name"]) in ("mini", "laptop") for j in jobs)
+        role = machine_role() if needs_role else None
+    skips = [_skip_reason(j, os_name, role) for j in jobs]
     home = Path(home or Path.home())
     run = run or _default_run
-    (home / ".claude" / "logs").mkdir(parents=True, exist_ok=True)
-    if os_name == "linux":
-        return [_install_linux(j, home, run) for j in jobs]
     uid = os.getuid() if uid is None else uid
-    return [_install_macos(j, home, run, uid) for j in jobs]
+    (home / ".claude" / "logs").mkdir(parents=True, exist_ok=True)
+    out = []
+    for job, why in zip(jobs, skips):
+        if why:
+            removed = _remove_linux(job, home, run) if os_name == "linux" else _remove_macos(job, home, run, uid)
+            out.append({"job": job["name"], "changed": removed, "ok": True, "skipped": why})
+        elif os_name == "linux":
+            out.append(_install_linux(job, home, run))
+        else:
+            out.append(_install_macos(job, home, run, uid))
+    return out
 
 
 def check_installed(names: list[str], home: Path | None = None) -> list[dict]:

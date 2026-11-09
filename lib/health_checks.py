@@ -1338,7 +1338,7 @@ def evaluate_machine_state(state: dict, now: datetime) -> list[tuple[str, str, s
         failed = [(label, status) for label, pid, status in state["job_exits"] if pid is None and status != 0]
         if failed:
             out.append(("jobs:exit", "red", "last run failed: " + ", ".join(f"{label} (exit {status})" for label, status in failed)
-                        + " -- read the job's log on this machine (tidy-agent: ~/.claude/organize/agent.err.log)"))
+                        + " -- read the job's log on this machine (tidy-agent: ~/.claude/logs/tidy-agent-error.log)"))
         else:
             out.append(("jobs:exit", "green", f"all {len(state['job_exits'])} scheduled jobs last exited cleanly or are running"))
     if state.get("jobs"):
