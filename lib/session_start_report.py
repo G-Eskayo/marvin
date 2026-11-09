@@ -41,6 +41,7 @@ HOOK_NAME = "session_start_report"
 # remote-session check), whose stdout counts toward the same cap.
 INLINE_LIMIT = 10_000
 BUDGET = 8_000
+LEXICON_MAX = 2_500  # full definitions every session (PR #1124); the live lexicon is ~1.2 KB without the MCP glossary
 BRIEF_MAX = 3_500  # the morning brief is shown first (marvin#306); this keeps room for the checklist below it
 FULL_REPORT = HOME / ".agents" / "var" / "session-start-report.md"  # everything, for whatever had to be cut
 
@@ -126,17 +127,30 @@ def check_suggestions() -> str | None:
 
 
 def load_lexicon() -> str | None:
-    """Every term's name, with the definitions read on demand: the same shape as Full Memory (the index every
-    session, notes opened when they matter). The full text didn't fit the hook cap anyway (marvin#1037)."""
+    """The lexicon in full, every session (owner's decision on PR #1124, after the generic MCP glossary moved to
+    best-practices/mcp-glossary.md). Capped at LEXICON_MAX so a lexicon that grows again can't push the checklist
+    and the handoff out of the report; past the cap it's cut at a line and says where the rest is."""
     f = CLAUDE_DIR / "lexicon.md"
     if not f.exists():
         return None
-    terms = re.findall(r"^\s*- \*\*(.+?)\*\*", f.read_text(errors="replace"), re.MULTILINE)
-    if not terms:
+    return load_lexicon_text(f.read_text(errors="replace"), str(f).replace(str(HOME), "~", 1))
+
+
+def load_lexicon_text(text: str, where: str = "~/.claude/lexicon.md") -> str | None:
+    if not re.search(r"^\s*- \*\*(.+?)\*\*", text, re.MULTILINE):
         return None
-    where = str(f).replace(str(HOME), "~", 1)
-    return (f"## Lexicon\n\n{len(terms)} terms are defined in `{where}`; read the definition there before "
-            f"you use or interpret one: " + ", ".join(terms) + ".")
+    text = re.sub(r"<!--.*?(-->|\Z)", "", text, flags=re.DOTALL)  # the "add new terms" template
+    lines = [ln.rstrip() for ln in text.splitlines()]
+    lines = [ln for ln in lines if not ln.startswith("# ") and ln.strip() != "---"]
+    lines = ["#" + ln if ln.startswith("## ") else ln for ln in lines]  # its sections nest under ## Lexicon
+    body = re.sub(r"\n{3,}", "\n\n", "\n".join(lines)).strip()
+    section = "## Lexicon (apply these terms without explanation)\n\n" + body
+    if len(section) <= LEXICON_MAX:
+        return section
+    note = f"\n…(the lexicon is longer than {LEXICON_MAX:,} characters; the rest is in `{where}`)"
+    head = section[: LEXICON_MAX - len(note)]
+    head = head[: head.rfind("\n")] if "\n" in head else head
+    return head + note
 
 
 def check_improvement_queue() -> str | None:

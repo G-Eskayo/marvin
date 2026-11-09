@@ -124,15 +124,58 @@ def test_checklist_notes_survive_a_huge_morning_brief(home, monkeypatch, capsys)
     assert "207 item(s) queued" in out
 
 
-# ── lexicon: every term named, definitions on demand ────────────────────────
+# ── lexicon: full definitions every session (owner's decision on PR #1124) ──
+# The owner chose full definitions over names-only, after moving the generic MCP glossary (40 of 48 terms, 7.9 KB)
+# out of the lexicon into best-practices/mcp-glossary.md. LEXICON_MAX keeps a lexicon that grows again from pushing
+# the checklist and the handoff out of the report.
 
-def test_lexicon_lists_every_term_and_where_the_definitions_are(home, capsys):
+REPO = LIB.parent
+
+
+def _lexicon_section(out: str) -> str:
+    start = out.index("## Lexicon")
+    rest = out[start + 1:]
+    nxt = rest.find("\n## ")
+    return out[start:] if nxt < 0 else out[start:start + 1 + nxt]
+
+
+def test_lexicon_gives_every_term_with_its_full_definition(home, capsys):
     (home / "lexicon.md").write_text(LEXICON)
     out = _report(capsys)
-    for term in ("wire", "skill loop", "quality filter", "MCP", "tool (MCP)"):
-        assert term in out
-    assert "lexicon.md" in out
-    assert "observe pattern" not in out  # definitions are read on demand, not pasted every session
+    for line in LEXICON.splitlines():
+        if line.startswith("- **"):
+            assert line in out  # the whole line: term and definition
+    assert "observe pattern → quality filter → draft skill → wire it" in out
+
+
+def test_lexicon_leaves_out_its_title_and_the_add_terms_template(home, capsys):
+    (home / "lexicon.md").write_text(LEXICON + "\n<!-- Add new terms below. Format:\n- **term** — definition\n-->\n"
+                                     "- **Workshop** — the dashboard tab.\n")
+    sec = _lexicon_section(_report(capsys))
+    assert "# Shared Lexicon" not in sec
+    assert "<!--" not in sec and "- **term** — definition" not in sec
+    assert "- **Workshop** — the dashboard tab." in sec
+
+
+def test_a_huge_lexicon_is_cut_at_a_line_and_points_at_the_file(home, capsys):
+    body = "".join(f"- **term{i}** — {'x' * 300}\n" for i in range(2000))
+    (home / "lexicon.md").write_text(LEXICON + body)
+    _handoff(home, "handoff-keep.md", "# Handoff: keep me\n")
+    out = _report(capsys)
+    sec = _lexicon_section(out)
+    assert len(sec) <= ssr.LEXICON_MAX
+    assert "lexicon.md" in sec.splitlines()[-1]  # says where the rest is
+    kept = [ln for ln in sec.splitlines() if ln.startswith("- **")]
+    assert kept and all(ln in (LEXICON + body).splitlines() for ln in kept)  # never half a definition
+    assert "keep me" in out  # the handoff after it survives
+    assert len(out) <= ssr.BUDGET
+
+
+def test_a_lexicon_that_is_one_huge_line_is_still_capped(home, capsys):
+    (home / "lexicon.md").write_text("- **blob** — " + "y" * 100_000)
+    out = _report(capsys)
+    assert len(_lexicon_section(out)) <= ssr.LEXICON_MAX
+    assert len(out) <= ssr.BUDGET
 
 
 def test_lexicon_with_no_terms_or_missing_adds_nothing(home, capsys):
@@ -146,6 +189,22 @@ def test_lexicon_that_is_not_text_does_not_break_the_report(home, capsys):
     (home / "lexicon.md").write_bytes(b"\xff\xfe\x00- **x** \x80\x81")
     out = _report(capsys)
     assert out.startswith("MARVIN active")
+
+
+def test_shipped_lexicon_has_no_mcp_glossary_and_fits_its_cap():
+    text = (REPO / "claude-config" / "lexicon.md").read_text()
+    assert "## MCP" not in text and "(MCP)" not in text
+    assert "mcp-glossary.md" in text  # says where the glossary went
+    assert len(ssr.load_lexicon_text(text)) <= ssr.LEXICON_MAX
+
+
+def test_mcp_glossary_kept_every_term_the_lexicon_had():
+    g = (REPO / "best-practices" / "mcp-glossary.md").read_text()
+    assert g.startswith("---\nname: mcp-glossary\n")  # frontmatter, so the index manifest can find it
+    for term in ("MCP", "MCP host", "MCP client", "MCP server", "tool (MCP)", "resource (MCP)", "sampling",
+                 "elicitation", "roots", "PKCE (MCP auth)", "MCPB (MCP Bundle)", "MCP Registry", "DNS rebinding (MCP)",
+                 "logging (MCP)", "confused deputy (MCP)", "token passthrough (MCP)"):
+        assert f"- **{term}** — " in g, term
 
 
 # ── handoff: a pointer, not the body ────────────────────────────────────────
@@ -195,11 +254,11 @@ def test_real_script_output_fits_with_a_real_sized_home(tmp_path):
     claude = tmp_path / ".claude"
     (claude / "handoffs").mkdir(parents=True)
     (claude / "commands").mkdir()
-    (claude / "lexicon.md").write_text(LEXICON + "".join(f"- **t{i}** — {'d' * 150}\n" for i in range(60)))
+    (claude / "lexicon.md").write_text(LEXICON + "".join(f"- **t{i}** — {'d' * 150}\n" for i in range(8)))
     (claude / "handoffs" / "handoff-2026-11-04-10-00.md").write_text("# Handoff: live-sized\n" + "h" * 4000)
     r = subprocess.run([sys.executable, str(LIB / "session_start_report.py")], capture_output=True, text=True,
                        env={"HOME": str(tmp_path), "PATH": "/usr/bin:/bin"}, timeout=120)
     assert r.returncode == 0, r.stderr
     assert r.stdout.startswith("MARVIN active")
     assert len(r.stdout) <= ssr.BUDGET
-    assert "t59" in r.stdout and "live-sized" in r.stdout
+    assert f"- **t7** — {'d' * 150}" in r.stdout and "live-sized" in r.stdout

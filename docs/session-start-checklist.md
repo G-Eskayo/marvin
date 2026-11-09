@@ -23,7 +23,7 @@ already reported).
 | 0 | Identity banner | `machine_profile.machine_label()` + live `git rev-parse --short HEAD` on `~/.agents` and `~/.claude` + count of `~/.claude/commands/*.md` | Single verifiable line — `MARVIN active — <machine> · agents@<hash> · claude@<hash> · <N> skills wired` — always the first line of stdout. Added 2026-07-14 so a session can be confirmed as genuinely running MARVIN's infra by checking real, checkable state, not just a static greeting. CLAUDE.md instructs Claude to open the first reply of every session with this line verbatim. |
 | 1 | Handoff | `~/.claude/handoffs/*.md` | The most recent handoff (if ≤7 days old) as a pointer: file name, age, its title line and "read it before resuming". Its full text never fit Claude Code's hook cap (see below) |
 | 2 | Suggestions | `~/.claude/suggestions.md` | Count of `**Status**: pending` entries |
-| 3 | Lexicon | `~/.claude/lexicon.md` | Every term's name and the file to read for its definition (the Full Memory shape: index always, text on demand) |
+| 3 | Lexicon | `~/.claude/lexicon.md` | The whole lexicon, definitions included, minus its title and the add-terms template (owner's decision on PR #1124). Capped at `LEXICON_MAX` (2,500 characters), cut at a line with a pointer to the file past that. The generic MCP glossary moved to `best-practices/mcp-glossary.md` so the lexicon fits |
 | 4 | Improvement queue | `~/.claude/improvement-queue.md` | Count of queued `- **[...]**` items |
 | 5 | Quarantine | `~/.claude/quarantine.md` | Runs `process_quarantine_reviews.process()` first (feeds checked approve/deny/modify boxes into calibration), then counts remaining unresolved entries |
 | 6 | Hook errors | `~/.claude/logs/hook-errors.log` | Count of entries in the last 24h |
@@ -43,6 +43,7 @@ the rest of the lexicon or the handoff (bench Run 31's transcripts show the prev
 - the report is kept under `BUDGET` (8,000 characters, leaving room for the other commands in the same
   SessionStart chain, whose stdout counts toward the same cap);
 - the morning brief stays first but is cut at `BRIEF_MAX` (3,500) so the checklist always fits;
+- the lexicon is cut at `LEXICON_MAX` (2,500) so a lexicon that grows can't push the handoff out;
 - anything that still doesn't fit is cut at a line break, or named in a closing "Left out" line, with the path of
   the full report, which is always saved to `~/.agents/var/session-start-report.md`;
 - the banner is always the first line.
