@@ -247,6 +247,12 @@ def _issues() -> str:
     return f"https://github.com/{instance.tickets_repo()}/issues/"
 
 
+def _open(number: int) -> dict:
+    """Open a ticket inside the dashboard (Workshop), never a browser: repo and number, plus the URL for reference."""
+    import instance
+    return {"how": "open", "repo": instance.tickets_repo(), "number": number, "url": f"{_issues()}{number}"}
+
+
 def fix_plan(loop: dict, home: str | None = None) -> dict:
     """What the loop's fix button does, as data. Pure: the argv comes only from the registry entry."""
     fix, home = loop["fix"], home or str(Path.home())
@@ -260,7 +266,7 @@ def fix_plan(loop: dict, home: str | None = None) -> dict:
     if kind == "relogin":
         return {"how": "renew", "account": arg}
     if kind in ("rollback", "decision"):
-        return {"how": "open", "url": f"{_issues()}{arg}"}
+        return _open(int(arg))
     title = f"Loop not closing: {loop['name']}"
     body = (f"The Vitals Loops panel shows **{loop['name']}** (`{loop['id']}`) as not closing.\n\n"
             f"- Watches: `{loop['watches']}`\n- Action: {loop['action']}\n- Verify: `{loop['verify']}`\n"
@@ -293,7 +299,7 @@ def run_fix(loop_id: str, registry: Path | None = None, runner=None, gh=None) ->
         m = re.search(r"/issues/(\d+)\s*$", (out or "").strip())
         if rc != 0 or not m:
             return {"ok": False, "how": "ticket", "error": (err or out or "gh failed").strip()[:200]}
-        return {"ok": True, "how": "open", "url": f"{_issues()}{m.group(1)}", "says": f"Filed #{m.group(1)}"}
+        return {"ok": True, **_open(int(m.group(1))), "says": f"Filed #{m.group(1)}"}
     return {"ok": True, **plan}
 
 
