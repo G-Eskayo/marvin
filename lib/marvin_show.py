@@ -15,6 +15,9 @@ What it does:
 2. It asks the running dashboard to show it: POST http://127.0.0.1:7879/show (the local refresh server, the same one
    the webhook pings). The dashboard opens that project's window, or reuses it, and brings it to the front.
 3. The dashboard isn't running: it is started (`open -b`), and the request is sent once it answers.
+4. It opens on the Mac Gil is using: the one with the most recent keyboard or mouse input (ioreg HIDIdleTime, asked
+   over ssh with a 3 s connect timeout, so an asleep Mac is skipped). A file goes to that Mac's
+   ~/.agents/var/show-inbox first, and its own `marvin-show --here` asks its dashboard. If it can't, it shows here.
 
 Exit codes: 0 shown; 2 refused (outside the allowed folders, a secret, gone, too big); 3 the dashboard can't be reached.
 """
@@ -346,6 +349,143 @@ def deliver(body: dict, port: int, *, launch: bool = True, post=post_show, start
     return (0 if status == 200 and answer.get("ok") else 2), answer
 
 
+# ── which Mac: the one Gil is using ────────────────────────────────────────────────────────────────────────────────
+
+SSH_OPTS = ["-o", "BatchMode=yes", "-o", "ConnectTimeout=3", "-o", "StrictHostKeyChecking=accept-new"]
+INBOX = HOME / ".agents" / "var" / "show-inbox"
+INBOX_KEEP_S = 7 * 24 * 3600
+IDLE_CMD = "/usr/sbin/ioreg -c IOHIDSystem -d 4 | grep -m1 HIDIdleTime"
+
+
+def parse_idle(out: str) -> float | None:
+    """Seconds since the last keyboard or mouse input, from ioreg's HIDIdleTime (nanoseconds)."""
+    m = re.search(r'"HIDIdleTime"\s*=\s*(\d+)', out or "")
+    return int(m.group(1)) / 1e9 if m else None
+
+
+def local_idle() -> float | None:
+    try:
+        return parse_idle(subprocess.run(["/bin/sh", "-c", IDLE_CMD], capture_output=True, text=True, timeout=5).stdout)
+    except (OSError, subprocess.SubprocessError):
+        return None
+
+
+def ssh(host: str, command: str, timeout: float = 8, stdin: str | None = None) -> subprocess.CompletedProcess | None:
+    try:
+        return subprocess.run(["ssh", *SSH_OPTS, host, command], input=stdin, capture_output=True, text=True, timeout=timeout)
+    except (OSError, subprocess.SubprocessError):
+        return None
+
+
+def peer_idle(host: str) -> float | None:
+    """A peer's idle seconds, or None when it is asleep, off or unreachable (3 s to connect, 8 s in all)."""
+    r = ssh(host, IDLE_CMD)
+    return parse_idle(r.stdout) if r is not None and r.returncode == 0 else None
+
+
+def mac_peers() -> dict[str, str]:
+    """{device id: tailscale host} for the other Macs in the registry (a Linux box has no screen for the owner)."""
+    try:
+        sys.path.insert(0, str(Path(__file__).resolve().parent))
+        import machine_profile
+        return {dev: info["tailscale_hostname"] for dev, info in machine_profile.remote_devices().items()
+                if info.get("tailscale_hostname") and info.get("os", "macos") == "macos"}
+    except Exception:
+        return {}
+
+
+def pick_mac(local: float | None, peers: dict[str, float | None]) -> str | None:
+    """The Mac the owner is using: the most recent input wins. None = this Mac. A peer that didn't answer (asleep, off) is
+    never picked; this Mac wins a tie and whenever no peer is known to be more recent."""
+    known = {h: i for h, i in peers.items() if i is not None}
+    if not known:
+        return None
+    host, idle = min(known.items(), key=lambda kv: kv[1])
+    return host if local is None or idle < local else None
+
+
+def prune_inbox(inbox: Path = INBOX, now: float | None = None) -> None:
+    """Items sent from the other Mac are kept a week (the outbox copy is the lasting one)."""
+    now = now or time.time()
+    try:
+        for d in inbox.iterdir():
+            if d.is_dir() and now - d.stat().st_mtime > INBOX_KEEP_S:
+                shutil.rmtree(d, ignore_errors=True)
+    except OSError:
+        pass
+
+
+def remote_args(body: dict, remote_path: str | None) -> list[str]:
+    """The `marvin-show --here` arguments that ask the other Mac's dashboard for the same item."""
+    args = ["--here", "--json"]
+    if body.get("project"):
+        args += ["--project", body["project"]]
+    if body.get("label"):
+        args += ["--label", body["label"]]
+    if body.get("outboxName"):
+        args += ["--outbox-name", body["outboxName"]]
+    if body["kind"] == "file":
+        return args + [remote_path]
+    if body["kind"] == "pr":
+        if body.get("number"):
+            args += ["--pr", str(body["number"])]
+        args += ["--repo", body["repo"]]
+        if body.get("ref") and not body.get("number"):
+            return args + [f"https://github.com/{body['repo']}/blob/{body['ref']}/{body['path']}"]
+        return args + [body["path"]]
+    return args + [body["url"]]
+
+
+def deliver_remote(host: str, body: dict, run=ssh, copy=None) -> tuple[int, dict] | None:
+    """Show the item on the other Mac: a file is copied into its ~/.agents/var/show-inbox first, then that Mac's own
+    marvin-show asks its dashboard. None when the other Mac can't take it (the caller shows it here instead)."""
+    import shlex
+    remote_path = None
+    if body["kind"] == "file":
+        src = Path(body["path"])
+        try:
+            if src.stat().st_size > MAX_COPY_BYTES:
+                return None
+        except OSError:
+            return None
+        stamp = f"{int(time.time())}-{os.getpid()}"
+        r = run(host, f'd="$HOME/.agents/var/show-inbox/{stamp}" && mkdir -p "$d" && printf %s "$d"')
+        if r is None or r.returncode != 0 or not r.stdout.strip():
+            return None
+        dest = r.stdout.strip()
+        files = [src] + ([src.parent / a for a in page_assets(src)] if src.suffix.lower() in (".html", ".htm") else [])
+        copier = copy or _scp
+        for f in files:
+            rel = f.relative_to(src.parent)
+            if not copier(host, f, f"{dest}/{rel}"):
+                return None
+        remote_path = f"{dest}/{src.name}"
+    cmd = "$HOME/.agents/bin/marvin-show " + " ".join(shlex.quote(x) for x in remote_args(body, remote_path))
+    r = run(host, cmd, timeout=90)
+    if r is None or r.returncode == 255:
+        return None
+    try:
+        answer = json.loads((r.stdout or "").strip().splitlines()[-1])
+    except (ValueError, IndexError):
+        return None
+    answer.pop("request", None)
+    if r.returncode == 3:
+        return None  # its dashboard couldn't be reached: show it here
+    return (0 if r.returncode == 0 else 2), answer
+
+
+def _scp(host: str, src: Path, dest: str) -> bool:
+    import shlex
+    parent = os.path.dirname(dest)
+    mk = ssh(host, f"mkdir -p {shlex.quote(parent)}")
+    if mk is None or mk.returncode != 0:
+        return False
+    try:
+        return subprocess.run(["scp", "-q", *SSH_OPTS, str(src), f"{host}:{shlex.quote(dest)}"], capture_output=True, timeout=120).returncode == 0
+    except (OSError, subprocess.SubprocessError):
+        return False
+
+
 def main(argv: list[str] | None = None) -> int:
     ap = argparse.ArgumentParser(prog="marvin-show", description="Show the owner one thing in its project's MARVIN window.")
     ap.add_argument("target", help="a file path, a repo path with --pr, or a URL")
@@ -354,6 +494,8 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("--project", help="the project it belongs to (default: this folder's project)")
     ap.add_argument("--topic", help="words for the outbox folder name (default: the file's name)")
     ap.add_argument("--label", help="the title shown in the window")
+    ap.add_argument("--here", action="store_true", help="show it on this Mac, not the one with the most recent input")
+    ap.add_argument("--outbox-name", help=argparse.SUPPRESS)  # sent by the other Mac with --here
     ap.add_argument("--no-launch", action="store_true", help="don't start the dashboard if it isn't running")
     ap.add_argument("--json", action="store_true", help="print the answer as JSON")
     a = ap.parse_args(argv)
@@ -366,11 +508,23 @@ def main(argv: list[str] | None = None) -> int:
     except Refused as e:
         print(f"marvin show: {e}", file=sys.stderr)
         return 2
-    code, answer = deliver(body, port, launch=not a.no_launch)
+    if a.outbox_name:
+        body["outboxName"] = a.outbox_name
+    where = "this Mac"
+    got = None
+    if a.here or os.environ.get("MARVIN_SHOW_HERE") == "1":
+        prune_inbox()
+    else:
+        peers = mac_peers()
+        host = pick_mac(local_idle(), {h: peer_idle(h) for h in peers.values()}) if peers else None
+        if host:
+            got = deliver_remote(host, body)
+            where = host if got else f"this Mac ({host} is in use but couldn't take it)"
+    code, answer = got or deliver(body, port, launch=not a.no_launch)
     if a.json:
-        print(json.dumps({**answer, "request": body}))
+        print(json.dumps({**answer, "on": where, "request": body}))
     elif code == 0:
-        print(f"Shown in the {answer.get('projectName') or answer.get('project')} window ({answer.get('window')}): {answer.get('label')}"
+        print(f"Shown on {where}, in the {answer.get('projectName') or answer.get('project')} window ({answer.get('window')}): {answer.get('label')}"
               + (f"\n  {what}" if what.startswith("copied") else ""))
     else:
         print(f"marvin show: {answer.get('reason') or 'not shown'}", file=sys.stderr)

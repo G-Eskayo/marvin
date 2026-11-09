@@ -124,7 +124,9 @@ export function parseShowRequest(body) {
 //   4. the project the CLI named (the session's own repo), when it is in the catalog.
 // Else the shared "Unsorted" window. Returns { id, name, how }.
 export const UNSORTED = { id: '__unsorted__', name: 'Unsorted' }
-export function projectFor(req, { real = null, outboxRoot, view = null, projects = [], matchOutboxName = null } = {}) {
+// A file the other Mac sent (marvin-show on the Mac Gil isn't using copies it into ~/.agents/var/show-inbox here) is
+// filed by the project that Mac named, never as MARVIN's just because the inbox sits inside ~/.agents.
+export function projectFor(req, { real = null, outboxRoot, view = null, projects = [], matchOutboxName = null, inboxRoot = path.join(homedir(), '.agents', 'var', 'show-inbox') } = {}) {
   const byId = new Map(projects.map((p) => [p.id, p]))
   const named = (id, how) => ({ id, name: byId.get(id)?.name || id, how })
   if (real && outboxRoot && within(real, outboxRoot)) {
@@ -145,7 +147,8 @@ export function projectFor(req, { real = null, outboxRoot, view = null, projects
     const m = matchOutboxName(req.outboxName)
     if (m?.id) return named(m.id, 'outbox')
   }
-  if (real) {
+  const fromPeer = real && inboxRoot && within(real, inboxRoot)
+  if (real && !fromPeer) {
     let best = null
     for (const p of projects) {
       for (const lp of p?.localPaths || []) {
