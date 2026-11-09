@@ -29,6 +29,10 @@ Rules:
 - Include the *image* if the term works visually (a metaphor, a shape, a dynamic)
 - No synonyms for existing terms — update the existing entry instead
 - If a term shifts meaning, update + note the shift
+- Only words MARVIN and Gil use with a meaning of their own. A general glossary of someone else's field (MCP, OAuth, ...)
+  goes in `~/.agents/best-practices/<topic>-glossary.md`, with a line under **Elsewhere** pointing at it
+- The whole lexicon is pasted into every session, capped at 2,500 characters (`LEXICON_MAX` in
+  `lib/session_start_report.py`, PR #1124). Past that the tail is cut, so keep entries short
 
 ## Reviewing
 
@@ -38,4 +42,6 @@ When asked to review the lexicon: read `~/.claude/lexicon.md`, flag any entries 
 
 Current sections in lexicon.md:
 - **Meta** — terms about the skill/agent system itself
+- **Elsewhere** — pointers to glossaries kept outside the lexicon (MCP: `~/.agents/best-practices/mcp-glossary.md`)
+- **Added terms** — new terms land here until they cluster into a section
 - Add new sections as concepts cluster into domains
