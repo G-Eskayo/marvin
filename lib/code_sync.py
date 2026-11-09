@@ -108,6 +108,7 @@ to trail instead; the next real push() (on either machine, from actual work)
 sweeps it up naturally, same as any other pending local change.
 """
 from __future__ import annotations
+import fcntl
 import hashlib
 import json
 import re
@@ -116,6 +117,7 @@ import shutil
 import subprocess
 import sys
 import time
+from contextlib import contextmanager
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -353,7 +355,7 @@ def _log(repo: Path, action: str, summary: str, files: list[str] | None = None) 
 
 # Summaries that mean a sync run failed (marvin#422): before, these lived only in sync-log.md, and a stale git lock
 # failed every pull for 26 hours without Health turning red.
-SYNC_FAILURE_RE = re.compile(r"^(REFUSING|CONFLICT|commit failed|push failed|pulled cleanly, but restoring)")
+SYNC_FAILURE_RE = re.compile(r"^(REFUSING|CONFLICT|GIT LOCK|commit failed|push failed|pulled cleanly, but restoring)")
 STALE_LOCK_SECONDS = 10 * 60
 
 
@@ -1014,9 +1016,66 @@ def _track_episode(repo: Path, action: str, failed: str | None, neutral: bool, n
         tmp.replace(path)
 
 
+# One code_sync run per clone at a time (#1188). 2026-11-09: four headless helpers started within a second and each
+# one's SessionStart hook pulled the same clones; the runs raced on HEAD and MERGE_AUTOSTASH, nine pulls failed as
+# "CONFLICT" and one left a stash that made every later pull refuse. An flock belongs to the open fd, so a killed run
+# never leaves a lock behind, only the file.
+RUN_LOCK_NAME = "marvin-code-sync.lock"
+RUN_LOCK_WAIT_S = 60.0
+
+
+@contextmanager
+def _run_lock(repo: Path, wait_s: float):
+    """Yield True holding this clone's lock, or False after waiting `wait_s` for another run to let go. Not a git
+    repo: yield True and let the run report that the way it always has."""
+    gitdir = _git(repo, ["rev-parse", "--absolute-git-dir"]).strip()
+    if not gitdir:
+        yield True
+        return
+    fd = os.open(Path(gitdir) / RUN_LOCK_NAME, os.O_RDWR | os.O_CREAT, 0o644)
+    try:
+        deadline = time.monotonic() + wait_s
+        while True:
+            try:
+                fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+                break
+            except BlockingIOError:
+                if time.monotonic() >= deadline:
+                    yield False
+                    return
+                time.sleep(0.1)
+        try:
+            yield True
+        finally:
+            fcntl.flock(fd, fcntl.LOCK_UN)
+    finally:
+        os.close(fd)
+
+
+def _merge_failed(output: str, conflict_summary: str) -> str:
+    """The log summary for a merge that failed: a git ref/lock error is not a content conflict, and calling it one
+    sent 2026-11-09's fix after sync-log.md instead of the race (#1188)."""
+    if re.search(r"cannot lock ref|update_ref failed|Unable to create '.*\.lock'", output or ""):
+        return ("GIT LOCK failure merging origin/main (another git process held a ref; not a content conflict) — "
+                "merge aborted, tree left clean:\n" + output)
+    return conflict_summary
+
+
 def _tracked(repo: Path, action: str, now: float | None, run) -> None:
-    """Run one push or pull and feed its outcome to the stuck-episode tracker. A run that raises counts as failed."""
+    """Run one push or pull and feed its outcome to the stuck-episode tracker. A run that raises counts as failed.
+    Holds the clone's run lock throughout; a run that can't get it skips, neutral, and writes nothing to sync-log.md
+    (that file is in the Claude dir, the clone the holder may be merging)."""
     _RUN.update(failed=None, neutral=False)
+    with _run_lock(Path(repo), RUN_LOCK_WAIT_S) as held:
+        if not held:
+            print(f"code_sync {action}: skipped — another code_sync run holds {repo} (waited {RUN_LOCK_WAIT_S:.0f} s); "
+                  "the next cycle syncs it", file=sys.stderr)
+            _neutral()
+            return
+        _tracked_locked(repo, action, now, run)
+
+
+def _tracked_locked(repo: Path, action: str, now: float | None, run) -> None:
     try:
         run()
     except Exception as exc:
@@ -1240,7 +1299,7 @@ def _pull(repo: Path, now: float | None) -> None:
     if not clean:
         if stashed:
             subprocess.run(["git", "stash", "pop"], cwd=repo, capture_output=True)
-        _log(repo, "pull", f"CONFLICT merging origin/main — merge aborted, tree left clean:\n{merge_output}")
+        _log(repo, "pull", _merge_failed(merge_output, f"CONFLICT merging origin/main — merge aborted, tree left clean:\n{merge_output}"))
         return
 
     after = _git(repo, ["rev-parse", "HEAD"]).strip()
@@ -1306,7 +1365,7 @@ def _pull_commit_first(repo: Path, now: float | None) -> None:
         return
     if state != "merged":
         kept = f"; this machine's {len(committed)} changed file(s) are committed locally, nothing lost" if committed else ""
-        _log(repo, "pull", f"CONFLICT merging origin/main — merge aborted, tree left clean{kept}:\n{merge_output}")
+        _log(repo, "pull", _merge_failed(merge_output, f"CONFLICT merging origin/main — merge aborted, tree left clean{kept}:\n{merge_output}"))
         return
     after = _git(repo, ["rev-parse", "HEAD"]).strip()
     _after_push_merge(repo, before, resolved)
