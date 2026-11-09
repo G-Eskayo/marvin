@@ -1,5 +1,5 @@
 {
-  "_comment": "The one place the product's name and identity live (marvin#1007). The name is a working name until the trademark question is settled: change `name` here and every page follows. Kept as data, not code, so the engine's no-hard-coded-owner rule (lib/tests/test_instance.py) stays about engine code.",
+  "_comment": "The one place the product's name and identity live (marvin#1007). The name is MARVIN, public from 2026-11-04 (the owner's decision: the site publishes under it now, and the trademark question is accepted for now). It stays one field: change `name` here and every page follows. Kept as data, not code, so the engine's no-hard-coded-owner rule (lib/tests/test_instance.py) stays about engine code.",
   "name": "MARVIN",
   "description": "Claude Code with a memory, its own skills and a way to keep working while you're away.",
   "url": "https://marvin.gileskayo.me",

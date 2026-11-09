@@ -117,3 +117,103 @@ def test_ci_runs_the_python_suite_strict():
     import yaml
     jobs = yaml.safe_load((ROOT / ".github" / "workflows" / "ci.yml").read_text())["jobs"]
     assert jobs["python-tests"]["env"]["MARVIN_REQUIRE_TOOLS"] == "1"
+
+
+# ── macOS-only tests (marvin#1117): GitHub runs the suite on Linux, the Macs (the Mini's gate) run everything ────
+
+MAC_SUITE = '''
+import pytest
+import tool_requirements as tr
+
+@pytest.mark.macos_only("launchctl loads the plist")
+def test_needs_a_mac():
+    assert True
+
+@pytest.mark.macos_only("plutil reads it")
+@pytest.mark.requires_tool("no-such-mac-tool-1117")
+def test_a_mac_tool():
+    assert False, "never runs on Linux, and fails on a Mac only for the missing tool"
+
+def test_portable():
+    assert True
+'''
+
+MODULE_SUITE = '''
+import tool_requirements as tr
+tr.require_macos("the whole module drives Keychain")
+
+def test_keychain():
+    assert True
+'''
+
+
+def _run(tmp_path: Path, body: str, platform: str | None, env_extra: dict | None = None) -> subprocess.CompletedProcess:
+    # The platform is pinned by a conftest in the temp suite, never by an environment knob (a knob could make a Mac
+    # skip its own tests); `None` leaves the real one.
+    (tmp_path / "test_suite.py").write_text(body)
+    pin = f"import tool_requirements\ntool_requirements.PLATFORM = {platform!r}\n" if platform else ""
+    (tmp_path / "conftest.py").write_text(pin)
+    env = {k: v for k, v in os.environ.items() if k not in ("MARVIN_REQUIRE_TOOLS", "PYTEST_ADDOPTS")}
+    env.update({"PYTHONPATH": str(ROOT / "lib"), **(env_extra or {})})
+    return subprocess.run([sys.executable, "-m", "pytest", "-p", "tool_requirements", "-p", "no:cacheprovider",
+                           "-rs", "-q", str(tmp_path / "test_suite.py")], cwd=tmp_path, capture_output=True, text=True,
+                          env=env, timeout=120)
+
+
+def test_off_macos_a_mac_only_test_skips_and_says_the_mac_gate_runs_it(tmp_path):
+    r = _run(tmp_path, MAC_SUITE, "linux")
+    assert r.returncode == 0, r.stdout
+    assert "1 passed, 2 skipped" in r.stdout
+    assert "needs macOS: launchctl loads the plist (the Mac gate runs it)" in r.stdout
+
+
+def test_off_macos_it_skips_even_under_ci_strict_tools(tmp_path):
+    # MARVIN_REQUIRE_TOOLS=1 fails a missing tool; a Mac-only tool on Linux isn't missing, the test just isn't for here.
+    r = _run(tmp_path, MAC_SUITE, "linux", {"MARVIN_REQUIRE_TOOLS": "1"})
+    assert r.returncode == 0, r.stdout
+    assert "1 passed, 2 skipped" in r.stdout
+
+
+def test_on_macos_a_mac_only_test_always_runs(tmp_path):
+    r = _run(tmp_path, MAC_SUITE, "darwin")
+    assert "2 passed, 1 skipped" in r.stdout, r.stdout   # the skip is the missing tool, never "needs macOS"
+    assert "needs macOS" not in r.stdout
+
+
+def test_the_run_ends_with_how_many_tests_need_a_mac(tmp_path):
+    assert "needs macOS: 2 tests did not run here; the Mac gate runs them" in _run(tmp_path, MAC_SUITE, "linux").stdout
+
+
+def test_a_whole_module_can_need_macos(tmp_path):
+    assert "1 skipped" in _run(tmp_path, MODULE_SUITE, "linux").stdout
+    assert "1 passed" in _run(tmp_path, MODULE_SUITE, "darwin").stdout
+
+
+def test_a_mac_only_mark_must_say_why(tmp_path):
+    r = _run(tmp_path, "import pytest\n@pytest.mark.macos_only()\ndef test_x():\n    pass\n", "linux")
+    assert r.returncode != 0 and "macos_only needs a reason" in r.stdout + r.stderr, r.stdout + r.stderr
+    r = _run(tmp_path, "import tool_requirements as tr\ntr.require_macos('')\ndef test_x():\n    pass\n", "linux")
+    assert r.returncode != 0 and "require_macos needs a reason" in r.stdout + r.stderr, r.stdout + r.stderr
+
+
+def test_the_real_platform_is_what_decides_by_default():
+    assert tr.PLATFORM == sys.platform
+
+
+def test_mac_only_tests_use_the_one_marker_not_their_own_platform_skips():
+    # One place decides, and it provably never skips on a Mac (above), so the Mini's gate runs every Mac-only test.
+    # A hand-rolled skipif on the platform would be a second way to skip on a Mac that nothing checks.
+    import re
+    rolled = re.compile(r"skip(if)?\([^)]*sys\.platform\s*!=\s*[\"']darwin")
+    offenders = [str(p.relative_to(ROOT)) for d in ("lib/tests", "bench/tests") for p in (ROOT / d).rglob("test_*.py")
+                 if rolled.search(p.read_text())]
+    assert offenders == [], f"use @pytest.mark.macos_only('why') instead: {offenders}"
+
+
+def test_github_runs_the_python_suite_on_linux_where_a_runner_is_always_free():
+    # #1117: the macOS job waited for runners (17 min and none on #935); the Mac gate covers the Mac-only tests.
+    import yaml
+    job = yaml.safe_load((ROOT / ".github" / "workflows" / "ci.yml").read_text())["jobs"]["python-tests"]
+    assert job["runs-on"] == "ubuntu-latest"
+    steps = " ".join(str(s.get("run", "")) for s in job["steps"])
+    assert "sha256sum -c" in steps and "gitleaks" in steps and "ripgrep" in steps

@@ -21,6 +21,8 @@ contextBridge.exposeInMainWorld('api', {
   },
   mr: {
     list: () => ipcRenderer.invoke('mr:list'),
+    projects: () => ipcRenderer.invoke('mr:projects'),
+    helperTabs: () => ipcRenderer.invoke('mr:helperTabs'),
     // Confirmation happens in the main process via a native dialog, not here --
     // see the comment on the mr:approve handler for why.
     approve: (pr) => ipcRenderer.invoke('mr:approve', pr),
@@ -127,6 +129,10 @@ contextBridge.exposeInMainWorld('api', {
     readiness: () => ipcRenderer.invoke('health:readiness'),
     setMergeFromDashboard: (repo, value) => ipcRenderer.invoke('health:setMergeFromDashboard', repo, value),
     setDispatch: (repo, value) => ipcRenderer.invoke('health:setDispatch', repo, value)
+  },
+  alerts: {
+    status: () => ipcRenderer.invoke('alerts:status'),
+    test: () => ipcRenderer.invoke('alerts:test')
   },
   accounts: {
     list: (opts) => ipcRenderer.invoke('accounts:list', opts),

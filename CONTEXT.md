@@ -1198,7 +1198,9 @@ untouched (it is the "legacy profile"); only repos with a profile file use the p
   (cloning killer-sudoku from GitHub took 0.7s; the same repo from the iCloud-synced `~/Documents` copy hung for
   minutes, and a person's working copy should not be the pipeline's base anyway); `setup` steps (run once per
   fresh worktree, skipped when their `creates` path exists; a failed step is an error, a missing tool is
-  EnvMissing); a `vitest` parser; `executor.denied_tools` (finance-os forbids reading
+  EnvMissing; a gitignored model a build needs comes from `lib/model_cache.py link`: one copy per machine under
+  `~/.agents-pipeline-cache/models/<project>/<name>/<key>`, keyed by a hash of the fetch script and manifest,
+  fetched once under a lock, checked by file sizes on every run and linked into the worktree, #1114); a `vitest` parser; `executor.denied_tools` (finance-os forbids reading
   `~/Library/Application Support/FinanceOS` and `~/Documents/Money-and-Admin`). killer-sudoku: `swift test` at the
   repo root (102 tests, Swift Testing, 13s). finance-os: SETUP.md's two-step install (`npm install
   --ignore-scripts`, then Electron's binary, then `@electron/rebuild -f -w better-sqlite3`, because Node 25/26
@@ -1600,7 +1602,7 @@ Mac has no push channel. Gil applies the hooks on each Mac with `marvin_hooks.py
 
 ## clarity-captions app-build check is now required (2026-10-05)
 
-The profile's `spike-app` tier (xcodegen + `xcodebuild` for the iOS Simulator SDK, signing off) is enabled and **required**, so both the pipeline's verification and the dashboard merge gate fail a PR that breaks the app build, not just CaptionCore's `swift test`. Selftest on main: build ok, 85 tests, about 3.5 min. Needs `xcodegen` (Homebrew, installed on the mini) and the 234 MB Sortformer model, which the `diarizer-model` setup step links into each worktree from `~/.agents-pipeline-cache/clarity-captions/` (fetched once, self-healing if missing). Build output goes to a shared `DerivedData` in that cache dir. Only `mac-mini-1` has these; a machine without them releases the claim without a strike.
+The profile's `spike-app` tier (xcodegen + `xcodebuild` for the iOS Simulator SDK, signing off) is enabled and **required**, so both the pipeline's verification and the dashboard merge gate fail a PR that breaks the app build, not just CaptionCore's `swift test`. Selftest on main: build ok, 85 tests, about 3.5 min. Needs `xcodegen` (Homebrew, installed on the mini) and the 234 MB Sortformer model, which the `diarizer-model` setup step links into each worktree, and the 484 MB Parakeet Ultra model (`asr-model`), both through `lib/model_cache.py` (fetched once per machine, refetched if the cached copy is incomplete; #1114). Build output goes to a shared `DerivedData` in that cache dir. Only `mac-mini-1` has these; a machine without them releases the claim without a strike.
 
 ## Base-branch rule (2026-10-05, from finance-os #8)
 
@@ -2058,3 +2060,15 @@ runs no merge or test of its own and its memory is normal).
   When the data is here it returns at once with no network. When the folder is parked it fetches the data back
   (locked, space-checked, verified) and returns. A path inside a parked folder fetches only that part. This is the
   trigger: nothing polls.
+
+## Loops (ADR 0083, marvin#1123, 2026-11-04)
+
+- **Loop**: a feedback cycle that works only when all four steps run: **notice → act → verify → remember**. Each one
+  is an entry in `config/loops.json`, read only by `lib/loops.py`.
+- **Loop status**: derived, never stored. **Closed**: a full cycle within its limit. **Stalled**: no full cycle within
+  `cycle_days`. **Broken**: its signal or its verify is red, or its job failed 3 runs in a row. **Not wired**: its
+  action doesn't run or doesn't report yet.
+- **Full cycle**: a passed run of the loop's action while its verify signal isn't red.
+- **Alert path**: `mr_notification._fire`, the one way MARVIN tells Gil (desktop, dashboard, and the phone once #958
+  lands). An alert fires on a change to bad, then once a day while it stays bad, and once when it clears.
+- **Inbox**: one JSON file per item per pile (`lib/inbox.py`), replacing the separate markdown piles one at a time.

@@ -354,3 +354,16 @@ def _mock_disposable_basetemp(request, monkeypatch):
         yield []
 
     monkeypatch.setattr(cleanup_sweep, "disposable_basetemp", mock_disposable)
+
+
+@pytest.fixture(autouse=True)
+def _no_real_alerts(tmp_path_factory, monkeypatch):
+    # The one alert path (mr_notification._fire, #1123) shows a real banner, pings the real dashboard and writes the
+    # real ~/.claude/logs/jobs/alerts.json. No test may do any of that: channels are inert and run logs go to tmp.
+    # A test that checks a channel sets its own fake after this.
+    import job_events
+    import mr_notification
+    monkeypatch.setattr(job_events, "JOBS_DIR", tmp_path_factory.mktemp("jobs"))
+    monkeypatch.setattr(mr_notification, "desktop_notify", lambda *a, **k: None)
+    monkeypatch.setattr(mr_notification, "dashboard_refresh_ping", lambda: None)
+    monkeypatch.setattr(mr_notification, "phone_notify", None)

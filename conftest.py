@@ -10,6 +10,11 @@
    that need gh behaviour mock it.
 3. Only the selected tests are collected when $MARVIN_SELECTED_TESTS names a file (marvin#826, lib/affected_tests.py):
    a PR runs what its change can affect, and files it can't are never imported.
+4. No test downloads Chroma's embedding model (#1156). Its default embedding fetches an ~80 MB ONNX model on first
+   use into ~/.cache, which the test home links to the real one; on a CI runner with no copy, the parallel workers all
+   fetched it at once into that one folder and broke each other's download, so a different handful of the 37 tests
+   that embed failed each run and main stayed red for days. No test is about embedding quality, so every test gets a
+   deterministic stand-in: words hashed into the real model's 384 dimensions (similar texts still rank closer).
 """
 import atexit
 import os
@@ -134,6 +139,35 @@ def _no_real_github(tmp_path_factory, monkeypatch):
     fake.write_text("#!/bin/sh\necho 'gh is disabled in tests' >&2\nexit 1\n")
     fake.chmod(0o755)
     monkeypatch.setenv("PATH", f"{bin_dir}{os.pathsep}{os.environ.get('PATH', '')}")
+
+
+EMBED_DIM = 384  # all-MiniLM-L6-v2's width, so collections a test stores match what the real model would make
+
+
+def hashed_embedding(texts):
+    """One unit vector per text: a bag of hashed words. O(total characters); deterministic on every machine."""
+    import hashlib
+    import re
+
+    import numpy as np
+    out = []
+    for text in texts:
+        vec = np.zeros(EMBED_DIM, dtype=np.float32)
+        for word in re.findall(r"\w+", str(text).lower()):
+            vec[int.from_bytes(hashlib.blake2b(word.encode(), digest_size=8).digest(), "little") % EMBED_DIM] += 1.0
+        norm = float(np.linalg.norm(vec))
+        out.append(vec / norm if norm else vec)
+    return out
+
+
+@pytest.fixture(autouse=True)
+def _no_embedding_model_download(monkeypatch):
+    """Rule 4 (#1156). A machine without chromadb has nothing to stand in for."""
+    try:
+        from chromadb.utils.embedding_functions.onnx_mini_lm_l6_v2 import ONNXMiniLM_L6_V2
+    except ImportError:
+        return
+    monkeypatch.setattr(ONNXMiniLM_L6_V2, "__call__", lambda self, input: hashed_embedding(input))
 
 
 @pytest.fixture(autouse=True)

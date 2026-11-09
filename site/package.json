@@ -12,7 +12,7 @@
     "check": "node scripts/check.mjs",
     "prebuild": "node scripts/changelog.mjs && node scripts/copy-diagrams.mjs && node scripts/check.mjs",
     "build": "astro build",
-    "postbuild": "node scripts/check.mjs --dist",
+    "postbuild": "node scripts/cname.mjs && node scripts/check.mjs --dist",
     "dev": "node scripts/changelog.mjs && node scripts/copy-diagrams.mjs && astro dev",
     "preview": "astro preview",
     "test": "node --test scripts/*.test.mjs"

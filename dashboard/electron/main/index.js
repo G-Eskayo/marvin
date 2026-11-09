@@ -139,6 +139,8 @@ import { createDeliverables } from './deliverables.js'
 import { createThumbs } from './thumbs.js'
 import { docsTextFor, maxNumbers, docsClickHandlers } from './docs_handlers.js'
 import { readCatalog, readMasterDoc, readOverrides, CATALOG_DIR, MASTER_DOC_PATH } from './catalog.js'
+import { readHelperTabs } from './helper_tabs.js'
+import { withOverrides } from '../../src/lib/project_names.js'
 import { STAGES_DIR } from '../../webhook-server/ticket_stages.js'
 import { DISPATCH_STATE_PATH } from './dispatch_status.js'
 import { createHash } from 'crypto'
@@ -172,6 +174,7 @@ import { createHelpersReader } from './chat_helpers.js'
 import { createChatsReader, createChatSender } from './chat_tabs.js'
 import { isPullOnlyNode, createFeedSource, feedOnlyGh, readNetworkRegistry, assertActsHere as assertPullOnlyActs, canMergeHere, withReadOnlyReason } from './github_feed.js'
 import { createAccounts } from './accounts.js'
+import { createAlerts } from './alerts.js'
 
 // The pipeline's screenshot copy runs unattended beside the real dashboard: log, never show a modal (#384).
 if (isEvidenceCapture(process.env)) installCaptureGuard(process)
@@ -181,6 +184,7 @@ instrumentIpc(ipcMain)
 
 const execFileAsync = promisify(execFile)
 const accountsView = createAccounts({ machine: () => resolveDeviceId(), execFile: execFileAsync })
+const alertsView = createAlerts({ execFile: execFileAsync })
 
 // marvin#954: a pull-only node (mac-mini-2012, ADR 0069) holds no GitHub credential. Its dashboard reads the open PRs
 // and boards from the Mini's feed (github_feed.js) and every other GitHub read or write here is refused in plain words,
@@ -505,6 +509,8 @@ function registerHealthHandlers() {
   // Vitals > Accounts (marvin#974; the card itself waits on Gil's approval, #640): saved view first, then this
   // machine checked live; Renew opens a helper tab where the person approves or pastes the login.
   ipcMain.handle('accounts:list', (_event, opts) => accountsView.list({ fresh: !!opts?.fresh }))
+  ipcMain.handle('alerts:status', () => alertsView.status())
+  ipcMain.handle('alerts:test', () => alertsView.test())
   ipcMain.handle('accounts:renew', (_event, id, machine) => accountsView.renew(String(id || ''), machine ? String(machine) : null))
   ipcMain.handle('health:setMergeFromDashboard', async (_event, repo, value) => {
     if (value === true) {
@@ -593,7 +599,7 @@ function registerActivityHandlers() {
     ])
     return { gh: ghJson, registryRepos, data, evidence, otherPrs }
   }
-  ipcMain.handle('boards:list', () => withProjectStatus(readRegistry(), readCatalog({ deviceId: deviceId() })))
+  ipcMain.handle('boards:list', () => withProjectStatus(readRegistry(), readCatalog({ deviceId: deviceId() }), readOverrides()))
   ipcMain.handle('boards:load', async (_event, repo, source = 'poll') => {
     assertRegistered(repo)
     const board = await loadBoard(repo, await boardInputs(repo))
@@ -727,7 +733,7 @@ function registerDocsHandlers() {
     overview: () => relations.overview(),
     peekBoards: () => githubState.peek('board'),
     stagesFor: defaultStagesFor,
-    boards: () => withProjectStatus(readRegistry(), readCatalog({ deviceId: deviceId() })),
+    boards: () => withProjectStatus(readRegistry(), readCatalog({ deviceId: deviceId() }), readOverrides()),
     savedMerged: () => readSavedMerged(MR_HISTORY_PATH),
     serverMerges: () =>
       fetch(MR_WEBHOOK_URL.replace(/\/approve$/, '/merge-history'), { signal: AbortSignal.timeout(3000) })
@@ -1102,6 +1108,11 @@ function registerMrReviewHandlers() {
       .then((prs) => withReadOnlyReason(prs, pullOnly)),
     () => `${githubState.localSeq()}:${githubState._genOf(null)}`
   )
+  // MR Review by project (marvin#848): the projects with their one name (overrides.json applied now), and the helper
+  // tabs for the cards' chips. Both read when the list is read, never on a timer of their own.
+  ipcMain.handle('mr:projects', () => withOverrides(readCatalog({ deviceId: deviceId() })?.projects, readOverrides())
+    .map(({ id, name, catalogName, repo, status, aliases }) => ({ id, name, catalogName, repo, status, aliases })))
+  ipcMain.handle('mr:helperTabs', () => readHelperTabs())
   ipcMain.handle('mr:list', async () => {
     if (!fixturePrs && !pullOnly) listOpenPrs().then((prs) => stackRetarget.check(prs)).catch(() => {})
     const list = await mrList()
