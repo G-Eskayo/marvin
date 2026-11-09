@@ -37,7 +37,24 @@ def test_anything_outside_the_five_is_refused(kind):
 
 
 def test_a_ticket_build_cannot_ride_in_as_a_security_tool():
-    for argv in (["claude", "-p", "build #12"], ["bash", "-c", "x"], ["python3", "x.py"], []):
+    # Owner, PR #941 security-tools: any Kali tool, no list. Ticket builds still never go to the box (trial-work
+    # decision), so agents, shells and interpreters stay refused, in every spelling.
+    for argv in (["claude", "-p", "build #12"], ["bash", "-c", "x"], ["python3", "x.py"], [], ["sh", "-c", "x"],
+                 ["zsh"], ["python3.12", "x.py"], ["node", "x.js"], ["codex", "exec"], ["env", "claude"],
+                 ["sudo", "nmap"], ["CLAUDE", "-p", "x"], ["Bash"], ["xargs", "claude"], ["nohup", "bash"]):
+        with pytest.raises(ValueError):
+            bt.security_command(argv)
+
+
+def test_any_kali_tool_runs_without_a_list():
+    for tool in ("nmap", "sqlmap", "hydra", "gobuster", "msfconsole", "john", "hashcat", "wpscan", "dirb", "nuclei",
+                 "enum4linux", "smbclient", "theHarvester", "aircrack-ng", "tshark"):
+        assert bt.security_command([tool, "--help"]) == f"{tool} --help"
+
+
+def test_the_tool_is_a_plain_command_name_never_a_path_or_shell():
+    for argv in (["/bin/sh"], ["./x"], ["../nmap"], ["~/nmap"], ["nmap;id"], ["$(id)"], ["`id`"], ["nm ap"], [""],
+                 ["-sn"], ["nmap\n"], ["a" * 200]):
         with pytest.raises(ValueError):
             bt.security_command(argv)
 
