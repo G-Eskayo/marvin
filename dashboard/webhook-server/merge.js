@@ -510,6 +510,20 @@ async function rerunnable(reason, scratchDir, base, exec) {
   return files.some((f) => changed.has(f.repoPath)) ? [] : names
 }
 
+// marvin#1183: abandon the conflicted rebase and merge base into the PR's own head instead. True when that merge is
+// clean (the clone is then at the merge commit); false, with the clone back at the PR's head, when it conflicts too.
+export async function mergeInstead(exec, dir, headRef, base) {
+  await Promise.resolve().then(() => exec('git', ['rebase', '--abort'], { cwd: dir })).catch(() => {})
+  try {
+    await exec('git', ['checkout', '-q', '--detach', `origin/${headRef}`], { cwd: dir })
+    await exec('git', ['merge', '--no-edit', '-m', `Merge ${base} into ${headRef} (the merge gate: its base PR was squash-merged)`, `origin/${base}`], { cwd: dir })
+    return true
+  } catch {
+    await Promise.resolve().then(() => exec('git', ['merge', '--abort'], { cwd: dir })).catch(() => {})
+    return false
+  }
+}
+
 export async function rebaseAndRetest(headRef, exec = execFileAsync, repoPath = REPO_PATH, runTests = _defaultRunTests, base = 'main', resolveConflicts = null, sleep = null, progress = noProgress, freeBytes = freeDiskBytes, firstAid = null, rerun = null) {
   let free = await freeBytes(tmpdir()).catch(() => null) // unreadable: carry on, as before this check
   const gb = (n) => `${(n / 1024 ** 3).toFixed(1)} GB`
@@ -537,6 +551,7 @@ export async function rebaseAndRetest(headRef, exec = execFileAsync, repoPath = 
     await exec('git', ['fetch', 'origin', base, headRef], { cwd: repoPath })
     await exec('git', ['worktree', 'add', '--detach', scratchDir, `origin/${headRef}`], { cwd: repoPath })
 
+    let merged = false   // marvin#1183: main merged in instead of a rebase; pushed without force
     try {
       await exec('git', ['rebase', `origin/${base}`], { cwd: scratchDir })
     } catch (err) {
@@ -544,8 +559,15 @@ export async function rebaseAndRetest(headRef, exec = execFileAsync, repoPath = 
       // is finished by the resolver (main's copy, regenerated). Real code conflicts still end here.
       const resolved = resolveConflicts ? await resolveConflicts(scratchDir).catch((e) => ({ ok: false, reason: String(e.message || e) })) : null
       if (!resolved?.ok) {
-        const why = resolved?.reason ? `\n\nGenerated-file resolution: ${resolved.reason}` : ''
-        return { ok: false, reason: `Rebase onto main failed:\n\n${String(err.stderr || err.message || err)}${why}` }
+        // marvin#1183: a branch built on a PR that was squash-merged carries that PR's own commits; rebasing replays
+        // them over their squash and conflicts, though merging main is clean (#942, held 2026-11-05 to 11-09). Merge
+        // main instead when that is clean; a real conflict fails both and still ends here, as a rebase conflict.
+        merged = await mergeInstead(exec, scratchDir, headRef, base)
+        if (!merged) {
+          const why = resolved?.reason ? `\n\nGenerated-file resolution: ${resolved.reason}` : ''
+          return { ok: false, reason: `Rebase onto main failed:\n\n${String(err.stderr || err.message || err)}${why}` }
+        }
+        progress('rebasing', 'running', { detail: `merged ${base} in (its base PR was squash-merged)` })
       }
     }
 
@@ -554,7 +576,7 @@ export async function rebaseAndRetest(headRef, exec = execFileAsync, repoPath = 
     try {
       await runTests(scratchDir, exec, progress, undefined, undefined, base)
     } catch (err) {
-      const reason = `Tests failed after rebasing onto main:\n\n${testOutputOf(err)}`
+      const reason = `Tests failed after ${merged ? 'merging main' : 'rebasing onto main'}:\n\n${testOutputOf(err)}`
       const names = rerun ? await rerunnable(reason, scratchDir, base, exec) : []
       let passed = false
       if (names.length) {
@@ -566,11 +588,13 @@ export async function rebaseAndRetest(headRef, exec = execFileAsync, repoPath = 
     progress('tests', 'done')
 
     // The retest above may have taken many minutes; a GitHub blip on the push must not discard it.
-    await withRetry(() => exec('git', ['push', '--force-with-lease', 'origin', `HEAD:${headRef}`], { cwd: scratchDir }), {
+    // A merge keeps the branch's history, so a plain push: if the branch moved meanwhile, it is refused, not overwritten.
+    const pushArgs = merged ? ['push', 'origin', `HEAD:${headRef}`] : ['push', '--force-with-lease', 'origin', `HEAD:${headRef}`]
+    await withRetry(() => exec('git', pushArgs, { cwd: scratchDir }), {
       classify: (e) => classifyFailure({ stage: 'gate', error: e }),
       ...(sleep ? { sleep } : {})
     })
-    return flaky ? { ok: true, flaky } : { ok: true }
+    return { ok: true, ...(flaky ? { flaky } : {}), ...(merged ? { merged: true } : {}) }
   } finally {
     await dropGateClone(scratchDir, exec, repoPath)
   }
