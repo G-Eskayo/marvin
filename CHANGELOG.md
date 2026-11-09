@@ -1,5 +1,7 @@
 # Changelog
 
+- Box builds: Mac-side dispatch of Linux-safe tickets to a VM on mac-mini-2012 ([#981](https://github.com/G-Eskayo/marvin/pull/981))
+
 - MARVIN shows what it's talking about: opens the document in a Docs sub-window and works on it with you ([#1032](https://github.com/G-Eskayo/marvin/pull/1032))
 
 - Merge queue: a PR built on a squash-merged base conflicts on rebase and is held silently ([#1186](https://github.com/G-Eskayo/marvin/pull/1186))
