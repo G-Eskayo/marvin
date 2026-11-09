@@ -1,0 +1,7 @@
+1. Post one reply comment on PR #969 (via `~/.agents/bin/gh pr comment 969 --repo G-Eskayo/marvin --body-file <tmp>`, not a heredoc substitution per the gh-body-file convention) containing:
+   - `<!-- marvin:decisions-addressed -->` marker (required for `lib/owner_decisions.py` to treat it as addressed).
+   - Confirmation that the `golden-home` decision ("keep the image in `runs/golden/`") is already carried out — it was the shipped design before the decision was even recorded, cited with the original commit (`8d35f879`).
+   - What actually changed on the branch since the decision: the `933`/`932` stacked-branch merges and the unrelated `ca16c1aa` CI-fix commit, explicitly stating these do not touch the golden-home choice or any other PR #969 feature file.
+   - The screenshots line: "not applicable — this PR has no UI change (VM build scripts and `lib/vm_run.py` only), so no screenshots were taken or need retaking."
+2. Confirm after posting that `lib/owner_decisions.py pr_status` would now read `addressed_by == "reply"` for this comment (i.e. the reply's `createdAt` is after the Decisions comment and carries the marker) — a manual read-check, not a code change.
+3. No further action on issue #989 itself: it is filed to close itself once PR #969 is addressed (per its own footer), so no manual close is needed — confirm it does in a later check rather than closing it by hand.
