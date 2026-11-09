@@ -23,9 +23,23 @@ import sys
 from pathlib import Path
 
 sys.path.insert(0, str(Path.home() / ".agents" / "lib"))
-import intent_classify  # noqa: E402
 import model_scope  # noqa: E402
 import model_registry  # noqa: E402
+
+
+def _intent_classify():
+    # Loaded on first use, not at import: the UserPromptSubmit hook imports this
+    # module for INTENTS and the keyword pass and shouldn't pay for the embedding
+    # classifier's imports (PR #1118, latency decision).
+    import intent_classify
+    return intent_classify
+
+
+def __getattr__(name: str):
+    # keeps `route.intent_classify` working for callers and tests that patch it
+    if name == "intent_classify":
+        return _intent_classify()
+    raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
 
 # ── routing table ─────────────────────────────────────────────────────────────
 
@@ -167,7 +181,7 @@ def resolve_intent(description: str, use_embed: bool) -> tuple[str, float | int,
         intent, hits = classify(description)
         return intent, hits, "keyword"
 
-    result = intent_classify.classify(description)
+    result = _intent_classify().classify(description)
     if result["status"] == "ok":
         return result["intent"], result["score"], "embed"
     if result["status"] == "no_match":
@@ -184,7 +198,7 @@ def launch_model(prompt) -> tuple[str, str | None]:
     if not isinstance(prompt, str) or not prompt.strip():
         return DEFAULT_INTENT, None
     try:
-        result = intent_classify.classify(prompt.strip()[:MAX_ROUTE_CHARS])
+        result = _intent_classify().classify(prompt.strip()[:MAX_ROUTE_CHARS])
     except Exception:
         return DEFAULT_INTENT, None
     if not isinstance(result, dict) or result.get("status") != "ok" or result.get("intent") not in INTENTS:
