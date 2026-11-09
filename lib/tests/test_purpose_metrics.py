@@ -445,3 +445,27 @@ def test_the_verify_timeouts_probe_counts_marvin_verify_timeouts_in_the_window(t
     assert pm._marvin_verify_timeouts(days=7, path=tmp_path / "missing.jsonl", now=now) == 0.0
     fn, limit, what = pm.PROBES["verify-timeouts"]
     assert limit >= 0 and "1152" in what
+
+
+def test_the_model_run_timeouts_probe_counts_planner_and_executor_timeouts_in_the_window(tmp_path):
+    """2026-11-09: ~3% of ticket-planner and ticket-executor launches hit the 900 s limit, and each one ended its run.
+    Counts those kinds' timeouts in launches.jsonl over the window; other kinds, other exits, old rows and junk don't."""
+    import json
+    from datetime import datetime, timedelta, timezone
+    now = datetime(2026, 11, 16, 12, tzinfo=timezone.utc)
+    log = tmp_path / "launches.jsonl"
+    at = lambda h: (now - timedelta(hours=h)).isoformat()
+    rows = [
+        {"at": at(2), "kind": "ticket-executor", "exit_code": 124, "exit_cause": "timeout", "ticket": "G-Eskayo/marvin#1"},
+        {"at": at(3), "kind": "ticket-planner", "exit_code": 124, "exit_cause": "timeout", "ticket": "G-Eskayo/marvin#2"},
+        {"at": at(4), "kind": "judge", "exit_code": 124, "exit_cause": "timeout"},                 # not a build run
+        {"at": at(5), "kind": "ticket-executor", "exit_code": 0, "exit_cause": "ok"},              # finished
+        {"at": at(6), "kind": "ticket-executor", "exit_code": 1, "exit_cause": "error"},           # failed, not slow
+        {"at": at(24 * 9), "kind": "ticket-planner", "exit_code": 124, "exit_cause": "timeout"},   # outside the window
+        {"kind": "ticket-planner", "exit_cause": "timeout"},                                       # no time
+    ]
+    log.write_text("\n".join(json.dumps(r) for r in rows) + "\nnot json\n[1]\n")
+    assert pm._model_run_timeouts(days=7, path=log, now=now) == 2.0
+    assert pm._model_run_timeouts(days=7, path=tmp_path / "missing.jsonl", now=now) == 0.0
+    fn, limit, what = pm.PROBES["model-run-timeouts"]
+    assert limit == 2.0 and "launches.jsonl" in what

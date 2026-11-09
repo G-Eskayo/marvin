@@ -384,3 +384,155 @@ def test_a_daily_calendar_is_unchanged():
 def test_other_calendar_keys_are_still_refused():
     with pytest.raises(ju.JobError):
         ju.validate({"name": "x", "command": ["x"], "schedule": {"calendar": {"day": 1, "hour": 4, "minute": 15}}})
+
+
+# ── tidy-agent runs on the venv Python (marvin#1123 0.6) ────────────────────────────────────────────────────────────
+# macOS privacy (TCC) checks a launchd job by its interpreter. /usr/bin/python3 lost Full Disk Access on the Mini and
+# tidy-agent failed every night from 2026-10-15 with PermissionError on ~/Desktop; the venv Python (Homebrew's
+# Python.app) holds the grant on both Macs (probed with `launchctl submit`, 2026-11-04).
+
+def test_tidy_agent_runs_the_organizer_daily_on_the_venv_python():
+    job = ju.load("tidy-agent")
+    assert job["command"] == ["~/.agents/venv/bin/python", "~/.claude/organize/tidy_agent.py"]
+    assert job["schedule"] == {"calendar": {"hour": 3, "minute": 0}}
+    plist = plistlib.loads(ju.render_plist(job, MAC_HOME))
+    assert plist["Label"] == "com.marvin.tidy-agent"
+    assert plist["ProgramArguments"][0] == f"{MAC_HOME}/.agents/venv/bin/python"
+    assert plist["StandardErrorPath"] == f"{MAC_HOME}/.claude/logs/tidy-agent-error.log"
+
+
+def test_no_job_definition_runs_the_system_python():
+    # /usr/bin/python3 is the xcode-select shim: TCC needs its own grant for it, separate from the venv's, and it is
+    # the one that broke. Any job that names it fails the same way on a Mac without that grant.
+    for name in ju.available():
+        assert ju.load(name)["command"][0] not in ("/usr/bin/python3", "python3", "/usr/bin/python"), name
+
+
+def test_the_catalog_and_cron_health_read_tidy_agents_new_logs():
+    import cron_health
+    import job_catalog
+    entry = job_catalog.JOBS["tidy-agent"]
+    assert entry.get("label", "com.marvin.tidy-agent") == "com.marvin.tidy-agent"
+    assert entry["reporter"] == "~/.claude/logs/tidy-agent-error.log"
+    _, logs = cron_health.JOBS["tidy-agent"]
+    assert logs == [".claude/logs/tidy-agent.log", ".claude/logs/tidy-agent-error.log"]
+
+
+# ── tidy-agent runs on the Mini only (owner's decision on PR #1129) ────────────────────────────────────────────────
+# ~/Desktop and ~/Documents are one iCloud copy shared by both Macs. Two Macs filing the same files at 03:00 fight
+# each other, so the catalog places tidy-agent on the Mini, and install refuses to put it anywhere else. These tests
+# try to sneak it onto the laptop, the Linux box and an unknown machine, and repeat the install.
+
+def _la(home):
+    return home / "Library" / "LaunchAgents"
+
+
+def test_the_catalog_places_tidy_agent_on_the_mini_only():
+    import job_catalog
+    import health_checks as hc
+    assert job_catalog.JOBS["tidy-agent"]["machine"] == "mini"
+    assert hc.JOB_PLACEMENT["tidy-agent"] == "mini"
+
+
+def test_health_flags_tidy_agent_on_the_laptop_and_missing_on_the_mini():
+    import health_checks as hc
+    laptop = [j for j, w in hc.JOB_PLACEMENT.items() if w in ("both", "laptop")]
+    sev, detail = hc.evaluate_job_placement(laptop + ["tidy-agent"], "laptop")
+    assert sev == "yellow" and "meant for the other machine: tidy-agent" in detail
+    mini = [j for j, w in hc.JOB_PLACEMENT.items() if w in ("both", "mini") and j != "tidy-agent"]
+    sev, detail = hc.evaluate_job_placement(mini, "mini")
+    assert sev == "yellow" and "missing: tidy-agent" in detail
+
+
+def test_install_on_the_mini_installs_tidy_agent(tmp_path):
+    run = FakeRun()
+    out = ju.install(["tidy-agent"], os_name="macos", home=tmp_path, run=run, uid=501, role="mini")
+    assert out == [{"job": "tidy-agent", "changed": True, "ok": True}]
+    assert (_la(tmp_path) / "com.marvin.tidy-agent.plist").exists()
+
+
+def test_install_on_the_laptop_writes_nothing_and_loads_nothing(tmp_path):
+    run = FakeRun()
+    out = ju.install(["tidy-agent"], os_name="macos", home=tmp_path, run=run, uid=501, role="laptop")
+    assert out == [{"job": "tidy-agent", "changed": False, "ok": True, "skipped": "placed on the mini only"}]
+    assert not (_la(tmp_path) / "com.marvin.tidy-agent.plist").exists()
+    assert not any("bootstrap" in c for c in run.calls)
+
+
+def test_install_on_the_laptop_removes_a_copy_already_installed_there(tmp_path):
+    ju.install(["tidy-agent"], os_name="macos", home=tmp_path, run=FakeRun(), uid=501, role="mini")
+    run = FakeRun()
+    out = ju.install(["tidy-agent"], os_name="macos", home=tmp_path, run=run, uid=501, role="laptop")
+    assert out == [{"job": "tidy-agent", "changed": True, "ok": True, "skipped": "placed on the mini only"}]
+    assert ["launchctl", "bootout", "gui/501/com.marvin.tidy-agent"] in run.calls
+    assert not (_la(tmp_path) / "com.marvin.tidy-agent.plist").exists()
+    # A repeat finds nothing to remove and touches launchd not at all.
+    run2 = FakeRun()
+    out = ju.install(["tidy-agent"], os_name="macos", home=tmp_path, run=run2, uid=501, role="laptop")
+    assert out[0]["changed"] is False and run2.calls == []
+
+
+def test_a_mixed_install_on_the_laptop_still_installs_the_jobs_placed_there(tmp_path):
+    out = ju.install(["tidy-agent", "usage-scan"], os_name="macos", home=tmp_path, run=FakeRun(), uid=501, role="laptop")
+    assert [r["job"] for r in out] == ["tidy-agent", "usage-scan"]
+    assert "skipped" in out[0] and "skipped" not in out[1]
+    assert (_la(tmp_path) / "com.marvin.usage-scan.plist").exists()
+
+
+def test_install_refuses_a_placed_job_when_it_cannot_tell_which_mac_this_is(tmp_path):
+    run = FakeRun()
+    with pytest.raises(ju.JobError, match="which Mac"):
+        ju.install(["usage-scan", "tidy-agent"], os_name="macos", home=tmp_path, run=run, uid=501, role=None)
+    assert run.calls == [] and not _la(tmp_path).exists()   # refused before anything was installed
+
+
+def test_a_job_placed_on_both_needs_no_role(tmp_path, monkeypatch):
+    monkeypatch.setattr(ju, "machine_role", lambda: None)
+    out = ju.install(["usage-scan"], os_name="macos", home=tmp_path, run=FakeRun(), uid=501)
+    assert out[0]["ok"] and "skipped" not in out[0]
+
+
+def test_tidy_agent_is_never_installed_on_linux(tmp_path):
+    # The box has no iCloud Desktop to file. The definition says macos; the catalog's Mac placement isn't consulted.
+    assert ju.load("tidy-agent")["os"] == "macos"
+    run = FakeRun()
+    out = ju.install(["tidy-agent"], os_name="linux", home=tmp_path, run=run)
+    assert out == [{"job": "tidy-agent", "changed": False, "ok": True, "skipped": "runs on macos only"}]
+    assert not (tmp_path / ".config" / "systemd" / "user" / "marvin-tidy-agent.timer").exists()
+    assert not any("enable" in c for c in run.calls)
+
+
+def test_linux_removes_a_tidy_agent_unit_someone_installed_by_hand(tmp_path):
+    d = tmp_path / ".config" / "systemd" / "user"
+    d.mkdir(parents=True)
+    (d / "marvin-tidy-agent.service").write_text("x")
+    (d / "marvin-tidy-agent.timer").write_text("x")
+    run = FakeRun()
+    out = ju.install(["tidy-agent"], os_name="linux", home=tmp_path, run=run)
+    assert out[0]["changed"] is True and out[0]["ok"] is True
+    assert ["systemctl", "--user", "disable", "--now", "marvin-tidy-agent.timer"] in run.calls
+    assert not (d / "marvin-tidy-agent.service").exists() and not (d / "marvin-tidy-agent.timer").exists()
+
+
+def test_the_box_still_installs_health_check_although_the_catalog_says_mini(tmp_path):
+    # Catalog placement is about the two Macs (Health checks launchd only); the box runs health-check by systemd.
+    out = ju.install(["health-check"], os_name="linux", home=tmp_path, run=FakeRun())
+    assert out == [{"job": "health-check", "changed": True, "ok": True}]
+
+
+@pytest.mark.parametrize("bad", ["windows", "", ["macos"], 1, "MacOS"])
+def test_a_bad_os_value_is_refused(bad):
+    job = dict(ju.load("tidy-agent"), os=bad)
+    with pytest.raises(ju.JobError, match="os"):
+        ju.validate(job)
+
+
+@pytest.mark.parametrize("kind,os_name,want", [
+    ("laptop", "macos", "laptop"), ("desktop", "macos", "mini"), ("desktop", "linux", None), (None, "macos", None)])
+def test_machine_role_comes_from_the_registry_entry(monkeypatch, kind, os_name, want):
+    import machine_profile
+    reg = {"me": {"kind": kind, "os": os_name}} if kind else {}
+    monkeypatch.setattr(machine_profile, "_load_registry", lambda: reg)
+    monkeypatch.setattr(machine_profile, "registry_id", lambda: "me")
+    monkeypatch.setattr(ju.host_os, "os_name", lambda: os_name)
+    assert ju.machine_role() == want

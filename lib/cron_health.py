@@ -83,7 +83,7 @@ JOBS = {
     ),
     "tidy-agent": (
         "03:00",
-        [".claude/organize/agent.out.log", ".claude/organize/agent.err.log"],
+        [".claude/logs/tidy-agent.log", ".claude/logs/tidy-agent-error.log"],  # config/jobs/tidy-agent.json
     ),
     "code-sync-push": (
         "22:00",
