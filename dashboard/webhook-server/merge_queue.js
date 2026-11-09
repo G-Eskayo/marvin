@@ -84,10 +84,19 @@ export function createQueueStore(file = queuePath(), { now = Date.now } = {}) {
       })
     },
     // The gate hit a conflict on this commit: it stays queued, held until the resolver (or anyone) pushes a new one.
-    markConflict(repo, url, head) {
+    markConflict(repo, url, head, at = now()) {
       return change(repo, (r) => {
         const it = r.items.find((i) => i.url === url)
-        if (it) it.conflictHead = head || null
+        if (!it) return
+        if (it.conflictHead !== (head || null)) { it.conflictAt = at; delete it.conflictTold }
+        it.conflictHead = head || null
+      })
+    },
+    // marvin#1183: the owner was told this commit has been held on a conflict for a day; told once per commit.
+    conflictTold(repo, url, head) {
+      return change(repo, (r) => {
+        const it = r.items.find((i) => i.url === url)
+        if (it) it.conflictTold = head
       })
     },
     fail(repo, url, { reason, code = null }) {
@@ -122,8 +131,29 @@ export function outcomeFor(outcome) {
 // waits for the merge's after-steps (stacked PRs moved onto main, the others conflict-checked) before deciding again;
 // onWaiting(repo, pr, entry): a queued PR is held by something MARVIN can act on (unbuilt answers, a conflict).
 export const HOLD_RETRY_MS = 5 * 60 * 1000   // a "later" hold's back-off (marvin#1097)
+// marvin#1184: GitHub or the network failing. Held and retried like a "later" hold, but only so many times in a row,
+// so a PR whose merge keeps failing still reaches the owner as a failure with its reason.
+export const TEMPORARY_CODES = new Set(['RATE_LIMITED', 'GITHUB_OUTAGE', 'TRANSIENT_NETWORK', 'BASE_MOVED'])
+export const TEMPORARY_TRIES = 6
+const COOLDOWN_MAX_MS = 6 * 60 * 60 * 1000
 
-export function createMergeQueue({ store, load, run, afterRun = async () => {}, onWaiting = () => {}, log = () => {}, clock = Date.now }) {
+// When a hold may next run: the default back-off, or a cooldown the refusal states ("cooldown until 11:44", the gh
+// gate's wording) when that ends later today and within a few hours. A past or far-off time falls back to the default.
+export function retryAt(reason, now) {
+  const base = now + HOLD_RETRY_MS
+  const m = /cooldown until (\d{1,2}):(\d{2})/i.exec(String(reason || ''))
+  if (!m) return base
+  const d = new Date(now)
+  d.setHours(Number(m[1]), Number(m[2]), 0, 0)
+  const t = d.getTime()
+  if (!(t > now) || t - now > COOLDOWN_MAX_MS) return base
+  return Math.max(t, base)
+}
+
+// marvin#1183: a PR held on the same conflicting commit this long is told to the owner (onStuck), once per commit.
+export const CONFLICT_TELL_MS = 24 * 60 * 60 * 1000
+
+export function createMergeQueue({ store, load, run, afterRun = async () => {}, onWaiting = () => {}, onStuck = () => {}, log = () => {}, clock = Date.now }) {
   const busy = new Set()
   const again = new Set()
   const running = new Map() // repo -> url
@@ -142,6 +172,13 @@ export function createMergeQueue({ store, load, run, afterRun = async () => {}, 
     for (const p of openPrs) {
       const e = out.entries[p.url]
       if (e?.queued && e.state === 'waiting') { try { onWaiting(repo, p, e) } catch { /* a hint, never the decision */ } }
+      const it = q.items.find((i) => i.url === p.url)
+      if (it?.conflictHead && it.conflictHead === p.headRefOid && it.conflictTold !== it.conflictHead &&
+          Number.isFinite(it.conflictAt) && clock() - it.conflictAt >= CONFLICT_TELL_MS) {
+        store.conflictTold(repo, p.url, it.conflictHead)
+        log(`[merge-queue] ${repo}: #${p.number} has been held on a conflict for a day; telling the owner`)
+        try { onStuck(repo, p, { head: it.conflictHead, since: it.conflictAt }) } catch { /* telling never stops the queue */ }
+      }
     }
     views.set(repo, { at: Date.now(), entries: out.entries, order: out.order, main: mainState, prs: openPrs })
     return out
@@ -189,13 +226,22 @@ export function createMergeQueue({ store, load, run, afterRun = async () => {}, 
         }
         const o = outcomeFor(outcome)
         if (o.kind === 'merged') store.merged(repo, url)
-        else if (o.kind === 'conflict') store.markConflict(repo, url, out.heads.get(url))
+        else if (o.kind === 'conflict') store.markConflict(repo, url, out.heads.get(url), clock())
         else if (o.kind === 'hold') {
           const v = views.get(repo)
           const pr = (v?.prs || []).find((p) => p.url === url)
           const key = holdKey(o.until, pr, v?.main)
-          store.hold(repo, url, { code: o.code, until: o.until, reason: o.reason, key, notBefore: o.until === 'later' || key == null ? clock() + HOLD_RETRY_MS : null, at: clock() })
-          log(`[merge-queue] ${repo}: #${prNumber(url)} held (${o.code}): ${o.reason}`)
+          const temporary = TEMPORARY_CODES.has(o.code)
+          const prev = store.forRepo(repo).items.find((i) => i.url === url)?.hold
+          const tries = temporary ? (prev?.code === o.code ? (Number(prev.tries) || 0) + 1 : 1) : null
+          if (temporary && tries >= TEMPORARY_TRIES) {
+            store.fail(repo, url, { reason: `${o.reason} (after ${tries} tries)`, code: o.code })
+            log(`[merge-queue] ${repo}: #${prNumber(url)} left the queue after ${tries} tries (${o.code}): ${o.reason}`)
+          } else {
+            const notBefore = o.until === 'later' || key == null ? (temporary ? retryAt(o.reason, clock()) : clock() + HOLD_RETRY_MS) : null
+            store.hold(repo, url, { code: o.code, until: o.until, reason: o.reason, key, notBefore, at: clock(), ...(temporary ? { tries } : {}) })
+            log(`[merge-queue] ${repo}: #${prNumber(url)} held (${o.code}${temporary ? `, try ${tries} of ${TEMPORARY_TRIES}` : ''}): ${o.reason}`)
+          }
         }
         else if (o.kind === 'failed') {
           store.fail(repo, url, { reason: o.reason, code: o.code })
