@@ -341,6 +341,30 @@ def _marvin_verify_timeouts(days: float = PROBE_WINDOW_DAYS, path: Path | None =
     return float(count)
 
 
+def _model_run_timeouts(days: float = PROBE_WINDOW_DAYS, path: Path | None = None,
+                        now: datetime | None = None) -> float:
+    """2026-11-09: ticket-planner and ticket-executor launches that hit their time limit, in this Mac's launches.jsonl
+    over the window. About 3% did at the old 900 s limit on both Macs, and each one ended its whole run, so tickets such
+    as #1156 were parked after 3 runs. O(log size)."""
+    now = now or datetime.now(timezone.utc)
+    path = path or Path.home() / ".claude" / "logs" / "launches.jsonl"
+    cut = now - timedelta(days=days)
+    try:
+        lines = Path(path).read_text(encoding="utf-8", errors="replace").splitlines()
+    except OSError:
+        return 0.0
+    count = 0
+    for line in lines:
+        try:
+            e = json.loads(line)
+            when = datetime.fromisoformat(e["at"])
+        except (ValueError, TypeError, KeyError, AttributeError):
+            continue
+        if when >= cut and e.get("kind") in ("ticket-planner", "ticket-executor") and e.get("exit_cause") == "timeout":
+            count += 1
+    return float(count)
+
+
 # name -> (symptom counter, the most it may read while the fix holds, what it counts). Summed across Macs like any
 # measure; the logs are per Mac (~/.claude/logs doesn't sync), so nothing is counted twice.
 # Each counter takes `days` (default the 7-day window): a watched incident is re-measured over the time since its last
@@ -360,6 +384,10 @@ PROBES: dict[str, tuple[Callable[..., float], float, str]] = {
     # Two a week leaves room for one genuinely hung run; the affected tests take seconds to minutes, not 20+.
     "verify-timeouts": (lambda days=PROBE_WINDOW_DAYS: _marvin_verify_timeouts(days=days), 2.0,
                         "marvin tickets whose pipeline verify timed out over 7 days, per Mac, summed (#1152)"),
+    # Two a week leaves room for one genuinely hung model run; at the new 1500 s limit a finished run never comes close.
+    "model-run-timeouts": (lambda days=PROBE_WINDOW_DAYS: _model_run_timeouts(days=days), 2.0,
+                           "ticket-planner and ticket-executor launches that timed out over 7 days, from each Mac's "
+                           "launches.jsonl, summed (pipeline timeout fix, 2026-11-09)"),
     "missing-bundled-model": (lambda days=PROBE_WINDOW_DAYS: _missing_model_failures(days=days), 0.0,
                               "pipeline builds that failed on a missing Resources/Models folder over 7 days, all Macs "
                               "(#1114)"),

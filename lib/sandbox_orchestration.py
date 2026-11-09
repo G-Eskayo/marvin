@@ -75,8 +75,11 @@ FLAGSHIP_MODEL = "claude-sonnet-5"
 HAIKU_MODEL = "claude-haiku-4-5-20251001"
 # Measured 2026-10-05 over 41 real planning calls: finished ones took 85-298s, many at 255-298s, and 8 hit the
 # old 300s wall (about 1 in 5 died for being slow, not wrong). Time costs nothing here; tokens do, so be generous.
-PLAN_TIMEOUT_S = 900
-EXEC_TIMEOUT_S = 900
+# Re-measured 2026-11-09 (launches.jsonl, both Macs, since 10-25): planner p50 410 s, p90 625 s, slowest success 814 s;
+# executor p50 229 s, p90 500 s, slowest 864 s; ~3% of each hit the old 900 s wall. A killed run wastes every token it
+# spent, so the limit sits well clear of the slowest success; a round that still runs out is one failed round.
+PLAN_TIMEOUT_S = 1500
+EXEC_TIMEOUT_S = 1500
 
 
 # ADR 0030: headless `-p` calls have no TTY, so anything not pre-authorized
@@ -283,7 +286,12 @@ def _saved_plan(design_doc_path: Path, task_list_path: Path) -> str | None:
 def _plan(worktree_path: Path, ticket_ref: str, plan_prompt: str, feedback, design_doc_path: Path,
           task_list_path: Path, env: dict | None) -> str:
     """One planning call: writes the design doc and its task list into the worktree, or raises."""
-    if feedback is not None:
+    if isinstance(feedback, dict) and feedback.get("timed_out"):
+        plan_prompt += (
+            f" A previous attempt ran out of time ({feedback.get('seconds', '?')} s) before it finished. Plan the "
+            f"smallest change that does the job, with tests that run in seconds; the merge gate runs the whole suite."
+        )
+    elif feedback is not None:
         plan_prompt += (
             f" A previous attempt's metrics comparison came back as: {feedback}. "
             f"Adjust the plan to address this before trying again."
@@ -323,6 +331,10 @@ def _round_feedback(feedback) -> str:
     fb = feedback if isinstance(feedback, dict) else {"verdict": str(feedback)}
     lines = [f"\n\nThis plan was already implemented once in this tree and the result was not accepted "
              f"(verdict: {fb.get('verdict', 'unknown')}). Work from the tree as it is now; do not start over."]
+    if fb.get("timed_out"):
+        lines.append(f"The last round ran out of time ({fb.get('seconds', '?')} s) before it finished. Finish the "
+                     "plan with the smallest change that does it, and run only the affected test files, never the whole "
+                     "suite (the merge gate runs that).")
     if fb.get("tests"):
         lines.append(f"Tests: {fb['tests']}")
     moved = [f"- {k}: {m.get('baseline')} -> {m.get('current')} ({m.get('direction')})"
@@ -523,6 +535,14 @@ def execute_ticket(
         _stage(ticket_ref, "executing", "started", f"iteration {iteration}/{max_iterations}")
         try:
             executor(worktree_path, ticket_ref, feedback)
+        except subprocess.TimeoutExpired as exc:
+            # One slow model call costs this round, never the run (2026-11-09: ~3% of planner and executor calls hit
+            # the limit on both Macs, and each one used to end the run as "Unhandled exception", so tickets like #1156
+            # were parked after 3 runs that never got their 2nd round). The tree keeps what the round got done.
+            secs = int(exc.timeout or 0)
+            _stage(ticket_ref, "executing", "failed", f"ran out of time after {secs} s (iteration {iteration}/{max_iterations})")
+            feedback = comparison = {"verdict": "ran out of time", "timed_out": True, "seconds": secs, "passing": False}
+            continue
         except Exception as exc:
             _stage(ticket_ref, "executing", "failed", str(exc)[:300])
             raise
