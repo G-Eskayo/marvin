@@ -143,7 +143,9 @@ def test_it_never_hands_a_call_to_another_copy_of_the_gate(tmp_path):
 def test_two_gate_copies_on_path_make_one_real_call_and_one_log_line(tmp_path):
     other = _gate_copy(tmp_path, "worktree-bin")
     real = _fake_gh(tmp_path)
-    env = {"PATH": f"{other}:{GATE.parent}:{real}:/usr/bin:/bin", "HOME": str(tmp_path), "GH_GATE_NO_BUDGET": "1"}
+    # MARVIN_PULL_ONLY=0: about a full node, as every Mac is; an unregistered Linux machine (CI, #1117) is pull-only.
+    env = {"PATH": f"{other}:{GATE.parent}:{real}:/usr/bin:/bin", "HOME": str(tmp_path), "GH_GATE_NO_BUDGET": "1",
+           "MARVIN_PULL_ONLY": "0"}
     p = subprocess.run([str(other / "gh"), "pr", "list"], capture_output=True, text=True, env=env, timeout=30)
     assert p.returncode == 0 and p.stdout.strip() == "ok"
     log = (tmp_path / ".claude" / "logs" / "gh-calls.jsonl").read_text().splitlines()
@@ -240,8 +242,9 @@ def _fake_pr_gh(tmp_path, files, body):
 
 
 def _run_gate(tmp_path, bin_dir, argv, extra_env=None):
+    # MARVIN_PULL_ONLY=0: about a full node, as every Mac is; an unregistered Linux machine (CI, #1117) is pull-only.
     env = {"PATH": f"{bin_dir}:/usr/bin:/bin", "HOME": str(tmp_path), "MARVIN_INSTANCE_DIR": str(tmp_path / "inst"),
-           **(extra_env or {})}
+           "MARVIN_PULL_ONLY": "0", **(extra_env or {})}
     return subprocess.run([sys.executable, str(GATE), *argv], capture_output=True, text=True, env=env)
 
 

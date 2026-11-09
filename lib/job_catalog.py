@@ -87,6 +87,9 @@ JOBS: dict[str, dict] = {
                           "healthy": "a sample in the last 2 min", "consumer": "the Resources panel"},
     "history-load": {"machine": "mini", "goal": "ns1", "reporter": "marvin.db load log",
                      "healthy": "a load in the last 15 min", "consumer": "Vitals history, GitHub usage"},
+    "sbir-monitor": {"machine": "mini", "goal": "ns4", "reporter": "its launchd log and ~/.agents/var/sbir/topics.json",
+                     "healthy": "last Wednesday's run exit 0 (1 = DSIP unreachable; told through the alert path)",
+                     "consumer": "the owner, through the one alert path, and `sbir_monitor.py show` (marvin#1165)"},
     "seal-beta-ingest": {"machine": "mini", "goal": "project:clarity-captions", "reporter": "its launchd log",
                          "healthy": "last run exit 0", "consumer": "the Seal Speak beta view and tickets"},
     "dashboard-launch": {"machine": "laptop", "goal": "ns3", "reporter": "none needed (opens the app at login)",
@@ -107,8 +110,8 @@ JOBS: dict[str, dict] = {
                                  "consumer": "the website map (#189)"},
     "open-loops": {"machine": "none", "goal": None, "reporter": None, "healthy": None, "consumer": None,
                    "review": "off until the goal tracker links loops to project goals (approved 2026-10-26)"},
-    "tidy-agent": {"label": "com.giles.tidy-agent", "machine": "both", "goal": "ns3",
-                   "reporter": "~/.claude/organize/agent.err.log", "healthy": "last run exit 0",
+    "tidy-agent": {"machine": "mini", "goal": "ns3",   # config/jobs/tidy-agent.json (was com.giles.tidy-agent); Mini only: one iCloud Desktop, PR #1129
+                   "reporter": "~/.claude/logs/tidy-agent-error.log", "healthy": "last run exit 0",
                    "consumer": "the owner's Downloads and Desktop"},
 }
 

@@ -1,7 +1,9 @@
 name: Site
 
-# Builds the MARVIN website (site/: Astro + Starlight, marvin#1007) and uploads the built pages as an artifact to
-# preview. It does not deploy: publishing to the domain is a separate, later step the owner turns on.
+# Builds the MARVIN website (site/: Astro + Starlight, marvin#1007). A pull request builds, checks and uploads a preview
+# artifact only. A push to main also publishes it to GitHub Pages at https://marvin.gileskayo.me (the owner turned
+# publishing on 2026-11-04; the domain comes from site.config.json url, written to dist/CNAME by scripts/cname.mjs).
+# The repo's Pages source must be "GitHub Actions" (Settings > Pages) for the deploy job to publish.
 # Not a required check (.github/required-checks.json): the site can't break the engine.
 
 on:
@@ -57,3 +59,64 @@ jobs:
           name: site-preview
           path: site/dist
           retention-days: 14
+      - name: Package for GitHub Pages (main only)
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+        uses: actions/upload-pages-artifact@v3
+        with:
+          path: site/dist
+
+  deploy:
+    name: Publish to marvin.gileskayo.me
+    needs: build
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    # Only this job can write Pages; the build keeps contents: read.
+    permissions:
+      pages: write
+      id-token: write
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    outputs:
+      page_url: ${{ steps.deployment.outputs.page_url }}
+    # A publish is never cancelled half-way by a newer push; the newer one waits and publishes after it.
+    concurrency:
+      group: pages
+      cancel-in-progress: false
+    steps:
+      - id: deployment
+        uses: actions/deploy-pages@v4
+
+  report:
+    # The ship step and its alarm (lib/site_deploy.py, ADR 0080 I4): published -> each ticket the publish carried gets
+    # its live link once, and an open site-deploy-failed ticket closes; failed -> one such ticket (never main-red, so
+    # merges are not held). A cancelled publish (a newer merge replaced it) says nothing: the newer run reports.
+    name: Site deploy report
+    if: always() && github.event_name == 'push' && github.ref == 'refs/heads/main'
+    needs: [build, deploy]
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      issues: write
+      contents: read
+      deployments: read
+      pull-requests: read
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0 # the ship step reads which merges since the last publish touched the site
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - run: python -m pip install PyYAML==6.0.3
+      - name: Report the publish
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RESULTS: ${{ toJSON(needs) }}
+          PAGE_URL: ${{ needs.deploy.outputs.page_url }}
+          SITE_DEPLOY_REF: ${{ github.sha }}
+        run: >-
+          python lib/site_deploy.py report --sha "$GITHUB_SHA"
+          --run "$GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID" --results "$RESULTS"
+          --page-url "$PAGE_URL"

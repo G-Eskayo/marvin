@@ -574,6 +574,22 @@ def check_main_health(path: Path | None = None, now: datetime | None = None) -> 
     return _result(cid, label, "green", f"main @ {d.get('sha', '?')}: {d.get('summary', 'passing')}")
 
 
+def check_site_published(gh=None, git=None) -> dict | None:
+    """Is main's latest site change live on GitHub Pages (marvin#1122)? Read from the Pages deployments, so a publish
+    that never ran shows too. Red never holds a merge (the gate reads main-red tickets and main-health.json only).
+    Nothing to report for an instance with no site."""
+    import site_deploy
+    if not site_deploy.SITE_CONFIG.exists() or not site_deploy.WORKFLOW.exists():
+        return None
+    cid, label = "site:published", "The site is published"
+    repo = json.loads(site_deploy.SITE_CONFIG.read_text()).get("repo", "")
+    kw = {k: v for k, v in (("gh", gh), ("git", git)) if v is not None}
+    r = site_deploy.health(repo, **kw)
+    if r["severity"] == UNKNOWN:
+        return _unknown(cid, label, r["detail"])
+    return _result(cid, label, r["severity"], r["detail"])
+
+
 def check_memory_lint() -> dict:
     """Memory's [[links]], MEMORY.md index and frontmatter (marvin#695): red on git conflict markers, yellow on broken
     links, index drift or bad frontmatter. Reports only; memory_lint never edits a note."""
@@ -1322,7 +1338,7 @@ def evaluate_machine_state(state: dict, now: datetime) -> list[tuple[str, str, s
         failed = [(label, status) for label, pid, status in state["job_exits"] if pid is None and status != 0]
         if failed:
             out.append(("jobs:exit", "red", "last run failed: " + ", ".join(f"{label} (exit {status})" for label, status in failed)
-                        + " -- read the job's log on this machine (tidy-agent: ~/.claude/organize/agent.err.log)"))
+                        + " -- read the job's log on this machine (tidy-agent: ~/.claude/logs/tidy-agent-error.log)"))
         else:
             out.append(("jobs:exit", "green", f"all {len(state['job_exits'])} scheduled jobs last exited cleanly or are running"))
     if state.get("jobs"):
@@ -1766,6 +1782,7 @@ def default_checks(reach: dict[str, str] | None = None, reach_results: list[dict
         ("main:green", "The main branch passes its tests", check_main_health, CHECK_BUDGET_S),
         ("memory:lint", "Memory links and index are sound", check_memory_lint, CHECK_BUDGET_S),
         ("profile:parity", "Public profile matches everywhere", check_profile_parity, CHECK_BUDGET_S),
+        ("site:published", "The site is published", check_site_published, CHECK_BUDGET_S),
         ("seal:beta-ingest", "Seal Speak beta reports are picked up", check_seal_beta_ingest, CHECK_BUDGET_S),
         ("brief:builder", "Morning brief builder", check_brief_builder, CHECK_BUDGET_S),
         ("merge:service", "Merge service reachable", check_merge_service, CROSS_MACHINE_BUDGET_S),

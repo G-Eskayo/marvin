@@ -7,6 +7,7 @@
 //     - a Planned feature has no docs page and links a ticket or an ADR
 //     - every feature page exists, shows its status block, and every page file belongs to a feature
 //   --dist (after the build)
+//     - dist/CNAME is exactly the host of site.config.json url (GitHub Pages' custom domain, marvin.gileskayo.me)
 //     - no private pattern in any built page: the owner's own patterns file when present (the same file the engine's
 //       pre-commit secret scan uses, ~/.claude/private-push-patterns.txt, or $MARVIN_SITE_PRIVATE_PATTERNS), plus
 //       home-folder paths and email addresses other than the configured contact. A match is reported by file and
@@ -19,7 +20,7 @@ import { parse } from 'yaml';
 
 const SITE = resolve(import.meta.dirname, '..');
 const ROOT = resolve(SITE, '..');
-const STATUSES = ['released', 'testing', 'planned', 'retired'];
+const STATUSES = ['released', 'testing', 'progress', 'planned', 'retired'];
 
 export function checkFeatures(data, { exists, adrFiles, pageFile }) {
   const errs = [];
@@ -32,11 +33,12 @@ export function checkFeatures(data, { exists, adrFiles, pageFile }) {
     seen.add(f.id);
     if (!areas.has(f.area)) errs.push(`${at}: unknown area "${f.area}"`);
     if (!STATUSES.includes(f.status)) errs.push(`${at}: unknown status "${f.status}"`);
-    if (f.status === 'released' || f.status === 'testing') {
+    if (f.status === 'released' || f.status === 'testing' || f.status === 'progress') {
       if (!f.evidence?.length) errs.push(`${at}: ${f.status} needs evidence`);
       if (!f.verified_on) errs.push(`${at}: ${f.status} needs verified_on`);
     }
-    if (f.status === 'testing' && !f.why_testing) errs.push(`${at}: testing needs why_testing`);
+    if ((f.status === 'testing' || f.status === 'progress') && !f.why_testing) errs.push(`${at}: ${f.status} needs why_testing`);
+    if (f.status === 'progress' && f.page) errs.push(`${at}: in-progress features live on the roadmap only, never a docs page`);
     if (f.status === 'planned') {
       if (f.page) errs.push(`${at}: planned features live on the roadmap only, never a docs page`);
       if (!f.ticket && !f.adrs?.length) errs.push(`${at}: planned needs a ticket or an ADR to link`);
@@ -89,6 +91,31 @@ export function scanText(text, { privatePatterns = [], allowEmail = '' }) {
   );
   if (emails.length) hits.push(`${emails.length} email address(es)`);
   return hits;
+}
+
+/** The bare host GitHub Pages serves as the custom domain (dist/CNAME), from site.config.json `url`. Refuses anything
+ * Pages can't serve that way: not https, a path, a port, credentials, or GitHub's own github.io host. */
+export function cnameFor(url) {
+  let u;
+  try {
+    u = new URL(url);
+  } catch {
+    throw new Error(`site.config.json url ${JSON.stringify(url)} is not a custom domain GitHub Pages can serve`);
+  }
+  if (u.protocol !== 'https:' || u.pathname !== '/' || u.port || u.username || u.password || u.search || u.hash ||
+      /(^|\.)github\.io$/.test(u.hostname)) {
+    throw new Error(`site.config.json url ${JSON.stringify(url)} is not a custom domain GitHub Pages can serve`);
+  }
+  return u.hostname;
+}
+
+/** Problems with the built CNAME: it must exist and be exactly one line, the configured host. */
+export function checkCname(text, url) {
+  if (text == null) return ['no CNAME in the built site: GitHub Pages would drop the custom domain'];
+  const lines = text.split('\n').map((l) => l.trim()).filter(Boolean);
+  if (lines.length !== 1) return [`CNAME must be one line (the domain), found ${lines.length}`];
+  const want = cnameFor(url);
+  return lines[0] === want ? [] : [`CNAME says ${lines[0]}, site.config.json url says ${want}`];
 }
 
 function walk(dir, out = []) {
@@ -152,6 +179,8 @@ function main() {
         for (const u of internalLinks(text)) if (!resolves(dist, u)) errs.push(`${f.slice(dist.length)}: broken link ${u}`);
       }
     }
+    const cnameFile = join(dist, 'CNAME');
+    errs.push(...checkCname(existsSync(cnameFile) ? readFileSync(cnameFile, 'utf8') : null, cfg.url));
     console.log(`check: scanned ${files.length} built files with ${privatePatterns.length} private patterns`);
   }
 

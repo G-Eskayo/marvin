@@ -1,0 +1,9 @@
+#!/bin/sh
+# marvin-ask: open a MARVIN session on a question you already have, on the model routing picks at launch.
+#   marvin-ask "explain how prompt caching works"
+# A confident research/explain question opens on Haiku; everything else (recall, coding, design) keeps the
+# session model. Routing happens here, before the session starts, never mid-session. See route.py launch_model.
+HERE="$(cd "$(dirname "$0")/.." && pwd)"
+PY="$HOME/.agents/venv/bin/python"
+[ -x "$PY" ] || PY="$(command -v python3)"
+exec "$PY" "$HERE/skills/route/scripts/route.py" --ask "$*"

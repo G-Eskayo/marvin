@@ -279,3 +279,72 @@ def test_a_successful_run_that_merely_mentions_a_limit_is_still_ok(memory, tmp_p
 def test_classify_survives_non_string_input():
     assert ml.classify_exit(1, None, None) == "crash"
     assert ml.classify_exit(0, None, None) == "ok"
+
+
+# ── background runs sign in with the setup-token (marvin#1123 0.5) ──────────────────────────────────────────────
+# A launchd job can't use the keychain login: on the Mini it expired 2026-11-01 ("OAuth session expired and could not
+# be refreshed") and architecture review failed daily, while ~/.claude/.oauth-token (`claude setup-token`, about a year)
+# was valid the whole time. task_dispatch's builders already export it; the launcher now does the same for every kind.
+
+FAKE_TOKEN = "fake-setup-token-for-tests"
+
+
+@pytest.fixture
+def token_file(tmp_path, monkeypatch):
+    f = tmp_path / ".oauth-token"
+    f.write_text(FAKE_TOKEN + "\n")
+    monkeypatch.setattr(ml, "SETUP_TOKEN_FILE", f)
+    return f
+
+
+def _env_of(fake):
+    (_, kw), = fake.calls
+    return kw["env"]
+
+
+def test_a_run_gets_the_setup_token_when_it_has_no_login_of_its_own(memory, tmp_path, token_file):
+    fake = FakeRun()
+    ml.launch("background-analyst", "Review.", env={"PATH": "/usr/bin"}, log_path=tmp_path / "l.jsonl", runner=fake)
+    assert _env_of(fake)["CLAUDE_CODE_OAUTH_TOKEN"] == FAKE_TOKEN
+
+
+def test_the_token_never_lands_in_argv_or_the_launch_log(memory, tmp_path, token_file):
+    fake, log = FakeRun(), tmp_path / "l.jsonl"
+    ml.launch("background-analyst", "Review.", env={}, log_path=log, runner=fake)
+    (cmd, _), = fake.calls
+    assert not any(FAKE_TOKEN in part for part in cmd)
+    assert FAKE_TOKEN not in log.read_text()
+
+
+def test_a_token_the_caller_already_set_wins(memory, tmp_path, token_file):
+    fake = FakeRun()
+    ml.launch("background-analyst", "Review.", env={"CLAUDE_CODE_OAUTH_TOKEN": "callers"}, log_path=tmp_path / "l.jsonl",
+              runner=fake)
+    assert _env_of(fake)["CLAUDE_CODE_OAUTH_TOKEN"] == "callers"
+
+
+def test_a_run_switched_to_the_api_credit_is_left_on_the_api_key(memory, tmp_path, token_file):
+    # dispatch_concurrency.credit_env removes the plan token on purpose; adding it back would undo the switch.
+    fake = FakeRun()
+    ml.launch("ticket-executor", "Build.", env={"ANTHROPIC_API_KEY": "key"}, log_path=tmp_path / "l.jsonl", runner=fake)
+    assert "CLAUDE_CODE_OAUTH_TOKEN" not in _env_of(fake)
+
+
+@pytest.mark.parametrize("content", [None, "", "   \n", "two words", "dir"])
+def test_a_missing_empty_or_damaged_token_file_adds_nothing_and_never_breaks_the_run(memory, tmp_path, monkeypatch,
+                                                                                      content):
+    f = tmp_path / ".oauth-token"
+    if content == "dir":
+        f.mkdir()
+    elif content is not None:
+        f.write_text(content)
+    monkeypatch.setattr(ml, "SETUP_TOKEN_FILE", f)
+    fake = FakeRun()
+    ml.launch("background-analyst", "Review.", env={}, log_path=tmp_path / "l.jsonl", runner=fake)
+    assert "CLAUDE_CODE_OAUTH_TOKEN" not in _env_of(fake)
+
+
+def test_the_callers_env_dict_is_not_changed(memory, tmp_path, token_file):
+    mine = {"PATH": "/usr/bin"}
+    ml.launch("background-analyst", "Review.", env=mine, log_path=tmp_path / "l.jsonl", runner=FakeRun())
+    assert mine == {"PATH": "/usr/bin"}

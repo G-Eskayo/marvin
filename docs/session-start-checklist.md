@@ -21,9 +21,9 @@ already reported).
 | # | Check | Source | What it reports |
 |---|-------|--------|------------------|
 | 0 | Identity banner | `machine_profile.machine_label()` + live `git rev-parse --short HEAD` on `~/.agents` and `~/.claude` + count of `~/.claude/commands/*.md` | Single verifiable line — `MARVIN active — <machine> · agents@<hash> · claude@<hash> · <N> skills wired` — always the first line of stdout. Added 2026-07-14 so a session can be confirmed as genuinely running MARVIN's infra by checking real, checkable state, not just a static greeting. CLAUDE.md instructs Claude to open the first reply of every session with this line verbatim. |
-| 1 | Handoff | `~/.claude/handoffs/*.md` | Full text of the most recent handoff, if ≤7 days old |
+| 1 | Handoff | `~/.claude/handoffs/*.md` | The most recent handoff (if ≤7 days old) as a pointer: file name, age, its title line and "read it before resuming". Its full text never fit Claude Code's hook cap (see below) |
 | 2 | Suggestions | `~/.claude/suggestions.md` | Count of `**Status**: pending` entries |
-| 3 | Lexicon | `~/.claude/lexicon.md` | Full contents, always loaded |
+| 3 | Lexicon | `~/.claude/lexicon.md` | The whole lexicon, definitions included, minus its title and the add-terms template (owner's decision on PR #1124). Capped at `LEXICON_MAX` (2,500 characters), cut at a line with a pointer to the file past that. The generic MCP glossary moved to `best-practices/mcp-glossary.md` so the lexicon fits |
 | 4 | Improvement queue | `~/.claude/improvement-queue.md` | Count of queued `- **[...]**` items |
 | 5 | Quarantine | `~/.claude/quarantine.md` | Runs `process_quarantine_reviews.process()` first (feeds checked approve/deny/modify boxes into calibration), then counts remaining unresolved entries |
 | 6 | Hook errors | `~/.claude/logs/hook-errors.log` | Count of entries in the last 24h |
@@ -32,6 +32,24 @@ already reported).
 | 9 | Sync log + git conflicts | `~/.claude/sync-log.md` (informational only) + live `git status`/`git stash list` on `~/.claude` and `~/.agents` (authoritative) | Latest sync-log activity, plus **live** conflict/stash state — deliberately NOT decided by scanning log text for the word "CONFLICT", because a resolved conflict's log line stays inside the 24h window and would falsely keep flagging as open. See the docstring on `check_git_conflicts()` for why. |
 | 10 | Daily digest | `~/.claude/daily-digest/<today>.md` | Whether today's digest exists |
 | 11 | Research digest | `~/.claude/research-digest/<today>.md` | Whether today's digest exists, plus item/correlation counts |
+
+## Size: the report must fit Claude Code's hook cap (marvin#1037)
+
+Claude Code caps a hook's stdout at 10,000 characters. Over that it saves the output to a file and puts only
+the path and the first 2,000 characters in context, and never asks Claude to read the file. Until marvin#1037
+the report was 12.8-15.4 KB, so sessions saw the banner, the checklist and a sliver of the lexicon, and never
+the rest of the lexicon or the handoff (bench Run 31's transcripts show the preview). Now:
+
+- the report is kept under `BUDGET` (8,000 characters, leaving room for the other commands in the same
+  SessionStart chain, whose stdout counts toward the same cap);
+- the morning brief stays first but is cut at `BRIEF_MAX` (3,500) so the checklist always fits;
+- the lexicon is cut at `LEXICON_MAX` (2,500) so a lexicon that grows can't push the handoff out;
+- anything that still doesn't fit is cut at a line break, or named in a closing "Left out" line, with the path of
+  the full report, which is always saved to `~/.agents/var/session-start-report.md`;
+- the banner is always the first line.
+
+Moving the changing parts to the end would not create cache hits: Claude Code puts this output in the same
+message as the working directory and (interactively) the first prompt, and both change every session.
 
 ## What's still prose in CLAUDE.md
 

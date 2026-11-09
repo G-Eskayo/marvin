@@ -4,6 +4,7 @@
 # status:
 #   released  merged to main AND run evidence in daily use (a loaded job, a log written in the last 7 days, an app)
 #   testing   merged to main, but behind a flag, in shadow mode, or with no run evidence yet ("Built, in testing")
+#   progress  partly merged to main, not usable end to end yet ("In progress"). Roadmap only, like planned.
 #   planned   an ADR or open ticket, no merged implementation. Roadmap only: never a feature page, never a date.
 #   retired   removed; kept so old links explain where it went
 # verified_on: the day the evidence was last checked against main and the running system.
@@ -274,8 +275,8 @@ features:
   - id: mobile
     title: MARVIN Mobile (iPhone)
     area: visibility
-    status: testing
-    why_testing: A demo slice; its backend job isn't loaded on the always-on machine yet.
+    status: progress
+    why_testing: A demo slice is built, but the app isn't on a phone yet and its backend isn't installed on the always-on machine (owner, 2026-11-04, portfolio PR #19).
     summary: MARVIN on the iPhone over a private network.
     evidence: [docs/adr/0039-marvin-mobile-split-compute.md]
     adrs: ["0039", "0046"]

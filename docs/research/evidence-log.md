@@ -124,3 +124,17 @@ Full report: [`knowledge-graphs-2026-10-26.md`](knowledge-graphs-2026-10-26.md).
 - **Confidence:** Ours (n = 30, one author; a single-pass rg understates an agent's real grep).
 - **Drives:** PR #713's decision on the graphify-first rule in CLAUDE.md; memory_graph as the memory retriever.
 - **Public use:** Careful.
+
+### E8. A control-led review prompt beat the built-in review on unseen apps, at similar cost
+- **Source:** our A/B, 2026-11-06 (marvin#1158). `security-sweep` vs `/security-review` vs Cloudflare's security-audit skill (MIT). Two held-out apps written by a separate agent, 12 planted bugs and 6 decoys each, 3 runs per arm per app, Sonnet, blind Opus scoring.
+- **What we took:** bugs found were 72 of 72 for `security-sweep` and 67 of 72 for `/security-review`, at about $0.19 and $0.16 a run. Cloudflare's skill found 59 of 60 in valid runs at about $3. No arm flagged a decoy. `security-sweep` also produced 4 wrong extra findings.
+- **Confidence:** Ours (6 runs per arm, near the ceiling, one model; the planted-bug apps are synthetic).
+- **Drives:** `skills/security-sweep`; Cloudflare's skill kept for occasional deep audits only.
+- **Public use:** Careful.
+
+### E9. ASD-STE100 prompting read easier but lost blind preference
+- **Source:** our A/B, 2026-11-06 (marvin#1158). 12 technical questions, 2 reps, plain vs STE vs `caveman`, blind Opus judge.
+- **What we took:** STE dropped reading grade from 6.9 to 4.8 with similar fact coverage, but plain beat it 39 to 9 and `caveman` beat it 36 to 12.
+- **Confidence:** Ours (a model judge, written text only).
+- **Drives:** STE not adopted as a default.
+- **Public use:** Careful.
