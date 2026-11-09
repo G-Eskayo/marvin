@@ -1345,3 +1345,108 @@ describe('rebaseAndRetest on a nearly full disk', () => {
     expect(MIN_GATE_FREE_BYTES).toBeGreaterThanOrEqual(3 * 1024 ** 3)
   })
 })
+
+// marvin#1183: #942 was built on #941, and #941 was squash-merged. Rebasing #942 replays #941's own commits over their
+// squash and conflicts, though merging main is clean; the queue then held it for four days. The gate now falls back to
+// merging main when the rebase conflicts, and pushes that without force.
+describe('rebaseAndRetest on a branch whose base PR was squash-merged (#1183)', () => {
+  const commit = (dir, file, text, msg) => {
+    writeFileSync(path.join(dir, file), text)
+    sh('git', ['add', '.'], dir)
+    sh('git', ['commit', '-q', '-m', msg], dir)
+  }
+  const isAncestor = (dir, a, b) => { try { sh('git', ['merge-base', '--is-ancestor', a, b], dir); return true } catch { return false } }
+
+  function squashStack() {
+    const f = makeGitFixture()
+    const { repoDir } = f
+    sh('git', ['checkout', '-q', '-b', 'base'], repoDir)
+    commit(repoDir, 'box.txt', 'one\n', 'base 1')
+    commit(repoDir, 'box.txt', 'one\ntwo\n', 'base 2')
+    sh('git', ['push', '-u', 'origin', 'base'], repoDir)
+    sh('git', ['checkout', '-q', '-b', 'top'], repoDir)
+    commit(repoDir, 'gate.txt', 'gate\n', 'top work')
+    sh('git', ['push', '-u', 'origin', 'top'], repoDir)
+    sh('git', ['checkout', '-q', 'main'], repoDir)
+    sh('git', ['merge', '--squash', 'base'], repoDir)
+    sh('git', ['commit', '-q', '-m', 'base, squashed (#941)'], repoDir)
+    sh('git', ['push', 'origin', 'main'], repoDir)
+    return f
+  }
+
+  it('merges main instead, retests, and pushes without rewriting the branch', async () => {
+    const { root, repoDir } = squashStack()
+    try {
+      const before = currentRemoteSha(repoDir, 'top')
+      const runTests = vi.fn().mockResolvedValue(undefined)
+      const result = await rebaseAndRetest('top', realExec, repoDir, runTests, 'main', null, null, undefined, plentyOfDisk)
+      expect(result).toMatchObject({ ok: true, merged: true })
+      expect(runTests).toHaveBeenCalledTimes(1)
+      const after = currentRemoteSha(repoDir, 'top')
+      sh('git', ['fetch', 'origin', 'main'], repoDir)
+      expect(isAncestor(repoDir, 'origin/main', after)).toBe(true)     // main is in it
+      expect(isAncestor(repoDir, before, after)).toBe(true)            // the old head too: nothing rewritten
+      expect(sh('git', ['worktree', 'list'], repoDir)).not.toContain('mr-merge-gate-')
+    } finally {
+      rmSync(root, { recursive: true, force: true })
+    }
+  })
+
+  it('a merge that is clean but fails its tests pushes nothing', async () => {
+    const { root, repoDir } = squashStack()
+    try {
+      const before = currentRemoteSha(repoDir, 'top')
+      const runTests = vi.fn().mockRejectedValue(Object.assign(new Error('boom'), { stdout: 'FAILED test_x' }))
+      const result = await rebaseAndRetest('top', realExec, repoDir, runTests, 'main', null, null, undefined, plentyOfDisk)
+      expect(result.ok).toBe(false)
+      expect(result.reason).toMatch(/Tests failed after/)
+      expect(currentRemoteSha(repoDir, 'top')).toBe(before)
+    } finally {
+      rmSync(root, { recursive: true, force: true })
+    }
+  })
+
+  it('a real conflict still fails as a rebase conflict, and pushes nothing', async () => {
+    const f = makeGitFixture()
+    const { root, repoDir } = f
+    try {
+      sh('git', ['checkout', '-q', '-b', 'feature'], repoDir)
+      commit(repoDir, 'README.md', 'hello\nfeature line\n', 'feature edit')
+      sh('git', ['push', '-u', 'origin', 'feature'], repoDir)
+      sh('git', ['checkout', '-q', 'main'], repoDir)
+      commit(repoDir, 'README.md', 'hello\nmain line\n', 'main edit')
+      sh('git', ['push', 'origin', 'main'], repoDir)
+      const before = currentRemoteSha(repoDir, 'feature')
+      const runTests = vi.fn()
+      const result = await rebaseAndRetest('feature', realExec, repoDir, runTests, 'main', null, null, undefined, plentyOfDisk)
+      expect(result.ok).toBe(false)
+      expect(result.reason).toMatch(/^Rebase onto main failed/)
+      expect(runTests).not.toHaveBeenCalled()
+      expect(currentRemoteSha(repoDir, 'feature')).toBe(before)
+      expect(sh('git', ['worktree', 'list'], repoDir)).not.toContain('mr-merge-gate-')
+    } finally {
+      rmSync(root, { recursive: true, force: true })
+    }
+  })
+
+  it('a branch whose base went in as a merge commit still rebases (no merge commit added)', async () => {
+    const { root, repoDir } = makeGitFixture()
+    try {
+      sh('git', ['checkout', '-q', '-b', 'base'], repoDir)
+      commit(repoDir, 'box.txt', 'one\n', 'base 1')
+      sh('git', ['push', '-u', 'origin', 'base'], repoDir)
+      sh('git', ['checkout', '-q', '-b', 'top'], repoDir)
+      commit(repoDir, 'gate.txt', 'gate\n', 'top work')
+      sh('git', ['push', '-u', 'origin', 'top'], repoDir)
+      sh('git', ['checkout', '-q', 'main'], repoDir)
+      sh('git', ['merge', '-q', '--no-ff', '-m', 'Merge base', 'base'], repoDir)
+      sh('git', ['push', 'origin', 'main'], repoDir)
+      const result = await rebaseAndRetest('top', realExec, repoDir, vi.fn().mockResolvedValue(undefined), 'main', null, null, undefined, plentyOfDisk)
+      expect(result).toEqual({ ok: true })
+      const after = currentRemoteSha(repoDir, 'top')
+      expect(sh('git', ['rev-list', '--merges', `origin/main..${after}`], repoDir).trim()).toBe('')
+    } finally {
+      rmSync(root, { recursive: true, force: true })
+    }
+  })
+})

@@ -1,0 +1,4 @@
+{
+  "_doc": "How strict the temp-deliverable hook is (lib/temp_deliverable_hook.py, marvin#715): note | nudge | hold.",
+  "mode": "nudge"
+}

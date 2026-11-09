@@ -812,3 +812,15 @@ def test_ticket_title_is_none_when_gh_fails(monkeypatch):
         returncode, stdout, stderr = 1, "", "boom"
     monkeypatch.setattr(mrr.subprocess, "run", lambda *a, **k: R())
     assert mrr._ticket_title("G-Eskayo/marvin#1") is None
+
+
+def test_a_box_build_commits_as_the_bot_never_as_the_owner(monkeypatch):
+    # Found on the first live box build (#870 → PR #984): every pipeline commit carried the owner as author.
+    import mr_raiser as mr
+    monkeypatch.delenv("MARVIN_BOX_BUILD", raising=False)
+    assert mr._author_args() == [f"--author={mr.AUTHOR}"]
+    for value in ("1",):
+        monkeypatch.setenv("MARVIN_BOX_BUILD", value)
+        assert mr._author_args() == []
+    monkeypatch.setenv("MARVIN_BOX_BUILD", "0")
+    assert mr._author_args() == [f"--author={mr.AUTHOR}"]

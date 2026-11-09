@@ -20,8 +20,10 @@ from hook_errors import log_hook_error  # noqa: E402
 _TEMP_ROOTS = ("/tmp/", "/private/tmp/", "/var/folders/", "/private/var/folders/")
 
 REASON = (
-    "That file is in a throwaway temp/scratchpad dir that Gil can't find later. Move it first: "
-    "docs Gil reviews (plans, mock-ups, proposals) go to ~/.agents/instance/docs/plans/<topic>-YYYY-MM-DD.md, "
+    "That file is in a throwaway temp/scratchpad dir that Gil can't find later, and a file card may not show at all. "
+    "Show it with `marvin-show <path>` instead (it copies the file into ~/.claude/outbox/<project>-<date>-<topic>/ "
+    "and opens it in that project's MARVIN window; docs/agents/showing-things.md). "
+    "Docs Gil reviews (plans, proposals) go to ~/.agents/instance/docs/plans/<topic>-YYYY-MM-DD.md, "
     "with images in ~/.agents/instance/docs/screenshots/<ticket>-*.png, committed and pushed to the private "
     "instance repo (never the public engine, ADR 0071) so the dashboard Docs tab shows them (and the mock-ups go on the ticket); other deliverables go to "
     "~/.claude/outbox/<topic>/. (deliverable_location_guard.py)"

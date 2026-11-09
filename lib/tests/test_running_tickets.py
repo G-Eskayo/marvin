@@ -51,3 +51,12 @@ def test_an_unreadable_machine_is_reported_to_a_caller_that_asks():
     assert out == [{"machine": "mac-mini-1", "repo": "G-Eskayo/marvin", "number": 5}]
     assert unreadable == ["macbook-pro-1"]
     assert rt.all_running({"mac-mini-1": None}, lambda: "", remote, "G-Eskayo/marvin") == []   # old callers unchanged
+
+
+def test_box_builds_in_flight_count_as_running_on_the_box(monkeypatch):
+    import box_build
+    import running_tickets as rtk
+    monkeypatch.setattr(box_build, "running", lambda: [{"repo": "G-Eskayo/marvin", "ticket": 7, "run_id": "x"}])
+    assert rtk.box_running() == [{"machine": "mac-mini-2012", "repo": "G-Eskayo/marvin", "number": 7}]
+    monkeypatch.setattr(box_build, "running", lambda: [{"repo": "x"}])   # a broken record: nothing, never a crash
+    assert rtk.box_running() == []

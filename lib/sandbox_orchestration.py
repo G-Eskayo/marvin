@@ -80,6 +80,17 @@ HAIKU_MODEL = "claude-haiku-4-5-20251001"
 # spent, so the limit sits well clear of the slowest success; a round that still runs out is one failed round.
 PLAN_TIMEOUT_S = 1500
 EXEC_TIMEOUT_S = 1500
+# A slower machine scales both (MARVIN_STEP_TIMEOUT_SCALE, 1 to 4): a box build VM on the 2012 Mac mini sets 2.5, since
+# its planner ran past 900 s where the M4 Mini's median is 405 s and p90 606 s (found live, marvin #951).
+STEP_SCALE_ENV = "MARVIN_STEP_TIMEOUT_SCALE"
+
+
+def step_timeout(base: float) -> float:
+    try:
+        scale = float(os.environ.get(STEP_SCALE_ENV, "1"))
+    except ValueError:
+        scale = 1.0
+    return base * (scale if 1.0 <= scale <= 4.0 else 1.0)
 
 
 # ADR 0030: headless `-p` calls have no TTY, so anything not pre-authorized
@@ -265,7 +276,7 @@ def _default_executor(worktree_path: Path, ticket_ref: str, feedback: dict | Non
         exec_prompt += _round_feedback(feedback)
     _, exec_cost = _launch(
         "ticket-executor", exec_prompt, ticket_ref=ticket_ref, model=HAIKU_MODEL, allowed_tools=allowed_tools,
-        disallowed_tools=disallowed_tools or None, cwd=worktree_path, timeout=EXEC_TIMEOUT_S, env=env,
+        disallowed_tools=disallowed_tools or None, cwd=worktree_path, timeout=step_timeout(EXEC_TIMEOUT_S), env=env,
     )
     _stage(ticket_ref, "executing", "passed", "execution call", cost_usd=exec_cost)
     return plan
@@ -303,7 +314,7 @@ def _plan(worktree_path: Path, ticket_ref: str, plan_prompt: str, feedback, desi
             )
     plan, plan_cost = _launch(
         "ticket-planner", plan_prompt, ticket_ref=ticket_ref, model=FLAGSHIP_MODEL,
-        allowed_tools=_PLAN_ALLOWED_TOOLS, cwd=worktree_path, timeout=PLAN_TIMEOUT_S, env=env,
+        allowed_tools=_PLAN_ALLOWED_TOOLS, cwd=worktree_path, timeout=step_timeout(PLAN_TIMEOUT_S), env=env,
     )
     _stage(ticket_ref, "executing", "started", "planning call", cost_usd=plan_cost)
 

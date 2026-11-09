@@ -71,10 +71,39 @@ export function ShowBody({ item, file, error, api }) {
   return <FileView file={file} loadImage={(src) => api.image(src)} fitImage />
 }
 
+// The history strip (#715): this project's earlier items, newest first; a click shows that one again here.
+export function HistoryStrip({ history = [], currentId, onSelect }) {
+  if (history.length < 2) return null
+  return (
+    <nav className="show-history flex gap-2 overflow-x-auto px-3 py-2" data-history-strip="">
+      {history.map((h) => {
+        const on = h.id === currentId
+        return (
+          <button
+            key={h.id}
+            onClick={() => !on && onSelect(h.id)}
+            title={h.label}
+            aria-current={on ? 'true' : undefined}
+            className={`show-history-item shrink-0 max-w-[14rem] text-left${on ? ' is-current' : ''}`}
+          >
+            <span className="show-history-label block truncate">{h.label}</span>
+            <span className="show-history-meta block">{itemTag(h)} · {new Date(h.at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</span>
+          </button>
+        )
+      })}
+    </nav>
+  )
+}
+
 export default function ShowWindow({ project, api = window.api.show, initialItem = null }) {
   const [item, setItem] = useState(initialItem)
   const [file, setFile] = useState(null)
   const [error, setError] = useState(null)
+  const [notice, setNotice] = useState(null)
+  const select = (id) => {
+    setNotice(null)
+    api.select(id).then((r) => !r?.ok && setNotice(r?.reason || 'That item can\'t be shown any more')).catch((err) => setNotice(String(err?.message || err)))
+  }
 
   useEffect(() => {
     let live = true
@@ -121,6 +150,8 @@ export default function ShowWindow({ project, api = window.api.show, initialItem
           <button onClick={() => api.openInDocs()} className="show-btn">Open in Docs</button>
         )}
       </header>
+      <HistoryStrip history={item?.history || []} currentId={item?.historyId} onSelect={select} />
+      {notice && <p className="show-notice px-3 py-1" data-show-notice="">{notice}</p>}
       <main className={`min-h-0 flex-1 ${isWeb ? 'overflow-hidden' : 'overflow-auto p-3'}`}>
         <ShowBody item={item} file={file} error={error} api={api} />
       </main>
