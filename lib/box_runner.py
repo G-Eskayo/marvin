@@ -43,6 +43,10 @@ BOX_HOST = "mac-mini-2012"
 TIMEOUT_S = 480          # 3x the box's measured 158 s at -n 8 (#623), the amendment's number
 WORKERS = 8
 REF_PREFIX = "refs/box-runs/"
+# Owner, PR #942 box-trust: "After 20 gates in a row with no disagreement, propose making it a second required runner
+# (still your call)". A no-result run (timeout, offline, error) neither counts nor breaks the streak.
+TRUST_STREAK = 20
+PROPOSALS_ROOT = Path.home() / ".claude" / "proposals"
 FAILED_LINE = re.compile(r"^(?:FAILED|ERROR) (\S+::\S+|\S+\.py)")
 
 
@@ -220,19 +224,61 @@ def compare(sha: str) -> dict | None:
             out["box_only"] = sorted(b - m)
             out["mac_only"] = sorted(m - b)
         _append(out)
+        if out["agree"]:
+            _maybe_propose_trust()   # still under the lock: two gates finishing together can't both propose
         return out
 
 
+def streak(rows: list[dict] | None = None) -> tuple[int, bool]:
+    """(agreeing gates in a row since the last disagreement, whether this streak has already been proposed).
+
+    O(log lines). No-result comparisons (agree None) are skipped: they neither count nor reset."""
+    count, proposed = 0, False
+    for r in rows if rows is not None else _lines():
+        if r.get("event") == "trust" and r.get("proposed"):
+            proposed = True
+        elif r.get("event") == "compare":
+            if r.get("agree") is False:
+                count, proposed = 0, False
+            elif r.get("agree") is True:
+                count += 1
+    return count, proposed
+
+
+def _maybe_propose_trust() -> None:
+    """At TRUST_STREAK agreeing gates in a row, add one Proposal for the owner. Never raises into the gate."""
+    count, proposed = streak()
+    if count < TRUST_STREAK or proposed:
+        return
+    try:
+        import proposals
+        rec = proposals.add(PROPOSALS_ROOT, {
+            "title": f"Make mac-mini-2012 a second required test runner ({count} gates in a row agreed with the Mac)",
+            "problem": (f"The box has run the Python suite beside the Mac's merge gate and agreed on {count} gates in a "
+                        "row, with no disagreement, but its result still never counts (PR #942)."),
+            "fix": ("Make the box a second required runner: a PR merges only when the Mac and the box both pass. "
+                    "`box_runner.py show` lists every comparison so far."),
+            "why": ("A second machine catches the Linux-only failures the Mac can't see (as #1144 did), before they "
+                    "reach main. Your call: nothing changes until you say so."),
+            "area": "merge-gate", "source": "box_runner trust streak", "north_star": 2, "size": "Small"})
+        _append({"event": "trust", "proposed": True, "streak": count, "proposal": rec.get("id")})
+    except Exception as exc:  # the gate never fails because a proposal couldn't be written
+        _append({"event": "trust", "proposed": False, "streak": count, "error": str(exc)[:300]})
+
+
 def show(last: int = 20) -> str:
-    rows = [l for l in _lines() if l.get("event") == "compare"][-last:]
+    every = _lines()
+    rows = [l for l in every if l.get("event") == "compare"][-last:]
     rows.sort(key=lambda r: (r.get("agree") is not False,))
     if not rows:
         return "no box runs compared yet"
+    count, proposed = streak(every)
     out = ["| commit | PR | box | Mac | agree | box only | Mac only |", "|---|---|---|---|---|---|---|"]
     for r in rows:
         agree = {True: "yes", False: "**NO**", None: "no result"}[r.get("agree")]
         out.append(f"| {r['sha'][:8]} | {r.get('label') or ''} | {r['box']} | {r['mac']} | {agree} | "
                    f"{', '.join(r.get('box_only') or [])} | {', '.join(r.get('mac_only') or [])} |")
+    out += ["", f"Agreeing gates in a row: {count} of {TRUST_STREAK}" + (" (proposed: see Proposals)" if proposed else "")]
     return "\n".join(out)
 
 
