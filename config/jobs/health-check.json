@@ -4,5 +4,6 @@
   "command": ["~/.agents/venv/bin/python", "~/.agents/lib/health_checks.py"],
   "schedule": {"every_s": 900, "at_load": true},
   "env": {"HOME": "~", "PATH": "~/.local/bin:/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:~/.agents/venv/bin"},
-  "log": "health-check"
+  "log": "health-check",
+  "reports_itself": true
 }
