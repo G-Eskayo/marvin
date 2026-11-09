@@ -5,6 +5,7 @@ import path from 'path'
 import { buildBoard } from './board.js'
 import { readOverrides } from './catalog.js'
 import { projectIdOf } from '../../src/lib/projects.js'
+import { withOverrides, projectFor } from '../../src/lib/project_names.js'
 import { listTrackedTickets, readStages } from '../../webhook-server/ticket_stages.js'
 import { readDispatchStatus } from './dispatch_status.js'
 
@@ -37,10 +38,15 @@ export function readRegistry(file = REGISTRY_PATH, overrides = readOverrides()) 
 
 // A board's project status (active / recent / dormant / archived) comes from the catalog, so boards of
 // projects nobody is working on can sit out of the way without being deleted. Unknown = recent: never hide.
-export function withProjectStatus(boards, catalog) {
+// Each board's name is its project's one name (overrides.json, marvin#848); the repo stays the board's key.
+export function withProjectStatus(boards, catalog, overrides = null) {
+  const projects = withOverrides(catalog?.projects, overrides)
   const status = Object.fromEntries((catalog?.projects || []).map((p) => [p.id, p.status]))
   const lastActivity = Object.fromEntries((catalog?.projects || []).map((p) => [p.id, p.lastActivity || null]))
-  return boards.map((b) => ({ ...b, status: status[projectIdOf(b.repo)] || 'recent', lastActivity: lastActivity[projectIdOf(b.repo)] }))
+  return boards.map((b) => {
+    const project = projectFor(b.repo, projects)
+    return { ...b, ...(project ? { name: project.name } : {}), status: status[projectIdOf(b.repo)] || 'recent', lastActivity: lastActivity[projectIdOf(b.repo)] }
+  })
 }
 
 // Stage events, keyed by project + ticket number (ticket_stages.js).

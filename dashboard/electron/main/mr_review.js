@@ -370,6 +370,10 @@ export async function listPipelinePrs(listOpenPrs, { canMerge = canMergeFromDash
       url: pr.url,
       repo: pr.repo || MARVIN_REPO,
       key: prKey(pr.repo || MARVIN_REPO, pr.number),
+      // Grouping by project (marvin#848): a project:<id> label moves a PR to that project (ADR 0060); drafts sort last
+      // and offer no Approve.
+      labels: (pr.labels || []).map((l) => (typeof l === 'string' ? l : l?.name)).filter(Boolean),
+      isDraft: !!pr.isDraft,
       // When it was opened: the Workshop's Now view orders the owner's moves by oldest wait (#862).
       createdAt: pr.createdAt || null,
       canMerge: canMerge(pr.repo || MARVIN_REPO),

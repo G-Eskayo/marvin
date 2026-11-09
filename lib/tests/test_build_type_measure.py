@@ -331,3 +331,269 @@ def test_measure_raises_when_pytest_dies_with_an_environment_error(monkeypatch, 
     with pytest.raises(btm.MeasureError) as exc:
         btm.measure(tmp_path)
     assert "Too many open files" in str(exc.value)
+
+
+# ── PairedMeasure: affected tests, the same set before and after (marvin#1152) ─
+# The pipeline's verify ran the whole Python suite (~5,700 tests, serially) for the baseline and again on every
+# reading, and timed out at 1200 s on almost every marvin ticket (103 times on the Mini). The merge gate runs only the
+# affected tests (MARVIN_BASE). The selection depends on the change, which doesn't exist when the baseline is taken,
+# so PairedMeasure pins the base commit then, and on each reading runs ONE selection, computed from the change, on
+# both the change and the base commit. Real git repos; only the pytest run itself is faked.
+
+import metrics_registry as mr  # noqa: E402
+
+RULES = ["lib/tests/test_instance.py", "lib/tests/test_instance_move.py"]
+
+
+@pytest.fixture
+def marvin_like(tmp_path, monkeypatch):
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    _run(["git", "init", "-q", "-b", "main"], cwd=repo)
+    _run(["git", "config", "user.email", "t@example.invalid"], cwd=repo)
+    _run(["git", "config", "user.name", "t"], cwd=repo)
+    files = {
+        "conftest.py": "",
+        "README.md": "hi\n",
+        "lib/foo.py": "X = 1\n",
+        "lib/bar.py": "Y = 2\n",
+        "lib/tests/test_instance.py": "def test_rule(): pass\n",
+        "lib/tests/test_instance_move.py": "def test_rule(): pass\n",
+        "lib/tests/test_foo.py": "import foo\n",
+        "lib/tests/test_bar.py": "import bar\n",
+        ".github/workflows/ci.yml": "on: push\n",
+    }
+    for rel, text in files.items():
+        (repo / rel).parent.mkdir(parents=True, exist_ok=True)
+        (repo / rel).write_text(text)
+    _run(["git", "add", "-A"], cwd=repo)
+    _run(["git", "commit", "-q", "-m", "init"], cwd=repo)
+    monkeypatch.setattr(btm, "parallel_args", lambda *a, **k: ["-n", "2"])
+    monkeypatch.delenv("MARVIN_BASE", raising=False)
+    monkeypatch.delenv("MARVIN_SELECTED_TESTS", raising=False)
+    return repo
+
+
+def _fake_pytest(monkeypatch):
+    """Each run: which tree, which command, which selection (None = everything), and which selected files the tree
+    really has. A test counts as one pass per test file the run would collect there."""
+    runs = []
+
+    def fake(wt, cmd, env=None, **kw):
+        env = env if env is not None else {}
+        listing = env.get("MARVIN_SELECTED_TESTS")
+        selection = Path(listing).read_text().split() if listing else None
+        wt = Path(wt)
+        present = sorted(str(p.relative_to(wt)) for p in wt.rglob("test_*.py"))
+        collected = present if selection is None else [p for p in selection if (wt / p).is_file()]
+        runs.append({"wt": wt, "cmd": list(cmd), "selection": selection, "collected": collected, "env": dict(env),
+                     "head": subprocess.run(["git", "rev-parse", "HEAD"], cwd=wt, capture_output=True,
+                                            text=True).stdout.strip()})
+        if not collected:
+            return {"suite": "pytest", "passed": None, "failed": None, "total": None, "output_tail": "no tests ran in 0.1s"}
+        return {"suite": "pytest", "passed": len(collected), "failed": 0, "total": len(collected)}
+
+    monkeypatch.setattr(btm, "capture_test_results", fake)
+    monkeypatch.setattr(btm, "_ensure_dashboard_deps", lambda wt: None)
+    return runs
+
+
+def _base_and_after(runs, after_wt):
+    after = [r for r in runs if r["wt"] == Path(after_wt)]
+    base = [r for r in runs if r["wt"] != Path(after_wt)]
+    return base, after
+
+
+def test_paired_no_python_change_still_runs_the_rules_on_both_sides(marvin_like, monkeypatch):
+    runs = _fake_pytest(monkeypatch)
+    pm = btm.PairedMeasure()
+    pm(marvin_like)                       # the untouched worktree: pins the base, runs no Python tests
+    assert runs == []
+    base_sha = subprocess.run(["git", "rev-parse", "HEAD"], cwd=marvin_like, capture_output=True, text=True).stdout.strip()
+    (marvin_like / "docs").mkdir()
+    (marvin_like / "docs" / "note.md").write_text("words\n")   # uncommitted, untracked: the executor never commits
+
+    current = pm(marvin_like)
+    base, after = _base_and_after(runs, marvin_like)
+
+    assert len(base) == 1 and len(after) == 1
+    assert after[0]["selection"] == RULES and base[0]["selection"] == RULES
+    assert base[0]["head"] == base_sha and not (base[0]["wt"] / "docs" / "note.md").exists()
+    assert current["pytest_passed"]["value"] == 2
+    assert pm.paired_baseline()["pytest_passed"]["value"] == 2
+
+
+def test_paired_before_and_after_run_the_identical_command(marvin_like, monkeypatch):
+    runs = _fake_pytest(monkeypatch)
+    pm = btm.PairedMeasure()
+    pm(marvin_like)
+    (marvin_like / "lib" / "foo.py").write_text("X = 2\n")
+    pm(marvin_like)
+    base, after = _base_and_after(runs, marvin_like)
+    strip = lambda c: [p for p in c if not p.startswith("--basetemp")]  # noqa: E731
+    assert strip(base[0]["cmd"]) == strip(after[0]["cmd"])
+    assert base[0]["selection"] == after[0]["selection"] == sorted(RULES + ["lib/tests/test_foo.py"])
+
+
+@pytest.mark.parametrize("path, text", [("conftest.py", "# changed\n"), (".github/workflows/ci.yml", "on: pull_request\n")])
+def test_paired_a_change_to_how_tests_run_runs_everything_on_both_sides(marvin_like, monkeypatch, path, text):
+    runs = _fake_pytest(monkeypatch)
+    pm = btm.PairedMeasure()
+    pm(marvin_like)
+    (marvin_like / path).write_text(text)
+    pm(marvin_like)
+    base, after = _base_and_after(runs, marvin_like)
+    assert base[0]["selection"] is None and after[0]["selection"] is None
+    assert "MARVIN_SELECTED_TESTS" not in base[0]["env"] and "MARVIN_SELECTED_TESTS" not in after[0]["env"]
+    assert len(after[0]["collected"]) == 4
+
+
+def test_paired_a_base_that_cannot_be_resolved_runs_everything_never_skips(tmp_path, monkeypatch):
+    runs = _fake_pytest(monkeypatch)
+    monkeypatch.setattr(btm, "parallel_args", lambda *a, **k: [])
+    not_git = tmp_path / "plain"
+    (not_git / "lib" / "tests").mkdir(parents=True)
+    (not_git / "lib" / "tests" / "test_a.py").write_text("")
+    pm = btm.PairedMeasure()
+    baseline = pm(not_git)
+    current = pm(not_git)
+    assert [r["selection"] for r in runs] == [None, None]
+    assert baseline["pytest_passed"]["value"] == 1 and current["pytest_passed"]["value"] == 1
+    assert pm.paired_baseline() == baseline
+
+
+def test_paired_when_the_change_cannot_be_read_both_sides_run_everything(marvin_like, monkeypatch):
+    runs = _fake_pytest(monkeypatch)
+    pm = btm.PairedMeasure()
+    pm(marvin_like)
+
+    def broken(*a, **k):
+        raise subprocess.CalledProcessError(128, "git diff")
+    monkeypatch.setattr(btm, "_changed_since", broken)
+    pm(marvin_like)
+    base, after = _base_and_after(runs, marvin_like)
+    assert base[0]["selection"] is None and after[0]["selection"] is None
+
+
+def test_paired_a_test_the_change_adds_runs_after_and_reads_as_an_improvement(marvin_like, monkeypatch):
+    runs = _fake_pytest(monkeypatch)
+    pm = btm.PairedMeasure()
+    pm(marvin_like)
+    (marvin_like / "lib" / "baz.py").write_text("Z = 3\n")
+    (marvin_like / "lib" / "tests" / "test_baz.py").write_text("import baz\n")   # untracked, as the executor leaves it
+
+    current = pm(marvin_like)
+    base, after = _base_and_after(runs, marvin_like)
+    assert "lib/tests/test_baz.py" in after[0]["selection"]
+    assert base[0]["selection"] == after[0]["selection"]
+    assert "lib/tests/test_baz.py" in after[0]["collected"] and "lib/tests/test_baz.py" not in base[0]["collected"]
+    assert mr.compare("t", pm.paired_baseline(), current)["verdict"] == "improved"
+
+
+def test_paired_a_test_the_change_deletes_runs_on_neither_side(marvin_like, monkeypatch):
+    runs = _fake_pytest(monkeypatch)
+    pm = btm.PairedMeasure()
+    pm(marvin_like)
+    (marvin_like / "lib" / "tests" / "test_bar.py").unlink()     # deleted, not staged
+    (marvin_like / "lib" / "bar.py").write_text("Y = 3\n")
+
+    current = pm(marvin_like)
+    base, after = _base_and_after(runs, marvin_like)
+    assert "lib/tests/test_bar.py" not in after[0]["selection"]
+    assert base[0]["selection"] == after[0]["selection"]
+    assert "lib/tests/test_bar.py" not in base[0]["collected"]
+    assert mr.compare("t", pm.paired_baseline(), current)["verdict"] == "unchanged"
+
+
+def test_paired_ignores_marvin_base_and_a_selection_already_in_the_environment(marvin_like, monkeypatch, tmp_path):
+    stale = tmp_path / "stale-selection.txt"
+    stale.write_text("lib/tests/test_instance.py\n")
+    monkeypatch.setenv("MARVIN_BASE", "origin/does-not-exist")
+    monkeypatch.setenv("MARVIN_SELECTED_TESTS", str(stale))
+    runs = _fake_pytest(monkeypatch)
+    pm = btm.PairedMeasure()
+    pm(marvin_like)
+    (marvin_like / "conftest.py").write_text("# changed\n")      # everything: a stale selection must not narrow it
+    pm(marvin_like)
+    for r in runs:
+        assert "MARVIN_BASE" not in r["env"]
+        assert "MARVIN_SELECTED_TESTS" not in r["env"]
+        assert len(r["collected"]) == 4
+
+
+def test_paired_the_base_reading_is_reused_while_the_selection_holds_and_redone_when_it_changes(marvin_like, monkeypatch):
+    runs = _fake_pytest(monkeypatch)
+    pm = btm.PairedMeasure()
+    pm(marvin_like)
+    (marvin_like / "lib" / "foo.py").write_text("X = 2\n")
+    pm(marvin_like)
+    pm(marvin_like)                                              # iteration 2, same change
+    base, after = _base_and_after(runs, marvin_like)
+    assert len(base) == 1 and len(after) == 2
+    (marvin_like / "lib" / "bar.py").write_text("Y = 3\n")     # iteration 3 widens the change
+    pm(marvin_like)
+    base, after = _base_and_after(runs, marvin_like)
+    assert len(base) == 2 and base[-1]["selection"] == after[-1]["selection"]
+    assert "lib/tests/test_bar.py" in base[-1]["selection"]
+
+
+def test_paired_leaves_no_base_worktree_or_selection_file_behind(marvin_like, monkeypatch):
+    runs = _fake_pytest(monkeypatch)
+    pm = btm.PairedMeasure()
+    pm(marvin_like)
+    (marvin_like / "lib" / "foo.py").write_text("X = 2\n")
+    pm(marvin_like)
+    listed = subprocess.run(["git", "worktree", "list"], cwd=marvin_like, capture_output=True, text=True).stdout
+    assert len(listed.strip().splitlines()) == 1
+    for r in runs:
+        assert not r["wt"].exists() or r["wt"] == marvin_like
+        if r["env"].get("MARVIN_SELECTED_TESTS"):
+            assert not Path(r["env"]["MARVIN_SELECTED_TESTS"]).exists()
+
+
+def test_paired_a_base_tree_that_cannot_be_made_is_an_error_not_a_skip(marvin_like, monkeypatch):
+    _fake_pytest(monkeypatch)
+    pm = btm.PairedMeasure()
+    pm(marvin_like)
+    pm.base_sha = "0" * 40                                       # a commit that doesn't exist
+    (marvin_like / "lib" / "foo.py").write_text("X = 2\n")
+    with pytest.raises(btm.MeasureError):
+        pm(marvin_like)
+
+
+def test_paired_reports_the_after_reading_as_the_prs_test_results(marvin_like, monkeypatch):
+    _fake_pytest(monkeypatch)
+    pm = btm.PairedMeasure()
+    assert pm.test_results() is None
+    pm(marvin_like)
+    (marvin_like / "lib" / "foo.py").write_text("X = 2\n")
+    pm(marvin_like)
+    tr = pm.test_results()
+    assert tr["passed"] == 3 and tr["failed"] == 0 and tr["total"] == 3
+    assert "3 test files" in tr["suite"]
+
+
+def test_paired_vitest_runs_on_the_untouched_tree_and_after_the_change(marvin_like, monkeypatch):
+    (marvin_like / "dashboard").mkdir()
+    (marvin_like / "dashboard" / "package.json").write_text("{}")
+    _run(["git", "add", "-A"], cwd=marvin_like)
+    _run(["git", "commit", "-q", "-m", "dash"], cwd=marvin_like)
+    seen = []
+
+    def fake(wt, cmd, env=None, **kw):
+        seen.append((Path(wt), "vitest" if any("vitest" in c for c in cmd) else "pytest"))
+        if seen[-1][1] == "vitest":
+            return {"suite": "vitest", "passed": 10 if len([s for s in seen if s[1] == "vitest"]) == 1 else 12,
+                    "failed": 0, "total": 10}
+        return {"suite": "pytest", "passed": 2, "failed": 0, "total": 2}
+
+    monkeypatch.setattr(btm, "capture_test_results", fake)
+    monkeypatch.setattr(btm, "_ensure_dashboard_deps", lambda wt: None)
+    pm = btm.PairedMeasure()
+    first = pm(marvin_like)
+    assert seen == [(marvin_like, "vitest")] and first["vitest_passed"]["value"] == 10
+    (marvin_like / "dashboard" / "x.js").write_text("1\n")
+    current = pm(marvin_like)
+    assert [s for s in seen if s[1] == "vitest"] == [(marvin_like, "vitest")] * 2
+    assert pm.paired_baseline()["vitest_passed"]["value"] == 10 and current["vitest_passed"]["value"] == 12
+    assert pm.paired_baseline()["tests_passed"]["value"] == 12 and current["tests_passed"]["value"] == 14

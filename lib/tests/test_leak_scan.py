@@ -107,4 +107,4 @@ def test_the_gate_and_ci_both_run_it_through_run_check():
     assert scan_check.get("where", "both") == "both" and "gitleaks" in scan_check["requires"]
     ci = (REPO / ".github" / "workflows" / "ci.yml").read_text()
     assert ".github/run-check.sh secret-scan" in ci
-    assert "brew install ripgrep gitleaks" in ci                     # CI's Python job installs what tests declare
+    assert "ripgrep" in ci and "gitleaks_8.30.1_linux_x64" in ci      # CI's Python job installs what tests declare

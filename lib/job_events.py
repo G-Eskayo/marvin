@@ -155,7 +155,7 @@ def reported(default_name: str, label: str | None = None):
                 try:
                     return fn(*args, **kwargs)
                 except SystemExit as e:
-                    if e.code not in (None, 0):
+                    if e.code not in (None, 0) and not run._failed:  # keep the reason the job already gave
                         run.fail(f"exited with status {e.code}")
                     raise
                 finally:

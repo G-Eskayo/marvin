@@ -40,6 +40,14 @@ const { status, small = false } = Astro.props;
   .m-badge--testing {
     color: var(--m-orange);
   }
+  .m-badge--progress {
+    color: var(--m-orange);
+    border-style: dashed;
+  }
+  .m-badge--progress::before {
+    background: transparent;
+    border: 1px solid currentColor;
+  }
   .m-badge--planned {
     color: var(--m-ink-dim);
   }

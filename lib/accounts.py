@@ -500,46 +500,25 @@ def alert_message(row: dict) -> tuple[str, str]:
     return title, " ".join(msg.split())[:400]
 
 
-def alerts_due(rows: list[dict], last: dict) -> tuple[list[dict], dict]:
-    """(rows to alert about, the new remembered states). Pure. 'unreachable', 'not_set_up' and 'not_needed' never
-    alert and never overwrite what was remembered, so a provider blip can't re-send an alert when it clears."""
-    due, seen = [], dict(last)
-    for r in rows:
-        if not r.get("alert", True):
-            continue
-        key = f"{r.get('id')}@{r.get('machine')}"
-        state, before = r.get("state"), last.get(key)
-        if state in ALERTABLE:
-            if before != state:
-                due.append(r)
-            seen[key] = state
-        elif state == "works":
-            if before in ALERTABLE:
-                due.append(r)
-            seen[key] = "works"
-    return due, seen
+def _alert_items(rows: list[dict]) -> list[dict]:
+    return [{**r, "key": f"{r.get('id')}@{r.get('machine')}"} for r in rows if isinstance(r, dict) and r.get("alert", True)]
 
 
-def alert_changes(rows: list[dict], path: Path = ALERT_STATE_PATH, fire=None) -> list[dict]:
-    try:
-        last = json.loads(path.read_text())
-        last = last if isinstance(last, dict) else {}
-    except (OSError, ValueError):
-        last = {}
-    due, seen = alerts_due(rows, last)
-    if fire is None:
-        import mr_notification
-        fire = lambda title, msg: mr_notification.notify_regression(title, msg)  # noqa: E731  desktop + phone + dashboard
-    for r in due:
-        try:
-            fire(*alert_message(r))
-        except Exception:  # noqa: BLE001 -- an alert failing never breaks the sweep
-            pass
-    path.parent.mkdir(parents=True, exist_ok=True)
-    tmp = path.with_name(path.name + ".tmp")
-    tmp.write_text(json.dumps(seen, indent=2, sort_keys=True))
-    os.replace(tmp, path)
-    return due
+def alerts_due(rows: list[dict], last: dict, today: str | None = None) -> tuple[list[dict], dict]:
+    """(rows to alert about, the new memory). Pure. The one alert memory (mr_notification.changes_due, #1123): a change
+    to 'expiring' or 'failed', back to 'works', and once a day while it stays bad. 'unreachable', 'not_set_up' and
+    'not_needed' never alert and never overwrite what was remembered, so a provider blip can't re-send an alert."""
+    import mr_notification
+    due, seen = mr_notification.changes_due(_alert_items(rows), last, ALERTABLE,
+                                            today or datetime.now(timezone.utc).date().isoformat())
+    return [{k: v for k, v in r.items() if k not in ("key", "why")} for r in due], seen
+
+
+def alert_changes(rows: list[dict], path: Path = ALERT_STATE_PATH, fire=None, today=None) -> list[dict]:
+    import mr_notification
+    due = mr_notification.alert_on_change(_alert_items(rows), path, bad=ALERTABLE, message=alert_message,
+                                          fire=fire, today=today)
+    return [{k: v for k, v in r.items() if k not in ("key", "why")} for r in due]
 
 
 def sweep_and_alert() -> dict:
