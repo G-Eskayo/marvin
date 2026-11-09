@@ -350,6 +350,28 @@ def test_a_fallback_run_is_built_as_tagged_work(world, monkeypatch):
     assert seen == ["test", "test"]
 
 
+# ── stdin: a file handed in for one run (#932) ───────────────────────────────────────────────────────────────
+
+def test_stdin_reaches_the_box_and_the_fallback_mac_alike(world):
+    world.behaviour["mac-mini-2012"] = hangs("mac-mini-2012")
+    world.load = {"mac-mini-1": (5.0, 10, 1), "macbook-pro-1": (0.5, 8, 0)}
+    assert td.dispatch("eval --questions /dev/stdin", need="bench", timeout=60, stdin="[1]").ok
+    assert world.stdin == [("mac-mini-2012", "[1]"), ("macbook-pro-1", "[1]")]
+
+
+def test_stdin_with_async_is_refused_rather_than_silently_dropped(world):
+    r = td.dispatch("eval", need="quarantine", mode="async", stdin="[1]")
+    assert not r.ok and "sync" in r.error and world.ran == []
+
+
+def test_stdin_really_reaches_a_local_command_and_never_touches_disk(tmp_path, monkeypatch):
+    monkeypatch.setenv("HOME", str(tmp_path))
+    script = td._build_wrapper_script("cat /dev/stdin | tr a-z A-Z", "abc", "l", "box", need="bench")
+    r = td._run_local(script, "sync", 30, stdin="secret questions")
+    assert r.ok and r.output.strip() == "SECRET QUESTIONS"
+    assert not any("secret" in p.read_text(errors="ignore") for p in tmp_path.rglob("*") if p.is_file())
+
+
 def test_the_cleanup_is_armed_before_the_task_record_is_written():
     """#992: main went red because a SIGTERM landed after the record was written but before the trap was set, so the
     record stayed and the machine looked busy for ever. The trap must come first, in every kind of wrapper."""

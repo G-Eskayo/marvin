@@ -1767,3 +1767,62 @@ def test_a_tree_git_cannot_read_fails_closed(git_repo, metrics_dir, monkeypatch)
 def test_compare_itself_still_refuses_unchanged(metrics_dir):
     same = {"tests_passed": _metric(5)}
     assert mr.compare("x", same, same)["passing"] is False
+
+
+# ── a model run timing out costs one iteration, never the whole run (#1156, #989: parked after 3 runs) ─────────────
+
+def _timeout_executor(times_out_on):
+    """An executor that times out on the given iteration numbers, like a claude -p hitting EXEC_TIMEOUT_S."""
+    import subprocess as _sp
+    calls = {"n": 0, "feedback": []}
+
+    def executor(wt, ref, feedback):
+        calls["n"] += 1
+        calls["feedback"].append(feedback)
+        if calls["n"] in times_out_on:
+            raise _sp.TimeoutExpired(cmd=["claude", "-p", "…"], timeout=so.EXEC_TIMEOUT_S)
+        return "ok"
+    return executor, calls
+
+
+def test_a_timed_out_iteration_is_one_failed_round_and_the_run_goes_on(git_repo, metrics_dir):
+    # Measured 2026-11-09: about 3% of planner and executor calls hit the limit on both Macs. One of them used to end
+    # the run as "Unhandled exception", so a ticket that needed 2 rounds never got its 2nd.
+    executor, calls = _timeout_executor({1})
+    seen = iter([{"accuracy": _metric(0.7)}, {"accuracy": _metric(0.9)}])
+    result = so.execute_ticket("TICKET-1", "test-subsystem", measure=lambda wt: next(seen, {"accuracy": _metric(0.9)}),
+                               executor=executor, repo_path=git_repo, max_iterations=3,
+                               reviewer=lambda wt, base: {"clean": True})
+    assert calls["n"] == 2                                   # round 2 ran
+    fb = calls["feedback"][1]
+    assert fb["verdict"] == "ran out of time" and fb["timed_out"] is True
+    assert result["iterations"] == 2
+
+
+def test_every_round_timing_out_ends_as_a_normal_failure_that_says_why(git_repo, metrics_dir):
+    executor, calls = _timeout_executor({1, 2, 3})
+    result = so.execute_ticket("TICKET-1", "test-subsystem", measure=lambda wt: {"accuracy": _metric(0.7)},
+                               executor=executor, repo_path=git_repo, max_iterations=3)
+    assert calls["n"] == 3
+    assert result["passing"] is False and result["iterations"] == 3
+    assert "ran out of time" in result["explanation"]
+
+
+def test_the_round_after_a_timeout_is_told_to_keep_it_small():
+    text = so._round_feedback({"verdict": "ran out of time", "timed_out": True, "seconds": 1500})
+    assert "ran out of time" in text and "affected test files" in text and "whole suite" in text
+
+
+def test_other_executor_errors_still_end_the_run(git_repo, metrics_dir):
+    # A failed model run (usage limit, crash) is about the service, not the ticket: run_ticket handles it with a
+    # backoff and no strike, so it must still propagate.
+    def executor(wt, ref, feedback):
+        raise so.ModelRunFailed("ticket-executor", 1, "You've hit your limit")
+    with pytest.raises(so.ModelRunFailed):
+        so.execute_ticket("TICKET-1", "test-subsystem", measure=lambda wt: {"accuracy": _metric(0.7)},
+                          executor=executor, repo_path=git_repo, max_iterations=3)
+
+
+def test_the_limits_clear_the_slowest_runs_measured():
+    # 2026-11-09, launches.jsonl on both Macs since 10-25: slowest successful planner 814 s, executor 864 s.
+    assert so.PLAN_TIMEOUT_S >= 1.5 * 814 and so.EXEC_TIMEOUT_S >= 1.5 * 864

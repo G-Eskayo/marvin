@@ -43,7 +43,7 @@ EMBED_TIMEOUT = 1.5           # seconds Ollama gets; a cold model load costs one
 BUILD_MARKER = Path.home() / ".claude" / "intent-routing-vectors.building"
 BUILD_MARKER_FRESH = 600      # a build younger than this is still running: don't start another
 
-ROUTED = ("recall", "coding", "research")  # architecture = the current profile is right: say nothing
+ROUTED = ("coding", "research")  # recall stays on the session model (#1125); architecture: say nothing
 
 
 def _route():

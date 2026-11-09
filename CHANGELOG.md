@@ -1,5 +1,11 @@
 # Changelog
 
+- Merge gate: mac-mini-2012 as a parallel, non-blocking extra test runner (never the verdict) ([#942](https://github.com/G-Eskayo/marvin/pull/942))
+
+- SBIR desk 1: topic monitor that scores new SBIR/STTR topics against a product's capability profile ([#1178](https://github.com/G-Eskayo/marvin/pull/1178))
+
+- Pipeline: a model run hitting its time limit ends the whole ticket run (3% of calls; #1156 and the decisions follow-ups parked) ([#1182](https://github.com/G-Eskayo/marvin/pull/1182))
+
 - Box trial work: the five trial types runnable on mac-mini-2012, with its prerequisites and the retrieval question file handed in per run ([#941](https://github.com/G-Eskayo/marvin/pull/941))
 
 - Main is red at cc83048: fix forward ([#1163](https://github.com/G-Eskayo/marvin/pull/1163))

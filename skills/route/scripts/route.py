@@ -5,6 +5,7 @@ Usage:
     route.py "what were the bench results?"        # classify + print routing
     route.py "fix the bug in utils.py" --launch   # classify + exec claude
     route.py --recall --launch                     # explicit recall mode + launch
+    route.py --ask "explain prompt caching"       # open a session on the launch-routed model
     route.py --table                               # show full routing table
     route.py --aliases                             # print shell alias definitions
     route.py --check-skill grill-with-docs --model haiku  # check if skill is allowed
@@ -45,7 +46,9 @@ def __getattr__(name: str):
 INTENTS: dict[str, dict] = {
     "recall": {
         "profile":    "marvin",
-        "model":      "claude-haiku-4-5-20251001",
+        # The session model, not Haiku: Haiku went 0/3 on the knowledge-base question in bench Run 31
+        # because it never invoked the skill (PR #1125, decision recall-model).
+        "model":      None,
         "config_dir": "~/.claude",
         "alias":      "claude-recall",
         "keywords": [
@@ -54,9 +57,10 @@ INTENTS: dict[str, dict] = {
             "we discussed", "we decided", "handoff", "resume", "do you remember",
             "from last time", "stored", "you know", "what was the",
         ],
-        "why": "Memory retrieval — MARVIN's ChromaDB holds the answer. "
-               "Haiku handles recall at ~60% Sonnet cost (bench Run 8).",
-        "savings": "~60% vs MARVIN + Sonnet",
+        "why": "Memory retrieval — MARVIN's ChromaDB holds the answer, reached through a skill. "
+               "Stays on the session model: Haiku was ~60% cheaper in bench Run 8 but failed the "
+               "knowledge-base question 0/3 in Run 31 because it never invoked the skill.",
+        "savings": "none (session model; correctness over cost)",
     },
     "research": {
         "profile":    "marvin",
@@ -112,6 +116,12 @@ INTENTS: dict[str, dict] = {
 
 DEFAULT_INTENT = "architecture"
 MIN_HITS = 2  # require at least 2 keyword matches to override the default
+
+# Route at launch (PR #1125, decision routing A): only these intents change the model of a session whose
+# prompt is known before it starts. Everything else, recall and skill-needing work included, keeps the
+# session model. A session never switches model mid-way ("Delegate, never switch", CONTEXT.md).
+LAUNCH_ROUTED = ("research",)
+MAX_ROUTE_CHARS = 4000  # classify the opening of a prompt, not a whole paste
 
 
 # ── model-scope helpers ──────────────────────────────────────────────────────
@@ -179,6 +189,46 @@ def resolve_intent(description: str, use_embed: bool) -> tuple[str, float | int,
 
     intent, hits = classify(description)
     return intent, hits, "keyword-fallback"
+
+
+def launch_model(prompt) -> tuple[str, str | None]:
+    """(intent, model) for a session launched with `prompt` already known. model is None for "keep the
+    session model". Only a confident embedding match routes: the keyword fallback (25% held-out, Run 21),
+    no match, bad output or any classifier failure all keep the session model."""
+    if not isinstance(prompt, str) or not prompt.strip():
+        return DEFAULT_INTENT, None
+    try:
+        result = intent_classify.classify(prompt.strip()[:MAX_ROUTE_CHARS])
+    except Exception:
+        return DEFAULT_INTENT, None
+    if not isinstance(result, dict) or result.get("status") != "ok" or result.get("intent") not in INTENTS:
+        return DEFAULT_INTENT, None
+    intent = result["intent"]
+    return intent, (INTENTS[intent]["model"] if intent in LAUNCH_ROUTED else None)
+
+
+def ask_command(prompt: str, claude: str = "claude") -> list[str]:
+    """argv for `marvin-ask "<question>"`: an interactive session opened on the question, on the routed
+    model when the question is confidently research. The prompt goes after `--`, so it can never be read
+    as a flag."""
+    if not isinstance(prompt, str) or not prompt.strip():
+        raise ValueError("marvin-ask needs a question")
+    _intent, model = launch_model(prompt)
+    cmd = [claude]
+    if model:
+        cmd += ["--model", model]
+    return cmd + ["--", prompt]
+
+
+def ask(prompt: str) -> None:
+    """Replace this process with the session `ask_command` builds."""
+    from claude_bin import resolve_claude_bin
+    cmd = ask_command(prompt, claude=resolve_claude_bin())
+    env = {k: v for k, v in os.environ.items()
+           if not (k.startswith("CLAUDE_CODE_") or k in ("CLAUDECODE", "CLAUDE_EFFORT"))}
+    model = cmd[2] if len(cmd) > 2 and cmd[1] == "--model" else "the session model"
+    print(f"→ {model}", file=sys.stderr, flush=True)
+    os.execvpe(cmd[0], cmd, env)
 
 
 # ── display ───────────────────────────────────────────────────────────────────
@@ -296,6 +346,8 @@ def _build_arg_parser() -> argparse.ArgumentParser:
     )
     ap.add_argument("task", nargs="?", default="", help="task description to classify")
     ap.add_argument("--launch", action="store_true", help="exec claude with the routed settings")
+    ap.add_argument("--ask", action="store_true",
+                    help="open a session on TASK, on the launch-routed model (bin/marvin-ask)")
     ap.add_argument("--table", action="store_true", help="print the full routing table and exit")
     ap.add_argument("--aliases", action="store_true", help="print shell alias definitions and exit")
     ap.add_argument(
@@ -335,6 +387,14 @@ def main() -> None:
 
     if args.table:
         print_table_proper()
+        return
+
+    if args.ask:
+        try:
+            ask(args.task)
+        except ValueError as exc:
+            print(f"error: {exc}", file=sys.stderr)
+            sys.exit(2)
         return
 
     if args.aliases:

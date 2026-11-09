@@ -41,9 +41,10 @@ def test_already_fired_survives_corrupt_state_file(tmp_path, monkeypatch):
 
 # ── classify: maps route.py's intent to a message, silent on architecture ──
 
-def test_classify_returns_message_for_recall(monkeypatch):
+def test_classify_stays_silent_for_recall(monkeypatch):
+    """Recall stays on the session model (PR #1125): there is nothing cheaper to suggest."""
     monkeypatch.setattr(arh, "_resolve_intent", lambda prompt: "recall")
-    assert "recall" in arh.classify("what did we decide last session").lower()
+    assert arh.classify("what did we decide last session") is None
 
 
 def test_classify_returns_message_for_coding(monkeypatch):
@@ -150,8 +151,8 @@ def test_real_payload_produces_a_suggestion_end_to_end(tmp_path, monkeypatch, ca
     monkeypatch.setattr(arh, "STATE_FILE", tmp_path / "auto-route-state.json")
     _offline_classifier(monkeypatch)
     out = _run_main(monkeypatch, _real_payload(
-        "do you remember what we decided last session about the handoff?"), capsys)
-    assert "claude-recall" in out
+        "research the latest papers comparing vector databases"), capsys)
+    assert "claude-research" in out
     assert arh._already_fired("0b9f3c1e-real-session") is True
 
 
@@ -196,18 +197,18 @@ def test_payload_that_is_not_an_object_is_silent(tmp_path, monkeypatch, capsys):
 def test_huge_prompt_is_capped_before_classifying(tmp_path, monkeypatch, capsys):
     monkeypatch.setattr(arh, "STATE_FILE", tmp_path / "auto-route-state.json")
     seen = []
-    monkeypatch.setattr(arh, "_resolve_intent", lambda prompt: seen.append(prompt) or "recall")
+    monkeypatch.setattr(arh, "_resolve_intent", lambda prompt: seen.append(prompt) or "research")
     huge = "fix the bug " * 500_000  # ~6 MB
     out = _run_main(monkeypatch, _real_payload(huge), capsys)
-    assert "claude-recall" in out
+    assert "claude-research" in out
     assert len(seen[0]) <= arh.MAX_PROMPT_CHARS
 
 
 def test_huge_prompt_real_classifier(tmp_path, monkeypatch, capsys):
     monkeypatch.setattr(arh, "STATE_FILE", tmp_path / "auto-route-state.json")
     _offline_classifier(monkeypatch)
-    out = _run_main(monkeypatch, _real_payload("do you remember what we decided last session " * 200_000), capsys)
-    assert "claude-recall" in out
+    out = _run_main(monkeypatch, _real_payload("research the latest papers comparing vector databases " * 100_000), capsys)
+    assert "claude-research" in out
 
 
 def test_unwritable_state_file_still_fails_open(tmp_path, monkeypatch, capsys):
@@ -223,7 +224,8 @@ def test_unwritable_state_file_still_fails_open(tmp_path, monkeypatch, capsys):
 
 def test_messages_are_derived_from_route_intents():
     import route
-    for intent in ("recall", "coding", "research"):
+    assert "recall" not in arh.messages()      # recall stays on the session model (#1125, Run 31)
+    for intent in ("coding", "research"):
         cfg = route.INTENTS[intent]
         assert cfg["alias"] in arh.messages()[intent]
         assert cfg["savings"] in arh.messages()[intent]
@@ -400,11 +402,11 @@ def test_hook_is_fast_and_never_loads_chromadb(tmp_path):
             "a.main(); print('chromadb' in sys.modules)")
     t = time.monotonic()
     r = subprocess.run([sys.executable, "-c", code, str(SCRIPTS),
-                        "do you remember what we decided last session?"],
+                        "research the latest papers comparing vector databases"],
                        capture_output=True, text=True, timeout=60,
                        env={"HOME": str(tmp_path), "PATH": "/usr/bin:/bin"})
     elapsed = time.monotonic() - t
     assert r.returncode == 0, r.stderr
-    assert "claude-recall" in r.stdout
+    assert "claude-research" in r.stdout
     assert r.stdout.strip().endswith("False")
     assert elapsed < 1.5, elapsed     # was ~4 s; typically ~0.2 s now

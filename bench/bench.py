@@ -42,6 +42,74 @@ PROFILES = {
     "lean":   ROOT / "profiles" / "lean",            # symlink overlay of ~/.claude-lean (no memory overhead)
 }
 
+# Where a run's working folder lives (PR #1125, decision bench-folders). Under Claude Code 2.1.318, plain Claude
+# Code's system prompt embeds an auto-memory path derived from the folder, so a fresh temp folder per run made it
+# rewrite its whole prompt every run and flattered MARVIN. "stable" gives each (task, cell) one folder, emptied
+# between runs, like a person working in one repo; "fresh" is the old one-temp-folder-per-run (Run 31 and before).
+# Same temp area as before, so the folder is still outside home and only the profile decides what is loaded.
+WORK_ROOT = Path(tempfile.gettempdir()) / "marvin-bench-work"
+WORKDIR_MODES = ("stable", "fresh")
+
+
+def _safe(part: str) -> str:
+    return re.sub(r"[^A-Za-z0-9_.-]", "_", str(part)).strip(".") or "_"
+
+
+def project_slug(folder: Path) -> str:
+    """Claude Code's name for a folder under <config>/projects/: every non-alphanumeric character is a '-'."""
+    return re.sub(r"[^A-Za-z0-9]", "-", str(folder))
+
+
+def _empty(folder: Path) -> None:
+    for child in folder.iterdir():
+        if child.is_dir() and not child.is_symlink():
+            shutil.rmtree(child)
+        else:
+            child.unlink()
+
+
+def prepare_workdir(task: dict, profile: str, model: str | None, prompt_prefix: str, mode: str = "stable",
+                    config_dir: Path | None = None) -> tuple[Path, bool]:
+    """(folder, cleanup) for one run. fs tasks and qa tasks with "cwd": "tmp" get a bench folder holding only the
+    task's files; other qa tasks run in their fixed folder, untouched (cleanup False)."""
+    is_fs = task.get("type") == "fs"
+    if not (is_fs or task.get("cwd") == "tmp"):
+        return Path(task.get("cwd", str(Path.home()))).expanduser(), False
+    if mode == "fresh":
+        workdir = Path(tempfile.mkdtemp(prefix=f"mb-{_safe(task['id'])}-{_safe(profile)}-"))
+    elif mode == "stable":
+        root = Path(WORK_ROOT).resolve()
+        home = Path.home().resolve()
+        if root == home or root in home.parents:
+            raise ValueError(f"bench work root {root} is the home folder or above it")
+        cell = [task["id"], profile, model or "default"]
+        if prompt_prefix:
+            import hashlib
+            cell.append(hashlib.sha256(prompt_prefix.encode()).hexdigest()[:8])
+        workdir = root / "--".join(_safe(c) for c in cell)
+        if workdir.parent != root:
+            raise ValueError(f"bench folder {workdir} escapes {root}")
+        workdir.mkdir(parents=True, exist_ok=True)
+        _empty(workdir)
+        # The folder is stable, so its auto memory would carry one run's notes into the next. Transcripts stay.
+        if config_dir is not None:
+            shutil.rmtree(Path(config_dir) / "projects" / project_slug(workdir.resolve()) / "memory",
+                          ignore_errors=True)
+    else:
+        raise ValueError(f"unknown workdir mode {mode!r}; choose from {WORKDIR_MODES}")
+    if is_fs and (task["dir"] / "files").exists():
+        shutil.copytree(task["dir"] / "files", workdir, dirs_exist_ok=True)
+    return workdir, True
+
+
+def finish_workdir(workdir: Path, mode: str) -> None:
+    """After a run: a fresh folder is removed, a stable one emptied (its path is what keeps the cache warm)."""
+    if mode == "fresh":
+        shutil.rmtree(workdir, ignore_errors=True)
+    elif workdir.is_dir():
+        _empty(workdir)
+
+
 # Substrings that mean "this run never actually attempted the task" — an
 # account-level rate/session limit or a stale credential, not a real
 # correctness failure. Runs matching these must never be scored as 0.00; they
@@ -253,7 +321,7 @@ def run_hidden_check(task: dict, workdir: Path) -> dict | None:
 
 
 def run_once(task: dict, profile: str, capture_snapshot: bool = False, model: str | None = None,
-             prompt_prefix: str = "") -> dict:
+             prompt_prefix: str = "", workdir_mode: str = "stable") -> dict:
     config_dir = PROFILES[profile]
     is_fs = task.get("type") == "fs"
 
@@ -264,15 +332,8 @@ def run_once(task: dict, profile: str, capture_snapshot: bool = False, model: st
     # ~/.claude/settings.json as the *project's* files, so even the clean profile gets
     # MARVIN's instructions and hooks; cwd = ~/.agents loads the repo's CLAUDE.md and
     # skills. A qa task that compares profiles should set "cwd": "tmp" — a fresh empty
-    # folder outside home, so only the profile decides what is loaded.
-    if is_fs or task.get("cwd") == "tmp":
-        workdir = Path(tempfile.mkdtemp(prefix=f"mb-{task['id']}-{profile}-"))
-        if is_fs and (task["dir"] / "files").exists():
-            shutil.copytree(task["dir"] / "files", workdir, dirs_exist_ok=True)
-        cleanup = True
-    else:
-        workdir = Path(task.get("cwd", str(Path.home()))).expanduser()
-        cleanup = False
+    # folder outside home, so only the profile decides what is loaded. Which bench folder: see WORK_ROOT.
+    workdir, cleanup = prepare_workdir(task, profile, model, prompt_prefix, workdir_mode, config_dir=config_dir)
 
     cmd = ["claude", "-p", prompt_prefix + task["prompt"],
            "--output-format", "stream-json", "--verbose"]
@@ -314,6 +375,7 @@ def run_once(task: dict, profile: str, capture_snapshot: bool = False, model: st
     )
     parsed["profile"] = profile
     parsed["model"] = model or "default"
+    parsed["workdir_mode"] = workdir_mode
     if proc.returncode != 0 and not parsed.get("result_text"):
         parsed["spawn_error"] = proc.stderr[-500:]
 
@@ -332,7 +394,7 @@ def run_once(task: dict, profile: str, capture_snapshot: bool = False, model: st
             check = run_hidden_check(task, workdir)
             if check is not None:
                 parsed["check"] = check
-        shutil.rmtree(workdir, ignore_errors=True)
+        finish_workdir(workdir, workdir_mode)
 
     return parsed
 
@@ -570,7 +632,7 @@ def _fmt_multi(task_id: str, rows: list[dict], show_judge: bool) -> str:
 
 # ── main ──────────────────────────────────────────────────────────────────────
 
-def main() -> None:
+def build_arg_parser() -> argparse.ArgumentParser:
     ap = argparse.ArgumentParser()
     ap.add_argument("tasks", nargs="+", help="task directories")
     ap.add_argument("--profiles", default="clean,lean,marvin",
@@ -601,7 +663,15 @@ def main() -> None:
     ap.add_argument("--stop-above", type=float, default=None, metavar="FRACTION",
                     help="before each task, read the plan's five-hour and seven-day usage and stop the "
                          "sweep if either is above this fraction (e.g. 0.8). Spends one tiny session per task.")
-    args = ap.parse_args()
+    ap.add_argument("--workdir", default="stable", choices=WORKDIR_MODES,
+                    help="stable (default): one folder per (task, cell), emptied between runs, as a person "
+                         "working in one repo has; fresh: a new temp folder every run, as Run 31 and before "
+                         "(PR #1125)")
+    return ap
+
+
+def main() -> None:
+    args = build_arg_parser().parse_args()
 
     # derive short display name for headers / filenames
     _MODEL_SHORT = None
@@ -685,7 +755,7 @@ def main() -> None:
             elif args.repeat == 1:
                 print(f"running {task['id']} @ {profile} ...", flush=True)
                 run = run_once(task, profile, capture_snapshot=args.judge, model=args.model,
-                                   prompt_prefix=args.prompt_prefix)
+                                   prompt_prefix=args.prompt_prefix, workdir_mode=args.workdir)
                 if run.get("infra_error"):
                     print(f"  ! infra error (rate/session limit or auth) — skipping judge, "
                           f"not scored as a real failure", flush=True)
@@ -701,7 +771,7 @@ def main() -> None:
                     print(f"running {task['id']} @ {profile} [{i+1}/{args.repeat}] ...",
                           flush=True)
                     run = run_once(task, profile, capture_snapshot=args.judge, model=args.model,
-                                   prompt_prefix=args.prompt_prefix)
+                                   prompt_prefix=args.prompt_prefix, workdir_mode=args.workdir)
                     if run.get("infra_error"):
                         print(f"  ! infra error (rate/session limit or auth) on repeat "
                               f"{i+1}/{args.repeat} — stopping this profile early, "
