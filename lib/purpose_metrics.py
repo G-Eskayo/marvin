@@ -108,6 +108,27 @@ def _github_calls(path: Path | None = None, days: float = 1, now: datetime | Non
                      if isinstance(r.get("t"), (int, float)) and r["t"] >= cut))
 
 
+def _ci_python_minutes(fetch=None, repo: str = "G-Eskayo/marvin", runs: int = 20) -> float:
+    """North star 1 (#1117): median minutes GitHub's "Python tests" job took from being queued to finishing, over its
+    last `runs` successful runs. Queue time counts: waiting for a macOS runner was the cost. Cancelled and failed jobs
+    have no meaningful duration and are left out. 1 + `runs` REST calls."""
+    fetch = fetch or (lambda path: _gh_json(path))
+    listed = fetch(f"repos/{repo}/actions/workflows/ci.yml/runs?status=completed&per_page={runs}")
+    minutes = []
+    for run in listed.get("workflow_runs", [])[:runs]:
+        for job in fetch(f"repos/{repo}/actions/runs/{run['id']}/jobs").get("jobs", []):
+            if job.get("name") != "Python tests" or job.get("conclusion") != "success":
+                continue
+            start, end = _when(job.get("created_at")), _when(job.get("completed_at"))
+            if start and end and end >= start:
+                minutes.append((end - start).total_seconds() / 60)
+    if not minutes:
+        raise OSError("no successful Python tests job to measure")
+    minutes.sort()
+    mid = len(minutes) // 2
+    return round(minutes[mid] if len(minutes) % 2 else (minutes[mid - 1] + minutes[mid]) / 2, 1)
+
+
 def _failed_headless_runs(path: Path | None = None, days: float = 1, now: datetime | None = None) -> float:
     """North star 2 (nothing breaks silently): headless runs that ended non-zero over the last day: an error, a timeout
     (exit 124, recorded since #597), a refusal. exit_cause (#598) says which; any non-zero code counts."""
@@ -123,6 +144,7 @@ MEASURES: dict[str, Callable[[], float]] = {
     "headless-bash-calls-per-week": lambda: float(_headless_bash()[1]),
     "github-calls-per-day": lambda: _github_calls(),
     "failed-headless-runs-per-day": lambda: _failed_headless_runs(),
+    "ci-python-tests-minutes": lambda: _ci_python_minutes(),
 }
 # Not a measure yet: minutes a machine was overloaded. Nothing samples load over time (machine_resources keeps cpu_pct,
 # not the load average, and its collector isn't running on either Mac as of 2026-10-26); run_ticket reads it only live.
@@ -243,6 +265,82 @@ def _mirror_failures(days: float = PROBE_WINDOW_DAYS, path: Path | None = None, 
     return float(mirror_health.recent_failures(entries, now.timestamp(), window_s=days * 86400))
 
 
+def _slot_wait_timeouts(days: float = PROBE_WINDOW_DAYS, path: Path | None = None, now: datetime | None = None) -> float:
+    """#1113 (2026-11-04): pipeline verify timeouts that were spent waiting in line for the test slot, in this Mac's
+    pipeline-failures.jsonl over the window. The run's last line was the slot's "waiting for ... to finish", so the
+    tests never ran. After the fix a wait doesn't count against the timeout and a too-long wait is signed slot-busy,
+    so this stays 0. O(log size)."""
+    import failure_breaker
+    now = now or datetime.now(timezone.utc)
+    cut = now - timedelta(days=days)
+    try:
+        lines = Path(path or failure_breaker.LOG_PATH).read_text(encoding="utf-8", errors="replace").splitlines()
+    except OSError:
+        return 0.0
+    count = 0
+    for line in lines:
+        try:
+            e = json.loads(line)
+            when = datetime.fromisoformat(e["t"])
+        except (ValueError, KeyError, TypeError):
+            continue
+        reason = str(e.get("reason", ""))
+        if (e.get("kind") == "failure" and e.get("sig") == "verify-timeout" and when >= cut
+                and "test-slot:" in reason and "waiting for" in reason):
+            count += 1
+    return float(count)
+
+
+def _missing_model_failures(days: float = PROBE_WINDOW_DAYS, path: Path | None = None,
+                            now: datetime | None = None) -> float:
+    """#1114 (2026-11-04): pipeline builds that failed because a gitignored model folder (Resources/Models/...) was
+    missing from the worktree, in this machine's pipeline-failures.jsonl over the window. 19 on the Mini before the
+    fix, across 12 Seal Speak tickets. O(log size)."""
+    now = now or datetime.now(timezone.utc)
+    path = path or Path.home() / ".claude" / "logs" / "pipeline-failures.jsonl"
+    cut = now - timedelta(days=days)
+    try:
+        lines = Path(path).read_text(encoding="utf-8", errors="replace").splitlines()
+    except OSError:
+        return 0.0
+    count = 0
+    for line in lines:
+        try:
+            e = json.loads(line)
+            when = datetime.fromisoformat(e["t"])
+        except (ValueError, TypeError, KeyError, AttributeError):
+            continue
+        reason = str(e.get("reason", "")) if isinstance(e, dict) else ""
+        if cut <= when <= now and "missing source directory" in reason and "Resources/Models/" in reason:
+            count += 1
+    return float(count)
+
+
+def _marvin_verify_timeouts(days: float = PROBE_WINDOW_DAYS, path: Path | None = None,
+                            now: datetime | None = None) -> float:
+    """#1152 (2026-11-06): marvin tickets whose pipeline verify timed out, in this Mac's pipeline-failures.jsonl over
+    the window. The verify ran the whole ~5,700-test Python suite (twice per ticket) and passed 1200 s on a loaded
+    Mac mini: 103 times before the fix. A row without a project is marvin's (the log's older shape). O(log size)."""
+    now = now or datetime.now(timezone.utc)
+    path = path or Path.home() / ".claude" / "logs" / "pipeline-failures.jsonl"
+    cut = now - timedelta(days=days)
+    try:
+        lines = Path(path).read_text(encoding="utf-8", errors="replace").splitlines()
+    except OSError:
+        return 0.0
+    count = 0
+    for line in lines:
+        try:
+            e = json.loads(line)
+            when = datetime.fromisoformat(e["t"])
+        except (ValueError, TypeError, KeyError, AttributeError):
+            continue
+        if (isinstance(e, dict) and e.get("kind") == "failure" and e.get("sig") == "verify-timeout"
+                and e.get("project", "G-Eskayo/marvin") == "G-Eskayo/marvin" and cut <= when <= now):
+            count += 1
+    return float(count)
+
+
 # name -> (symptom counter, the most it may read while the fix holds, what it counts). Summed across Macs like any
 # measure; the logs are per Mac (~/.claude/logs doesn't sync), so nothing is counted twice.
 # Each counter takes `days` (default the 7-day window): a watched incident is re-measured over the time since its last
@@ -257,6 +355,14 @@ PROBES: dict[str, tuple[Callable[..., float], float, str]] = {
     # Six is one hour of failed runs in a week: a blip passes, an outage Health let run for an hour doesn't.
     "box-mirror-failures": (lambda days=PROBE_WINDOW_DAYS: _mirror_failures(days=days), 6.0,
                             "mirror failures on pull-only nodes (sync:mirror in errors.jsonl) over 7 days (#910)"),
+    "verify-timeout-in-slot-wait": (lambda days=PROBE_WINDOW_DAYS: _slot_wait_timeouts(days=days), 0.0,
+                                    "pipeline verify timeouts spent waiting for the test slot over 7 days, per Mac, summed (#1113)"),
+    # Two a week leaves room for one genuinely hung run; the affected tests take seconds to minutes, not 20+.
+    "verify-timeouts": (lambda days=PROBE_WINDOW_DAYS: _marvin_verify_timeouts(days=days), 2.0,
+                        "marvin tickets whose pipeline verify timed out over 7 days, per Mac, summed (#1152)"),
+    "missing-bundled-model": (lambda days=PROBE_WINDOW_DAYS: _missing_model_failures(days=days), 0.0,
+                              "pipeline builds that failed on a missing Resources/Models folder over 7 days, all Macs "
+                              "(#1114)"),
 }
 MEASURES.update({name: fn for name, (fn, _limit, _what) in PROBES.items()})
 

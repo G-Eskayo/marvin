@@ -22,7 +22,7 @@ export const NAV = [
 ];
 export const CTA = { label: 'Join the waitlist', href: '/waitlist/' };
 
-export type Status = 'released' | 'testing' | 'planned' | 'retired';
+export type Status = 'released' | 'testing' | 'progress' | 'planned' | 'retired';
 export interface Feature {
   id: string;
   title: string;
@@ -53,6 +53,7 @@ export const FEATURES = data.features.map((f) => ({
 export const STATUS_LABEL: Record<Status, string> = {
   released: 'Released',
   testing: 'Built, in testing',
+  progress: 'In progress',
   planned: 'Planned',
   retired: 'Retired',
 };

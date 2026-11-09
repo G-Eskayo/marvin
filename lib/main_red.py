@@ -24,7 +24,9 @@ import json
 import os
 import subprocess
 import sys
+from dataclasses import dataclass, field
 from pathlib import Path
+from typing import Callable
 
 LABEL = "main-red"
 LABELS = ["priority:p0", "ready-for-agent", "bug", LABEL]
@@ -78,28 +80,61 @@ def _ensure_label(gh, repo: str, name: str, color: str, description: str) -> Non
         pass  # it exists already: leave it as its owner set it
 
 
-def report(results: dict, sha: str, run_url: str, repo: str, gh=_gh) -> dict:
+@dataclass(frozen=True)
+class Kind:
+    """One thing on main that opens a ticket when it fails and closes it when it passes again. MAIN is the fix-forward
+    ticket (#826). lib/site_deploy.py adds the site's publish (#1122), which must never hold a merge, so its labels
+    carry no main-red and no p0 (the gate's isRedTicket reads those)."""
+    label: str
+    labels: list[str]
+    label_help: str
+    title: Callable[[str], str]
+    body: Callable[[list[str], str, str], str]
+    closed: Callable[[str, str], str]
+    still: Callable[[str, list[str], str], str]
+    once_per_commit: bool = False   # a re-run of the same commit adds nothing to the open ticket
+    extra: dict = field(default_factory=dict)
+
+
+MAIN = Kind(
+    label=LABEL, labels=LABELS, label_help="Main is red: fix forward before anything else (#826)", title=title,
+    body=ticket_body,
+    closed=lambda sha, run: f"Main is green again at `{sha[:7]}` ([the run]({run})): every required check passed. Closing.",
+    still=lambda sha, failed, run: f"Still red at `{sha[:7]}`: {', '.join(failed)} failed ([the run]({run})).")
+
+
+def _mentions(gh, repo: str, number: int, sha: str) -> bool:
+    """Does the open ticket already name this commit (its body or any comment)?"""
+    try:
+        d = json.loads(gh(["issue", "view", str(number), "--repo", repo, "--json", "body,comments"]) or "{}")
+    except (subprocess.CalledProcessError, ValueError):
+        return False
+    texts = [d.get("body") or ""] + [(c or {}).get("body") or "" for c in d.get("comments") or []]
+    return any(f"`{sha[:7]}`" in t for t in texts)
+
+
+def report(results: dict, sha: str, run_url: str, repo: str, gh=_gh, kind: Kind = MAIN) -> dict:
     state, failed = _verdict(results)
     if state == "unknown":
         return {"state": state, "ticket": None, "action": "none"}
-    found = json.loads(gh(["issue", "list", "--repo", repo, "--state", "open", "--label", LABEL,
+    found = json.loads(gh(["issue", "list", "--repo", repo, "--state", "open", "--label", kind.label,
                            "--json", "number,title", "--limit", "5"]) or "[]")
     current = min((t["number"] for t in found), default=None)
     if state == "green":
         if current is None:
             return {"state": state, "ticket": None, "action": "none"}
-        gh(["issue", "close", str(current), "--repo", repo, "--comment",
-            f"Main is green again at `{sha[:7]}` ([the run]({run_url})): every required check passed. Closing."])
+        gh(["issue", "close", str(current), "--repo", repo, "--comment", kind.closed(sha, run_url)])
         return {"state": state, "ticket": current, "action": "closed"}
     if current is not None:
-        gh(["issue", "comment", str(current), "--repo", repo, "--body",
-            f"Still red at `{sha[:7]}`: {', '.join(failed)} failed ([the run]({run_url}))."])
+        if kind.once_per_commit and _mentions(gh, repo, current, sha):
+            return {"state": state, "ticket": current, "action": "already"}
+        gh(["issue", "comment", str(current), "--repo", repo, "--body", kind.still(sha, failed, run_url)])
         return {"state": state, "ticket": current, "action": "attached"}
     project = f"project:{repo.split('/')[-1]}"
-    _ensure_label(gh, repo, LABEL, "b60205", "Main is red: fix forward before anything else (#826)")
+    _ensure_label(gh, repo, kind.label, "b60205", kind.label_help)
     _ensure_label(gh, repo, project, "c5def5", f"Work on {repo.split('/')[-1]}")
-    args = ["issue", "create", "--repo", repo, "--title", title(sha), "--body", ticket_body(failed, sha, run_url)]
-    for label in [*LABELS, project]:
+    args = ["issue", "create", "--repo", repo, "--title", kind.title(sha), "--body", kind.body(failed, sha, run_url)]
+    for label in [*kind.labels, project]:
         args += ["--label", label]
     url = gh(args).strip()
     return {"state": state, "ticket": int(url.rstrip("/").split("/")[-1]), "action": "opened"}
