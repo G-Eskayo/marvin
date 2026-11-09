@@ -41,9 +41,10 @@ def test_already_fired_survives_corrupt_state_file(tmp_path, monkeypatch):
 
 # ── classify: maps route.py's intent to a message, silent on architecture ──
 
-def test_classify_returns_message_for_recall(monkeypatch):
+def test_classify_stays_silent_for_recall(monkeypatch):
+    """Recall stays on the session model (PR #1125): there is nothing cheaper to suggest."""
     monkeypatch.setattr(arh, "_resolve_intent", lambda prompt: "recall")
-    assert "recall" in arh.classify("what did we decide last session").lower()
+    assert arh.classify("what did we decide last session") is None
 
 
 def test_classify_returns_message_for_coding(monkeypatch):

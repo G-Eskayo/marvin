@@ -21,7 +21,6 @@ from pathlib import Path
 STATE_FILE = Path.home() / ".claude" / "auto-route-state.json"
 
 MESSAGES = {
-    "recall": "This looks like a **recall** task — `claude-recall` (marvin + haiku) handles it at ~60% of this session's cost.",
     "coding": "This looks like a **coding** task — `claude-code` (lean + sonnet) saves ~9% tokens.",
     "research": "This looks like a **research** task — `claude-research` (marvin + haiku) is ~60% cheaper for synthesis.",
 }
