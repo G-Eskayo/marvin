@@ -44,12 +44,16 @@ class World:
         monkeypatch.setattr(td, "_read_local_dispatch_state", lambda: {"busy": self_id in self.busy})
         monkeypatch.setattr(td, "machine_load", lambda device_id, info: self.load.get(device_id))
 
-        def run_remote(host, script, mode, timeout, device_id, remote_os="macos"):
+        self.stdin = []
+
+        def run_remote(host, script, mode, timeout, device_id, remote_os="macos", stdin=None):
             self.ran.append((device_id, timeout))
+            self.stdin.append((device_id, stdin))
             return self.behaviour.get(device_id, lambda t: td.DispatchResult(ok=True, device_id=device_id, output="ok"))(timeout)
 
-        def run_local(script, mode, timeout):
+        def run_local(script, mode, timeout, stdin=None):
             self.ran.append((self_id, timeout))
+            self.stdin.append((self_id, stdin))
             return self.behaviour.get(self_id, lambda t: td.DispatchResult(ok=True, device_id=self_id, output="ok"))(timeout)
 
         monkeypatch.setattr(td, "_run_remote", run_remote)
@@ -346,6 +350,28 @@ def test_a_fallback_run_is_built_as_tagged_work(world, monkeypatch):
     assert seen == ["test", "test"]
 
 
+# ── stdin: a file handed in for one run (#932) ───────────────────────────────────────────────────────────────
+
+def test_stdin_reaches_the_box_and_the_fallback_mac_alike(world):
+    world.behaviour["mac-mini-2012"] = hangs("mac-mini-2012")
+    world.load = {"mac-mini-1": (5.0, 10, 1), "macbook-pro-1": (0.5, 8, 0)}
+    assert td.dispatch("eval --questions /dev/stdin", need="bench", timeout=60, stdin="[1]").ok
+    assert world.stdin == [("mac-mini-2012", "[1]"), ("macbook-pro-1", "[1]")]
+
+
+def test_stdin_with_async_is_refused_rather_than_silently_dropped(world):
+    r = td.dispatch("eval", need="quarantine", mode="async", stdin="[1]")
+    assert not r.ok and "sync" in r.error and world.ran == []
+
+
+def test_stdin_really_reaches_a_local_command_and_never_touches_disk(tmp_path, monkeypatch):
+    monkeypatch.setenv("HOME", str(tmp_path))
+    script = td._build_wrapper_script("cat /dev/stdin | tr a-z A-Z", "abc", "l", "box", need="bench")
+    r = td._run_local(script, "sync", 30, stdin="secret questions")
+    assert r.ok and r.output.strip() == "SECRET QUESTIONS"
+    assert not any("secret" in p.read_text(errors="ignore") for p in tmp_path.rglob("*") if p.is_file())
+
+
 def test_the_cleanup_is_armed_before_the_task_record_is_written():
     """#992: main went red because a SIGTERM landed after the record was written but before the trap was set, so the
     record stayed and the machine looked busy for ever. The trap must come first, in every kind of wrapper."""
@@ -374,3 +400,138 @@ def test_the_wrapper_cleans_up_when_terminated_at_once(tmp_path):
         os.killpg(p.pid, 15)
         p.wait(timeout=10)
         assert not record.exists(), f"run {i} left its record"
+
+
+# ── #1139: a signal ends the wrapper and its job at once, whenever it lands ───────────────────────────────────────
+# bash runs no trap while it waits on a foreground command. A SIGTERM that reached the wrapper but not its job (the
+# job was forked just after the group was signalled, or only the wrapper was signalled) waited the whole job out: 30 s
+# on Linux CI, main red at 69d1a55. The job now runs in the background under `wait`, which a trapped signal ends.
+
+def _run_wrapper(tmp_path, command, name="w", stdin=None):
+    home = tmp_path / name
+    home.mkdir()
+    f = home / "w.sh"
+    f.write_text(td._build_wrapper_script(command, "abc12345", "label", "box"))
+    p = subprocess.Popen(["/bin/bash", str(f)], env={"HOME": str(home), "PATH": "/usr/bin:/bin"},
+                         start_new_session=True, stdin=stdin)
+    return p, home, home / ".claude" / "dispatch" / "tasks" / "abc12345.json"
+
+
+def _wait_for(path, seconds=5.0):
+    end = time.monotonic() + seconds
+    while time.monotonic() < end:
+        if path.exists() and path.read_text().strip():
+            return True
+        time.sleep(0.01)
+    return False
+
+
+def _gone(pid, seconds=3.0):
+    end = time.monotonic() + seconds
+    while time.monotonic() < end:
+        try:
+            os.kill(pid, 0)
+        except ProcessLookupError:
+            return True
+        try:   # a zombie of ours would still answer kill(0); reap if it is our child (it isn't: the wrapper's)
+            os.waitpid(pid, os.WNOHANG)
+        except ChildProcessError:
+            pass
+        time.sleep(0.02)
+    return False
+
+
+@pytest.mark.parametrize("sig,code", [(15, 143), (2, 130), (1, 129)])
+def test_a_signal_to_the_wrapper_alone_ends_it_and_its_job_at_once(tmp_path, sig, code):
+    pidfile = tmp_path / "job.pid"
+    p, home, record = _run_wrapper(tmp_path, f"sh -c 'echo $$ > {pidfile}; exec sleep 30'")
+    try:
+        assert _wait_for(pidfile)
+        job = int(pidfile.read_text())
+        t = time.monotonic()
+        os.kill(p.pid, sig)                       # the wrapper only, not its group: the job never got the signal
+        assert p.wait(timeout=3) in (code, -sig)   # 128+n, or killed by n: both read as a signal by ssh and timeout
+        assert time.monotonic() - t < 2, "the wrapper waited for its job"
+        assert _gone(job), "the job outlived its wrapper"
+        assert not record.exists()
+        assert '"busy": false' in (home / ".claude" / "dispatch-state.json").read_text()
+    finally:
+        os.killpg(p.pid, 9) if p.poll() is None else None
+
+
+@pytest.mark.parametrize("command,code", [("true", 0), ("exit 3", 3), ("sh -c 'kill -TERM $$'", 143),
+                                          ("echo a && false", 1), ("false || exit 7", 7)])
+def test_the_wrapper_still_exits_with_its_jobs_own_code(tmp_path, command, code):
+    p, _, record = _run_wrapper(tmp_path, command)
+    assert p.wait(timeout=10) == code
+    assert not record.exists()
+
+
+def test_the_job_still_reads_the_wrappers_stdin(tmp_path):
+    out = tmp_path / "out.txt"
+    p, _, _ = _run_wrapper(tmp_path, f"cat > {out}", stdin=subprocess.PIPE)
+    p.communicate(b"hello from stdin\n", timeout=10)
+    assert p.returncode == 0
+    assert out.read_text() == "hello from stdin\n"
+
+
+def test_a_job_that_ignores_sigterm_still_lets_the_wrapper_end_and_clean_up(tmp_path):
+    pidfile = tmp_path / "job.pid"
+    p, _, record = _run_wrapper(tmp_path, f"sh -c 'trap \"\" TERM; echo $$ > {pidfile}; while :; do sleep 1; done'")
+    job = None
+    try:
+        assert _wait_for(pidfile)
+        job = int(pidfile.read_text())
+        os.killpg(p.pid, 15)
+        assert p.wait(timeout=3) in (143, -15)
+        assert not record.exists()
+    finally:
+        if job:
+            try:
+                os.kill(job, 9)
+            except ProcessLookupError:
+                pass
+        if p.poll() is None:
+            os.killpg(p.pid, 9)
+
+
+def test_terminated_at_once_never_waits_for_the_job(tmp_path):
+    """The CI failure itself, many times over: SIGTERM to the group the moment the record appears. Each run must end
+    within two seconds, not only eventually."""
+    for i in range(30):
+        p, _, record = _run_wrapper(tmp_path, "sleep 30", name=str(i))
+        for _ in range(400):
+            if record.exists():
+                break
+            time.sleep(0.002)
+        t = time.monotonic()
+        os.killpg(p.pid, 15)
+        try:
+            p.wait(timeout=5)
+        finally:
+            if p.poll() is None:
+                os.killpg(p.pid, 9)
+        assert time.monotonic() - t < 2, f"run {i} waited for its job"
+        assert not record.exists(), f"run {i} left its record"
+
+
+# ── stdin: a file handed in for one run (#932) ───────────────────────────────────────────────────────────────
+
+def test_stdin_reaches_the_box_and_the_fallback_mac_alike(world):
+    world.behaviour["mac-mini-2012"] = hangs("mac-mini-2012")
+    world.load = {"mac-mini-1": (5.0, 10, 1), "macbook-pro-1": (0.5, 8, 0)}
+    assert td.dispatch("eval --questions /dev/stdin", need="bench", timeout=60, stdin="[1]").ok
+    assert world.stdin == [("mac-mini-2012", "[1]"), ("macbook-pro-1", "[1]")]
+
+
+def test_stdin_with_async_is_refused_rather_than_silently_dropped(world):
+    r = td.dispatch("eval", need="quarantine", mode="async", stdin="[1]")
+    assert not r.ok and "sync" in r.error and world.ran == []
+
+
+def test_stdin_really_reaches_a_local_command_and_never_touches_disk(tmp_path, monkeypatch):
+    monkeypatch.setenv("HOME", str(tmp_path))
+    script = td._build_wrapper_script("cat /dev/stdin | tr a-z A-Z", "abc", "l", "box", need="bench")
+    r = td._run_local(script, "sync", 30, stdin="secret questions")
+    assert r.ok and r.output.strip() == "SECRET QUESTIONS"
+    assert not any("secret" in p.read_text(errors="ignore") for p in tmp_path.rglob("*") if p.is_file())

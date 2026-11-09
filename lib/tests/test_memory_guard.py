@@ -273,7 +273,7 @@ def test_the_dispatch_event_mask_maps_to_a_level(mask, level):
     assert mg.level_from_mask(mask) == level
 
 
-@pytest.mark.skipif(sys.platform != "darwin", reason="libdispatch memory-pressure source is macOS only")
+@pytest.mark.macos_only("libdispatch memory-pressure source is macOS only")
 def test_the_real_dispatch_source_arms_and_cancels():
     src = mg.PressureSource()
     try:
@@ -299,7 +299,7 @@ def _wait_for(cond, timeout=10.0):
     raise AssertionError("condition not met in time")
 
 
-@pytest.mark.skipif(sys.platform != "darwin", reason="libdispatch sources are macOS only")
+@pytest.mark.macos_only("libdispatch sources are macOS only")
 def test_the_real_source_reports_a_change_to_the_queue_directory():
     mg.guard("#1", ["true"], "/tmp", level_reader=_level("warn"), start_watcher=_no_watcher)
     src = mg.PressureSource(watch_dir=mg.QUEUE_DIR)

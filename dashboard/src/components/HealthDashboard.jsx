@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react'
 import AccountsPanel from './AccountsPanel.jsx'
+import ReachRow from './ReachRow.jsx'
 import { useScrollPlace, useScrollAreaControl } from './ScrollPlaces.jsx'
 import HealthDrilldown from './HealthDrilldown.jsx'
 import AgentsPanel from './AgentsPanel.jsx'
@@ -292,6 +293,7 @@ export default function HealthDashboard({ nav }) {
       ) : (
       <>
       <OverallBadge overall={status.overall} generatedAt={status.generated_at} refreshing={refreshing} onRefresh={handleRefresh} />
+      <ReachRow />
       <AccountsPanel />
 
       {cov && (

@@ -44,7 +44,7 @@
         <key>HOME</key>
         <string>__HOME__</string>
         <key>PATH</key>
-        <string>/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin:__HOME__/.agents/venv/bin</string>
+        <string>/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin:__HOME__/.agents/venv/bin:/opt/homebrew/bin</string>
     </dict>
 
     <key>KeepAlive</key>

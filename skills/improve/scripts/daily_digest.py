@@ -288,7 +288,8 @@ def main() -> None:
     DIGEST_DIR.mkdir(parents=True, exist_ok=True)
 
     # Check if this machine should build (primary always builds; standby only after deadline)
-    decision = brief_fallback.should_run(local_path=OUT_FILE, usual_hour=8, usual_minute=30)
+    uh, um = brief_fallback.usual_time("daily-digest")  # the primary plist's own schedule
+    decision = brief_fallback.should_run(local_path=OUT_FILE, usual_hour=uh, usual_minute=um)
     if not decision.should_build:
         print(f"[daily-digest] {decision.reason} — skipping", flush=True)
         return

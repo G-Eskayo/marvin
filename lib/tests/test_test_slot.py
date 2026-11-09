@@ -64,12 +64,21 @@ def test_two_runs_at_once_never_overlap(slot_dir, tmp_path):
 
 
 def test_a_waiting_merge_goes_before_a_helper_that_was_waiting_first(slot_dir, tmp_path):
-    log = tmp_path / "order.log"
-    first = _run(slot_dir, log, "suite", 0.8)
+    # Ordered by events, not sleeps: under load (a busy Mini, CI on Linux, #1117) a fixed 0.8 s suite could end before
+    # the merge had even started, and the helper then went first rightly.
+    log, go = tmp_path / "order.log", tmp_path / "go"
+    body = f"echo 'suite start' >> {log}; while [ ! -f {go} ]; do sleep 0.05; done; echo 'suite end' >> {log}"
+    first = subprocess.Popen([sys.executable, str(SCRIPT), "run", "--what", "suite", "--", "/bin/sh", "-c", body],
+                             env=_env(slot_dir))
     assert _wait_for(lambda: "suite start" in _lines(log))
-    helper = _run(slot_dir, log, "helper", 0.1)
-    time.sleep(0.2)   # the helper is queued first
+    helper = subprocess.Popen([sys.executable, str(SCRIPT), "run", "--what", "helper", "--", "/bin/sh", "-c",
+                               f"echo 'helper start' >> {log}; echo 'helper end' >> {log}"],
+                              env=_env(slot_dir), stderr=subprocess.PIPE, text=True)
+    assert "waiting for" in helper.stderr.readline()   # the helper is queued first
     merge = _run(slot_dir, log, "merge", 0.1, merge=True)
+    assert _wait_for(lambda: ts.merge_pending(slot_dir))
+    time.sleep(0.3)   # the merge reaches its wait for the slot (it marks itself first, then asks)
+    go.write_text("")
     for p in (first, helper, merge):
         assert p.wait(15) == 0
     assert _lines(log) == ["suite start", "suite end", "merge start", "merge end", "helper start", "helper end"]

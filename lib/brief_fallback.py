@@ -26,6 +26,72 @@ import task_dispatch  # noqa: E402
 import machine_profile  # noqa: E402
 
 
+REPO = Path(__file__).resolve().parent.parent
+# Each output's two launchd jobs: the primary's (the Mini) and the fallback's (the other Macs). The primary plist's own
+# schedule is the output's usual time, so the gate and the schedule can't drift apart. Found 2026-11-04 (#1123 0.4):
+# the laptop ran the primary plists, at or before the usual time + GRACE, so every fallback skipped every day.
+PAIRS = {
+    "daily-digest": ("skills/improve/com.marvin.daily-digest.plist",
+                     "skills/improve/com.marvin.daily-digest-fallback.plist"),
+    "research-colony": ("skills/research-colony/com.marvin.research-colony.plist",
+                        "skills/research-colony/com.marvin.research-colony-fallback.plist"),
+    "morning-brief": ("config/launchd/com.marvin.morning-brief.plist",
+                      "config/launchd/com.marvin.morning-brief-fallback.plist"),
+}
+GRACE_MINUTES = 60            # how long a standby waits past the usual time before it covers
+FALLBACK_MARGIN_MINUTES = 5   # a fallback is scheduled at least this long after its deadline
+
+
+def plists(job: str) -> tuple[Path, Path]:
+    """(primary plist, fallback plist) in this checkout. KeyError for a job that has no pair."""
+    primary, fallback = PAIRS[job]
+    return REPO / primary, REPO / fallback
+
+
+def _calendar(path: Path) -> tuple[int, int]:
+    import plistlib
+    when = plistlib.loads(path.read_bytes())["StartCalendarInterval"]
+    return int(when["Hour"]), int(when.get("Minute", 0))
+
+
+def usual_time(job: str) -> tuple[int, int]:
+    """(hour, minute), local: when the primary builds `job`, read from its plist."""
+    return _calendar(plists(job)[0])
+
+
+def _launchctl(cmd: list[str]) -> int:
+    return subprocess.run(cmd, capture_output=True, text=True).returncode
+
+
+def install(job: str, primary: bool, home: Path | None = None, run=None, uid: int | None = None) -> dict:
+    """Install the one job of the pair this Mac should run, and boot out and remove the other one's copy (a copy of a
+    repo file, so nothing is lost). Identical and already installed: left alone."""
+    import os
+    want, other = plists(job) if primary else plists(job)[::-1]
+    home = Path(home or Path.home())
+    run = run or _launchctl
+    uid = os.getuid() if uid is None else uid
+    agents = home / "Library" / "LaunchAgents"
+    label, other_label = (f"com.marvin.{job}", f"com.marvin.{job}-fallback")[::1 if primary else -1]
+    removed = None
+    other_path = agents / f"{other_label}.plist"
+    if other_path.exists():
+        run(["launchctl", "bootout", f"gui/{uid}/{other_label}"])
+        other_path.unlink()
+        removed = other_label
+    dest = agents / f"{label}.plist"
+    data = want.read_bytes()
+    if dest.exists() and dest.read_bytes() == data:
+        return {"job": job, "installed": label, "removed": removed, "ok": True}
+    agents.mkdir(parents=True, exist_ok=True)
+    tmp = dest.with_name(dest.name + ".tmp")
+    tmp.write_bytes(data)
+    os.replace(tmp, dest)
+    run(["launchctl", "bootout", f"gui/{uid}/{label}"])   # fails harmlessly when it wasn't loaded
+    ok = run(["launchctl", "bootstrap", f"gui/{uid}", str(dest)]) == 0
+    return {"job": job, "installed": label, "removed": removed, "ok": ok}
+
+
 class Decision(NamedTuple):
     should_build: bool
     reason: str
@@ -128,7 +194,7 @@ def produced(local_path: Path, remote_path: str | None = None, host: str | None 
 
 
 def past_deadline(now: datetime, usual_hour: int = 8, usual_minute: int = 30,
-                  grace_minutes: int = 60) -> bool:
+                  grace_minutes: int = GRACE_MINUTES) -> bool:
     """Has the primary's usual scheduled time (plus grace period) passed?
     Pure local-clock comparison — never checks the remote machine's clock.
     Grace period lets the primary finish if it starts slightly late."""
@@ -142,7 +208,7 @@ def past_deadline(now: datetime, usual_hour: int = 8, usual_minute: int = 30,
 
 def should_run(device_id: str | None = None, now: datetime | None = None, local_path: Path | None = None,
                remote_path: str | None = None, usual_hour: int = 8, usual_minute: int = 30,
-               grace_minutes: int = 60, run=subprocess.run) -> Decision:
+               grace_minutes: int = GRACE_MINUTES, run=subprocess.run) -> Decision:
     """Should this machine build the output? Mirrors scanner_role.should_scan().
     Returns (bool, reason_string). Both machines call this independently and get the same answer.
 
@@ -170,3 +236,19 @@ def should_run(device_id: str | None = None, now: datetime | None = None, local_
         return Decision(False, "standby: primary already produced")
 
     return Decision(True, "fallback: covering for the primary")
+
+
+def main(argv: list[str]) -> int:
+    """brief_fallback.py install [job...]: install this Mac's half of each pair (all three by default)."""
+    import json
+    if not argv or argv[0] != "install":
+        print("usage: brief_fallback.py install [" + "|".join(PAIRS) + " ...]", file=sys.stderr)
+        return 2
+    me = machine_profile.registry_id()
+    results = [install(job, primary=is_primary(me)) for job in (argv[1:] or list(PAIRS))]
+    print(json.dumps(results))
+    return 0 if all(r["ok"] for r in results) else 1
+
+
+if __name__ == "__main__":
+    sys.exit(main(sys.argv[1:]))

@@ -529,3 +529,129 @@ class TestParameterization:
         path.write_text("Some prefix _Quarantined by safety-monitor some suffix")
 
         assert brief_fallback.produced(path) is True
+
+
+# ── each fallback runs after its own deadline, and each Mac installs the right one (marvin#1123 0.4) ────────────────
+# Found 2026-11-04: the laptop had the *primary* plists installed (morning-brief 09:45, daily-digest 08:30,
+# research-colony 09:00). On a standby Mac should_run() waits until the usual time + GRACE, so every one of them logged
+# "standby: before deadline" and skipped, every day; with the Mini's morning-brief job missing too, no brief since 10-28.
+import plistlib  # noqa: E402
+
+JOBS = ("daily-digest", "research-colony", "morning-brief")
+
+
+def _at(hour, minute, second=0):
+    """Today at hour:minute on this machine's wall clock, the way launchd fires a StartCalendarInterval job."""
+    return datetime.now().astimezone().replace(hour=hour, minute=minute, second=second, microsecond=0)
+
+
+def _calendar(path):
+    when = plistlib.loads(Path(path).read_bytes())["StartCalendarInterval"]
+    return when["Hour"], when.get("Minute", 0)
+
+
+@pytest.mark.parametrize("job", JOBS)
+def test_the_usual_time_is_the_primary_jobs_own_schedule(job):
+    primary, _ = brief_fallback.plists(job)
+    assert brief_fallback.usual_time(job) == _calendar(primary)
+
+
+@pytest.mark.parametrize("job", JOBS)
+def test_a_fallback_fires_after_its_own_deadline_with_room_to_spare(job):
+    _, fallback = brief_fallback.plists(job)
+    h, m = _calendar(fallback)
+    uh, um = brief_fallback.usual_time(job)
+    fires = _at(h, m)
+    early = fires - timedelta(minutes=brief_fallback.FALLBACK_MARGIN_MINUTES)  # launchd or the clock a bit early
+    assert brief_fallback.past_deadline(early, usual_hour=uh, usual_minute=um)
+    # and it doesn't wait pointlessly long: the brief is for the morning
+    assert fires - _at(uh, um) <= timedelta(minutes=brief_fallback.GRACE_MINUTES + 30)
+
+
+@pytest.mark.parametrize("job", JOBS)
+def test_a_standby_mac_at_its_fallback_time_covers_for_a_quiet_primary(job, tmp_path):
+    _, fallback = brief_fallback.plists(job)
+    h, m = _calendar(fallback)
+    uh, um = brief_fallback.usual_time(job)
+    decision = brief_fallback.should_run(device_id="macbook-pro-1", now=_at(h, m), local_path=tmp_path / "out.md",
+                                         usual_hour=uh, usual_minute=um, run=lambda *a, **k: subprocess.CompletedProcess(a, 255, "", ""))
+    assert decision == (True, "fallback: covering for the primary")
+
+
+@pytest.mark.parametrize("job", JOBS)
+def test_the_two_plists_are_a_matched_pair(job):
+    primary, fallback = (plistlib.loads(Path(p).read_bytes()) for p in brief_fallback.plists(job))
+    assert primary["Label"] == f"com.marvin.{job}"
+    assert fallback["Label"] == f"com.marvin.{job}-fallback"
+    assert primary["ProgramArguments"] == fallback["ProgramArguments"]
+    assert primary["StandardErrorPath"] != fallback["StandardErrorPath"]
+
+
+def test_no_call_site_hardcodes_its_usual_time():
+    # One source for the usual time (the primary plist): a hardcoded copy is how a gate and a schedule drift apart.
+    root = Path(brief_fallback.__file__).resolve().parents[1]
+    for rel in ("lib/morning_brief.py", "skills/improve/scripts/daily_digest.py",
+                "skills/research-colony/scripts/run_colony.py"):
+        src = (root / rel).read_text()
+        assert "usual_hour=" not in src.replace("usual_hour=uh", ""), rel
+        assert "brief_fallback.usual_time(" in src, rel
+
+
+class FakeLaunchctl:
+    def __init__(self, fail_bootstrap=False):
+        self.calls, self.fail_bootstrap = [], fail_bootstrap
+
+    def __call__(self, cmd):
+        self.calls.append(cmd)
+        return 1 if (self.fail_bootstrap and cmd[1] == "bootstrap") else 0
+
+
+def _agents(home):
+    return home / "Library" / "LaunchAgents"
+
+
+@pytest.mark.parametrize("job", JOBS)
+def test_a_standby_mac_gets_the_fallback_and_loses_the_primary(job, tmp_path):
+    agents = _agents(tmp_path)
+    agents.mkdir(parents=True)
+    primary, fallback = brief_fallback.plists(job)
+    (agents / f"com.marvin.{job}.plist").write_bytes(Path(primary).read_bytes())  # the 2026-11-04 laptop
+    run = FakeLaunchctl()
+    out = brief_fallback.install(job, primary=False, home=tmp_path, run=run, uid=501)
+    assert out == {"job": job, "installed": f"com.marvin.{job}-fallback", "removed": f"com.marvin.{job}", "ok": True}
+    assert not (agents / f"com.marvin.{job}.plist").exists()
+    assert (agents / f"com.marvin.{job}-fallback.plist").read_bytes() == Path(fallback).read_bytes()
+    assert ["launchctl", "bootout", f"gui/501/com.marvin.{job}"] in run.calls
+    assert run.calls[-1] == ["launchctl", "bootstrap", "gui/501", str(agents / f"com.marvin.{job}-fallback.plist")]
+
+
+def test_the_primary_gets_the_primary_and_loses_a_stray_fallback(tmp_path):
+    agents = _agents(tmp_path)
+    agents.mkdir(parents=True)
+    (agents / "com.marvin.morning-brief-fallback.plist").write_text("stray")
+    run = FakeLaunchctl()
+    out = brief_fallback.install("morning-brief", primary=True, home=tmp_path, run=run, uid=501)
+    assert out["installed"] == "com.marvin.morning-brief" and out["removed"] == "com.marvin.morning-brief-fallback"
+    assert not (agents / "com.marvin.morning-brief-fallback.plist").exists()
+    assert (agents / "com.marvin.morning-brief.plist").exists()
+
+
+def test_installing_twice_leaves_a_loaded_identical_job_alone(tmp_path):
+    run = FakeLaunchctl()
+    brief_fallback.install("daily-digest", primary=False, home=tmp_path, run=run, uid=501)
+    run2 = FakeLaunchctl()
+    out = brief_fallback.install("daily-digest", primary=False, home=tmp_path, run=run2, uid=501)
+    assert out == {"job": "daily-digest", "installed": "com.marvin.daily-digest-fallback", "removed": None, "ok": True}
+    assert not any(c[1] == "bootstrap" for c in run2.calls)
+
+
+def test_a_failed_bootstrap_is_reported_not_claimed(tmp_path):
+    out = brief_fallback.install("research-colony", primary=False, home=tmp_path, run=FakeLaunchctl(True), uid=501)
+    assert out["ok"] is False
+
+
+def test_an_unknown_job_installs_nothing(tmp_path):
+    run = FakeLaunchctl()
+    with pytest.raises(KeyError):
+        brief_fallback.install("rm -rf", primary=False, home=tmp_path, run=run, uid=501)
+    assert run.calls == [] and not _agents(tmp_path).exists()

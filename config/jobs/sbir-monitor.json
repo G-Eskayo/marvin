@@ -1,0 +1,8 @@
+{
+  "name": "sbir-monitor",
+  "description": "Wednesday SBIR/STTR topic monitor: DSIP's pre-release and open topics scored against the instance's capability profile; new matches go through the one alert path (marvin#1165). Install on ONE always-on machine.",
+  "command": ["~/.agents/venv/bin/python", "~/.agents/skills/research-colony/scripts/sbir_monitor.py", "run"],
+  "schedule": {"calendar": {"weekday": 3, "hour": 9, "minute": 30}},
+  "low_priority": true,
+  "log": "sbir-monitor"
+}

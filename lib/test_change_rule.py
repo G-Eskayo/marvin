@@ -73,6 +73,18 @@ def _is_code_change(c: dict) -> bool:
     return any(not _COMMENT.match(l) for l in lines)
 
 
+def real_changes(changes: list[dict], rules: dict) -> list[str]:
+    """The paths that change something: not generated output, not a pure rename, not blank lines. Code and tests must
+    also change more than comments; in docs and config a line starting `#` is content, not a comment (#1157)."""
+    def real(c: dict) -> bool:
+        if _match(c["path"], rules.get("generated", [])):
+            return False
+        if kind(c["path"], rules) != "other":
+            return _is_code_change(c)
+        return any(l.strip() for l in [*c.get("added", []), *c.get("removed", [])])
+    return [c["path"] for c in changes if real(c)]
+
+
 def check(changes: list[dict], rules: dict) -> tuple[bool, str]:
     code = [c["path"] for c in changes if kind(c["path"], rules) == "code" and _is_code_change(c)]
     tests = [c["path"] for c in changes if kind(c["path"], rules) == "test"]

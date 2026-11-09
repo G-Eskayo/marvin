@@ -343,3 +343,129 @@ def test_mirror_failures_on_a_machine_without_the_log_are_zero(tmp_path):
 def test_mirror_probe_is_registered():
     fn, limit, what = pm.PROBES["box-mirror-failures"]
     assert "#910" in what and limit >= 0
+
+
+# ── #1117: GitHub's Python tests job, queued to finished ──────────────────────────────────────────────────────
+
+def _job(name, conclusion, created, completed):
+    return {"name": name, "conclusion": conclusion, "created_at": created, "completed_at": completed}
+
+
+def test_ci_python_minutes_is_the_median_queue_plus_run_of_successful_jobs():
+    runs = {"workflow_runs": [{"id": 1}, {"id": 2}, {"id": 3}, {"id": 4}]}
+    jobs = {
+        1: [_job("Python tests", "success", "2026-11-04T10:00:00Z", "2026-11-04T10:25:00Z"),   # 17 min queued
+            _job("Rules", "success", "2026-11-04T10:00:00Z", "2026-11-04T10:01:00Z")],
+        2: [_job("Python tests", "success", "2026-11-04T11:00:00Z", "2026-11-04T11:09:00Z")],
+        3: [_job("Python tests", "cancelled", "2026-11-04T12:00:00Z", "2026-11-04T12:59:00Z")],  # not a duration
+        4: [_job("Python tests", "success", "2026-11-04T13:00:00Z", "2026-11-04T13:04:00Z")],
+    }
+
+    def fetch(path):
+        if "/jobs" in path:
+            return {"jobs": jobs[int(path.split("/runs/")[1].split("/")[0])]}
+        assert "workflows/ci.yml/runs" in path and "status=completed" in path
+        return runs
+    assert pm._ci_python_minutes(fetch=fetch) == 9.0
+
+
+def test_ci_python_minutes_with_nothing_measurable_is_an_error_not_zero():
+    with pytest.raises(OSError):
+        pm._ci_python_minutes(fetch=lambda path: {"workflow_runs": []} if "jobs" not in path else {"jobs": []})
+
+
+def test_ci_python_minutes_skips_a_job_with_a_broken_timestamp():
+    runs = {"workflow_runs": [{"id": 1}, {"id": 2}]}
+    jobs = {1: [_job("Python tests", "success", "garbage", "2026-11-04T10:25:00Z")],
+            2: [_job("Python tests", "success", "2026-11-04T11:00:00Z", "2026-11-04T11:06:00Z")]}
+    fetch = lambda path: {"jobs": jobs[int(path.split("/runs/")[1].split("/")[0])]} if "/jobs" in path else runs
+    assert pm._ci_python_minutes(fetch=fetch) == 6.0
+
+
+def test_ci_python_minutes_is_a_registered_measure():
+    assert "ci-python-tests-minutes" in pm.MEASURES
+
+
+# ── missing-bundled-model: pipeline worktrees get the app's models (#1114) ─────────────────────────────────────────
+
+def _fail_line(t, reason):
+    import json as _j
+    return _j.dumps({"t": t.isoformat(), "kind": "failure", "ticket": 266, "project": "G-Eskayo/clarity-captions",
+                     "reason": reason})
+
+
+MISSING = ('App builds produced no result: Spec validation error: Target "CaptionSpike" has a missing source directory '
+           '"/w/Apps/Spike/Resources/Models/ParakeetUltra"')
+
+
+def test_missing_model_failures_are_counted_over_the_window(tmp_path):
+    from datetime import timedelta
+    log = tmp_path / "pipeline-failures.jsonl"
+    log.write_text("\n".join([_fail_line(NOW - timedelta(days=1), MISSING), _fail_line(NOW - timedelta(days=6), MISSING),
+                              _fail_line(NOW - timedelta(days=8), MISSING),                      # outside 7 days
+                              _fail_line(NOW - timedelta(hours=1), "timed out after 1200s"),     # another symptom
+                              _fail_line(NOW - timedelta(hours=1), 'missing source directory "/w/Sources/App"'),
+                              '{"t": "soon", "reason": "missing source directory Resources/Models"}',
+                              "{garbled", "[]", ""]) + "\n")
+    assert pm._missing_model_failures(path=log, now=NOW) == 2.0
+    assert pm._missing_model_failures(days=2, path=log, now=NOW) == 1.0
+
+
+def test_missing_model_failures_without_a_log_are_zero(tmp_path):
+    assert pm._missing_model_failures(path=tmp_path / "missing.jsonl", now=NOW) == 0.0
+
+
+def test_missing_model_probe_is_registered_with_a_zero_threshold():
+    fn, limit, what = pm.PROBES["missing-bundled-model"]
+    assert limit == 0.0 and "#1114" in what
+
+
+def test_the_verify_timeouts_probe_counts_marvin_verify_timeouts_in_the_window(tmp_path):
+    """#1152: the pipeline's verify ran the whole suite and timed out 103 times on the Mini. Counts marvin's
+    verify-timeout failures over the window (another project's, other signatures, old rows and junk don't count)."""
+    import json
+    from datetime import datetime, timedelta, timezone
+    now = datetime(2026, 11, 6, 18, tzinfo=timezone.utc)
+    log = tmp_path / "pipeline-failures.jsonl"
+    rows = [
+        {"t": (now - timedelta(hours=2)).isoformat(), "kind": "failure", "ticket": 1151, "project": "G-Eskayo/marvin",
+         "sig": "verify-timeout", "reason": "timed out after 1200s running ......"},
+        {"t": (now - timedelta(hours=3)).isoformat(), "kind": "failure", "ticket": 983, "sig": "verify-timeout",
+         "reason": "timed out after 1200s running ....s...."},
+        {"t": (now - timedelta(hours=4)).isoformat(), "kind": "failure", "ticket": 12, "project": "G-Eskayo/seal-speak",
+         "sig": "verify-timeout", "reason": "timed out after 1200s running xcodebuild"},
+        {"t": (now - timedelta(days=9)).isoformat(), "kind": "failure", "ticket": 900, "project": "G-Eskayo/marvin",
+         "sig": "verify-timeout", "reason": "timed out after 1200s running ...."},
+        {"t": (now - timedelta(hours=1)).isoformat(), "kind": "failure", "ticket": 989, "project": "G-Eskayo/marvin",
+         "sig": "slot-busy", "reason": "waited 7200s for the test slot"},
+        {"t": (now - timedelta(hours=1)).isoformat(), "kind": "release", "ticket": 1151, "sig": "verify-timeout"},
+    ]
+    log.write_text("\n".join(json.dumps(r) for r in rows) + "\nnot json\n[1]\n")
+    assert pm._marvin_verify_timeouts(days=7, path=log, now=now) == 2.0
+    assert pm._marvin_verify_timeouts(days=7, path=tmp_path / "missing.jsonl", now=now) == 0.0
+    fn, limit, what = pm.PROBES["verify-timeouts"]
+    assert limit >= 0 and "1152" in what
+
+
+def test_the_model_run_timeouts_probe_counts_planner_and_executor_timeouts_in_the_window(tmp_path):
+    """2026-11-09: ~3% of ticket-planner and ticket-executor launches hit the 900 s limit, and each one ended its run.
+    Counts those kinds' timeouts in launches.jsonl over the window; other kinds, other exits, old rows and junk don't."""
+    import json
+    from datetime import datetime, timedelta, timezone
+    now = datetime(2026, 11, 16, 12, tzinfo=timezone.utc)
+    log = tmp_path / "launches.jsonl"
+    at = lambda h: (now - timedelta(hours=h)).isoformat()
+    rows = [
+        {"at": at(2), "kind": "ticket-executor", "exit_code": 124, "exit_cause": "timeout", "ticket": "G-Eskayo/marvin#1"},
+        {"at": at(3), "kind": "ticket-planner", "exit_code": 124, "exit_cause": "timeout", "ticket": "G-Eskayo/marvin#2"},
+        {"at": at(4), "kind": "judge", "exit_code": 124, "exit_cause": "timeout"},                 # not a build run
+        {"at": at(5), "kind": "ticket-executor", "exit_code": 0, "exit_cause": "ok"},              # finished
+        {"at": at(6), "kind": "ticket-executor", "exit_code": 1, "exit_cause": "error"},           # failed, not slow
+        {"at": at(24 * 9), "kind": "ticket-planner", "exit_code": 124, "exit_cause": "timeout"},   # outside the window
+        {"kind": "ticket-planner", "exit_cause": "timeout"},                                       # no time
+    ]
+    log.write_text("\n".join(json.dumps(r) for r in rows) + "\nnot json\n[1]\n")
+    assert pm._model_run_timeouts(days=7, path=log, now=now) == 2.0
+    assert pm._model_run_timeouts(days=7, path=tmp_path / "missing.jsonl", now=now) == 0.0
+    fn, limit, what = pm.PROBES["model-run-timeouts"]
+    assert limit == 2.0 and "launches.jsonl" in what

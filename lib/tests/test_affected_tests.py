@@ -265,3 +265,12 @@ def test_marvins_dashboard_check_covers_the_dashboard_and_python_runs_the_select
     by_id = {c["id"]: c for c in required_checks.load(ROOT)}
     assert by_id["dashboard"]["paths"] == ["dashboard/*"]
     assert by_id["python"]["command"] == ["python", "lib/affected_tests.py"]
+
+
+# ── untracked files (marvin#1152): the pipeline's executor leaves its work uncommitted ─
+
+def test_an_untracked_test_is_picked_only_when_asked_so_the_gate_is_unchanged(repo):
+    _write(repo, {"lib/tests/test_new.py": "import alone\n"})
+    assert "lib/tests/test_new.py" not in at.select(repo, ["lib/alone.py"])
+    assert "lib/tests/test_new.py" in at.select(repo, ["lib/alone.py"], untracked=True)
+    assert "lib/tests/test_new.py" in at.select(repo, ["lib/tests/test_new.py"], untracked=True)

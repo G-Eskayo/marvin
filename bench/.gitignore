@@ -5,3 +5,4 @@ results/*.json
 results/*.jsonl
 __pycache__/
 *.pyc
+results/aesthetics/

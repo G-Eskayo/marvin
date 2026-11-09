@@ -89,10 +89,12 @@ def test_qa_task_with_tmp_cwd_runs_in_a_fresh_folder_outside_home(tmp_path, monk
         return bench.subprocess.CompletedProcess(cmd, 0, "", "")
 
     monkeypatch.setattr(bench.subprocess, "run", fake_run)
+    monkeypatch.setattr(bench, "WORK_ROOT", Path(bench.tempfile.mkdtemp()) / "work")
     task = {"id": "t", "type": "qa", "cwd": "tmp", "prompt": "Q", "dir": tmp_path}
     run = bench.run_once(task, "clean", prompt_prefix="Caveman mode. ")
     assert seen["empty"] and Path.home() not in seen["cwd"].resolve().parents
-    assert not seen["cwd"].exists()          # cleaned up afterwards
+    # stable folder per cell (PR #1125): emptied afterwards, kept for the next run of the same cell
+    assert seen["cwd"].is_dir() and not any(seen["cwd"].iterdir())
     assert seen["prompt"] == "Caveman mode. Q"
     assert "check" not in run
 

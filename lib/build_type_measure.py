@@ -195,3 +195,187 @@ def measure(worktree_path: Path) -> dict:
     metrics["tests_passed"] = {"value": passed, "higher_is_better": True}
     metrics["tests_failed"] = {"value": failed, "higher_is_better": False}
     return metrics
+
+
+# ── the affected tests, the same set before and after (marvin#1152) ─────────
+
+# What the caller's environment may carry that would change which tests run: the gate's MARVIN_BASE, a selection
+# file left over from an outer run. Both sides of a comparison are run without them, so only our selection counts.
+_SELECTION_ENV = ("MARVIN_BASE", "MARVIN_SELECTED_TESTS")
+
+
+def _git_out(cwd: Path, *args: str) -> str:
+    return subprocess.run(["git", *args], cwd=cwd, capture_output=True, text=True, check=True, timeout=60).stdout
+
+
+def _changed_since(worktree: Path, base_sha: str) -> list[str]:
+    """Every path the change touches against the base commit: committed, staged, unstaged, deleted, and new files not
+    yet added (the executor never commits). Raises CalledProcessError when git can't say."""
+    tracked = _git_out(worktree, "diff", "--name-only", base_sha).split()
+    new = _git_out(worktree, "ls-files", "--others", "--exclude-standard").split()
+    return sorted(set(tracked) | set(new))
+
+
+def _suite_reading(label: str, parsed: dict) -> tuple[int, int]:
+    """(passed, failed) from one run, with measure()'s rule: a crash is an error, a runner's 'no tests ran' is 0."""
+    if parsed.get("passed") is None and parsed.get("failed") is None:
+        tail = parsed.get("output_tail") or ""
+        if not any(marker in tail.lower() for marker in _NO_TESTS_MARKERS):
+            raise MeasureError(f"{label} produced no test summary (crashed or never ran): ...{tail[-300:].strip()}")
+    return parsed.get("passed") or 0, parsed.get("failed") or 0
+
+
+def _metrics(suites: dict[str, tuple[int, int]]) -> dict:
+    out: dict = {}
+    for label, (p, f) in suites.items():
+        out[f"{label}_passed"] = {"value": p, "higher_is_better": True}
+        out[f"{label}_failed"] = {"value": f, "higher_is_better": False}
+    out["tests_passed"] = {"value": sum(p for p, _ in suites.values()), "higher_is_better": True}
+    out["tests_failed"] = {"value": sum(f for _, f in suites.values()), "higher_is_better": False}
+    return out
+
+
+class PairedMeasure:
+    """The measure for a marvin ticket: the Python tests its change can affect (lib/affected_tests.select, the
+    selection the merge gate and CI run), never the whole ~5,700-test suite that timed out the verify step on almost
+    every ticket (103 times on the Mini).
+
+    The selection depends on the change, which doesn't exist when execute_ticket takes its baseline. So the first call
+    (the untouched worktree) only pins the base commit and runs vitest there. Each later call computes ONE selection
+    from the change, runs it on the change and, in a throwaway detached worktree, on the base commit, and
+    `paired_baseline()` names that base reading: before and after always ran the identical command on the identical
+    list. A test the change adds is in the list but absent at the base (a real improvement); a test it deletes is
+    left out on both sides. Whenever the selection can't be trusted (a change to how tests run, a change git can't
+    read), both sides run everything; a base that can't be pinned at all falls back to measure() on both sides.
+    A base reading is cached per selection, so a later iteration with the same reach doesn't rerun it."""
+
+    def __init__(self):
+        self.base_sha: str | None = None
+        self.full = False                       # no pinned base: measure() (everything) on both sides
+        self._started = False
+        self._vitest_base: tuple[int, int] | None = None
+        self._base_cache: dict = {}
+        self._paired: dict | None = None
+        self._last: dict | None = None          # {"selection", "passed", "failed"} of the last reading after the change
+
+    # ── execute_ticket's interface ─────────────────────────────────────────
+    def __call__(self, worktree_path: Path) -> dict:
+        wt = Path(worktree_path)
+        if not self._started:
+            self._started = True
+            try:
+                self.base_sha = _git_out(wt, "rev-parse", "HEAD").strip() or None
+            except (subprocess.CalledProcessError, OSError, subprocess.TimeoutExpired):
+                self.base_sha = None
+            if self.base_sha is None:
+                print("[measure] cannot pin the base commit; measuring every test before and after", file=sys.stderr)
+                self.full = True
+                self._paired = measure(wt)
+                return self._paired
+            suites = {}
+            if self._has_dashboard(wt):
+                self._vitest_base = self._vitest(wt)
+                suites["vitest"] = self._vitest_base
+            return _metrics(suites) if suites else {}
+        if self.full:
+            return measure(wt)
+        selection = self._selection(wt)
+        after = {"pytest": self._pytest(wt, selection)}
+        if self._vitest_base is not None:
+            after["vitest"] = self._vitest(wt)
+        key = None if selection is None else tuple(selection)
+        if key not in self._base_cache:
+            self._base_cache[key] = self._pytest_at_base(wt, selection)
+        base = {"pytest": self._base_cache[key]}
+        if self._vitest_base is not None:
+            base["vitest"] = self._vitest_base
+        self._paired = _metrics(base)
+        p, f = after["pytest"]
+        self._last = {"selection": selection, "passed": p + after.get("vitest", (0, 0))[0],
+                      "failed": f + after.get("vitest", (0, 0))[1], "vitest": "vitest" in after}
+        return _metrics(after)
+
+    def paired_baseline(self) -> dict | None:
+        """The base reading on the same tests as the last call's (execute_ticket compares against this)."""
+        return self._paired
+
+    def test_results(self) -> dict | None:
+        """The last reading after the change, in mr_raiser's test-results shape, so the PR doesn't run them again."""
+        if self._last is None:
+            return None
+        sel = self._last["selection"]
+        suite = "pytest (every test)" if sel is None else f"pytest ({len(sel)} test files the change can affect)"
+        if self._last["vitest"]:
+            suite += " + vitest"
+        return {"suite": suite, "passed": self._last["passed"], "failed": self._last["failed"],
+                "total": self._last["passed"] + self._last["failed"]}
+
+    # ── pieces ─────────────────────────────────────────────────────────────
+    @staticmethod
+    def _has_dashboard(wt: Path) -> bool:
+        return (wt / "dashboard" / "package.json").is_file()
+
+    def _vitest(self, wt: Path) -> tuple[int, int]:
+        _ensure_dashboard_deps(wt)
+        return _suite_reading("vitest", capture_test_results(wt, ["bash", "-c", "cd dashboard && npx vitest run"]))
+
+    def _selection(self, wt: Path) -> list[str] | None:
+        """The test files to run on both sides, or None for all. Computed from the change alone."""
+        import affected_tests
+        try:
+            changed = _changed_since(wt, self.base_sha)
+        except (subprocess.CalledProcessError, OSError, subprocess.TimeoutExpired):
+            print(f"[measure] cannot tell what changed since {self.base_sha[:12]}; every test, both sides", file=sys.stderr)
+            return None
+        picked = affected_tests.select(wt, changed, untracked=True)
+        if picked is None:
+            return None
+        return [p for p in picked if (wt / p).is_file()]   # a deleted test runs on neither side
+
+    @staticmethod
+    def _env(selection_file: str | None) -> dict:
+        import os
+        env = {k: v for k, v in os.environ.items() if k not in _SELECTION_ENV}
+        if selection_file:
+            env["MARVIN_SELECTED_TESTS"] = selection_file
+        return env
+
+    def _pytest(self, wt: Path, selection: list[str] | None) -> tuple[int, int]:
+        import cleanup_sweep
+        import os
+        import tempfile
+        path = None
+        if selection is not None:
+            fd, path = tempfile.mkstemp(prefix="marvin-paired-selection-", suffix=".txt")
+            with os.fdopen(fd, "w") as f:
+                f.write("\n".join(selection) + "\n")
+        try:
+            command = [VENV_PYTHON, "-m", "pytest", "-q", *parallel_args()]
+            with cleanup_sweep.disposable_basetemp() as basetemp_args:
+                parsed = capture_test_results(wt, command + basetemp_args, env=self._env(path))
+            return _suite_reading("pytest", parsed)
+        finally:
+            if path:
+                Path(path).unlink(missing_ok=True)
+
+    def _pytest_at_base(self, wt: Path, selection: list[str] | None) -> tuple[int, int]:
+        """The same selection on the pinned base commit, in a detached worktree removed afterwards."""
+        import shutil
+        import tempfile
+        holder = Path(tempfile.mkdtemp(prefix="marvin-paired-base-"))
+        base_wt = holder / "base"
+        proc = subprocess.run(["git", "worktree", "add", "-q", "--detach", str(base_wt), self.base_sha],
+                              cwd=wt, capture_output=True, text=True)
+        try:
+            if proc.returncode != 0:
+                raise MeasureError(f"cannot check out the base commit {self.base_sha[:12]} to measure it: "
+                                   f"{(proc.stderr or '').strip()[-300:]}")
+            try:   # the same node_modules the ticket's worktree was seeded with, so a test that needs it sees it too
+                import node_modules_seed
+                node_modules_seed.seed_tree(base_wt)
+            except Exception:  # noqa: BLE001 - a seed miss leaves the tree as a fresh worktree, as for the ticket
+                pass
+            return self._pytest(base_wt, selection)
+        finally:
+            subprocess.run(["git", "worktree", "remove", "--force", str(base_wt)], cwd=wt, capture_output=True)
+            shutil.rmtree(holder, ignore_errors=True)

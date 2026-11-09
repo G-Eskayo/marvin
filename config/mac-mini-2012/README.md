@@ -27,6 +27,10 @@ and `CONTEXT.md` "Third node". Every file the box needs outside the repos is in 
 - The test harness, declared in `~/.agents/requirements-test.txt` (the venv has no pip):
   `uv pip install --python ~/.agents/venv/bin/python -r ~/.agents/requirements-test.txt`. Re-run it when that file changes.
 - `marvin-do` (this folder) → `~/.local/bin/`: mirrors steps into the on-screen activity window.
+- Box trial tools (#932), no sudo: `rg` from Kali's own repo without installing the package
+  (`apt-get download ripgrep && dpkg-deb -x ripgrep_*.deb x && install -m 755 x/usr/bin/rg ~/.local/bin/`), and
+  `uv tool install graphifyy==<the Macs' version>`; then `cd ~/.agents && graphify update .` once (~90 s; git-ignored).
+  The retrieval questions are never stored here: `lib/box_trial.py retrieval` hands them in on stdin per run.
 
 ## 4. Repos (pull-only)
 - `git clone github-agents-ro:G-Eskayo/marvin.git ~/.agents`
@@ -47,6 +51,12 @@ and `CONTEXT.md` "Third node". Every file the box needs outside the repos is in 
 - libvirt `default` network (autostart) for marvin-test; `virsh net-define marvin-isolated.xml` (no `<forward>`) for
   quarantine, plus `quarantine.nft` loaded by `marvin-quarantine-fw.service` (DHCP/DNS only to the host).
 - VMs need a video device: with `--graphics none` Debian's GRUB reset-loops under this libvirt.
+- Ticket builds (marvin #949) run in `marvin-build` VMs. Its golden image is built by the box's user, no sudo:
+  `bash ~/.agents/config/mac-mini-2012/build-builder-image.sh` (~20 min). It boots a throwaway copy of `marvin-test`, runs
+  `builder/provision.sh` (Node, npm, corepack/pnpm, git, rg, gh, Claude Code pinned to the Macs' version, the MARVIN
+  venv from `builder/requirements.txt` with CPU torch), refuses to freeze if any credential file is in it, then
+  flattens it read-only into `/var/lib/libvirt/images/runs/golden/marvin-build.qcow2` (`golden/` is root's). Rebuild it
+  when the Claude Code pin, Node or the venv changes. `vm_run.py sweep` removes run VMs and disks a crashed run left.
 
 ## 7. Register (only after work tags are on main)
 Add to `~/.claude/marvin-network.json` on a Mac:
