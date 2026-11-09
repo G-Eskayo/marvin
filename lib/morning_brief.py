@@ -318,7 +318,8 @@ def build(now: datetime | None = None, sources: dict[str, Callable] | None = Non
     import brief_fallback
     now = now or datetime.now(timezone.utc)
     brief_path = BRIEFS / f"{_day(now)}.md"
-    decision = brief_fallback.should_run(local_path=brief_path, usual_hour=9, usual_minute=15)
+    uh, um = brief_fallback.usual_time("morning-brief")  # the primary plist's own schedule
+    decision = brief_fallback.should_run(local_path=brief_path, usual_hour=uh, usual_minute=um)
     if not decision.should_build:
         print(f"[morning-brief] {decision.reason} — skipping", file=sys.stderr)
         return brief_path

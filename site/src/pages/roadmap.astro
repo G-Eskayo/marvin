@@ -1,0 +1,178 @@
+---
+// Themes, not dates (Decision `roadmap`, marvin-instance PR #12): Now = built and in testing, Next = planned, each
+// linked to its ticket or ADR, Done recently = released in the last 30 days. All from features.yaml.
+import Marketing from '~/layouts/Marketing.astro';
+import StatusBadge from '~/components/StatusBadge.astro';
+import { SITE, FEATURES, AREAS, REPO_URL, issue, adrLinks, pageHref, evidenceHref, fmtDate } from '~/lib/site';
+
+const updated = FEATURES.map((f) => f.verified_on ?? '').sort().at(-1)!;
+const cutoff = new Date(`${updated}T00:00:00Z`);
+cutoff.setUTCDate(cutoff.getUTCDate() - 30);
+const area = (id: string) => AREAS.find((a) => a.id === id)?.title ?? id;
+
+const now = FEATURES.filter((f) => f.status === 'testing' || f.status === 'progress');
+const next = FEATURES.filter((f) => f.status === 'planned');
+const done = FEATURES.filter((f) => f.status === 'released' && f.shipped && new Date(`${f.shipped}T00:00:00Z`) >= cutoff).sort(
+  (a, b) => b.shipped!.localeCompare(a.shipped!),
+);
+const nextLink = (f: (typeof FEATURES)[number]) => {
+  if (f.ticket) return { href: issue(f.ticket), label: `Ticket #${f.ticket}` };
+  const a = (f.adrs ?? []).flatMap((id) => adrLinks(id))[0];
+  return a ? { href: a.href, label: `ADR ${a.id}` } : null;
+};
+const doneLink = (f: (typeof FEATURES)[number]) =>
+  f.page ? { href: pageHref(f.page), label: 'Docs' } : f.evidence?.[0] ? { href: evidenceHref(f.evidence[0]), label: 'Source' } : null;
+---
+
+<Marketing title="Roadmap" description={`What ${SITE.name} is building now and next. Themes, not dates.`}>
+  <header class="m-pagehead m-wrap">
+    <p class="m-eyebrow">Roadmap</p>
+    <h1>What's being built, and what's next</h1>
+    <p>
+      Themes, not dates. A date on a roadmap is a promise that goes stale. Each item links to the ticket or decision
+      record where the work actually happens.
+    </p>
+    <p class="m-updated m-mono">Updated on {fmtDate(updated)}</p>
+  </header>
+
+  <div class="m-wrap m-bands">
+    <section class="m-band">
+      <h2><span class="m-band-k">Now</span> Built, in testing, or in progress</h2>
+      <p class="m-dim">Merged and running but not yet proven in daily use, or partly built and not yet usable end to end.</p>
+      <ul>
+        {
+          now.map((f) => (
+            <li class="m-panel">
+              <p class="m-item-area">{area(f.area)}</p>
+              <h3>{f.title}</h3>
+              <p>{f.summary}</p>
+              <p class="m-dim m-small">Why it's not released yet: {f.why_testing}</p>
+              <p class="m-item-links">
+                <StatusBadge status={f.status} small />
+                {f.evidence?.[0] && <a href={evidenceHref(f.evidence[0])}>Evidence</a>}
+              </p>
+            </li>
+          ))
+        }
+      </ul>
+    </section>
+
+    <section class="m-band">
+      <h2><span class="m-band-k">Next</span> Planned</h2>
+      <p class="m-dim">Decided or ticketed, not built. No dates.</p>
+      <ul>
+        {
+          next.map((f) => {
+            const l = nextLink(f);
+            return (
+              <li class="m-panel">
+                <p class="m-item-area">{area(f.area)}</p>
+                <h3>{f.title}</h3>
+                <p>{f.summary}</p>
+                <p class="m-item-links">
+                  <StatusBadge status="planned" small />
+                  {l && <a href={l.href}>{l.label}</a>}
+                </p>
+              </li>
+            );
+          })
+        }
+      </ul>
+    </section>
+
+    <section class="m-band">
+      <h2><span class="m-band-k">Done</span> Recently released</h2>
+      <p class="m-dim">Shipped in the 30 days before the update. Everything else is in the <a href="/changelog/">changelog</a>.</p>
+      <ul>
+        {
+          done.map((f) => {
+            const l = doneLink(f);
+            return (
+              <li class="m-panel">
+                <p class="m-item-area">{area(f.area)} · {fmtDate(f.shipped!)}</p>
+                <h3>{f.title}</h3>
+                <p>{f.summary}</p>
+                <p class="m-item-links">
+                  <StatusBadge status="released" small />
+                  {l && <a href={l.href}>{l.label}</a>}
+                </p>
+              </li>
+            );
+          })
+        }
+      </ul>
+    </section>
+  </div>
+
+  <p class="m-wrap m-dim">
+    Every open ticket is on <a href={`${REPO_URL}/issues`}>GitHub</a>. The roadmap shows the themes; the issue list is
+    the whole backlog.
+  </p>
+</Marketing>
+
+<style>
+  .m-updated {
+    font-size: 0.85rem;
+    color: var(--m-green);
+  }
+  .m-bands {
+    display: grid;
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+    gap: 1.5rem;
+    align-items: start;
+    margin-bottom: 2rem;
+  }
+  @media (max-width: 62rem) {
+    .m-bands {
+      grid-template-columns: 1fr;
+    }
+  }
+  .m-band h2 {
+    font-size: 1.6rem;
+    display: flex;
+    align-items: baseline;
+    gap: 0.6rem;
+    flex-wrap: wrap;
+    border-bottom: 1px solid var(--m-line);
+    padding-bottom: 0.4rem;
+  }
+  .m-band-k {
+    font-family: var(--m-font-mono);
+    font-size: 0.85rem;
+    font-weight: 400;
+    color: var(--m-bg);
+    background: var(--m-amber);
+    padding: 0.05rem 0.45rem;
+    letter-spacing: 0.1em;
+    text-transform: uppercase;
+  }
+  .m-band ul {
+    list-style: none;
+    padding: 0;
+    margin: 1rem 0 0;
+    display: grid;
+    gap: 1.1rem;
+  }
+  .m-band h3 {
+    font-size: 1.2rem;
+    margin-bottom: 0.4rem;
+  }
+  .m-band li p {
+    margin-bottom: 0.5rem;
+  }
+  .m-item-area {
+    font-family: var(--m-font-mono);
+    font-size: 0.75rem;
+    text-transform: uppercase;
+    letter-spacing: 0.1em;
+    color: var(--m-ink-faint);
+  }
+  .m-item-links {
+    display: flex;
+    gap: 1rem;
+    align-items: center;
+    flex-wrap: wrap;
+    margin: 0.4rem 0 0 !important;
+    font-size: 0.9rem;
+  }
+</style>

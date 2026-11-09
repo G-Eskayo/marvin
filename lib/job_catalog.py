@@ -38,6 +38,9 @@ GOALS = {
 }
 
 JOBS: dict[str, dict] = {
+    "claude-update-watch": {"machine": "both", "goal": "ns3", "reporter": "chat_restart.py (chat-restarts.jsonl)",
+                            "healthy": "idle chats run the installed Claude Code within a minute of an update",
+                            "consumer": "the person's chat tabs (marvin#1086)"},
     "code-sync-push": {"machine": "both", "goal": "project:marvin", "reporter": "code_sync.py (sync-log.md)",
                        "healthy": "push and pull succeed within 30 min", "consumer": "the other Macs; Health sync:stuck"},
     "cross-machine-merge": {"machine": "both", "goal": "project:marvin", "reporter": "its launchd log",

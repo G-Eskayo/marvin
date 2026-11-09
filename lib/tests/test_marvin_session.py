@@ -8,6 +8,7 @@ import pytest
 import cleanup_sweep
 import marvin_launcher as ml
 import marvin_session as ms
+import wezterm_cli as wz
 
 AGENTS = Path(__file__).resolve().parents[2]
 
@@ -64,13 +65,13 @@ def test_spawns_into_the_running_wezterm_and_falls_back_to_starting_it(tmp_path)
 
     def run(cmd, **kw):
         calls.append(cmd)
-        return subprocess.CompletedProcess(cmd, 1 if cmd[1:3] == ["cli", "spawn"] else 0, "", "no mux")
+        return subprocess.CompletedProcess(cmd, 1 if wz.subcommand(cmd) == "spawn" else 0, "", "no mux")
 
     started = []
     ms.open_in_wezterm(tmp_path, wezterm="/x/wezterm", run=run, start=lambda cmd: started.append(cmd),
                        state_file=tmp_path / "window.json", identity=lambda run: None)
-    spawn = next(c for c in calls if c[1:3] == ["cli", "spawn"])
-    assert spawn[:4] == ["/x/wezterm", "cli", "spawn", "--new-window"]
+    spawn = next(c for c in calls if wz.subcommand(c) == "spawn")
+    assert spawn[:5] == ["/x/wezterm", "cli", "--no-auto-start", "spawn", "--new-window"]  # never a hidden mux (#1059)
     assert started and started[0][:2] == ["/x/wezterm", "start"]
 
 
@@ -84,10 +85,12 @@ class FakeWezTerm:
         self.spawns = []
 
     def __call__(self, cmd, **kw):
-        if cmd[1:3] == ["cli", "list"]:
+        if cmd[0] == "/bin/ps":  # the GUI lookup (marvin#1059): this fake Mac's ps shows no GUI, so no socket is named
+            return subprocess.CompletedProcess(cmd, 0, "", "")
+        if wz.subcommand(cmd) == "list":
             rows = [{"window_id": w, "pane_id": p} for w, panes in self.windows.items() for p in panes]
             return subprocess.CompletedProcess(cmd, 0, json.dumps(rows), "")
-        if cmd[1:3] == ["cli", "spawn"]:
+        if wz.subcommand(cmd) == "spawn":
             self.spawns.append(cmd)
             if self.fail_spawn:
                 return subprocess.CompletedProcess(cmd, 1, "", "no mux")
@@ -152,7 +155,7 @@ def test_a_window_that_vanishes_between_check_and_spawn_still_gets_a_session(tmp
     real_call = wez.__call__
 
     def racing(cmd, **kw):
-        if cmd[1:3] == ["cli", "spawn"] and "--window-id" in cmd:
+        if wz.subcommand(cmd) == "spawn" and "--window-id" in cmd:
             wez.windows.pop(0, None)  # closed just now
         return real_call(cmd, **kw)
 
@@ -282,3 +285,127 @@ def test_unknown_or_hostile_proposal_id_is_a_clear_error(tmp_path, monkeypatch, 
 def test_ticket_and_proposal_together_is_refused(capsys):
     assert ms.main(["open", "--ticket", "5", "--proposal", "x"]) == 1
     assert json.loads(capsys.readouterr().out)["ok"] is False
+
+
+# ── open session focuses the chat that already exists (marvin#1063) ────────────────────────
+
+def _chat(**over):
+    c = dict(mac="macbook-pro", socket="/s/gui-sock-13044", pane=16, tty="ttys004", cwd="/wt/ticket-1063-x",
+             repo="G-Eskayo/marvin", branch="ticket/1063-x", ticket=1063, state="your-turn", seen_at=100,
+             unknown=False)
+    c.update(over)
+    return c
+
+
+@pytest.fixture
+def ticket_dir(tmp_path, monkeypatch):
+    wt = tmp_path / "ticket-1063-x"
+    wt.mkdir()
+    monkeypatch.setattr(ms, "_clone_for", lambda repo: tmp_path)
+    monkeypatch.setattr(ms, "_ticket_title", lambda repo, t: "x")
+    monkeypatch.setattr(ms, "session_dir", lambda clone, ticket, title: wt)
+    opened = []
+    monkeypatch.setattr(ms, "open_in_wezterm", lambda d, **k: opened.append(d))
+    return wt, opened
+
+
+def test_an_open_chat_for_the_ticket_is_focused_not_duplicated(ticket_dir):
+    wt, opened = ticket_dir
+    focused = []
+    out = ms.open_session(1063, chats=lambda: [_chat(cwd=str(wt))], focus=lambda c: focused.append(c["pane"]))
+    assert focused == [16] and opened == [] and out == wt
+
+
+def test_a_hand_opened_chat_inside_the_worktree_counts(ticket_dir):
+    wt, opened = ticket_dir
+    focused = []
+    ms.open_session(1063, chats=lambda: [_chat(cwd=str(wt / "lib"), branch="main", ticket=None)],
+                    focus=lambda c: focused.append(c["pane"]))
+    assert focused == [16] and opened == []
+
+
+def test_a_chat_on_the_same_ticket_branch_elsewhere_counts(ticket_dir):
+    wt, opened = ticket_dir
+    focused = []
+    ms.open_session(1063, chats=lambda: [_chat(cwd="/elsewhere/clone", ticket=1063)],
+                    focus=lambda c: focused.append(c["pane"]))
+    assert focused == [16] and opened == []
+
+
+def test_the_same_number_in_another_repo_is_not_this_ticket(ticket_dir):
+    wt, opened = ticket_dir
+    ms.open_session(1063, repo="G-Eskayo/marvin", chats=lambda: [_chat(cwd="/x", repo="G-Eskayo/clarity-captions")],
+                    focus=lambda c: pytest.fail("another repo's #1063"))
+    assert opened == [wt]
+
+
+def test_a_worktree_with_a_similar_prefix_is_not_this_one(ticket_dir):
+    wt, opened = ticket_dir
+    ms.open_session(1063, chats=lambda: [_chat(cwd=str(wt) + "-old", ticket=None, branch="main")],
+                    focus=lambda c: pytest.fail("a sibling folder"))
+    assert opened == [wt]
+
+
+def test_no_live_chat_opens_a_new_one(ticket_dir):
+    wt, opened = ticket_dir
+    ms.open_session(1063, chats=lambda: [], focus=lambda c: pytest.fail("nothing to focus"))
+    assert opened == [wt]
+
+
+def test_a_chat_whose_state_is_unknown_is_still_focused_if_its_pane_answers(ticket_dir):
+    wt, opened = ticket_dir
+    focused = []
+    ms.open_session(1063, chats=lambda: [_chat(cwd=str(wt), unknown=True)], focus=lambda c: focused.append(1))
+    assert focused == [1]
+
+
+def test_a_focus_that_fails_falls_back_to_a_new_chat(ticket_dir):
+    wt, opened = ticket_dir
+    def gone(c):
+        raise ms.wezterm_cli.WeztermError("no such pane")
+    ms.open_session(1063, chats=lambda: [_chat(cwd=str(wt))], focus=gone)
+    assert opened == [wt]
+
+
+def test_a_chat_list_that_fails_never_stops_a_session_opening(ticket_dir):
+    wt, opened = ticket_dir
+    ms.open_session(1063, chats=lambda: 1 / 0, focus=lambda c: pytest.fail("no list"))
+    assert opened == [wt]
+
+
+def test_with_two_chats_the_one_seen_most_recently_is_focused(ticket_dir):
+    wt, opened = ticket_dir
+    focused = []
+    ms.open_session(1063, chats=lambda: [_chat(cwd=str(wt), pane=3, seen_at=50), _chat(cwd=str(wt), pane=9, seen_at=90)],
+                    focus=lambda c: focused.append(c["pane"]))
+    assert focused == [9]
+
+
+def test_no_ticket_always_opens_a_new_chat(monkeypatch):
+    opened = []
+    monkeypatch.setattr(ms, "open_in_wezterm", lambda d, **k: opened.append(d))
+    ms.open_session(None, chats=lambda: [_chat(cwd=str(ms.HOME))], focus=lambda c: pytest.fail("never for no ticket"))
+    assert opened == [ms.HOME]
+
+
+def test_focus_activates_the_pane_on_its_own_wezterm_then_raises_that_app(monkeypatch):
+    calls, raised = [], []
+
+    class W:
+        def __init__(self, socket=None, **k):
+            calls.append(("socket", socket))
+
+        def activate_pane(self, pane):
+            calls.append(("activate", pane))
+    monkeypatch.setattr(ms.wezterm_cli, "Wezterm", W)
+    ms.focus_chat(_chat(), raise_app=lambda pid: raised.append(pid))
+    assert calls == [("socket", "/s/gui-sock-13044"), ("activate", 16)] and raised == [13044]
+
+
+def test_the_main_answer_says_it_focused_an_existing_chat(ticket_dir, monkeypatch, capsys):
+    wt, _ = ticket_dir
+    monkeypatch.setattr(ms, "_live_chats", lambda: [_chat(cwd=str(wt))])
+    monkeypatch.setattr(ms, "focus_chat", lambda c: None)
+    assert ms.main(["open", "--ticket", "1063"]) == 0
+    out = json.loads(capsys.readouterr().out)
+    assert out["ok"] and out["focused"] is True and out["pane"] == 16

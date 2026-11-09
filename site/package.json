@@ -1,0 +1,25 @@
+{
+  "name": "marvin-site",
+  "private": true,
+  "type": "module",
+  "description": "The MARVIN website: marketing pages and docs in one Astro + Starlight build (marvin#1007).",
+  "engines": {
+    "node": ">=22.12"
+  },
+  "scripts": {
+    "facts": "node scripts/facts.mjs",
+    "changelog": "node scripts/changelog.mjs",
+    "check": "node scripts/check.mjs",
+    "prebuild": "node scripts/changelog.mjs && node scripts/copy-diagrams.mjs && node scripts/check.mjs",
+    "build": "astro build",
+    "postbuild": "node scripts/cname.mjs && node scripts/check.mjs --dist",
+    "dev": "node scripts/changelog.mjs && node scripts/copy-diagrams.mjs && astro dev",
+    "preview": "astro preview",
+    "test": "node --test scripts/*.test.mjs"
+  },
+  "dependencies": {
+    "@astrojs/starlight": "0.42.6",
+    "astro": "7.3.8",
+    "yaml": "2.8.1"
+  }
+}

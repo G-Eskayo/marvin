@@ -47,8 +47,15 @@ def _git(repo: Path, *args: str) -> str:
     return subprocess.run(["git", *args], cwd=repo, capture_output=True, text=True, check=True, timeout=60).stdout
 
 
-def all_tests(repo: Path) -> list[str]:
-    return sorted(p for p in _git(Path(repo), "ls-files", "*.py").split() if _TEST.search(p))
+def _tracked(repo: Path, untracked: bool, *pattern: str) -> list[str]:
+    """Tracked files; with `untracked`, also new files not yet added (the pipeline's executor never commits, so a test
+    it adds is untracked when verify runs, marvin#1152). The gate and CI work on commits, so they leave it off."""
+    extra = ("--cached", "--others", "--exclude-standard") if untracked else ()
+    return _git(Path(repo), "ls-files", *extra, *pattern).split()
+
+
+def all_tests(repo: Path, untracked: bool = False) -> list[str]:
+    return sorted(p for p in _tracked(repo, untracked, "*.py") if _TEST.search(p))
 
 
 def changed_paths(repo: Path, base: str) -> list[str]:
@@ -81,13 +88,13 @@ def _imports(source: str) -> set[str]:
     return out
 
 
-def select(repo: Path, changed: list[str]) -> list[str] | None:
-    """The test files `changed` can affect, or None for the whole suite."""
+def select(repo: Path, changed: list[str], untracked: bool = False) -> list[str] | None:
+    """The test files `changed` can affect, or None for the whole suite. `untracked`: see _tracked."""
     repo = Path(repo)
     if any(RUNS_EVERYTHING.search(p) for p in changed):
         return None
     sources: dict[str, str] = {}
-    for p in _git(repo, "ls-files", "*.py").split():
+    for p in _tracked(repo, untracked, "*.py"):
         try:
             sources[p] = (repo / p).read_text(errors="replace")
         except OSError:
@@ -100,7 +107,7 @@ def select(repo: Path, changed: list[str]) -> list[str] | None:
     # names a changed file of any other kind.
     start: set[str] = {p for p in changed if p.endswith(".py")}
     names = defaultdict(int)
-    for p in _git(repo, "ls-files").split():
+    for p in _tracked(repo, untracked):
         names[Path(p).name] += 1
     for p in changed:
         name, parent = Path(p).name, Path(p).parent.name
@@ -115,7 +122,7 @@ def select(repo: Path, changed: list[str]) -> list[str] | None:
             if importer not in seen:
                 seen.add(importer)
                 todo.append(importer)
-    tests = set(all_tests(repo))
+    tests = set(all_tests(repo, untracked))
     picked = {p for p in seen if p in tests} | {p for p in RULES if p in tests}
     for p in changed:
         if Path(p).name == "conftest.py":

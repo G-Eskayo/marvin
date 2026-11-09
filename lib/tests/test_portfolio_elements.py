@@ -2,6 +2,8 @@
 import sys
 from pathlib import Path
 
+import pytest
+
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 import portfolio_elements as pe  # noqa: E402
 import project_catalog  # noqa: E402
@@ -36,6 +38,7 @@ def test_deviations_report_hand_built_markup_look_and_geometry_per_page():
     assert any("hand-built" in w or "recognisable" in w for w in out[0]["why"]) and any("geometry" in w for w in out[0]["why"]) and any("look" in w for w in out[0]["why"])
 
 
+@pytest.mark.outside_state("the portfolio repo's captured elements")
 def test_the_captured_card_equals_the_one_template_file_so_library_and_source_cannot_disagree():
     import json
     element = json.loads((PROJECT / "templates" / "elements" / "project-card.json").read_text())
@@ -44,6 +47,7 @@ def test_the_captured_card_equals_the_one_template_file_so_library_and_source_ca
     assert element["markup"] == re.sub(r">\s+<", "><", template).strip()
 
 
+@pytest.mark.outside_state("the portfolio repo's captured elements")
 def test_the_captured_card_is_one_look_in_one_geometry_everywhere_it_appears():
     import json
     element = json.loads((PROJECT / "templates" / "elements" / "project-card.json").read_text())

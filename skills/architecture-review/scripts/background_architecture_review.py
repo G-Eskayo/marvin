@@ -35,7 +35,7 @@ import time
 from datetime import datetime, timezone
 from pathlib import Path
 
-sys.path.insert(0, str(Path.home() / ".agents" / "lib"))
+sys.path.insert(0, str(Path(__file__).resolve().parents[3] / "lib"))  # this checkout's lib: a worktree runs its own code
 from hook_errors import log_hook_error  # noqa: E402
 from claude_bin import resolve_claude_bin as _resolve_claude_bin  # noqa: E402
 import marvin_launcher  # noqa: E402
@@ -169,7 +169,23 @@ Append your findings to ~/.claude/suggestions.md using the exact entry format fr
 """
 
 
+class ReviewFailed(RuntimeError):
+    """The run reviewed nothing (claude missing, failed, or timed out). main() turns it into a non-zero exit and a
+    hook error: until 2026-11-04 these runs exited 0, so an expired login on the Mini showed green for four days
+    (marvin#1123 0.5)."""
+
+
+def _first_line(*texts: str) -> str:
+    for t in texts:
+        for line in (t or "").splitlines():
+            if line.strip():
+                return line.strip()[:300]
+    return "no output"
+
+
 def run_review(chunk: dict, trigger_reason: str, is_threshold_trigger: bool) -> None:
+    """Review one chunk. Raises ReviewFailed when nothing was reviewed; the cursor and cooldown are then untouched,
+    so the same chunk is tried again next run."""
     STATE_DIR.mkdir(parents=True, exist_ok=True)
     try:
         _resolve_claude_bin()  # fail early and log it when claude is missing
@@ -177,7 +193,7 @@ def run_review(chunk: dict, trigger_reason: str, is_threshold_trigger: bool) -> 
         with LOG_FILE.open("a") as log:
             log.write(f"\n=== run {datetime.now(timezone.utc).isoformat()} ===\n")
             log.write(f"START_FAILED: {exc}\n")
-        return
+        raise ReviewFailed(f"claude not found: {exc}") from exc
 
     chunk_paths = _render_chunk_paths(chunk["paths"])
     prompt = REVIEW_PROMPT_TEMPLATE.format(chunk_paths=chunk_paths, trigger_reason=trigger_reason)
@@ -192,12 +208,12 @@ def run_review(chunk: dict, trigger_reason: str, is_threshold_trigger: bool) -> 
             log.write(result.text + (f"\n{result.stderr}" if result.stderr else "") + "\n")
             log.write(f"=== claude exit {result.exit_code} ===\n")
             if result.exit_code != 0:
-                log.flush()
-                return  # don't advance cursor or sort on a failed run
-        except subprocess.TimeoutExpired:
+                log.flush()  # don't advance cursor or sort on a failed run
+                raise ReviewFailed(f"claude exit {result.exit_code}: {_first_line(result.text, result.stderr)}")
+        except subprocess.TimeoutExpired as exc:
             log.write(f"=== TIMED OUT after {CLAUDE_CALL_TIMEOUT}s — chunk may be too large, consider splitting it further ===\n")
-            log.flush()
-            return  # don't advance cursor or sort on a failed run
+            log.flush()  # don't advance cursor or sort on a failed run
+            raise ReviewFailed(f"claude timed out after {CLAUDE_CALL_TIMEOUT}s") from exc
 
         sort_proc = subprocess.run(
             [sys.executable, str(SORT_SCRIPT)], capture_output=True, text=True, timeout=30,
@@ -221,7 +237,6 @@ def run_review(chunk: dict, trigger_reason: str, is_threshold_trigger: bool) -> 
         _save_state(index=(current_index + 1) % len(chunks))
 
 
-sys.path.insert(0, str(__import__("pathlib").Path.home() / ".agents" / "lib"))
 import job_events  # noqa: E402  (run log shown in the dashboard's Health tab)
 
 
@@ -234,14 +249,22 @@ def main() -> None:
     try:
         chunk, reason, is_threshold_trigger = pick_chunk()
     except Exception as e:
-        log_hook_error("background_architecture_review", "picking chunk", e)
-        return
+        _fail("picking chunk", e)
 
     print(f"[architecture-review] reviewing chunk '{chunk['name']}': {reason}", file=sys.stderr)
     try:
         run_review(chunk, reason, is_threshold_trigger)
     except Exception as e:
-        log_hook_error("background_architecture_review", "running review", e)
+        _fail("running review", e)
+
+
+def _fail(context: str, exc: BaseException) -> None:
+    """Record why in the hook-error log and this run's job record, then exit 1 so launchd and Health see it."""
+    log_hook_error("background_architecture_review", context, exc)
+    if job_events._CURRENT:
+        job_events._CURRENT[-1].fail(f"{context}: {exc}")
+    print(f"[architecture-review] FAILED {context}: {exc}", file=sys.stderr)
+    sys.exit(1)
 
 
 if __name__ == "__main__":

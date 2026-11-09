@@ -1,0 +1,68 @@
+---
+title: How MARVIN fits together
+description: The docs hub. One system diagram, the words MARVIN uses, and every feature with its release status.
+sidebar:
+  order: 0
+tableOfContents:
+  maxHeadingLevel: 2
+---
+import FeatureIndex from '~/components/FeatureIndex.astro';
+
+MARVIN sits around Claude Code. It doesn't replace the model or the CLI. It decides what a session knows when it
+starts, gives it playbooks to load on demand, and runs work in the background while you're away, with gates you
+control before anything lands on `main`.
+
+Each feature below has a page with how it works, how to use it, its limits, and links to the decision record and
+the source. Every page shows a status badge and the date its facts were last checked against the running system.
+
+## The system on one page
+
+```text
+you ─► Claude Code session ─► memory + skills loaded on demand
+              │
+              ▼
+        ticket on GitHub ─► pipeline (worktree, plan, build, measure) ─► PR with evidence
+                                                                        │
+                                        you approve ─► merge gate ─► main
+                                                                        │
+        dashboard + map ◄── health checks, logs, usage ◄────────────────┘
+```
+
+## Release status
+
+| Badge | What it means | The rule behind it |
+|---|---|---|
+| **Released** | Documented, on in daily use, changes go in the changelog | Merged to `main` **and** there's run evidence: a loaded job, a log written in the last 7 days, an installed app |
+| **Built, in testing** | Merged and runnable, but opt-in, in shadow mode, or not proven in daily use yet. It may change | Merged to `main`, but behind a flag, in shadow mode, or with no run evidence yet |
+| **In progress** | Not usable end to end yet. Parts are built, the rest is being built | Some of it is merged to `main`, but it can't be used as a whole yet. In progress work is on the [roadmap](/roadmap/) only, never a feature page |
+| **Planned** | Nothing to use yet | An open ticket or an ADR, no merged code. Planned work is on the [roadmap](/roadmap/) only, never a feature page, never a date |
+
+"Verified on" is the day someone checked the page's facts against the code and the machines that run it. The badges
+come from one file, [`site/src/data/features.yaml`](https://github.com/G-Eskayo/marvin/blob/main/site/src/data/features.yaml),
+and the build fails if a Released feature has no evidence.
+
+## Features
+
+<FeatureIndex />
+
+## Words MARVIN uses
+
+From the repo's [`CONTEXT.md`](https://github.com/G-Eskayo/marvin/blob/main/CONTEXT.md), the shared glossary.
+
+| Term | Meaning |
+|---|---|
+| **Engine** | The public MARVIN code anyone can download. It holds no person's or machine's data. |
+| **Instance** | One owner's private state for an engine: plans, screenshots, tickets, accounts, feature choices. One engine, many instances. |
+| **Skill** | One capability inside MARVIN: a `SKILL.md` playbook loaded when a task needs it. |
+| **Add-on** | A feature that's off until the owner turns it on. Not the same thing as a skill. |
+| **Ticket** | A GitHub issue the pipeline can pick up and turn into a PR. |
+| **Merge gate** | The checks between your Approve and `main`. |
+| **Decisions** | Questions a PR asks the owner as tickable options, never in prose. |
+| **ADR** | An architecture decision record in `docs/adr/`: what was decided, why, and what was rejected. |
+
+## Reading an ADR
+
+Every feature page links its ADRs. They're short and follow one shape: **Status** (Proposed, Accepted, Superseded),
+**Context** (the problem at the time), **Decision**, and **Consequences**, often with the alternatives that were
+turned down. A Proposed ADR describes a direction, not shipped behaviour. When the code and an ADR disagree, the
+feature page follows the code and says so.

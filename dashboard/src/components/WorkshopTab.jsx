@@ -1,5 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { buildNow, durationText, stripFor } from '../lib/next_step.js'
+import { itemTarget, targetKey } from '../lib/workshop_item.js'
+import WorkshopItem from './WorkshopItem.jsx'
 import { NOW_TOPICS, SHOWN_ROWS, loadSaved, readEvents, patchSectionState, readSectionState, readSources, save, shownRows, writeSectionState } from '../lib/workshop_feed.js'
 
 // Workshop (ADR 0080, #862): the merge of Activity and MR Review. Only its Now view is built; Projects, Shipped and
@@ -302,17 +304,37 @@ export function WorkshopNow({ feed, onOpen, now = Date.now(), store = storageOf(
   )
 }
 
-export default function WorkshopTab({ feed, navigate }) {
+// The page a navigation asks for, picked while rendering (not in an effect), so a deep link from Docs, Related or
+// another tab draws the item on its first frame, never a flash of Now first. Each navigation is acted on once (`at`).
+export function useOpenItem(nav) {
+  const [state, setState] = useState(() => ({ at: nav?.at ?? null, target: nav?.tab === 'workshop' ? itemTarget(nav) : null }))
+  let current = state
+  if ((nav?.at ?? null) !== state.at && nav?.tab === 'workshop') {
+    current = { at: nav.at, target: itemTarget(nav) }
+    setState(current)
+  }
+  const open = useCallback((t) => setState((s) => ({ ...s, target: t ? itemTarget({ item: t }) : null })), [])
+  return [current.target, open]
+}
+
+export default function WorkshopTab({ feed, navigate, nav = null }) {
+  const [target, setTarget] = useOpenItem(nav)
   const pick = (id) => {
     if (id === 'projects') navigate('activity')
     else if (id === 'shipped') navigate('mr-review', { view: 'merged' })
     else if (id === 'proposals') navigate('mr-review', { view: 'proposals' })
   }
-  // Every row opens today's PR detail or ticket drill-down until the item page lands (#863).
+  // A ticket or PR row opens the item page (#863); a proposal still opens MR Review's Proposals until #864.
   const open = (item) => {
-    if (item.type === 'pr') navigate('mr-review', { prKey: item.key })
-    else if (item.type === 'ticket') navigate('activity', { repo: item.repo, ticketNumber: item.number })
+    if (item.type === 'pr') setTarget({ repo: item.repo, pr: item.number })
+    else if (item.type === 'ticket') setTarget({ repo: item.repo, ticket: item.number })
     else navigate('mr-review', { view: 'proposals' })
+  }
+  if (target) {
+    return (
+      <WorkshopItem key={targetKey(target)} target={target} feed={feed} onBack={() => setTarget(null)} onOpenItem={setTarget}
+        onOpenDocs={(projectId, path) => navigate('docs', { projectId, path })} />
+    )
   }
   return (
     <div className="max-w-[1100px] px-4 py-5 lg:px-6" data-testid="workshop">

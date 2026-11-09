@@ -22,7 +22,7 @@ import sys
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
-from evidence_capture import TestTimedOut  # noqa: E402
+from evidence_capture import TestTimedOut, run_timed  # noqa: E402
 import instance  # noqa: E402
 
 PROFILES_DIR = instance.path("config", "projects")  # the owner's projects: private instance (ADR 0071)
@@ -448,18 +448,8 @@ def missing_here(profile: dict) -> list[str]:
 # ── measuring ───────────────────────────────────────────────────────────────
 
 def _default_runner(cmd, cwd, env, timeout):
-    proc = subprocess.Popen(
-        cmd, cwd=cwd, env=env, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
-        text=True, start_new_session=True,
-    )
-    try:
-        stdout, stderr = proc.communicate(timeout=timeout)
-    except subprocess.TimeoutExpired:
-        os.killpg(os.getpgid(proc.pid), signal.SIGKILL)
-        stdout, stderr = proc.communicate()
-        output = (stdout or "") + (stderr or "")
-        raise TestTimedOut(cmd, timeout, output)
-    return proc.returncode, (stdout or "") + (stderr or "")
+    # marvin#1113: the timeout counts the tests running, never the wait for this machine's test slot.
+    return run_timed(cmd, cwd=cwd, env=env, timeout_s=timeout)
 
 
 def _failure_lines(output: str, limit: int = 60) -> list[str]:
@@ -500,8 +490,8 @@ class Measurer:
                 continue
             try:
                 rc, out = self.runner(t["command"], Path(worktree) / t["cwd"], self.env, t["timeout_s"])
-            except TestTimedOut as exc:
-                raise TestTimedOut(exc.command, exc.timeout_s, exc.partial_output) from exc
+            except TestTimedOut:
+                raise   # as it came: a SlotWaitTimedOut must stay one (marvin#1113)
             parsed = parse_output(t["parser"], out, rc)
             if parsed is None:
                 if any(m in out.lower() for m in _NO_TESTS_MARKERS):
@@ -536,8 +526,8 @@ class Measurer:
                 raise EnvMissing(st["id"], missing)
             try:
                 rc, out = self.runner(st["command"], worktree / st["cwd"], self.env, st["timeout_s"])
-            except TestTimedOut as exc:
-                raise TestTimedOut(exc.command, exc.timeout_s, exc.partial_output) from exc
+            except TestTimedOut:
+                raise   # as it came: a SlotWaitTimedOut must stay one (marvin#1113)
             if rc != 0:
                 raise MeasureError(f"setup step '{st['label']}' failed: ...{out[-400:].strip()}")
 

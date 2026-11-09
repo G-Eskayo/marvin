@@ -97,7 +97,7 @@ def test_helpers_in_two_windows_converge_on_the_one_with_most_helpers():
 
 def _fake_env(tmp_path):
     fake = tmp_path / "wezterm"
-    fake.write_text(f'#!/bin/sh\nprintf "%s" "$5" > {tmp_path}/title\n')
+    fake.write_text(f'#!/bin/sh\nfor a; do last=$a; done\nprintf "%s" "$last" > {tmp_path}/title\n')  # the title is the last argument
     fake.chmod(0o755)
     return {"WEZTERM_PANE": "7", "PATH": "/usr/bin:/bin", "HOME": str(tmp_path), "HELPER_TAB_WEZTERM": str(fake),
             "HELPER_TAB_QUIET": "1", "HELPER_TAB_JOBS_DIR": str(tmp_path / "jobs")}
@@ -112,6 +112,7 @@ def test_wrapper_keeps_the_tab_open_afterwards():
     assert ht.wrapper_script(["true"], "G", "w").rstrip().endswith("exec zsh -l")
 
 
+@pytest.mark.requires_tool("zsh")  # the helper wrapper runs under zsh, macOS's shell
 def test_success_retitles_done_and_logs_a_passed_run(tmp_path):
     out = _run_wrapper(tmp_path, ["echo", "hello"], "Seal Speak", "#60 split")
     assert "hello" in out.stdout
@@ -120,6 +121,7 @@ def test_success_retitles_done_and_logs_a_passed_run(tmp_path):
     assert doc["runs"][-1]["status"] == "passed"
 
 
+@pytest.mark.requires_tool("zsh")  # the helper wrapper runs under zsh, macOS's shell
 def test_failure_retitles_failed_logs_it_and_keeps_the_exit_code(tmp_path):
     out = _run_wrapper(tmp_path, ["sh", "-c", "exit 3"])
     assert (tmp_path / "title").read_text() == ht.tab_title("G", "w", "failed")
@@ -128,16 +130,19 @@ def test_failure_retitles_failed_logs_it_and_keeps_the_exit_code(tmp_path):
     assert doc["runs"][-1]["status"] == "failed"
 
 
+@pytest.mark.requires_tool("zsh")  # the helper wrapper runs under zsh, macOS's shell
 def test_on_exit_fires_once_with_the_exit_code(tmp_path):
     _run_wrapper(tmp_path, ["sh", "-c", "exit 2"], on_exit=f'echo "$HELPER_RC" >> {tmp_path}/fired')
     assert (tmp_path / "fired").read_text() == "2\n"
 
 
+@pytest.mark.requires_tool("zsh")  # the helper wrapper runs under zsh, macOS's shell
 def test_missing_command_fails_the_tab_instead_of_crashing_the_wrapper(tmp_path):
     out = _run_wrapper(tmp_path, ["/no/such/helper"])
     assert (tmp_path / "title").read_text() == ht.tab_title("G", "w", "failed")
 
 
+@pytest.mark.requires_tool("zsh")  # the helper wrapper runs under zsh, macOS's shell
 def test_hostile_titles_and_arguments_are_never_expanded(tmp_path):
     canary = tmp_path / "pwned"
     hostile = f"it's $(touch {canary}) `touch {canary}`"
@@ -208,6 +213,7 @@ def test_the_disk_check_can_be_skipped_on_purpose(monkeypatch):
     assert ht.launch("G", "w", ["true"], "/tmp") == 0
 
 
+@pytest.mark.requires_tool("zsh")  # the helper wrapper runs under zsh, macOS's shell
 def test_the_helper_is_told_where_the_download_cache_is(tmp_path):
     out = _run_wrapper(tmp_path, ["sh", "-c", 'printf "%s" "$MARVIN_DOWNLOAD_CACHE"'])
     assert out.stdout.startswith(str(tmp_path / ".cache" / "marvin-downloads"))
@@ -282,3 +288,24 @@ def test_the_helpers_exit_starts_the_next_queued_one_without_changing_its_exit_c
     assert kicks == [1]
     monkeypatch.setattr(memory_guard, "kick", lambda: 1 / 0)
     assert ht.run_helper("G", "w", ["true"]) == 0
+
+
+# ── group names come from the project catalog (marvin#848) ───────────────────
+
+def test_a_project_group_is_named_the_way_the_catalog_names_it(monkeypatch):
+    import project_catalog
+    monkeypatch.setattr(project_catalog, "display_name", lambda term, *a, **k: {"clarity-captions": "Seal Speak"}.get(term, term))
+    seen = []
+    monkeypatch.setattr(ht, "launch", lambda group, title, command, cwd, on_exit=None: seen.append(group) or 0)
+    assert ht.main(["--group", "clarity-captions", "--title", "#60", "--", "true"]) == 0
+    assert ht.main(["--group", "Disk", "--title", "trim", "--", "true"]) == 0
+    assert seen == ["Seal Speak", "Disk"]
+
+
+def test_a_broken_catalog_never_stops_a_helper(monkeypatch):
+    import project_catalog
+    monkeypatch.setattr(project_catalog, "display_name", lambda *a, **k: (_ for _ in ()).throw(OSError("gone")))
+    seen = []
+    monkeypatch.setattr(ht, "launch", lambda group, *a, **k: seen.append(group) or 0)
+    assert ht.main(["--group", "clarity-captions", "--title", "#60", "--", "true"]) == 0
+    assert seen == ["clarity-captions"]

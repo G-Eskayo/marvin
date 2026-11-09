@@ -1,4 +1,5 @@
 import { useEffect, useState } from 'react'
+import { createPortal } from 'react-dom'
 
 // The owner answers a PR's or ticket's Decisions section here (2026-10-09): big tappable options, a note per question,
 // and text boxes for written answers. Submitting writes the answers into the description on GitHub (decisions_submit.js)
@@ -134,7 +135,9 @@ export function followGithub({ questions, editing, status }) {
   return { draft: initialDraft(questions), status: stale ? { state: 'error', message: 'GitHub now has different answers than the ones you saved (the note above says what changed).' } : status }
 }
 
-export default function Decisions({ repo, number, decisions, onSubmitted, refsFor = () => [], onSeeImage, submit = (p) => window.api.decisions.submit(p), onRecorded = (cb) => window.api.decisions.onRecorded?.(cb) }) {
+// `submitSlot` (the Workshop item page's next-step bar, #863): an element the Submit button renders into instead of the
+// panel's foot. The same button and the same rules; only where it sits changes.
+export default function Decisions({ repo, number, decisions, onSubmitted, refsFor = () => [], onSeeImage, submitSlot = null, submit = (p) => window.api.decisions.submit(p), onRecorded = (cb) => window.api.decisions.onRecorded?.(cb) }) {
   const questions = decisions?.questions || []
   const [draft, setDraft] = useState(() => initialDraft(questions))
   const [editing, setEditing] = useState(() => (decisions?.pending || []).length > 0)
@@ -171,6 +174,20 @@ export default function Decisions({ repo, number, decisions, onSubmitted, refsFo
     }
   }
 
+  const submitButton = (
+    <button
+      type="button"
+      onClick={onSubmit}
+      disabled={!dirty || status.state === 'saving'}
+      data-submit-decisions="1"
+      className={submitSlot
+        ? 'min-h-[40px] rounded-lg bg-amber-500 px-4 py-2 text-sm font-semibold text-black transition-transform hover:bg-amber-400 active:scale-95 disabled:opacity-50'
+        : 'min-h-[44px] rounded-xl bg-emerald-600 px-5 py-2 text-sm font-semibold text-white transition-transform hover:bg-emerald-500 active:scale-95 disabled:opacity-40'}
+    >
+      {status.state === 'saving' ? 'Saving…' : 'Submit decisions'}
+    </button>
+  )
+
   return (
     <div className="rounded-lg border-2 border-sky-800 bg-sky-950/20 p-4" data-decisions={pendingNow.length ? 'pending' : 'answered'}>
       <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
@@ -198,16 +215,10 @@ export default function Decisions({ repo, number, decisions, onSubmitted, refsFo
           {missing.length > 0 && (
             <p className="text-xs text-amber-300">Still to answer: {questions.filter((q) => missing.includes(q.id)).map((q) => q.question).join(' · ')}</p>
           )}
-          <button
-            type="button"
-            onClick={onSubmit}
-            disabled={!dirty || status.state === 'saving'}
-            className="min-h-[44px] rounded-xl bg-emerald-600 px-5 py-2 text-sm font-semibold text-white transition-transform hover:bg-emerald-500 active:scale-95 disabled:opacity-40"
-          >
-            {status.state === 'saving' ? 'Saving…' : 'Submit decisions'}
-          </button>
+          {!submitSlot && submitButton}
         </div>
       )}
+      {editing && submitSlot && createPortal(submitButton, submitSlot)}
       {status.state === 'saved' && (
         <p className="mt-3 text-right text-sm text-emerald-300">
           Saved to the description.{' '}

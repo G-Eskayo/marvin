@@ -4,7 +4,9 @@ On 2026-10-07 main went red because of a bad test, and nobody knew until a PR wa
 whenever origin/main has a new commit, run the whole Python suite on a clean checkout and write the answer to
 ~/.claude/logs/main-health.json (read by the Health check `main:green`). The ticket-pipeline scan starts it in the
 background, so a scan never waits on it. Unlike the merge gate it runs EVERYTHING, including the tests that read other
-repos' data, which the gate leaves out.
+repos' data, which the gate leaves out. A failure of a test marked `outside_state` (lib/outside_state.py, marvin#1047:
+another repo's working copy or a running local service, not main's code) is recorded under `outside` and shown
+yellow in Health. When those are the only failures, main is still ok and the queue still moves.
 
     python main_health.py refresh        check now (skips when origin/main has not moved)
 
@@ -43,6 +45,20 @@ def failed_ids(output: str) -> list[str]:
     return [m.group(1) for m in re.finditer(r"^FAILED\s+(\S+)", output, re.M)]
 
 
+def verdict(returncode: int, output: str) -> tuple[bool, list[str], list[dict]]:
+    """(ok, failed code tests, outside-state failures) for one suite run (marvin#1047). Main is ok when the run passed,
+    or when it failed only because of tests marked outside_state. An error, a crash or a kill is never ok."""
+    import outside_state
+    outside = outside_state.parse(output)
+    theirs = {o["test"] for o in outside}
+    failed = [t for t in failed_ids(output) if t not in theirs]
+    if returncode == 0:
+        return True, failed, outside
+    only_outside = (returncode == 1 and outside and not failed
+                    and not re.search(r"^ERROR\s", output, re.M))
+    return bool(only_outside), failed, outside
+
+
 def _head() -> str | None:
     try:
         subprocess.run(["git", "fetch", "-q", "origin", "main"], cwd=REPO_DIR, capture_output=True, timeout=60, check=True)
@@ -69,13 +85,13 @@ def parallel_args(python: Path = VENV_PY, workers=None) -> list[str]:
     return []
 
 
-def _run_suite() -> tuple[bool, list[str], str]:
+def _run_suite() -> tuple[bool, list[str], str, list[dict]]:
     import test_slot
     with test_slot.slot("main-health (after-merge full suite)"):
         return _run_suite_in_slot()
 
 
-def _run_suite_in_slot() -> tuple[bool, list[str], str]:
+def _run_suite_in_slot() -> tuple[bool, list[str], str, list[dict]]:
     tmp = tempfile.mkdtemp(prefix="main-health-")
     try:
         subprocess.run(["git", "worktree", "add", "-q", "--detach", tmp, "origin/main"], cwd=REPO_DIR, check=True, capture_output=True, timeout=120)
@@ -85,7 +101,8 @@ def _run_suite_in_slot() -> tuple[bool, list[str], str]:
             p = subprocess.run(["nice", "-n", "10", str(VENV_PY), "-m", "pytest", "lib/tests", "-q", "-p", "no:cacheprovider",
                                 *parallel_args(), *basetemp_args], cwd=tmp, capture_output=True, text=True, timeout=1800)
         last = [l for l in p.stdout.strip().splitlines() if l.strip()][-1:] or [""]
-        return p.returncode == 0, failed_ids(p.stdout), last[0].strip(" =")
+        ok, failed, outside = verdict(p.returncode, p.stdout)
+        return ok, failed, last[0].strip(" ="), outside
     finally:
         subprocess.run(["git", "worktree", "remove", "--force", tmp], cwd=REPO_DIR, capture_output=True)
 
@@ -165,13 +182,15 @@ def _refresh_once(state_path, head, run_suite, now, changed, named_by_a_test) ->
     if sha is None or sha == prior.get("sha"):
         return {**prior, "ran": False}
     if prior.get("sha") and "ok" in prior and not needs_suite(changed(prior["sha"], sha), lambda p: named_by_a_test(p, sha)):
-        res = {**{k: v for k, v in prior.items() if k in ("ok", "failed", "summary")}, "sha": sha,
+        res = {**{k: v for k, v in prior.items() if k in ("ok", "failed", "summary", "outside")}, "sha": sha,
                "tested_sha": prior.get("tested_sha", prior["sha"]), "checked_at": now.isoformat(),
                "carried": f"only docs or machine data changed since {prior['sha']}", "ran": False}
         _write(state_path, res)
         return res
-    ok, failed, summary = run_suite()
+    ok, failed, summary, *rest = run_suite()     # a 4th item: outside-state failures (marvin#1047)
     res = {"sha": sha, "ok": ok, "failed": failed, "summary": summary, "checked_at": now.isoformat(), "ran": True}
+    if rest and rest[0]:
+        res["outside"] = rest[0]
     _write(state_path, res)
     return res
 

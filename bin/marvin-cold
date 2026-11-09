@@ -1,0 +1,8 @@
+#!/bin/sh
+# marvin-cold: park big cold folders on MARVIN's cold host and get them back when something needs them.
+#   marvin-cold park PATH | ensure PATH|NAME [--part SUB] [--optional] | list
+# Scripts call `marvin-cold ensure PATH` before reading PATH: instant when the data is here. See lib/cold_store.py.
+HERE="$(cd "$(dirname "$0")/.." && pwd)"
+PY="$HOME/.agents/venv/bin/python"
+[ -x "$PY" ] || PY="$(command -v python3)"
+exec "$PY" "$HERE/lib/cold_store.py" "$@"
