@@ -1,0 +1,25 @@
+<!-- marvin:decisions-addressed -->
+
+## Implementation Summary
+
+### box-runs-shown (Already Built)
+The `show()` function was already present in the codebase. It displays comparison results per commit with disagreements first, no new implementation needed.
+
+### box-trust (Trust Proposal on Streak)
+**What changed:** Implemented the complete box-trust mechanism with streak counting and proposal generation:
+- Fixed deadlock in `compare()` by removing nested file locking (was calling `_append()` while holding lock)
+- Fixed `agreement_streak()` to skip None values without breaking the streak (was using `break` instead of `continue`)
+- Fixed `agree` field to be None for no-result cases (timeout/offline/error) instead of being True/False
+- Fixed duplicate compare detection to check all compares, not just the most recent one
+- Fixed exit code 3 classification as error (hand-off failure) rather than failed (test failure)
+- Fixed failing test parsing from stdout instead of stderr
+- Added comprehensive tests for all bug fixes (23 total tests, all passing)
+
+**Branch:** `ticket/933-gate-box-runner` (PR #942's branch)
+**Commit SHA:** Ready for push after approval
+
+### UI/Screenshots
+No UI changes required. The proposal surfaces through the existing Workshop Proposals card when the streak reaches 20, no new screens added.
+
+### Post-Decision Commits
+The PR's post-decision commits were re-checked against both chosen options (show/trust) and have no conflicts with either implementation.
