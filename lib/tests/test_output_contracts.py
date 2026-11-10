@@ -102,3 +102,75 @@ def test_a_digest_is_consumed_by_that_days_brief_and_a_brief_by_being_read(tmp_p
     assert [d.date().isoformat() for d in oc._brief()[0]] == ["2026-10-07"]
     (tmp_path / "briefs" / "2026-10-07.read").write_text("now")
     assert oc._brief()[0] == []
+
+
+# ── after the move to the inbox (ADR 0083): the same contracts, read from the pile ─────────────────────────────
+
+import inbox  # noqa: E402
+import pytest  # noqa: E402
+
+
+@pytest.fixture
+def piles(tmp_path, monkeypatch):
+    """A temp ~/.claude with the legacy files beside an inbox root; nothing imported yet."""
+    claude = tmp_path / ".claude"
+    claude.mkdir()
+    (claude / "suggestions.md").write_text(SUGGESTIONS)
+    monkeypatch.setattr(inbox, "default_root", lambda: claude / "inbox")
+    monkeypatch.setattr(oc, "SUGGESTIONS", claude / "suggestions.md")
+    monkeypatch.setattr(oc, "QUEUE", claude / "improvement-queue.md")
+    monkeypatch.setattr(oc, "AUTO_FIX_LOG", claude / "auto-fix-log.md")
+    return claude
+
+
+def test_before_the_import_the_contracts_read_the_old_file(piles):
+    assert [d.date().isoformat() for d in oc._suggestions()[0]] == ["2026-09-01", "2026-10-05"]
+    assert not inbox.pile_exists("suggestions")  # reading never makes the pile
+
+
+def test_after_the_import_the_contracts_read_the_inbox(piles):
+    inbox.import_legacy("suggestions")
+    (piles / "suggestions.md").write_text("")  # proves the old file is no longer read
+    pending, consumed = oc._suggestions()
+    assert sorted(d.date().isoformat() for d in pending) == ["2026-09-01", "2026-10-05"]
+    assert [d.date().isoformat() for d in consumed] == ["2026-09-20"]
+
+
+def test_the_queue_contract_counts_open_items_not_sections(piles):
+    (piles / "improvement-queue.md").write_text(
+        "## 2026-07-01 — marvin\n- **[NAMING]** a (`x.py`)\n- **[NAMING]** b (`x.py`) — auto-fix: done, PR #1 merged\n"
+        "## 2026-07-02 — marvin\n- **[NAMING]** a (`x.py`)\n")
+    assert len(oc._queue()[0]) == 2  # the old reader: one per dated section
+    inbox.import_legacy("improvement-queue")
+    assert [d.date().isoformat() for d in oc._queue()[0]] == ["2026-07-01"]  # one open item, its first day
+
+
+def test_promotion_from_the_inbox_takes_the_top_open_items_in_priority_order_and_records_each(piles):
+    inbox.import_legacy("suggestions")
+    decisions = iter([{"promoted": True, "ticket_ref": "https://github.com/G-Eskayo/marvin/issues/400", "reasoning": "r"},
+                      {"promoted": False, "ticket_ref": None, "reasoning": "one-off\n  really"}])
+    seen = []
+    tried = oc.promote_inbox(NOW, limit=2, promote=lambda f: seen.append(f) or next(decisions))
+    assert tried == 2 and seen[0].startswith("## Use the classifier everywhere\n**Priority**: 9\n**Status**: pending")
+    assert seen[1].startswith("## Newer idea")
+    by_title = {i["title"]: i for i in inbox.list_items("suggestions")["items"]}
+    assert by_title["Use the classifier everywhere"]["status"] == {
+        "state": "promoted", "on": "2026-10-08", "note": "https://github.com/G-Eskayo/marvin/issues/400"}
+    assert by_title["Newer idea"]["status"] == {"state": "declined", "on": "2026-10-08", "note": "(one-off really)"}
+    assert (piles / "suggestions.md").read_text() == SUGGESTIONS  # the old file stays a read-only backup
+    assert oc.promote_inbox(NOW, limit=2, promote=lambda f: pytest.fail("nothing is left to promote")) == 0
+
+
+def test_a_promotion_with_no_ticket_stays_open_in_the_inbox(piles):
+    inbox.import_legacy("suggestions")
+    oc.promote_inbox(NOW, limit=1, promote=lambda f: {"promoted": True, "ticket_ref": None, "reasoning": "r"})
+    assert len(inbox.open_items("suggestions")) == 2
+
+
+def test_run_promotion_switches_to_the_inbox_once_it_exists(piles, monkeypatch):
+    calls = []
+    monkeypatch.setattr(oc, "_default_promote", lambda: lambda f: calls.append(f) or {"promoted": False, "reasoning": "n"})
+    inbox.import_legacy("suggestions")
+    oc.run_promotion(NOW)
+    assert len(calls) == 2 and (piles / "suggestions.md").read_text() == SUGGESTIONS
+    assert len(inbox.open_items("suggestions")) == 0

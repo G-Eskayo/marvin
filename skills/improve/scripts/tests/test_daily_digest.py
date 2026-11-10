@@ -459,3 +459,26 @@ class TestDailyDigestGate:
         assert len(calls) == 1
         assert calls[0].get("usual_hour") == 8
         assert calls[0].get("usual_minute") == 30
+
+
+# ── the improvement queue in the inbox (ADR 0083) ────────────────────────────────────────────────────────────
+
+def test_queue_summary_reads_the_inbox_once_the_pile_exists(tmp_path, monkeypatch):
+    import inbox
+    claude = tmp_path / ".claude"
+    claude.mkdir()
+    (claude / "improvement-queue.md").write_text(
+        "## 2026-07-01 — marvin\n- **[NAMING]** a (`x.py`)\n- **[KISS]** b (`y.py`) — auto-fix: done, PR #1 merged\n")
+    monkeypatch.setattr(dd, "CLAUDE_DIR", claude)
+    assert "**[NAMING]** a" in dd.improvement_queue_summary()  # the old file, before the import
+    inbox.import_legacy("improvement-queue", claude / "inbox")
+    (claude / "improvement-queue.md").write_text("STALE")
+    out = dd.improvement_queue_summary()
+    assert "STALE" not in out and out.startswith("1 of 2 item(s) still open")
+    assert "[NAMING] a" in out and "[done, PR #1 merged]" in out
+
+
+def test_queue_summary_of_an_empty_pile(tmp_path, monkeypatch):
+    (tmp_path / "inbox" / "improvement-queue").mkdir(parents=True)
+    monkeypatch.setattr(dd, "CLAUDE_DIR", tmp_path)
+    assert dd.improvement_queue_summary() == "(improvement queue is empty)"

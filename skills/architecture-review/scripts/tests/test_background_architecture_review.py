@@ -301,3 +301,116 @@ def test_the_failure_and_its_reason_reach_the_job_log(tmp_path, monkeypatch):
     run = json.loads((tmp_path / "jobs" / "architecture-review.json").read_text())["runs"][-1]
     assert run["status"] == "failed"
     assert "OAuth session expired" in run["error"]
+
+
+# ── after suggestions move into the inbox (ADR 0083) ──────────────────────────────────────────────────────────
+
+
+sys.path.insert(0, str(Path(__file__).resolve().parents[4] / "lib"))
+import inbox  # noqa: E402
+import sort_suggestions as ss  # noqa: E402
+
+EXISTING = "## Old idea\n**Priority**: 4\n**Status**: pending\n**Impact**: speed\n**Effort**: low\n**Why**: w\n**Added**: 2026-10-01\n"
+NEW = ("## New idea\n**Priority**: 7\n**Status**: pending\n**Impact**: reliability\n**Effort**: low\n**Why**: found it\n"
+       "**What**: fix\n**How**:\n- step\n**Added**: 2026-11-04\n")
+
+
+@pytest.fixture
+def piled(tmp_path, monkeypatch):
+    claude = tmp_path / ".claude"
+    claude.mkdir()
+    md = claude / "suggestions.md"
+    md.write_text(EXISTING)
+    state = tmp_path / "state"
+    monkeypatch.setattr(inbox, "default_root", lambda: claude / "inbox")
+    for name, value in (("STATE_DIR", state), ("CURSOR_FILE", state / "chunk-cursor.json"),
+                        ("LOCK_FILE", state / ".last-run"), ("LOG_FILE", state / "background-review.log"),
+                        ("SUGGESTIONS_FILE", md), ("SNAPSHOT_FILE", state / "suggestions-now.md"),
+                        ("STAGING_FILE", state / "new-suggestions.md")):
+        monkeypatch.setattr(bar, name, value)
+    monkeypatch.setattr(bar, "_resolve_claude_bin", lambda: "/usr/bin/true")
+    inbox.import_legacy("suggestions")
+    return md
+
+
+def _fake_claude(monkeypatch, write=None, rc=0):
+    calls = []
+
+    def fake_run(cmd, **kwargs):
+        calls.append(cmd)
+        if cmd[1:2] == ["-p"]:
+            calls_prompt.append(cmd[2])
+            if write:
+                write()
+
+        class Result:
+            returncode = rc
+            stdout = ""
+            stderr = ""
+        return Result()
+    calls_prompt: list[str] = []
+    monkeypatch.setattr(bar.subprocess, "run", fake_run)
+    return calls, calls_prompt
+
+
+def test_inbox_mode_the_reviewer_writes_a_staging_file_that_is_added_to_the_inbox(piled, monkeypatch):
+    calls, prompts = _fake_claude(monkeypatch, write=lambda: bar.STAGING_FILE.write_text(NEW))
+    bar.run_review({"name": "handoffs", "paths": []}, "test reason", False)
+    titles = [i["title"] for i in inbox.list_items("suggestions")["items"]]
+    assert titles == ["New idea", "Old idea"]  # read in priority order
+    assert piled.read_text() == EXISTING  # the old file is a read-only backup
+    assert not bar.STAGING_FILE.exists()
+    assert len(calls) == 1  # no sort_suggestions subprocess in inbox mode
+    assert str(bar.STAGING_FILE) in prompts[0] and "Append your findings to ~/.claude/suggestions.md" not in prompts[0]
+    assert "## Old idea" in bar.SNAPSHOT_FILE.read_text()  # the reviewer can read what's already there
+    assert "1 new suggestion(s) added" in bar.LOG_FILE.read_text()
+    assert bar.LOCK_FILE.exists()
+
+
+def test_inbox_mode_a_rerun_with_the_same_entry_adds_nothing(piled, monkeypatch):
+    _fake_claude(monkeypatch, write=lambda: bar.STAGING_FILE.write_text(NEW))
+    bar.run_review({"name": "handoffs", "paths": []}, "r", False)
+    bar.run_review({"name": "handoffs", "paths": []}, "r", False)
+    assert len(inbox.list_items("suggestions")["items"]) == 2
+
+
+def test_inbox_mode_a_failed_run_keeps_what_it_wrote_but_does_not_advance(piled, monkeypatch):
+    _fake_claude(monkeypatch, write=lambda: bar.STAGING_FILE.write_text(NEW), rc=1)
+    with pytest.raises(bar.ReviewFailed):  # a failed run still fails loudly (marvin#1123 0.5)
+        bar.run_review({"name": "handoffs", "paths": []}, "r", False)
+    assert len(inbox.list_items("suggestions")["items"]) == 2
+    assert not bar.LOCK_FILE.exists() and not bar.CURSOR_FILE.exists()
+
+
+def test_inbox_mode_entries_appended_to_the_old_file_by_habit_are_still_added(piled, monkeypatch):
+    _fake_claude(monkeypatch, write=lambda: piled.write_text(EXISTING + "\n" + NEW))
+    bar.run_review({"name": "handoffs", "paths": []}, "r", False)
+    assert sorted(i["title"] for i in inbox.list_items("suggestions")["items"]) == ["New idea", "Old idea"]
+    assert "wrote to the old suggestions.md" in bar.LOG_FILE.read_text()
+
+
+def test_inbox_mode_a_garbage_staging_file_adds_nothing_and_does_not_crash(piled, monkeypatch):
+    _fake_claude(monkeypatch, write=lambda: bar.STAGING_FILE.write_bytes(b"\xff\xfe no headers here"))
+    bar.run_review({"name": "handoffs", "paths": []}, "r", False)
+    assert len(inbox.list_items("suggestions")["items"]) == 1
+
+
+def test_inbox_mode_a_symlinked_staging_file_is_not_followed(piled, monkeypatch, tmp_path):
+    outside = tmp_path / "outside.md"
+    outside.write_text(NEW)
+    _fake_claude(monkeypatch, write=lambda: bar.STAGING_FILE.symlink_to(outside))
+    bar.run_review({"name": "handoffs", "paths": []}, "r", False)
+    assert len(inbox.list_items("suggestions")["items"]) == 1
+
+
+def test_sort_suggestions_leaves_the_old_file_alone_once_the_inbox_has_it(piled, monkeypatch):
+    monkeypatch.setattr(ss, "SUGGESTIONS_FILE", piled)
+    piled.write_text(NEW + "\n" + EXISTING)  # unsorted on purpose
+    assert ss.sort_suggestions() == -1 and piled.read_text() == NEW + "\n" + EXISTING
+
+
+def test_sort_suggestions_still_sorts_before_the_import(tmp_path, monkeypatch):
+    md = tmp_path / "suggestions.md"
+    md.write_text("# S\n\n" + EXISTING + "\n" + NEW)
+    monkeypatch.setattr(ss, "SUGGESTIONS_FILE", md)
+    assert ss.sort_suggestions() == 2 and md.read_text().index("## New idea") < md.read_text().index("## Old idea")

@@ -53,10 +53,11 @@ Entry format:
 
 **Priority scoring**: weight compounding leverage above standalone impact — an item that makes several future items cheaper/faster/possible outranks a bigger one-off win. Within that, break ties by Impact (token-reduction/speed rank above organization/robustness per `## Optimization Priorities` below) then Effort (lower effort wins at equal impact).
 
-After writing the entry, run the sorter so the file actually reflects current priority order, not insertion order:
+Suggestions live in MARVIN's inbox (`~/.claude/inbox/suggestions/`, one JSON file each, ADR 0083); `~/.claude/suggestions.md` is a read-only backup once that folder exists. Write the entry above to a file and add it (re-adding the same entry is a no-op):
 ```
-~/.agents/venv/bin/python ~/.agents/skills/architecture-review/scripts/sort_suggestions.py
+~/.agents/venv/bin/python ~/.agents/lib/inbox.py import suggestions --file <entry.md>
 ```
+Priority order is applied when the pile is read (`inbox.py list suggestions`), so there is nothing to re-sort. Until the inbox folder exists, append to `suggestions.md` and run `scripts/sort_suggestions.py` as before.
 
 ### 3. Present to user
 
@@ -72,10 +73,10 @@ Don't dump the full list unprompted — respect caveman mode.
 When user approves a suggestion (by name or number):
 1. Read the suggestion's **How** steps
 2. Implement exactly as specified
-3. Update status to `done` in `~/.claude/suggestions.md`
+3. Update its status: `~/.agents/venv/bin/python ~/.agents/lib/inbox.py act suggestions <id> done --json '{"note": "<what changed>"}'`
 4. Confirm what changed
 
-On rejection: update status to `rejected`. Don't re-raise.
+On rejection: `inbox.py act suggestions <id> rejected`. Don't re-raise.
 
 ## Suggestion Bar
 
@@ -92,9 +93,9 @@ Do not queue:
 ## Review Subcommand
 
 When invoked as `/architecture-review review`:
-- Read `~/.claude/suggestions.md` — already in priority order (highest first), since the file is kept sorted
+- Run `~/.agents/venv/bin/python ~/.agents/lib/inbox.py list suggestions` — already in priority order (highest first)
 - Show all `pending` items in compact form, in that order
-- Ask: "Approve any? (by title or 'all')" — also accept reprioritization requests ("bump X", "this is more important than Y"): update the entry's **Priority** field and re-run `sort_suggestions.py`
+- Ask: "Approve any? (by title or 'all')" — also accept reprioritization requests ("bump X", "this is more important than Y"): `inbox.py set suggestions <id> --json '{"priority": N}'`
 
 ## Optimization Priorities
 

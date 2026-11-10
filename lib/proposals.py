@@ -8,6 +8,9 @@ calls its CLI, and the feeds (#532, #533) call add(). There is no second parser 
 A proposal is visible in MR Review when it's open, or when its snooze or "dismiss until" backup date has passed.
 In those cases it carries `returned` to say why it came back. A linked ticket closing is checked by #534, not here.
 
+The file rules (id claim, atomic write, per-item lock, size cap, symlink refusal) are the inbox's (lib/inbox.py, ADR
+0083), imported from there: proposals is the inbox's `proposals` pile, kept at its own folder with its own validation.
+
 Complexity: list is O(N) small files (N = proposals ever made, tens to low hundreds; each capped at 256 KB);
 an action is O(1): one file read, locked, rewritten atomically.
 
@@ -19,20 +22,19 @@ CLI (always prints JSON; exit 0 ok / 1 error):
 from __future__ import annotations
 
 import argparse
-import fcntl
 import json
-import os
 import re
 import subprocess
 import sys
 import tempfile
-from contextlib import contextmanager
 from datetime import date, timedelta
 from pathlib import Path
 from typing import Callable
 
-ID_RE = re.compile(r"[a-z0-9][a-z0-9-]{0,79}")
-MAX_FILE_BYTES = 256 * 1024
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+import inbox  # noqa: E402  (the shared file rules)
+from inbox import ID_RE, MAX_FILE_BYTES, write_atomic as _write_atomic, locked as _locked  # noqa: E402,F401
+
 NORTH_STARS = {1: "Minimise resources", 2: "Phone OS", 3: "Raise the human experience", 4: "Best tool for making tools"}
 SIZES = ("Small", "Medium", "Large")
 LIMITS = {"title": 140, "problem": 600, "fix": 600, "why": 600, "area": 40, "source": 60, "technical": 5000}
@@ -83,48 +85,17 @@ def _validate(proposal: object) -> dict:
 
 
 def _slug(title: str) -> str:
-    s = re.sub(r"[^a-z0-9]+", "-", title.lower()).strip("-")[:60].strip("-")
-    return s or "proposal"
+    return inbox.slug(title, "proposal")
 
 
 # --- files ----------------------------------------------------------------------------------------------------------
 
 def _path(root: Path, pid: object) -> Path:
-    if not isinstance(pid, str) or not ID_RE.fullmatch(pid):
-        raise ProposalError(f"not a proposal id: {str(pid)[:60]!r}")
-    return root / f"{pid}.json"
-
-
-def _write_atomic(path: Path, record: dict) -> None:
-    fd, tmp = tempfile.mkstemp(dir=path.parent, prefix=f".{path.stem}.", suffix=".tmp")
-    try:
-        with os.fdopen(fd, "w") as f:
-            json.dump(record, f, indent=2, ensure_ascii=False)
-            f.write("\n")
-        os.replace(tmp, path)
-    except BaseException:
-        Path(tmp).unlink(missing_ok=True)
-        raise
-
-
-@contextmanager
-def _locked(root: Path, pid: str):
-    lock_dir = root / ".locks"
-    lock_dir.mkdir(parents=True, exist_ok=True)
-    with open(lock_dir / f"{pid}.lock", "w") as lf:
-        fcntl.flock(lf, fcntl.LOCK_EX)
-        try:
-            yield
-        finally:
-            fcntl.flock(lf, fcntl.LOCK_UN)
+    return root / f"{inbox.check_id(pid, ProposalError, 'proposal')}.json"
 
 
 def _read(path: Path) -> dict:
-    if path.is_symlink():
-        raise ProposalError("symlinks aren't read")
-    if path.stat().st_size > MAX_FILE_BYTES:
-        raise ProposalError(f"bigger than {MAX_FILE_BYTES // 1024} KB")
-    data = json.loads(path.read_text())
+    data = inbox.read_json(path, ProposalError)
     clean = _validate(data)
     if data.get("id") != path.stem:
         raise ProposalError("id doesn't match the file name")
@@ -143,15 +114,9 @@ def add(root: Path, submitted: object, today: date | None = None) -> dict:
     base = _slug(clean["title"])
     for n in range(1, 1000):
         pid = base if n == 1 else f"{base[:75]}-{n}"
-        path = root / f"{pid}.json"
-        try:
-            fd = os.open(path, os.O_CREAT | os.O_EXCL | os.O_WRONLY)  # claim the name atomically
-        except FileExistsError:
-            continue
-        os.close(fd)
         record = {"id": pid, **clean, "added": today.isoformat(), "status": {"state": "open"}, "history": []}
-        _write_atomic(path, record)
-        return record
+        if inbox.create_exclusive(root / f"{pid}.json", record):  # claims the name atomically
+            return record
     raise ProposalError("too many proposals with this title")
 
 

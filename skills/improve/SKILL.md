@@ -8,7 +8,7 @@ tags: [intent:improve, intent:quality, intent:digest, type:system]
 
 Two capabilities:
 
-1. **Post-completion sweep** (automatic) — fires on every handoff write. Scans the session's project through `qa_scan`, picks the top 5 issues by priority (logic > naming > verbosity > style > complexity > comment), and appends them to `~/.claude/improvement-queue.md`.
+1. **Post-completion sweep** (automatic) — fires on every handoff write. Scans the session's project through `qa_scan`, picks the top 5 issues by priority (logic > naming > verbosity > style > complexity > comment), and adds them to the inbox's `improvement-queue` pile (`~/.claude/inbox/improvement-queue/`, ADR 0083; the old `improvement-queue.md` is a read-only backup once that folder exists).
 
 2. **Daily digest** (cron) — runs at 08:30 daily via launchd. Assembles context from the roadmap, recent handoffs, QA KB, and bench results, then calls `claude` to brainstorm: feature combinations, trim candidates, a wild idea, and a quick win. Writes to `~/.claude/daily-digest/YYYY-MM-DD.md`.
 
@@ -25,7 +25,7 @@ rm ~/.claude/daily-digest/$(date +%Y-%m-%d).md
 ~/.agents/venv/bin/python ~/.agents/skills/improve/scripts/daily_digest.py
 
 # Show improvement queue
-cat ~/.claude/improvement-queue.md
+~/.agents/venv/bin/python ~/.agents/lib/inbox.py list improvement-queue
 
 # Run sweep manually against a project
 ~/.agents/venv/bin/python ~/.agents/skills/improve/scripts/improvement_sweep.py
@@ -42,7 +42,7 @@ bash ~/.agents/skills/improve/install.sh
 ## Session start integration
 
 At session start, MARVIN checks:
-- `~/.claude/improvement-queue.md` — mentions count if new items
+- the inbox's improvement-queue pile — mentions the open count
 - `~/.claude/daily-digest/` — mentions if today's digest exists
 
 ## Triggers (manual invocation)
