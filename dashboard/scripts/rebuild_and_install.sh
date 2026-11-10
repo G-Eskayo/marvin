@@ -81,9 +81,10 @@ fi
 
 # The merge server is a long-running node process: it keeps the code it started with until restarted (it ran Oct 5 code
 # on Oct 8, so a merged fix to the merge flow didn't apply). This script runs detached, so restarting it is safe.
+# Wait for any in-flight merge to complete before restarting to avoid interrupting a merge in progress.
 if launchctl print "gui/$(id -u)/com.marvin.dashboard-webhook" >/dev/null 2>&1; then
   echo "${LOG_PREFIX} restarting the merge server on the new code..."
-  launchctl kickstart -k "gui/$(id -u)/com.marvin.dashboard-webhook" || echo "${LOG_PREFIX} merge server restart failed" >&2
+  "$HOME/.agents/venv/bin/python" "$HOME/.agents/lib/webhook_restart.py" --force --reason "rebuild installed new code" || echo "${LOG_PREFIX} merge server restart failed" >&2
 fi
 
 rm -f "$HOME/.claude/logs/dashboard-rebuild-failed"  # a good install clears any earlier failure (#443)

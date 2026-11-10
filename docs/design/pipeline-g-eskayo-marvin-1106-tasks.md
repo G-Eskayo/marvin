@@ -1,0 +1,14 @@
+1. `lib/webhook_restart.py`: add `merge_running()` (GET `/merge-queue`, port 7878, bounded request timeout; unreachable/malformed → `False`).
+2. `lib/webhook_restart.py`: add `wait_for_merge_idle(timeout_s, poll_s, check=merge_running, sleep=time.sleep, now=time.monotonic)`, pure/injectable for tests.
+3. `lib/webhook_restart.py`: add `restart_now(reason, wait_timeout_s)` — calls `wait_for_merge_idle`, logs the outcome to the existing `LOG_FILE`, then runs the existing `launchctl kickstart -k` call; always restarts even after giving up the wait.
+4. `lib/webhook_restart.py`: add a `--force --reason "<text>"` CLI path that calls `restart_now()` directly, bypassing `decide()`'s staleness/backoff logic (which doesn't apply to a deliberate post-rebuild restart).
+5. Write tests 1-11 in `lib/tests/test_webhook_restart.py` before implementing steps 1-4 (TDD).
+6. `dashboard/scripts/rebuild_and_install.sh`: replace the unconditional `launchctl kickstart -k` block with a call to `"$HOME/.agents/venv/bin/python" "$HOME/.agents/lib/webhook_restart.py" --force --reason "rebuild installed new code"`; leave the build/install/relaunch steps above it untouched (they run regardless of merge state, per the ticket).
+7. `dashboard/webhook-server/merge_facts.js`: add a bounded `timeout` option (matching the file's existing 30s/90s convention) to the three unguarded `exec('gh', ...)` calls in `createQueueLoader`.
+8. Write tests 12-14 in `dashboard/test/merge_queue_main_state.test.js` before step 7.
+9. Add the explicit regression test for "re-approving an already-queued, about-to-resume PR is a safe no-op" (`merge_queue.test.js`).
+10. Apply the owner's `wait-bound` decision as the `MERGE_WAIT_TIMEOUT_S` constant (with a comment citing `GATE_TIMEOUT_MS`).
+11. If `other-callers: A` — wire `lib/webhook_restart.py`'s cron `main()` and `lib/peer_care.py`'s `restart-service` action through `restart_now()`/`wait_for_merge_idle()` too, with their own tests.
+12. If `ui-copy: A` — implement tests 15-17 and the corresponding changes in `merge_progress.js` (`takeInterruptedMerges`, add a `stillQueued` predicate param), `index.js` (wire a queue-presence check before forwarding the interrupted ping), `dashboard/src/lib/merge_progress.js` (reducer), and `prState.js` (card copy/state).
+13. Run the full dashboard vitest suite and the full Python pytest suite (not a filtered subset) before calling this done — per "full suites before a hand-merge," and because this ticket's prior two attempts failed verification purely on test-slot contention, not logic; keep the actual test run itself targeted/fast where possible so it doesn't become the next contended slot.
+14. Open the PR naming `Closes #1106`, with the two Decisions above in the Decisions format so Approve can gate on them if still unanswered.

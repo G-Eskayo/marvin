@@ -123,8 +123,8 @@ const PR_FIELDS = 'number,title,url,body,baseRefName,headRefName,headRefOid,merg
 export function createQueueLoader({ exec, unbuilt, baseOf, health = readMainHealth, repairs = readRepairFailures, rebase = readRebaseStatus, covers = () => gateCheckNames() }) {
   return async (repo) => {
     const [prsOut, issuesOut] = await Promise.all([
-      exec('gh', ['pr', 'list', '--repo', repo, '--state', 'open', '--limit', '100', '--json', PR_FIELDS]),
-      exec('gh', ['issue', 'list', '--repo', repo, '--state', 'open', '--limit', '500', '--json', 'number,title,labels'])
+      exec('gh', ['pr', 'list', '--repo', repo, '--state', 'open', '--limit', '100', '--json', PR_FIELDS], { timeout: 60_000 }),
+      exec('gh', ['issue', 'list', '--repo', repo, '--state', 'open', '--limit', '500', '--json', 'number,title,labels'], { timeout: 60_000 })
     ])
     const prs = JSON.parse(String(prsOut?.stdout || ''))
     const issues = JSON.parse(String(issuesOut?.stdout || ''))
@@ -135,7 +135,7 @@ export function createQueueLoader({ exec, unbuilt, baseOf, health = readMainHeal
     let headSha = null
     if (repo === engineRepo()) {
       try {
-        headSha = String((await exec('gh', ['api', `repos/${repo}/commits/${base}`, '--jq', '.sha']))?.stdout || '').trim() || null
+        headSha = String((await exec('gh', ['api', `repos/${repo}/commits/${base}`, '--jq', '.sha'], { timeout: 30_000 }))?.stdout || '').trim() || null
       } catch { headSha = null }
     }
     return {
