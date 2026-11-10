@@ -36,6 +36,7 @@ HOME = Path.home()
 CONFIG_PATH = HOME / ".agents" / "config" / "ticket_agents.json"
 AUDIT_PATH = HOME / ".claude" / "logs" / "ticket-agent-actions.jsonl"
 PROPOSALS_PATH = HOME / ".claude" / "logs" / "ticket-agent-proposals.json"
+PROPOSALS_TOLERANCE_S = 2 * 3600
 OVERRIDES_PATH = HOME / ".claude" / "catalog" / "overrides.json"
 AGENTS = ("prioritize", "triage", "stale_claims", "refeed", "project_tag", "revisit")
 APPLY_ORDER = ("stale_claims", "refeed", "revisit", "triage", "prioritize", "project_tag")
@@ -456,10 +457,14 @@ def run(snapshot, gh, cfg, now, audit_path=AUDIT_PATH, proposals_path=PROPOSALS_
     if revisit_state_path is not None:
         write_revisit_state(without_revisit, revisit_state_path, now)
     _write(audit_path, rows)
-    _write(proposals_path, [{
-        "generated_at": ts, "mode": cfg.get("mode"), "act_after": cfg.get("act_after"),
-        "effective_mode": modes["prioritize"], "by_agent": by_agent, "proposals": proposals,
-    }], mode="w")
+    import stamped
+    try:  # stamped (marvin#1223): the hourly pass on the primary; past PROPOSALS_TOLERANCE_S the copy is frozen
+        stamped.write(proposals_path, {
+            "generated_at": ts, "mode": cfg.get("mode"), "act_after": cfg.get("act_after"),
+            "effective_mode": modes["prioritize"], "by_agent": by_agent, "proposals": proposals,
+        }, tolerance_s=PROPOSALS_TOLERANCE_S, indent=None)
+    except OSError:
+        pass  # the audit must never stop the job
     return {"proposed": len(proposals), "applied": applied, "failed": failed, "deferred": deferred, "by_agent": by_agent}
 
 
@@ -547,11 +552,13 @@ def main() -> int:
     sub.add_parser("status")
     a = ap.parse_args()
     if a.cmd == "status":
-        try:
-            p = json.loads(PROPOSALS_PATH.read_text())
-        except (OSError, json.JSONDecodeError):
+        import stamped
+        copy = stamped.read(PROPOSALS_PATH)
+        if copy.missing:
             print("no run recorded yet")
             return 0
+        p = copy.value
+        print(stamped.describe(copy, {}))
         print(f"{p['generated_at']}  mode={p['effective_mode']}  proposals={len(p['proposals'])}")
         for x in p["proposals"][:40]:
             print(f"  {x['agent']:<13} {x['repo'].split('/')[1]}#{x['number']:<4} {x['op']:<13} {x['arg'][:40]:<40} {x['why'][:70]}")

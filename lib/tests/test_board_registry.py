@@ -3,6 +3,7 @@
 """
 from __future__ import annotations
 import json
+import pytest
 import sys
 from pathlib import Path
 
@@ -246,3 +247,55 @@ def test_candidates_merge_boards_and_catalog_including_archived_ones():
     assert by["killer-sudoku"]["status"] == "archived"  # a finished board counts as archived
     assert by["killer-sudoku"]["description"] == "a sudoku game"
     assert set(by) == {"killer-sudoku", "new", "old-site"}
+
+
+# ── stamped + derived on read (marvin#1223, incident 5) ──────────────────────
+
+def test_list_boards_drops_a_repo_whose_profile_is_archived_with_no_scan(tmp_path, monkeypatch):
+    import project_profile
+    reg = tmp_path / "registry.json"
+    reg.write_text(json.dumps({"boards": [{"repo": "G-Eskayo/slopecycle-interview-agent"}, {"repo": "G-Eskayo/marvin"},
+                                          {"repo": "G-Eskayo/no-profile"}]}))
+    monkeypatch.setattr(project_profile, "all_profiles", lambda *a, **k: [
+        {"repo": "G-Eskayo/slopecycle-interview-agent", "status": "archived"}, {"repo": "G-Eskayo/marvin"}])
+    assert [b["repo"] for b in br.list_boards(reg)] == ["G-Eskayo/marvin", "G-Eskayo/no-profile"]
+    assert len(br.list_boards(reg, include_archived=True)) == 3
+
+
+def test_unreadable_profiles_hide_nothing(tmp_path, monkeypatch):
+    import project_profile
+    reg = tmp_path / "registry.json"
+    reg.write_text(json.dumps({"boards": [{"repo": "G-Eskayo/a"}]}))
+    monkeypatch.setattr(project_profile, "all_profiles", lambda *a, **k: (_ for _ in ()).throw(OSError("gone")))
+    assert [b["repo"] for b in br.list_boards(reg)] == ["G-Eskayo/a"]
+
+
+def test_the_registry_is_stamped_on_save_and_reads_as_before(tmp_path, monkeypatch):
+    import stamped
+    monkeypatch.setattr(stamped, "_me", lambda: ("mac-mini-1", "U"))
+    reg = tmp_path / "registry.json"
+    br.ensure_board("G-Eskayo/x", path=reg)
+    data = json.loads(reg.read_text())
+    assert data["host"] == "mac-mini-1" and data["tolerance_s"] == br.REGISTRY_TOLERANCE_S
+    assert [b["repo"] for b in br.list_boards(reg, include_archived=True)] == ["G-Eskayo/x"]
+
+
+def test_a_missing_or_corrupt_registry_lists_nothing_but_writes_still_refuse_corrupt(tmp_path):
+    reg = tmp_path / "registry.json"
+    assert br.list_boards(reg) == []
+    reg.write_text("{corrupt")
+    assert br.list_boards(reg) == []
+    with pytest.raises(ValueError):
+        br.ensure_board("G-Eskayo/x", path=reg)  # never overwrite what we can't parse
+
+
+def test_a_scan_that_reached_github_refreshes_alive_at_even_with_no_change(tmp_path, monkeypatch):
+    import stamped
+    monkeypatch.setattr(stamped, "_me", lambda: ("mac-mini-1", None))
+    reg = tmp_path / "registry.json"
+    reg.write_text(json.dumps({"boards": [{"repo": "o/a"}], "alive_at": "2026-01-01T00:00:00+00:00"}))
+    br.discover("o", gh=lambda args: "[]", path=reg)
+    assert json.loads(reg.read_text())["alive_at"] > "2026-11"
+    reg.write_text(json.dumps({"boards": [], "alive_at": "2026-01-01T00:00:00+00:00"}))
+    br.discover("o", gh=lambda args: (_ for _ in ()).throw(OSError("offline")), path=reg)
+    assert json.loads(reg.read_text())["alive_at"] == "2026-01-01T00:00:00+00:00", "an offline scan vouches for nothing"

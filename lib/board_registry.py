@@ -27,6 +27,7 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 REGISTRY_PATH = Path.home() / ".claude" / "boards" / "registry.json"
+REGISTRY_TOLERANCE_S = 3 * 3600   # the primary's hourly scan re-stamps it (marvin#1223); three missed scans is frozen
 _REPO_RE = re.compile(r"^[\w.-]+/[\w.-]+$")
 
 
@@ -63,10 +64,7 @@ def ensure_board(repo: str, name: str | None = None, due: str | None = None,
         entry["dueHard"] = due_hard
         changed = True
     if changed:
-        path.parent.mkdir(parents=True, exist_ok=True)
-        tmp = path.with_suffix(".tmp")
-        tmp.write_text(json.dumps(data, indent=2) + "\n")
-        tmp.replace(path)
+        _save(data, path)
     return {"created": created, "board": entry}
 
 
@@ -78,21 +76,36 @@ def retire_board(repo: str, path: Path | None = None) -> bool:
     if len(kept) == len(data["boards"]):
         return False
     data["boards"] = kept
-    tmp = path.with_suffix(".tmp")
-    tmp.write_text(json.dumps(data, indent=2) + "\n")
-    tmp.replace(path)
+    _save(data, path)
     return True
 
 
-def list_boards(path: Path | None = None) -> list[dict]:
-    return _load(path or REGISTRY_PATH)["boards"]
+def _archived_repos() -> set[str]:
+    """Repos whose project profile says archived (synced in the instance repo). Unreadable profiles hide nothing."""
+    try:
+        import project_profile
+        return {p["repo"].lower() for p in project_profile.all_profiles() if p.get("status") == "archived"}
+    except Exception:  # noqa: BLE001
+        return set()
+
+
+def list_boards(path: Path | None = None, include_archived: bool = False) -> list[dict]:
+    """The boards, read through stamped (marvin#1223). Derived on read: a repo whose profile is archived is left out,
+    so a Mac that doesn't run the scan (the standby laptop) agrees with the one that does. The registry's own write
+    paths pass include_archived=True."""
+    import stamped
+    boards = (stamped.read(path or REGISTRY_PATH).value or {}).get("boards")
+    boards = [b for b in boards if isinstance(b, dict) and b.get("repo")] if isinstance(boards, list) else []
+    if include_archived:
+        return boards
+    gone = _archived_repos()
+    return [b for b in boards if str(b["repo"]).lower() not in gone]
 
 
 def _save(registry: dict, path: Path) -> None:
-    path.parent.mkdir(parents=True, exist_ok=True)
-    tmp = path.with_suffix(".tmp")
-    tmp.write_text(json.dumps(registry, indent=2) + "\n")
-    tmp.replace(path)
+    import stamped
+    data = {k: v for k, v in registry.items() if k not in stamped.STAMP_KEYS}
+    stamped.write(path, data, tolerance_s=REGISTRY_TOLERANCE_S)
 
 
 # ── lifecycle ───────────────────────────────────────────────────────────────
@@ -216,7 +229,7 @@ def similar(text: str, cands: list[dict], embed=None, limit: int = 3) -> list[di
 def similar_now(text: str, path: Path | None = None) -> list[dict]:
     import project_catalog
     cat = project_catalog.read_catalog(project_catalog.catalog_path()) or {}
-    return similar(text, candidates(list_boards(path), cat.get("projects", [])))
+    return similar(text, candidates(list_boards(path, include_archived=True), cat.get("projects", [])))
 
 
 PIPELINE_LABEL = "ready-for-agent"
@@ -232,7 +245,7 @@ def discover(owner: str, gh=_gh, path: Path | None = None, extra_repos=()) -> li
     `extra_repos` (e.g. every active or recent project in the catalog) get a board too, so a project has
     somewhere for its first ticket to show up. Returns the newly registered repos. Never raises:
     discovery is best-effort."""
-    known = {b["repo"] for b in list_boards(path)}
+    known = {b["repo"] for b in list_boards(path, include_archived=True)}
     added = []
     for repo in extra_repos:
         if repo in known or not _REPO_RE.match(repo or ""):
@@ -267,6 +280,12 @@ def discover(owner: str, gh=_gh, path: Path | None = None, extra_repos=()) -> li
         if has_tickets:
             ensure_board(repo, path=path)
             added.append(repo)
+    try:  # GitHub answered: the registry is current as of now, even if nothing changed (alive_at, marvin#1223)
+        p = path or REGISTRY_PATH
+        if p.exists():
+            _save(_load(p), p)
+    except (OSError, ValueError):
+        pass
     return added
 
 
@@ -291,7 +310,7 @@ def main() -> int:
                 print(f"{'CLOSE ' if m['close'] else '      '}{m['id']:<32} {m['status']:<9} {m['score']:.2f}  {m['why']}")
             return 0
         if a.cmd == "ensure":
-            known = {b["repo"] for b in list_boards()}
+            known = {b["repo"] for b in list_boards(include_archived=True)}
             if a.repo not in known and not a.new:
                 close = [m for m in similar_now(f"{a.name or a.repo.split('/')[1]}") if m["close"] and m["repo"] != a.repo]
                 if close:

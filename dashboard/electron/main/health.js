@@ -1,4 +1,4 @@
-import { readFileSync, existsSync } from 'fs'
+import { readStamped } from './stamped.js'
 import { homedir } from 'os'
 import path from 'path'
 
@@ -40,11 +40,11 @@ export const HEALTH_STATUS_PATH = path.join(homedir(), '.claude', 'logs', 'healt
 
 const EMPTY_STATUS = { generated_at: null, overall: 'grey', coverage: null, anomaly: null, checks: [] }
 
+// Through stamped.js (marvin#1223): `copy` says which Mac made this snapshot and how old it is.
 export function readHealthStatus(statusPath = HEALTH_STATUS_PATH) {
-  if (!existsSync(statusPath)) return EMPTY_STATUS
-  try {
-    return JSON.parse(readFileSync(statusPath, 'utf-8'))
-  } catch {
-    return EMPTY_STATUS
-  }
+  const c = readStamped(statusPath, { defaultToleranceS: 20 * 60 })
+  if (c.missing) return EMPTY_STATUS
+  return { ...c.value, copy: copyMeta(c) }
 }
+const copyMeta = (c) => ({ host: c.host || null, ageS: c.ageS, stale: !!c.stale, legacy: !!c.legacy, toleranceS: c.toleranceS ?? null })
+

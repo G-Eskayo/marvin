@@ -228,11 +228,9 @@ def status(registry: Path | None = None, health: Path | None = None, jobs_dir: P
     import job_events
     now = now or datetime.now(timezone.utc)
     loops, problems = load(registry)
-    try:
-        hs = json.loads((health or HEALTH_STATUS).read_text())
-        checks = hs.get("checks") if isinstance(hs, dict) and isinstance(hs.get("checks"), list) else []
-    except (OSError, ValueError):
-        checks, hs = [], {}
+    import stamped
+    hs = stamped.read(health or HEALTH_STATUS).value or {}
+    checks = hs.get("checks") if isinstance(hs.get("checks"), list) else []
     rows = [evaluate(lp, checks, jobs_dir or job_events.JOBS_DIR, now) for lp in loops]
     rows.sort(key=lambda r: (STATUS_ORDER.index(r["status"]), r["name"].lower()))
     counts = {s: sum(r["status"] == s for r in rows) for s in STATUS_ORDER}

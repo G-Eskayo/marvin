@@ -121,9 +121,9 @@ def onboarded(repo: str | None, registry: Path = REGISTRY_PATH) -> bool:
     """True when repo has a MARVIN board. No repo, no registry or an unreadable one: False (the rule is skipped)."""
     if not repo:
         return False
-    try:
-        boards = json.loads(Path(registry).read_text()).get("boards") or []
-    except (OSError, ValueError, AttributeError):
+    import stamped
+    boards = (stamped.read(Path(registry)).value or {}).get("boards")
+    if not isinstance(boards, list):
         return False
     want = repo.lower()
     return any(isinstance(b, dict) and str(b.get("repo", "")).lower() == want for b in boards)

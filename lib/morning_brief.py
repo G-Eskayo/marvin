@@ -62,8 +62,11 @@ def _open_prs() -> list[dict]:
 
 
 def _red_checks() -> list[dict]:
-    data = json.loads(HEALTH_STATUS.read_text())
-    return [c for c in data.get("checks", []) if c.get("severity") == "red"]
+    import stamped
+    copy = stamped.read(HEALTH_STATUS)
+    if copy.missing:
+        raise OSError(f"no readable {HEALTH_STATUS.name}")  # the caller's existing "couldn't read Health" path
+    return [c for c in copy.value.get("checks", []) if c.get("severity") == "red"]
 
 
 def _human_tickets() -> list[dict]:

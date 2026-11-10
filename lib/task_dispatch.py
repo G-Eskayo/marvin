@@ -96,12 +96,8 @@ def _tailscale_online_hosts() -> set[str]:
 
 
 def _read_local_dispatch_state() -> dict:
-    if not DISPATCH_STATE_PATH.exists():
-        return {"busy": False}
-    try:
-        return json.loads(DISPATCH_STATE_PATH.read_text())
-    except Exception:
-        return {"busy": False}
+    import stamped
+    return stamped.read(DISPATCH_STATE_PATH).value or {"busy": False}
 
 
 def _read_remote_dispatch_state(host: str) -> dict:

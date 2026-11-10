@@ -20,6 +20,7 @@ from pathlib import Path
 PATH = Path(__file__).resolve().parents[1] / "config" / "dispatch.json"
 TASKS_DIR = Path.home() / ".claude" / "dispatch" / "tasks"
 DISPATCH_STATE_PATH = Path.home() / ".claude" / "dispatch-state.json"
+DISPATCH_TOLERANCE_S = 3600
 MAX_LIMIT = 8
 
 DEFAULTS = {
@@ -377,12 +378,9 @@ def refresh_dispatch_state_summary(tasks_dir: Path | None = None) -> None:
             "task_id": earliest.get("task_id", ""),
             "started_at": earliest.get("started_at", ""),
         }
-    DISPATCH_STATE_PATH.parent.mkdir(parents=True, exist_ok=True)
-    fd, tmp = tempfile.mkstemp(dir=DISPATCH_STATE_PATH.parent, suffix=".tmp")
-    with os.fdopen(fd, "w") as f:
-        json.dump(state, f)
-        f.write("\n")
-    os.replace(tmp, DISPATCH_STATE_PATH)
+    import stamped
+    # Stamped (marvin#1223): written on change only, so idle can be old and still true; busy past this is "stuck?".
+    stamped.write(DISPATCH_STATE_PATH, state, tolerance_s=DISPATCH_TOLERANCE_S, indent=None)
 
 
 def _cli(argv: list[str]) -> int:

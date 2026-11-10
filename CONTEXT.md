@@ -2061,6 +2061,20 @@ runs no merge or test of its own and its memory is normal).
   (locked, space-checked, verified) and returns. A path inside a parked folder fetches only that part. This is the
   trigger: nothing polls.
 
+## Stamped copies (marvin#1223, decided with Gil 2026-11-09)
+
+- **Stamp**: the flat envelope every per-Mac file carries on its own JSON object, copied from the github feed:
+  `host` (registry id), `hardware_uuid` (survives a rename), `generated_at`, `alive_at` (the producer saying "still
+  current"), `tolerance_s`. Flat, so a reader that predates it keeps working on the other Mac mid-rollout. On
+  `health-status.json`, `ticket-agent-proposals.json`, `dispatch-state.json` and `boards/registry.json`.
+- **Copy**: what `lib/stamped.py` / `dashboard/electron/main/stamped.js` return: the value plus host, age (this Mac's
+  clock, from the newer of generated_at/alive_at, never negative) and **stale** (age past `tolerance_s`; exactly at it
+  is not). No stamp is **legacy** (dated by its own generated_at or mtime); no file is **missing**. Every reader goes
+  through the helper; a grep test fails on a raw read.
+- **Producer**: the Mac that made a copy. A non-producing Mac shows the producer's live copy, labelled "<Mac>, as of
+  N min ago" (Gil's decision); a stale copy is never shown as current. The board registry is derived on read: a repo
+  whose profile is `archived` is left out by `list_boards()`, so a Mac that doesn't scan agrees with the one that does.
+
 ## Loops (ADR 0083, marvin#1123, 2026-11-04)
 
 - **Loop**: a feedback cycle that works only when all four steps run: **notice → act → verify → remember**. Each one
