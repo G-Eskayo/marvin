@@ -603,6 +603,13 @@ def check_stale_relay(reachability: dict[str, str] | None = None) -> dict:
     return stale_relay.row(per)
 
 
+def check_parked() -> dict:
+    """Parked choices (marvin#1222): every "until Gil decides" names a ticket with a Decisions block and a review-by
+    date; yellow when one is due or garbled, unknown (never green) when GitHub can't be read."""
+    import parked
+    return parked.row(parked.report())
+
+
 def check_memory_lint() -> dict:
     """Memory's [[links]], MEMORY.md index and frontmatter (marvin#695): red on git conflict markers, yellow on broken
     links, index drift or bad frontmatter. Reports only; memory_lint never edits a note."""
@@ -1791,6 +1798,7 @@ def default_checks(reach: dict[str, str] | None = None, reach_results: list[dict
         ("dispatch:parallel", "Parallel dispatch keeping up", check_parallel_dispatch, CHECK_BUDGET_S),
         ("purpose:missed", "Purpose metrics", check_missed_purposes, CHECK_BUDGET_S),
         ("freshness:stale-relay", "Stale claims: caught vs leaked", lambda: check_stale_relay(reach), CROSS_MACHINE_BUDGET_S),
+        ("parked:overdue", "Parked choices come back when due", check_parked, CHECK_BUDGET_S),
         ("contract", "Output contracts", check_output_contracts, CHECK_BUDGET_S),
         ("profile:missing", "Projects without an execution profile", check_missing_profiles, CHECK_BUDGET_S),
         ("profile:no-machines", "Projects with no machines", check_unrunnable_profiles, CHECK_BUDGET_S),

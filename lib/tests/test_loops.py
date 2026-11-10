@@ -155,7 +155,7 @@ def test_a_duplicate_id_keeps_the_first(tmp_path):
 
 def test_the_real_registry_parses_and_covers_the_audit():
     loops, problems = lp.load()
-    assert problems == [] and len(loops) >= 34
+    assert problems == [] and len(loops) >= 33  # the audit's 34, less open-loops (folded into tickets, marvin#1222)
     ids = {x["id"] for x in loops}
     for must in ("alerts", "sync", "deploy-verify", "history-backup", "morning-brief", "disk", "safety-reviews",
                  "improvement-queue", "architecture-suggestions", "logins", "peers", "question-log", "memory"):

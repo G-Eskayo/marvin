@@ -133,3 +133,63 @@ def test_an_existing_foreign_commit_msg_hook_is_not_clobbered(tmp_path):
 def test_installing_twice_is_harmless(repo):
     r, _ = repo
     assert cc.install_hook(r) == "already installed"
+
+
+# ── parked choices refused at write time (marvin#1222, Gil 2026-11-09: refuse, with a logged override) ──
+
+def _stage(r, path, text):
+    p = r / path
+    p.parent.mkdir(parents=True, exist_ok=True)
+    p.write_text(text)
+    git(r, "add", "-A")
+    return git(r, "commit", "-q", "-m", "config change", check=False)
+
+
+@pytest.mark.parametrize("text", [
+    '{"_readme": "propose for now; switch back to act once Gil decides."}',
+    '{"x": "stays off until the owner answers the Decision"}',
+    "<!-- trims nothing until Gil decides -->",
+    "# ask Gil before turning this on\n",
+])
+def test_parking_text_in_config_without_a_parked_entry_is_refused(repo, text):
+    r, _ = repo
+    out = _stage(r, "config/thing.json" if text.startswith("{") else "config/thing.plist", text)
+    assert out.returncode != 0 and "parked" in out.stderr and "review_by" in out.stderr
+
+
+def test_the_same_text_with_a_parked_entry_commits(repo):
+    r, _ = repo
+    data = {"_readme": "propose until Gil decides", "parked": {"triage": {"decision": "G-Eskayo/marvin#1220",
+                                                                           "review_by": "2026-11-16"}}}
+    assert _stage(r, "config/ticket_agents.json", json.dumps(data)).returncode == 0
+
+
+def test_a_non_json_file_that_points_at_its_park_commits(repo):
+    r, _ = repo
+    assert _stage(r, "config/launchd/x.plist", "<!-- off until the owner answers: parked as aerial_watch_trim "
+                                               "(config/disk_triggers.json) -->").returncode == 0
+
+
+def test_the_phrase_in_a_code_block_or_outside_config_is_not_refused(repo):
+    r, _ = repo
+    assert _stage(r, "config/notes.md", "Example of what not to write:\n```\nuntil Gil decides\n```\n").returncode == 0
+    assert _stage(r, "lib/tests/fixtures/park.json", '{"x": "until Gil decides"}').returncode == 0
+    assert _stage(r, "docs/plan.md", "parked until Gil decides").returncode == 0
+
+
+def test_the_override_lets_one_through_and_is_logged(repo, tmp_path, monkeypatch):
+    r, _ = repo
+    log = tmp_path / "parked-overrides.jsonl"
+    monkeypatch.setenv("MARVIN_PARKED_LOG", str(log))
+    (r / "config").mkdir(exist_ok=True)
+    (r / "config" / "y.json").write_text('{"x": "until Gil decides"}')
+    git(r, "add", "-A")
+    out = git(r, "commit", "-q", "-m", "c", env={"MARVIN_PARKED_OK": "migrating it in the next commit"}, check=False)
+    assert out.returncode == 0
+    assert json.loads(log.read_text().splitlines()[-1])["reason"] == "migrating it in the next commit"
+
+
+def test_instance_config_counts_too(repo):
+    r, _ = repo
+    out = _stage(r, "instance/config/projects/p.json", '{"x": "until Gil decides"}')
+    assert out.returncode != 0

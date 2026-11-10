@@ -44,6 +44,8 @@ _FENCE = re.compile(r"```.*?```", re.DOTALL)
 _INLINE = re.compile(r"`[^`\n]*`")
 _LINK = re.compile(r"\[\[(.{1,200}?)\]\]", re.DOTALL)
 _INDEX_LINK = re.compile(r"\]\(([^)\s]+\.md)\)")
+# A choice parked on the owner in a note (marvin#1222) needs a home: front matter open_question (its ticket) + review_by.
+_UNHOMED = re.compile(r"\bask gil\b|\bunresolved conflict\b|\buntil gil decides\b", re.I)
 
 
 def _blank(m: re.Match) -> str:
@@ -128,7 +130,7 @@ def lint(memory_dir: Path) -> dict:
     files = sorted(p for p in d.glob("*.md") if p.is_file())
     texts: dict[str, str | None] = {}
     report = {"notes": 0, "links": 0, "dangling": [], "orphans": [], "conflicts": [], "frontmatter": [],
-              "unindexed": [], "index_missing": [], "edges": [], "meta": {}}
+              "unindexed": [], "index_missing": [], "edges": [], "meta": {}, "unhomed": []}
     for p in files:
         try:
             texts[p.name] = p.read_text(encoding="utf-8")
@@ -153,6 +155,9 @@ def lint(memory_dir: Path) -> dict:
             keys.setdefault(fields["name"].lower(), p.stem)
         if problem:
             report["frontmatter"].append({"file": p.name, "problem": problem})
+        m = _UNHOMED.search(_strip_code(text))
+        if m and not fields.get("open_question"):
+            report["unhomed"].append({"file": p.name, "phrase": m.group(0)})
 
     for name, text in texts.items():
         if text:
@@ -397,7 +402,10 @@ def check(memory_dir: Path | None = None, now: datetime | None = None) -> dict:
         parts.append(f"{_plural(len(r['unindexed']), 'note')} missing from {INDEX}: {', '.join(r['unindexed'][:3])}")
     if r["index_missing"]:
         parts.append(f"{INDEX} lists {_plural(len(r['index_missing']), 'missing file')}: {', '.join(r['index_missing'][:3])}")
-    issues = len(r["conflicts"]) + len(r["dangling"]) + len(r["frontmatter"]) + len(r["unindexed"]) + len(r["index_missing"])
+    if r["unhomed"]:
+        parts.append(f"{_plural(len(r['unhomed']), 'note')} park a choice on the owner with no open_question "
+                     f"(its ticket) and review_by: {', '.join(x['file'] for x in r['unhomed'][:3])}")
+    issues = len(r["unhomed"]) + len(r["conflicts"]) + len(r["dangling"]) + len(r["frontmatter"]) + len(r["unindexed"]) + len(r["index_missing"])
     head = f"{r['notes']} notes, {r['links']} links"
     tail = f"{len(r['orphans'])} with no inbound link"
     if not parts:

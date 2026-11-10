@@ -186,7 +186,10 @@ _FIELDS = (
 )
 
 
-def build_query(keys: list[str]) -> str:
+_EXTRA = "body labels(first: 20) { nodes { name } } "   # for callers that judge the ticket itself (lib/parked.py)
+
+
+def build_query(keys: list[str], with_body: bool = False) -> str:
     parts = []
     for i, key in enumerate(keys):
         repo, n = key.rsplit("#", 1)
@@ -194,15 +197,15 @@ def build_query(keys: list[str]) -> str:
         if not (_NAME.match(owner) and _NAME.match(name) and n.isdigit()):
             continue  # never interpolate anything that isn't a plain name
         parts.append(f'i{i}: repository(owner: "{owner}", name: "{name}") '
-                     f'{{ issueOrPullRequest(number: {int(n)}) {{ {_FIELDS} }} }}')
+                     f'{{ issueOrPullRequest(number: {int(n)}) {{ {_FIELDS.replace("... on Issue { ", "... on Issue { " + _EXTRA) if with_body else _FIELDS} }} }}')
     return "query { " + " ".join(parts) + " }"
 
 
-def fetch(keys: list[str], *, run, timeout: float, gh=None) -> dict:
+def fetch(keys: list[str], *, run, timeout: float, gh=None, with_body: bool = False) -> dict:
     """{key: node or None}. Raises RuntimeError with a reason a person can read when GitHub gave no answer."""
     gh = gh or (str(GH) if GH.exists() else "gh")
     try:
-        p = run([gh, "api", "graphql", "-f", f"query={build_query(keys)}"], capture_output=True, text=True,
+        p = run([gh, "api", "graphql", "-f", f"query={build_query(keys, with_body)}"], capture_output=True, text=True,
                 timeout=timeout)
     except subprocess.TimeoutExpired:
         raise RuntimeError(f"GitHub timed out after {timeout:g} s") from None

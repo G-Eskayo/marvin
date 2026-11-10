@@ -2089,6 +2089,14 @@ runs no merge or test of its own and its memory is normal).
 
 ## Data freshness: handed-forward claims (decided with Gil 2026-11-09; plan `instance/docs/plans/data-freshness-2026-11-09.md`)
 
+- **Parked choice** (`lib/parked.py`, marvin#1222): a choice waiting on Gil. Its one home is a ticket with a Decisions
+  block; everywhere else names it: `"parked": {"<id>": {"decision": "owner/repo#N", "review_by": "YYYY-MM-DD",
+  "condition": "#N closes"}}` in config (`config/parked.json` for parks with no file of their own), or
+  `open_question` + `review_by` in memory front matter (ticket_policy's revisit grammar). It may sit **7 days** (Gil,
+  2026-11-09). When review_by passes or its condition closes, the hourly scan puts the decision ticket in Needs you,
+  once, and Health row `parked:overdue` names it. The commit check refuses "until Gil decides" text in `config/` or
+  `instance/config/` without a park (`MARVIN_PARKED_OK` overrides, logged); the memory lint flags "ask Gil" with no
+  `open_question`. Open loops were folded into tickets with "Revisit by:" and `open_loops.py` removed.
 - **Cache**: anything MARVIN hands forward without deriving it at read time (a handoff, a memory note, a plan, a
   config value, another Mac's file). A cache is shown only with its source and age, and is re-checked before it's
   relayed as current. "Derive, don't store" carried past the dashboard.

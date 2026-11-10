@@ -399,24 +399,6 @@
    "why": "Tier 4: #533"
   },
   {
-   "id": "open-loops",
-   "name": "Open loops are closed or dismissed",
-   "watches": "none",
-   "broken_when": "red",
-   "action": "job:open-loops",
-   "verify": "none",
-   "cycle_days": 7,
-   "owner": "gil",
-   "fix": {
-    "level": "one_tap",
-    "kind": "rerun",
-    "arg": "open-loops"
-   },
-   "wired": false,
-   "ticket": 1123,
-   "why": "Moves into the inbox with dismiss-until"
-  },
-  {
    "id": "glossary",
    "name": "Glossary and conversation playbook stay current",
    "watches": "none",

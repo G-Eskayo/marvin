@@ -217,3 +217,25 @@ def test_quoted_descriptions_lose_their_quotes(tmp_path):
     d = healthy(tmp_path)
     note(d, "gamma", "[[alpha]]", frontmatter='---\nname: gamma\ndescription: "a quoted one"\nmetadata:\n  type: user\n---\n')
     assert ml.lint(d)["meta"]["gamma"]["description"] == "a quoted one"
+
+
+# ── a choice parked in a note needs a home (marvin#1222) ──────────────────────
+
+def test_a_note_that_asks_gil_with_no_open_question_is_flagged(tmp_path):
+    d = healthy(tmp_path)
+    note(d, "feedback-open-it", "Unresolved conflict with the 11-02 handoff, ask Gil which stands.", type_="feedback")
+    index(d, *[p.stem for p in d.glob("*.md") if p.name != "MEMORY.md"])
+    r = ml.lint(d)
+    assert [x["file"] for x in r["unhomed"]] == ["feedback-open-it.md"]
+    c = ml.check(d)
+    assert c["severity"] == "yellow" and "open_question" in c["detail"]
+
+
+def test_with_an_open_question_it_is_not_flagged_and_code_doesnt_count(tmp_path):
+    d = healthy(tmp_path)
+    p = note(d, "feedback-open-it", "Unresolved conflict, ask Gil.", type_="feedback")
+    p.write_text(p.read_text().replace("---\n\n", "---\n\n", 1).replace("name: feedback-open-it\n",
+                 "name: feedback-open-it\nopen_question: G-Eskayo/marvin#1300\nreview_by: 2026-11-16\n", 1))
+    note(d, "reference-x", "Write `ask Gil` like this:\n```\nask Gil\n```", type_="reference")
+    index(d, *[q.stem for q in d.glob("*.md") if q.name != "MEMORY.md"])
+    assert ml.lint(d)["unhomed"] == []

@@ -8,5 +8,12 @@
     "project_tag": "act",
     "triage": "propose",
     "prioritize": "act"
+  },
+  "parked": {
+    "triage": {
+      "decision": "G-Eskayo/marvin#1220",
+      "review_by": "2026-11-17",
+      "what": "triage acts again (propose since 10-21)"
+    }
   }
 }
