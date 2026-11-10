@@ -8,8 +8,12 @@ it instead of adding a duplicate, so after two weeks `top` is the real list of m
 One append-only JSONL file per Mac under ~/.agents/var (MARVIN-owned, gitignored); it moves into marvin.db with the
 other streams. Each append is one write under an flock, so concurrent sessions never interleave.
 
+A `--kind` sorts entries: `stale` (marvin#1224) is Gil correcting a claim MARVIN relayed as current when it was
+already done or out of date. The stale-relay probe (lib/stale_relay.py) counts those as leaked.
+
     question_log.py add "<question>" [--why "<why it couldn't be answered>"] [--want "<signal that would answer it>"]
-    question_log.py top [--limit N]
+                        [--kind stale]
+    question_log.py top [--limit N] [--kind stale]
 """
 from __future__ import annotations
 
@@ -24,6 +28,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 MAX_LEN = 500
+KINDS = ("stale",)
 
 
 def default_path() -> Path:
@@ -35,15 +40,19 @@ def _key(q: str) -> str:
 
 
 def add(question, why: str | None = None, want: str | None = None, path: Path | None = None,
-        machine: str | None = None) -> dict:
+        machine: str | None = None, kind: str | None = None) -> dict:
     if not isinstance(question, str) or not question.strip():
         raise ValueError("an empty question can't be logged")
+    if kind is not None and kind not in KINDS:
+        raise ValueError(f"kind must be one of {', '.join(KINDS)}")
     path = Path(path) if path else default_path()
     row = {"ts": datetime.now(timezone.utc).isoformat(timespec="seconds"),
            "machine": machine or socket.gethostname().split(".")[0],
            "question": " ".join(question.split())[:MAX_LEN],
            "why": (why or "").strip()[:MAX_LEN] or None,
            "want": (want or "").strip()[:MAX_LEN] or None}
+    if kind:
+        row["kind"] = kind
     path.parent.mkdir(parents=True, exist_ok=True)
     line = (json.dumps(row, ensure_ascii=False) + "\n").encode()
     fd = os.open(path, os.O_WRONLY | os.O_APPEND | os.O_CREAT, 0o600)
@@ -55,7 +64,7 @@ def add(question, why: str | None = None, want: str | None = None, path: Path | 
     return row
 
 
-def top(path: Path | None = None, limit: int = 20) -> list[dict]:
+def top(path: Path | None = None, limit: int = 20, kind: str | None = None) -> list[dict]:
     """Questions grouped by their normalised text, most asked first: O(lines)."""
     path = Path(path) if path else default_path()
     if not path.exists():
@@ -67,6 +76,8 @@ def top(path: Path | None = None, limit: int = 20) -> list[dict]:
         except ValueError:
             continue
         if not isinstance(row, dict) or not isinstance(row.get("question"), str) or not row["question"].strip():
+            continue
+        if kind is not None and row.get("kind") != kind:
             continue
         g = groups.setdefault(_key(row["question"]), {"question": row["question"], "count": 0, "want": [],
                                                       "why": [], "last": None})
@@ -86,17 +97,19 @@ def main(argv: list[str]) -> int:
     a.add_argument("question")
     a.add_argument("--why")
     a.add_argument("--want")
+    a.add_argument("--kind", choices=KINDS)
     t = sub.add_parser("top")
     t.add_argument("--limit", type=int, default=20)
+    t.add_argument("--kind", choices=KINDS)
     args = ap.parse_args(argv)
     if args.cmd == "add":
         try:
-            add(args.question, why=args.why, want=args.want)
+            add(args.question, why=args.why, want=args.want, kind=args.kind)
         except ValueError as e:
             print(e, file=sys.stderr)
             return 1
         return 0
-    rows = top(limit=args.limit)
+    rows = top(limit=args.limit, kind=args.kind)
     if not rows:
         print("No questions logged yet.")
     for r in rows:

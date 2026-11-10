@@ -67,3 +67,4 @@ Before a significant topic or project change: run `handoff`, surface the resume 
 When Gil asks something you can't answer from MARVIN's own data (logs, stores, GitHub state) and have to dig for, guess or say "I don't know", log it right away. Don't ask first (Gil, 2026-10-26: automatic):
 `~/.agents/venv/bin/python ~/.agents/lib/question_log.py add "<his question>" --why "<what was missing>" --want "<the signal that would have answered it>"`.
 `question_log.py top` lists the most-asked ones. They are the blind spots to measure next (`docs/plans/blind-spots-2026-10-26.md`).
+When Gil corrects a claim you relayed as current that was already done or out of date, log it with `--kind stale`: the stale-relay probe counts it as leaked (marvin#1224).

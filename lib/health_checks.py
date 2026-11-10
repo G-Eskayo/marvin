@@ -592,6 +592,17 @@ def check_site_published(gh=None, git=None) -> dict | None:
     return _result(cid, label, r["severity"], r["detail"])
 
 
+def check_stale_relay(reachability: dict[str, str] | None = None) -> dict:
+    """Stale claims caught by the resume check vs leaked to the owner this week, per Mac (marvin#1224). An asleep Mac is
+    unknown for the week, not 0."""
+    import stale_relay
+    import purpose_metrics
+    macs = [(d, h) for d, h in purpose_metrics._macs() if _reachable(reachability, d)]
+    asleep = [d for d, _h in purpose_metrics._macs() if not _reachable(reachability, d)]
+    per = stale_relay.everywhere(macs=macs) + [{"machine": d, "known": False, "error": "asleep"} for d in asleep]
+    return stale_relay.row(per)
+
+
 def check_memory_lint() -> dict:
     """Memory's [[links]], MEMORY.md index and frontmatter (marvin#695): red on git conflict markers, yellow on broken
     links, index drift or bad frontmatter. Reports only; memory_lint never edits a note."""
@@ -1779,6 +1790,7 @@ def default_checks(reach: dict[str, str] | None = None, reach_results: list[dict
         ("sync:union-review", "Code sync: merged lines to check", check_union_merge_review, CHECK_BUDGET_S),
         ("dispatch:parallel", "Parallel dispatch keeping up", check_parallel_dispatch, CHECK_BUDGET_S),
         ("purpose:missed", "Purpose metrics", check_missed_purposes, CHECK_BUDGET_S),
+        ("freshness:stale-relay", "Stale claims: caught vs leaked", lambda: check_stale_relay(reach), CROSS_MACHINE_BUDGET_S),
         ("contract", "Output contracts", check_output_contracts, CHECK_BUDGET_S),
         ("profile:missing", "Projects without an execution profile", check_missing_profiles, CHECK_BUDGET_S),
         ("profile:no-machines", "Projects with no machines", check_unrunnable_profiles, CHECK_BUDGET_S),
