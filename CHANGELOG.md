@@ -1,5 +1,7 @@
 # Changelog
 
+- Freshness: `stale-relay` probe: measure caught vs leaked stale claims ([#1246](https://github.com/G-Eskayo/marvin/pull/1246))
+
 - Freshness: Memory claims checked: notes asserting open state about closed work get flagged daily ([#1244](https://github.com/G-Eskayo/marvin/pull/1244))
 
 - Freshness: Stamped copies: one envelope and read helper, with standby Macs reading the producer ([#1247](https://github.com/G-Eskayo/marvin/pull/1247))
