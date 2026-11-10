@@ -12,12 +12,21 @@ the index, not a note: its entries don't count as inbound links, or no note coul
 
 Cost: O(notes + links), one read per file.
 
+Claims (marvin#1225): once a day, a project or reference note that asserts open state ("OPEN", "QUEUED", "URGENT",
+"awaiting", outside code) has the ticket and PR refs on those lines checked with the resume check's reference checker
+(lib/resume_check.py: relations.js through node, one GitHub call). When every ref it names is closed or merged, the
+note is flagged with an `invalid_at` suggestion and its MEMORY.md index line gains "(closed <date>)". A feedback or
+user note is a rule, still valid after its ticket closes, so it is never flagged on that alone. A note is never
+edited; the index is the only thing written. A ref GitHub can't read leaves the note unflagged and is listed.
+
     memory_lint.py [memory-dir] [--json]
+    memory_lint.py claims [memory-dir]     # the claims check now (ignores the day's saved result)
 """
 from __future__ import annotations
 
 import json
 import re
+import subprocess
 import sys
 from datetime import datetime, timezone
 from pathlib import Path
@@ -209,6 +218,153 @@ def is_current(meta: dict, today=None) -> bool:
     return not (_DATE.match(inv) and inv <= (today or date.today()).isoformat())
 
 
+# ── claims: open-state notes about finished work (marvin#1225) ────────────────────────────────────────────
+
+CLAIMS_ID, CLAIMS_LABEL = "memory:claims", "Memory doesn't call finished work open"
+OPEN_STATE = re.compile(r"\b(?:OPEN|QUEUED|URGENT)\b|(?i:\bawaiting\b)")
+STALE_TYPES = ("project", "reference")   # feedback and user notes are rules: still valid after a ticket closes
+CLAIMS_STATE = Path.home() / ".agents" / "var" / "memory-claims.json"
+_CLOSED_MARK = r"(?: \(closed \d{4}-\d{2}-\d{2}\))?"
+
+
+def _closed_on(node: dict) -> str | None:
+    """YYYY-MM-DD the item was closed or merged, "" when closed with no date GitHub gave, None while open."""
+    if node.get("state") not in ("CLOSED", "MERGED"):
+        return None
+    import resume_check as rc
+    times = [rc._parse_time(node.get("mergedAt"))]
+    times += [rc._parse_time((e or {}).get("createdAt")) for e in (node.get("timelineItems") or {}).get("nodes") or []
+              if (e or {}).get("__typename") in ("ClosedEvent", "MergedEvent")]
+    times = [t for t in times if t]
+    return max(times).strftime("%Y-%m-%d") if times else ""
+
+
+def claims(memory_dir: Path, *, run=subprocess.run, now: datetime | None = None, repos: dict | None = None,
+           node=True) -> dict:
+    """{status: checked | unverified, reason, notes, flagged: [{note, refs, closed, suggest}], unreadable, skipped}."""
+    import resume_check as rc
+    now = now or datetime.now(timezone.utc)
+    out = {"status": "checked", "reason": None, "notes": 0, "flagged": [], "unreadable": [], "skipped": 0}
+    candidates = []
+    for p in sorted(Path(memory_dir).glob("*.md")):
+        if p.name == INDEX:
+            continue
+        try:
+            text = p.read_text(encoding="utf-8")
+        except (UnicodeDecodeError, OSError):
+            continue
+        fields, _problem = _frontmatter(text)
+        if fields.get("type") not in STALE_TYPES or not is_current(fields, today=now.date()):
+            continue
+        # The claim is the line that says it's open: a ref elsewhere (the PR that found a problem, history) isn't.
+        lines = [ln for ln in _strip_code(text).splitlines() if OPEN_STATE.search(ln)]
+        if lines:
+            candidates.append((p.stem, lines))
+    out["notes"] = len(candidates)
+    if not candidates:
+        return out
+    node = rc.find_node() if node is True else node
+    flat = [ln for _s, lines in candidates for ln in lines]
+    try:
+        per_line = rc.extract_refs(flat, repos=rc.default_repos() if repos is None else repos, default_repo=None,
+                                   node=node)
+    except (RuntimeError, OSError, ValueError, KeyError, subprocess.TimeoutExpired) as e:
+        return {**out, "status": "unverified", "reason": str(e) if isinstance(e, RuntimeError) else e.__class__.__name__}
+    home = rc._home_repo()
+    per_note, i = [], 0
+    for _stem, lines in candidates:
+        refs = []
+        for line_refs in per_line[i:i + len(lines)]:
+            # a bare "#3" belongs to the one repo its line names ("marvin-voice#21 then #3"), else the tickets repo
+            named = {k.rsplit("#", 1)[0] for k in line_refs if not k.startswith("#")}
+            default = next(iter(named)) if len(named) == 1 else home
+            refs += [f"{default}{k}" if k.startswith("#") else k for k in line_refs]
+        i += len(lines)
+        per_note.append(list(dict.fromkeys(refs)))
+    keys = list(dict.fromkeys(k for refs in per_note for k in refs))
+    if not keys:
+        return out
+    asked = keys[:rc.MAX_REFS]
+    out["skipped"] = len(keys) - len(asked)
+    try:
+        nodes = rc.fetch(asked, run=run, timeout=rc.BUDGET_S)
+    except RuntimeError as e:
+        return {**out, "status": "unverified", "reason": str(e)}
+    out["unreadable"] = [k for k in asked if not nodes.get(k)]
+    for (stem, _text), refs in zip(candidates, per_note):
+        if not refs or any(k not in nodes or not nodes[k] for k in refs):
+            continue  # nothing to judge by, or a ref we couldn't read: never call it stale on a guess
+        dates = [_closed_on(nodes[k]) for k in refs]
+        if any(d is None for d in dates):
+            continue  # some of it is still open
+        closed = max(dates) or now.strftime("%Y-%m-%d")
+        out["flagged"].append({"note": stem, "refs": refs, "closed": closed, "suggest": f"invalid_at: {closed}"})
+    return out
+
+
+def annotate_index(index_text: str, closed: dict) -> str:
+    """MEMORY.md with "(closed <date>)" right after each flagged note's link; idempotent, a newer date replaces."""
+    for stem, day in closed.items():
+        pat = re.compile(r"(\]\(" + re.escape(stem) + r"\.md\))" + _CLOSED_MARK)
+        index_text = pat.sub(lambda m: f"{m.group(1)} (closed {day})", index_text)
+    return index_text
+
+
+def check_claims(memory_dir: Path | None = None, *, run=subprocess.run, now: datetime | None = None,
+                 state_path: Path | None = None, repos: dict | None = None, node=True, force: bool = False) -> dict:
+    """The daily claims check as a health row. A day's result is kept and reused that day; a day GitHub couldn't be
+    read is never kept (and never green), so the next sweep tries again."""
+    if memory_dir is None:
+        import host_os
+        memory_dir = host_os.memory_dir()
+    now = now or datetime.now(timezone.utc)
+    state_path = state_path or CLAIMS_STATE
+    day = now.strftime("%Y-%m-%d")
+    try:
+        saved = json.loads(state_path.read_text())
+    except (OSError, ValueError):
+        saved = {}
+    if not force and isinstance(saved, dict) and saved.get("day") == day and isinstance(saved.get("result"), dict):
+        return saved["result"]
+
+    def result(sev, detail, value=None):
+        return {"id": CLAIMS_ID, "label": CLAIMS_LABEL, "severity": sev, "detail": detail,
+                "checked_at": now.isoformat(), "value": value}
+
+    if not Path(memory_dir).is_dir():
+        return result("yellow", f"no memory folder at {memory_dir}")
+    r = claims(Path(memory_dir), run=run, now=now, repos=repos, node=node)
+    if r["status"] == "unverified":
+        return result("yellow", f"couldn't check memory claims today: {r['reason']}")
+    extra = []
+    if r["unreadable"]:
+        extra.append(f"{len(r['unreadable'])} ref(s) couldn't be read: {', '.join(r['unreadable'][:3])}")
+    if r["skipped"]:
+        extra.append(f"{r['skipped']} more ref(s) not checked")
+    tail = ("; " + "; ".join(extra)) if extra else ""
+    if r["flagged"]:
+        index = Path(memory_dir) / INDEX
+        try:
+            text = index.read_text(encoding="utf-8")
+            new = annotate_index(text, {f["note"]: f["closed"] for f in r["flagged"]})
+            if new != text:
+                index.write_text(new, encoding="utf-8")
+        except (OSError, UnicodeDecodeError):
+            pass
+        ex = ", ".join(f"{f['note']} (all its refs closed by {f['closed']}; suggest {f['suggest']})"
+                       for f in r["flagged"][:4])
+        res = result("yellow", f"{_plural(len(r['flagged']), 'note')} still call finished work open: {ex}"
+                     + (" …" if len(r["flagged"]) > 4 else "") + tail, len(r["flagged"]))
+    else:
+        res = result("green", f"{_plural(r['notes'], 'open-state note')} checked, none about finished work{tail}", 0)
+    try:
+        state_path.parent.mkdir(parents=True, exist_ok=True)
+        state_path.write_text(json.dumps({"day": day, "result": res, "flagged": r["flagged"]}))
+    except OSError:
+        pass
+    return res
+
+
 def _plural(n: int, word: str) -> str:
     return f"{n} {word}{'' if n == 1 else 's'}"
 
@@ -250,6 +406,11 @@ def check(memory_dir: Path | None = None, now: datetime | None = None) -> dict:
 
 
 def _cli(argv: list[str]) -> int:
+    if argv[:1] == ["claims"]:
+        rest = [a for a in argv[1:] if not a.startswith("--")]
+        c = check_claims(Path(rest[0]).expanduser() if rest else None, force=True)
+        print(f"[{c['severity']}] {c['detail']}")
+        return 0
     args = [a for a in argv if not a.startswith("--")]
     d = Path(args[0]).expanduser() if args else None
     if "--json" in argv:

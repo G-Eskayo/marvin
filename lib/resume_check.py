@@ -148,19 +148,26 @@ def _home_repo() -> str:
     return instance.tickets_repo()
 
 
-def extract_refs(texts: list[str], *, repos: dict, default_repo: str, node, cli: Path = CLI,
+def extract_refs(texts: list[str], *, repos: dict, default_repo: str | None, node, cli: Path = CLI,
                  timeout: float = NODE_MAX_S) -> list[list[str]]:
-    """Per text, its refs as "owner/repo#n" keys. Raises RuntimeError when the parser can't run."""
+    """Per text, its refs as "owner/repo#n" keys (a bare ref is "#n" when default_repo is None, for the caller to
+    place). Raises RuntimeError when the parser can't run."""
     if not node:
         raise RuntimeError("node isn't installed, so the refs couldn't be read")
     p = subprocess.run([node, "--no-warnings", str(cli)], capture_output=True, text=True, timeout=timeout,
-                       input=json.dumps({"texts": texts, "repos": repos, "defaultRepo": default_repo}))
+                       input=json.dumps({"texts": texts, "repos": repos, "defaultRepo": default_repo,
+                                         "keepBare": default_repo is None}))
     if p.returncode != 0:
         raise RuntimeError(f"the refs parser failed ({(p.stderr or '').strip()[-160:] or p.returncode})")
     out = json.loads(p.stdout)["refs"]
-    return [[f"{r['repo']}#{r['number']}" for r in refs
-             if all(_NAME.match(x) for x in str(r["repo"]).split("/")) and str(r["repo"]).count("/") == 1]
-            for refs in out]
+
+    def key(r):
+        if r["repo"] is None:
+            return f"#{r['number']}"
+        repo = str(r["repo"])
+        return f"{repo}#{r['number']}" if repo.count("/") == 1 and all(_NAME.match(x) for x in repo.split("/")) else None
+
+    return [[k for k in map(key, refs) if k] for refs in out]
 
 
 # ── GitHub (one call) ────────────────────────────────────────────────────────

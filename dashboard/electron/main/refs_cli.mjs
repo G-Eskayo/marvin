@@ -1,6 +1,7 @@
 // extractRefs for callers that aren't JavaScript (lib/resume_check.py, marvin#1221), so there is one parser.
-// stdin: {texts: [string], repos: {shortName: 'owner/repo'}, defaultRepo: 'owner/repo'}
-// stdout: {refs: [[{repo, number}]]}, one list per text, bare refs given defaultRepo, de-duplicated in order.
+// stdin: {texts: [string], repos: {shortName: 'owner/repo'}, defaultRepo: 'owner/repo', keepBare: bool}
+// stdout: {refs: [[{repo, number}]]}, one list per text, bare refs given defaultRepo (or kept as repo null with
+// keepBare, for a caller that picks their repo itself), de-duplicated in order.
 // Not JSON in: exit 2. The same pattern as webhook-server/decisions_cli.js for lib/decisions_check.py.
 import { extractRefs } from './relations.js'
 
@@ -21,6 +22,11 @@ process.stdin.on('end', () => {
     const out = []
     for (const t of extractRefs(String(text ?? ''), { repos, words: true }).tickets) {
       const repo = t.repo || input.defaultRepo || null
+      if (!repo && input.keepBare) {
+        if (!seen.has(`null#${t.number}`)) out.push({ repo: null, number: t.number })
+        seen.add(`null#${t.number}`)
+        continue
+      }
       const key = `${String(repo).toLowerCase()}#${t.number}`
       if (!repo || seen.has(key)) continue
       seen.add(key)

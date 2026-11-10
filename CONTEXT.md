@@ -2102,3 +2102,9 @@ runs no merge or test of its own and its memory is normal).
   `as_of`, or a ticket's closing PR merged after it. Shown as Gil decided: each changed item listed inline under
   "N of M changed since, treat as history", and an urgent step naming one is struck. GitHub unreachable means "as of
   <date>, unverified", never silent. Each run is a row in `~/.agents/var/resume-checks.jsonl`.
+- **Memory claims** (`memory_lint.check_claims`, health row `memory:claims`, marvin#1225): once a day, a project or
+  reference note whose line says "OPEN", "QUEUED", "URGENT" or "awaiting" has **that line's** refs checked with the
+  resume check's checker (a ref elsewhere in the note, like the PR that found a problem, isn't the claim; a bare `#N`
+  belongs to the one repo its line names). Every ref closed: yellow with an `invalid_at` suggestion, and the
+  MEMORY.md index line gains "(closed <date>)". Feedback and user notes are rules and never flagged on a closed
+  ticket alone. A note is never edited; a day GitHub couldn't be read is yellow and retried, never green.
