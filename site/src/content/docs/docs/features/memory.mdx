@@ -112,7 +112,7 @@ To add a memory, write a note with `name`, `description` and `metadata: type:` f
 ## Related features
 
 - [Skills](/docs/features/skills/): what retrieval mostly returns.
-- [Dashboard](/docs/features/dashboard/): the Health check "Memory links and index are sound" (`memory:lint`).
+- [Dashboard](/docs/features/dashboard/): the Health checks "Memory links and index are sound" (`memory:lint`) and "Memory doesn't call finished work open" (`memory:claims`, once a day: a note whose line says OPEN, QUEUED, URGENT or awaiting about tickets that have all closed gets an `invalid_at` suggestion and a "(closed <date>)" mark on its index line).
 - Lexicon: the shared vocabulary, loaded every session next to the memory index.
 - Handoffs: the `handoff` skill writes a resume document to `~/.claude/handoffs/` before a context switch, so the next session picks up the thread.
 - Session start, routing classifier, qa-agent knowledge base.

@@ -599,6 +599,14 @@ def check_memory_lint() -> dict:
     return memory_lint.check()
 
 
+def check_memory_claims() -> dict:
+    """Memory notes that call finished work open (marvin#1225): once a day, a project or reference note saying
+    "OPEN"/"QUEUED"/"URGENT"/"awaiting" has its refs checked; all closed means yellow with an invalid_at suggestion,
+    and its MEMORY.md line gains "(closed <date>)". Never edits a note."""
+    import memory_lint
+    return memory_lint.check_claims()
+
+
 def check_profile_parity() -> dict | None:
     """The owner's public profile facts (instance config/public-profile.json) match every surface: the live site, the
     resume PDF, the master resume, GitHub and the product sites (marvin#1038). Amber names the surface and field that
@@ -1783,6 +1791,7 @@ def default_checks(reach: dict[str, str] | None = None, reach_results: list[dict
         ("github:gate", "GitHub calls go through the gate", check_gh_gate, CHECK_BUDGET_S),
         ("main:green", "The main branch passes its tests", check_main_health, CHECK_BUDGET_S),
         ("memory:lint", "Memory links and index are sound", check_memory_lint, CHECK_BUDGET_S),
+        ("memory:claims", "Memory doesn't call finished work open", check_memory_claims, CHECK_BUDGET_S),
         ("profile:parity", "Public profile matches everywhere", check_profile_parity, CHECK_BUDGET_S),
         ("site:published", "The site is published", check_site_published, CHECK_BUDGET_S),
         ("seal:beta-ingest", "Seal Speak beta reports are picked up", check_seal_beta_ingest, CHECK_BUDGET_S),

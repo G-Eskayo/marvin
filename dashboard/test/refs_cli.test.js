@@ -47,6 +47,11 @@ describe('refs_cli.mjs', () => {
     expect(out).toEqual([['G-Eskayo/marvin#5', 'G-Eskayo/portfolio-website-updater#17'], ['G-Eskayo/marvin#9']])
   })
 
+  it('keeps bare refs as repo null with keepBare, so the caller can choose their repo', () => {
+    const p = run({ texts: ['G-Eskayo/x#1 and #2'], keepBare: true })
+    expect(JSON.parse(p.stdout).refs[0].map((r) => `${r.repo}#${r.number}`).sort()).toEqual(['G-Eskayo/x#1', 'null#2'])
+  })
+
   it('fails loudly (non-zero) on input that is not JSON', () => {
     const p = spawnSync(process.execPath, ['--no-warnings', CLI], { input: 'not json', encoding: 'utf8' })
     expect(p.status).not.toBe(0)

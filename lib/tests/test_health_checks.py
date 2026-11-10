@@ -1633,7 +1633,12 @@ def test_every_machine_state_key_has_a_label_and_an_unlabelled_one_breaks_nothin
 def test_profile_parity_is_a_registered_health_check():
     ids = [spec[0] for spec in hc.default_checks()]
     assert "profile:parity" in ids
-    assert ids.index("profile:parity") == ids.index("memory:lint") + 1
+    assert ids.index("profile:parity") == ids.index("memory:claims") + 1
+
+
+def test_memory_claims_is_a_registered_health_check_next_to_the_lint():
+    ids = [spec[0] for spec in hc.default_checks()]
+    assert ids.index("memory:claims") == ids.index("memory:lint") + 1
 
 
 def test_profile_parity_reports_nothing_without_a_facts_file(tmp_path, monkeypatch):
