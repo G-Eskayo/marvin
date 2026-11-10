@@ -1,5 +1,7 @@
 # Changelog
 
+- Freshness: Decision supersession (extend ticket 652): answered Decisions find and flag earlier answers to the same question ([#1257](https://github.com/G-Eskayo/marvin/pull/1257))
+
 - Freshness: `stale-relay` probe: measure caught vs leaked stale claims ([#1246](https://github.com/G-Eskayo/marvin/pull/1246))
 
 - Freshness: Memory claims checked: notes asserting open state about closed work get flagged daily ([#1244](https://github.com/G-Eskayo/marvin/pull/1244))
