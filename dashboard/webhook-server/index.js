@@ -443,8 +443,9 @@ const fixTickets = createFixTicketsCache({ exec: execAsync, owners: () => [...ne
 // Everything MR Review reads from here besides the queue: refreshed together on each trigger.
 const refreshFacts = () => Promise.all([unbuiltCache.refresh(), fixTickets.refresh()])
 const triggeredResolver = new Map() // url -> head sha the conflict resolver was started for
+const queueStore = createQueueStore()
 const mergeQueue = createMergeQueue({
-  store: createQueueStore(),
+  store: queueStore,
   load: createQueueLoader({ exec: execAsync, unbuilt: () => unbuiltCache.get(), baseOf: createBaseLookup({ exec: execAsync }) }),
   run: async (url, attach) => {
     attach?.ran()
@@ -491,9 +492,11 @@ server.listen(PORT, () => {
   console.log(`GitHub credential source: ${ghTokenSource}`)
 
   // A merge that was running when the last process died is over: say so now (log + one event to an open dashboard
-  // here), instead of its card reading "Merging…" until the 45-minute limit. Resuming is not attempted: the gate's
-  // scratch worktree died with the process, and Approve again is safe (the gate starts from GitHub's state).
+  // here), instead of its card reading "Merging…" until the 45-minute limit. It is automatically resumed in the queue
+  // so it merges as soon as the gate can run it from GitHub's current state.
   for (const { url, event } of takeInterruptedMerges()) {
+    const repo = repoOfPr(url)
+    if (repo) queueStore.resume(repo, url)
     forwardRefreshPing(DASHBOARD_REFRESH_URL, (u) => postJson(u, { topics: ['merge'], source: 'merge', merge: { url, event } }))
   }
   // marvin#866: ...and that merge's temporary clone (~660 MB) died with it, its finally never ran. Clear any older than

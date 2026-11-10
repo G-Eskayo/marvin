@@ -300,6 +300,7 @@ describe('a webhook restart mid-merge', () => {
     const lost = takeInterruptedMerges(inflightPath(), { log: (l) => lines.push(l), now: () => 99 })
     expect(lost).toEqual([{ url: PR, event: { id: 'a1', seq: 7, stage: 'tests', state: 'failed', interrupted: true, at: 99, detail: 'interrupted: the webhook restarted' } }])
     expect(lines[0]).toMatch(/G-Eskayo\/marvin#559 interrupted: the webhook restarted while it was at "tests"/)
+    expect(lines[0]).toMatch(/Resuming automatically/)
     expect(JSON.parse(readFileSync(inflightPath(), 'utf-8'))).toEqual({})
     // ...and the dashboard's reducer turns that one event into a failed Tests row.
     let p = applyMergeEvent(emptyProgress(), { id: 'a1', seq: 6, stage: 'tests', state: 'running', at: 1 })
