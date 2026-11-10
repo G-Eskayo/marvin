@@ -106,6 +106,24 @@ export function createQueueStore(file = queuePath(), { now = Date.now } = {}) {
         const keep = Object.entries(r.failed).sort((a, b) => b[1].at - a[1].at).slice(0, FAILED_KEEP)
         r.failed = Object.fromEntries(keep)
       })
+    },
+    // Resume an interrupted merge: re-add/move to front, clear stale hold/failed entry.
+    resume(repo, url, { by = 'auto-resume' } = {}) {
+      return change(repo, (r) => {
+        delete r.failed[url]
+        const had = r.items.find((i) => i.url === url)
+        if (had) {
+          delete had.hold
+          const minTime = r.items.length > 0 ? Math.min(...r.items.map((i) => i.approvedAt)) : now()
+          had.approvedAt = minTime - 1
+          r.items.sort((a, b) => a.approvedAt - b.approvedAt)
+          return { resumed: true, item: had }
+        }
+        const minTime = r.items.length > 0 ? Math.min(...r.items.map((i) => i.approvedAt)) : now()
+        const item = { url, number: prNumber(url), approvedAt: minTime - 1, by }
+        r.items.unshift(item)
+        return { resumed: true, item }
+      })
     }
   }
 }
