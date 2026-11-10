@@ -7,14 +7,34 @@
 
 import { stripCode, prTicketRefs } from './ticket_refs.js'
 
-export function extractRefs(text) {
+// Opt-in readings for prose that names work the way people write it (the handoff resume check, marvin#1221):
+//   repos  {shortName: 'owner/repo'}: "portfolio-website-updater #17" (or "marvin#5") is that repo's (an unknown name stays bare)
+//   words  "ticket 1185", "PR 20", "PRs 20, 21 and 22", "issue #9" are bare refs
+// Without them the dashboard's relations read exactly as before.
+export function extractRefs(text, { repos = null, words = false } = {}) {
   const clean = stripCode(text)
   const tickets = []
   // Qualified (owner/repo#n) first, then blank them out so the bare-#n pass doesn't see them again.
-  const unqualified = clean.replace(/\b([A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+)#(\d{1,6})(?![\w-])/g, (_m, repo, n) => {
+  let unqualified = clean.replace(/\b([A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+)#(\d{1,6})(?![\w-])/g, (_m, repo, n) => {
     tickets.push({ repo, number: Number(n) })
     return ' '
   })
+  if (repos) {
+    unqualified = unqualified.replace(/(?<![\w/.-])([A-Za-z0-9_.-]+)\s*#(\d{1,6})(?![\w-])/g, (m, name, n) => {
+      const repo = repos[name] || repos[name.toLowerCase()]
+      if (!repo) return m
+      tickets.push({ repo, number: Number(n) })
+      return ' '
+    })
+  }
+  if (words) {
+    const LIST = /\b(?:tickets?|issues?|PRs?|pull requests?)\s+#?(\d{1,6})((?:\s*(?:,|&|\band\b)\s*#?\d{1,6}(?![\w-]))*)(?![\w-])/gi
+    unqualified = unqualified.replace(LIST, (_m, first, rest) => {
+      tickets.push({ repo: null, number: Number(first) })
+      for (const x of rest.matchAll(/\d{1,6}/g)) tickets.push({ repo: null, number: Number(x[0]) })
+      return ' '
+    })
+  }
   for (const m of unqualified.matchAll(/(?<![\w/&#])#(\d{1,6})(?![\w-])/g)) tickets.push({ repo: null, number: Number(m[1]) })
 
   const adrs = new Set()

@@ -29,7 +29,16 @@ After saving, you MUST do both:
 
 ## Document Structure
 
+The front matter dates the handoff by its content, not its file time (marvin#1221). The `PostToolUse` hook
+(`emit-resume-prompt.py`) adds it if you leave it out, and never overwrites one that's there.
+
 ```
+---
+as_of: [UTC time of this session's last real activity, e.g. 2026-11-09T22:00:00Z]
+machine: [this Mac's label]
+session: [this session's id]
+source: skill
+---
 # Handoff — [date]
 
 ## What we were working on
@@ -68,6 +77,10 @@ Continue from handoff: ~/.claude/handoffs/handoff-[timestamp].md
 - Keep the whole document under 150 lines — compress aggressively, reference don't repeat
 
 ## On Resume
+
+The SessionStart report already checks the newest handoff's ticket and PR claims against GitHub
+(`lib/resume_check.py`). When it says "N of M changed since, treat as history" or "unverified", the handoff is
+history: re-derive the current state before acting on any of it, and never relay a struck step as current.
 
 When starting a new session, check `~/.claude/handoffs/` for the most recent file. If one exists and is recent (within 7 days), read it and use it to restore context before doing anything else.
 

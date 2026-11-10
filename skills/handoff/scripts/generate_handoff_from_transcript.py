@@ -15,6 +15,11 @@ the prompt — bounded cost regardless of session length, matching
 daily_digest.py's "assemble real context, don't make the model discover
 it" pattern.
 
+Dated by the transcript, not today (marvin#1221): the handoff's front matter `as_of` is the last message's own
+timestamp, `machine` the Mac the session ran on (this one: the generator runs where the transcript is) and `session`
+the transcript's id. A handoff rebuilt today from a Nov 3 session reads as Nov 3, so the resume check treats it as
+history. It never overwrites an existing handoff (a skill-written one in the same minute keeps its file).
+
 Usage: generate_handoff_from_transcript.py <transcript-path>
 """
 from __future__ import annotations
@@ -26,6 +31,8 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path.home() / ".agents" / "lib"))
 import marvin_launcher  # noqa: E402
+import resume_check  # noqa: E402
+from machine_profile import machine_label  # noqa: E402
 
 MAX_MESSAGES = 60
 MAX_BLOCK_CHARS = 800
@@ -79,6 +86,33 @@ def extract_recent_excerpt(transcript_path: Path, max_messages: int = MAX_MESSAG
     return "\n\n".join(lines)
 
 
+def last_message_time(transcript_path: Path) -> datetime | None:
+    """The timestamp of the transcript's last user or assistant message: the session's last real activity."""
+    last = None
+    with transcript_path.open(errors="ignore") as f:
+        for line in f:
+            try:
+                d = json.loads(line)
+            except Exception:
+                continue
+            if d.get("type") in ("user", "assistant"):
+                t = resume_check._parse_time(d.get("timestamp"))
+                last = t or last
+    return last
+
+
+def handoff_path(now: datetime | None = None) -> Path:
+    """A handoff file name that doesn't exist yet: never write over another handoff."""
+    now = now or datetime.now(timezone.utc)
+    base = f"handoff-{now:%Y-%m-%d-%H-%M}"
+    p = HANDOFF_DIR / f"{base}.md"
+    n = 2
+    while p.exists():
+        p = HANDOFF_DIR / f"{base}-{n}.md"
+        n += 1
+    return p
+
+
 PROMPT_TEMPLATE = """You are generating a handoff document for Gil's MARVIN system, from a
 still-open (or just-finished) Claude Code session's transcript — you were dispatched because Gil
 switched to a different machine and there's no live model with this conversation's context to ask
@@ -96,7 +130,7 @@ transcript — tool calls are noted but not shown in full, tool results are trun
 {excerpt}
 ---
 
-Save the handoff to {handoff_dir}/handoff-{timestamp}.md — use the Write tool, nothing else needs
+Save the handoff to exactly {target} — use the Write tool, nothing else needs
 touching. Do not print the resume prompt to stdout; just write the file.
 """
 
@@ -116,12 +150,10 @@ def main() -> None:
         print("no extractable content in transcript — nothing to summarize", file=sys.stderr)
         sys.exit(0)
 
-    timestamp = datetime.now(timezone.utc).strftime("%Y-%m-%d-%H-%M")
-    prompt = PROMPT_TEMPLATE.format(
-        skill_path=SKILL_PATH, excerpt=excerpt, handoff_dir=HANDOFF_DIR, timestamp=timestamp,
-    )
-
     HANDOFF_DIR.mkdir(parents=True, exist_ok=True)
+    target = handoff_path()
+    prompt = PROMPT_TEMPLATE.format(skill_path=SKILL_PATH, excerpt=excerpt, target=target)
+
     try:
         result = marvin_launcher.launch("utility-call", prompt, tools="Read,Write", permission_mode="bypassPermissions",
                                         timeout=180)
@@ -131,7 +163,13 @@ def main() -> None:
     if result.exit_code != 0:
         print(f"handoff generation failed: {(result.stderr or result.text)[:500]}", file=sys.stderr)
         sys.exit(1)
-    print(f"handoff generated for {timestamp}")
+    if not target.exists():
+        print(f"handoff generation wrote nothing at {target}", file=sys.stderr)
+        sys.exit(1)
+    as_of = last_message_time(transcript_path) or datetime.fromtimestamp(transcript_path.stat().st_mtime, timezone.utc)
+    resume_check.stamp(target, as_of=as_of, machine=machine_label(), session=transcript_path.stem, source="rebuilt",
+                       force=True)  # the child's own write hook stamped "now"; the transcript's time is the truth
+    print(f"handoff generated: {target.name} (as of {as_of:%Y-%m-%d %H:%M} UTC)")
 
 
 if __name__ == "__main__":

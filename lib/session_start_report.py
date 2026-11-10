@@ -30,6 +30,7 @@ sys.path.insert(0, str(Path.home() / ".agents" / "skills" / "safety-monitor" / "
 from hook_errors import log_hook_error  # noqa: E402
 import machine_profile  # noqa: E402
 import inbox  # noqa: E402
+import resume_check  # noqa: E402
 
 HOME = Path.home()
 CLAUDE_DIR = HOME / ".claude"
@@ -99,22 +100,24 @@ def check_identity() -> str:
 
 
 def check_handoff() -> str | None:
+    """The newest handoff by its content date (`as_of`, not mtime), with its ticket and PR claims checked against
+    GitHub first (lib/resume_check.py, marvin#1221): a claim that changed since is shown as history, never as current."""
     d = CLAUDE_DIR / "handoffs"
-    if not d.exists():
+    now = _now()
+    ranked = resume_check.ranked_handoffs(d, now)
+    if not ranked:
         return None
-    files = sorted(d.glob("handoff-*.md"), key=lambda p: p.stat().st_mtime, reverse=True)
-    if not files:
+    latest, when = ranked[0]
+    if now - when.at > timedelta(days=7):
         return None
-    latest = files[0]
-    age = _now() - datetime.fromtimestamp(latest.stat().st_mtime, tz=timezone.utc)
-    if age > timedelta(days=7):
-        return None
-    title = next((ln.lstrip("# ").strip() for ln in latest.read_text(errors="replace").splitlines()
-                  if ln.startswith("#")), "")
-    where = str(latest).replace(str(HOME), "~", 1)
-    return (f"## Most recent handoff — {latest.name} ({age.days}d old)\n\n"
-            + (f"{title}. " if title else "")
-            + f"Read `{where}` before resuming that work.")
+    text = latest.read_text(errors="replace")
+    try:
+        report = resume_check.check(text, when, now=now)
+    except Exception as exc:  # noqa: BLE001  (the check never hides the handoff; it says it couldn't run)
+        log_hook_error(HOOK_NAME, "check_handoff", exc)
+        report = resume_check.Report("unverified", when, reason=f"the check failed ({exc.__class__.__name__})")
+    resume_check.log_run(report, handoff=latest, where="session-start", machine=machine_profile.machine_label())
+    return resume_check.render_section(latest, report, home=HOME, text=text, now=now)
 
 
 def _open_in_inbox(pile: str) -> int | None:
