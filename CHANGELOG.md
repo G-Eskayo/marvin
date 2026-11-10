@@ -1,5 +1,7 @@
 # Changelog
 
+- Workshop: a "Part of #N" PR hides ticket #N completely (it should only fold in on "Closes #N") ([#1204](https://github.com/G-Eskayo/marvin/pull/1204))
+
 - Main is red at 2b914e8: fix forward ([#1194](https://github.com/G-Eskayo/marvin/pull/1194))
 
 - Box builds: Mac-side dispatch of Linux-safe tickets to a VM on mac-mini-2012 ([#981](https://github.com/G-Eskayo/marvin/pull/981))
