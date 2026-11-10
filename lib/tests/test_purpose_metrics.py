@@ -469,3 +469,131 @@ def test_the_model_run_timeouts_probe_counts_planner_and_executor_timeouts_in_th
     assert pm._model_run_timeouts(days=7, path=tmp_path / "missing.jsonl", now=now) == 0.0
     fn, limit, what = pm.PROBES["model-run-timeouts"]
     assert limit == 2.0 and "launches.jsonl" in what
+
+
+# ── #1098/#1156: CI's embedding model downloads that flaked the Python tests (#1163 fix) ─────────────────────
+
+def _run(rid, jobs_list):
+    return {"id": rid, "jobs": jobs_list}
+
+
+def _py_job(name, conclusion):
+    return {"name": name, "conclusion": conclusion}
+
+
+def test_ci_onnx_download_failures_counts_python_tests_failures_in_the_window():
+    """#1098/#1156 (2026-11-09): counts any 'Python tests' job with conclusion in {failure, timed_out} in the
+    7-day window. Option B: conclusion-only (no log-text fetch); noisier than exact-symptom-match but respects
+    the PROBES convention and reuses _ci_python_minutes' shape."""
+    now = datetime(2026, 11, 18, 12, tzinfo=timezone.utc)
+    runs = {"workflow_runs": [
+        {"id": 1, "created_at": (now - timedelta(days=1)).isoformat(), "head_branch": "main"},  # has failed Python tests
+        {"id": 2, "created_at": (now - timedelta(days=1)).isoformat(), "head_branch": "main"},  # has timed out Python tests
+        {"id": 3, "created_at": (now - timedelta(days=1)).isoformat(), "head_branch": "main"},  # has success Python tests
+        {"id": 4, "created_at": (now - timedelta(days=1)).isoformat(), "head_branch": "main"},  # has failed non-Python job
+    ]}
+    jobs = {
+        1: [_py_job("Python tests", "failure"), _py_job("Rules", "failure")],
+        2: [_py_job("Python tests", "timed_out")],
+        3: [_py_job("Python tests", "success")],
+        4: [_py_job("Lint", "failure")],
+    }
+
+    def fetch(path):
+        if "/jobs" in path:
+            run_id = int(path.split("/runs/")[1].split("/")[0])
+            return {"jobs": jobs[run_id]}
+        # Return runs only for page 1 (default if page= not in path); empty for other pages
+        if "page=" in path and "page=1" not in path:
+            return {"workflow_runs": []}
+        return runs
+
+    assert pm._ci_onnx_download_failures(fetch=fetch, now=now) == 2.0
+
+
+def test_ci_onnx_download_failures_with_no_failed_python_tests_is_zero():
+    """No failures in the window → 0.0, not an error."""
+    now = datetime(2026, 11, 18, 12, tzinfo=timezone.utc)
+    runs = {"workflow_runs": [{"id": 1, "created_at": (now - timedelta(days=1)).isoformat(), "head_branch": "main"}]}
+    jobs = {1: [_py_job("Python tests", "success")]}
+    def fetch(path):
+        if "/jobs" in path:
+            return {"jobs": jobs[1]}
+        if "page=" in path and "page=1" not in path:
+            return {"workflow_runs": []}
+        return runs
+    assert pm._ci_onnx_download_failures(fetch=fetch, now=now) == 0.0
+
+
+def test_ci_onnx_download_failures_skips_no_python_tests_job():
+    """A run with no 'Python tests' job at all → not counted."""
+    now = datetime(2026, 11, 18, 12, tzinfo=timezone.utc)
+    runs = {"workflow_runs": [{"id": 1, "created_at": (now - timedelta(days=1)).isoformat(), "head_branch": "main"}]}
+    jobs = {1: [_py_job("Lint", "failure"), _py_job("Build", "failure")]}
+    def fetch(path):
+        if "/jobs" in path:
+            return {"jobs": jobs[1]}
+        if "page=" in path and "page=1" not in path:
+            return {"workflow_runs": []}
+        return runs
+    assert pm._ci_onnx_download_failures(fetch=fetch, now=now) == 0.0
+
+
+def test_ci_onnx_download_failures_skips_missing_conclusion():
+    """A job with no conclusion field → skipped, not counted."""
+    now = datetime(2026, 11, 18, 12, tzinfo=timezone.utc)
+    runs = {"workflow_runs": [
+        {"id": 1, "created_at": (now - timedelta(days=1)).isoformat(), "head_branch": "main"},
+        {"id": 2, "created_at": (now - timedelta(days=1)).isoformat(), "head_branch": "main"},
+    ]}
+    jobs = {
+        1: [{"name": "Python tests"}],  # missing conclusion
+        2: [_py_job("Python tests", "failure")],
+    }
+    def fetch(path):
+        if "/jobs" in path:
+            run_id = int(path.split("/runs/")[1].split("/")[0])
+            return {"jobs": jobs[run_id]}
+        if "page=" in path and "page=1" not in path:
+            return {"workflow_runs": []}
+        return runs
+    assert pm._ci_onnx_download_failures(fetch=fetch, now=now) == 1.0
+
+
+def test_ci_onnx_download_failures_respects_the_7day_window():
+    """A failure inside the window is counted; one just outside is not."""
+    now = datetime(2026, 11, 18, 12, tzinfo=timezone.utc)
+    # Runs have created_at timestamps; only those within 7 days count
+    runs = {"workflow_runs": [
+        {"id": 1, "created_at": (now - timedelta(days=1)).isoformat(), "head_branch": "main"},
+        {"id": 2, "created_at": (now - timedelta(days=7)).isoformat(), "head_branch": "main"},    # just inside
+        {"id": 3, "created_at": (now - timedelta(days=7.1)).isoformat(), "head_branch": "main"},  # just outside
+    ]}
+    jobs = {
+        1: [_py_job("Python tests", "failure")],
+        2: [_py_job("Python tests", "failure")],
+        3: [_py_job("Python tests", "failure")],
+    }
+    def fetch(path):
+        if "/jobs" in path:
+            run_id = int(path.split("/runs/")[1].split("/")[0])
+            return {"jobs": jobs[run_id]}
+        if "page=" in path and "page=1" not in path:
+            return {"workflow_runs": []}
+        return runs
+    assert pm._ci_onnx_download_failures(fetch=fetch, now=now) == 2.0
+
+
+def test_ci_onnx_download_failures_propagates_fetch_errors():
+    """If the run-listing fetch fails (API unreachable), the error propagates (handled by check_issue's retry)."""
+    def broken_fetch(path):
+        raise OSError("GitHub API unreachable")
+    with pytest.raises(OSError, match="GitHub API"):
+        pm._ci_onnx_download_failures(fetch=broken_fetch)
+
+
+def test_ci_onnx_download_failures_is_registered():
+    """The probe is registered with a baseline pointing to #1098/#1156."""
+    assert "ci-onnx-download-failures" in pm.PROBES
+    fn, limit, what = pm.PROBES["ci-onnx-download-failures"]
+    assert limit == 6.0 and "#1098" in what and "#1156" in what and "#1163" in what
