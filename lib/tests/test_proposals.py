@@ -60,6 +60,12 @@ def test_add_then_list_round_trip(root):
     assert got["north_star_name"] == "Minimise resources"
 
 
+def test_a_proposal_can_name_north_star_5(root):
+    got = p.add(root, idea(north_star=5), today=TODAY)
+    assert p.load_all(root, today=TODAY)["proposals"][0]["north_star_name"] == "Every machine works, none overloaded"
+    assert got["id"]
+
+
 @pytest.mark.parametrize("field", ["title", "problem", "fix", "why", "north_star"])
 def test_add_rejects_a_proposal_missing_a_required_field(root, field):
     bad = idea()
@@ -70,7 +76,7 @@ def test_add_rejects_a_proposal_missing_a_required_field(root, field):
 
 
 @pytest.mark.parametrize("over", [
-    {"north_star": 0}, {"north_star": 5}, {"north_star": "1"}, {"north_star": True},
+    {"north_star": 0}, {"north_star": 6}, {"north_star": "1"}, {"north_star": True},
     {"size": "Huge"}, {"title": "   "}, {"problem": "x" * 601}, {"title": "t" * 141},
     {"technical": "x" * 5001}, {"area": 7},
 ])

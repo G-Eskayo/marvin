@@ -80,5 +80,11 @@ def test_titles_are_read_from_the_doc_in_order(tmp_path):
     assert north_stars.titles(doc) == ["First one", "Second, with a comma", "Third"]
 
 
-def test_the_real_doc_has_four_titles():
-    assert len(north_stars.titles()) == 4
+def test_the_real_doc_has_five_titles():
+    assert len(north_stars.titles()) == 5
+
+
+def test_proposals_know_every_north_star_in_the_doc():
+    # marvin#1198: the doc gained a fifth north star; a proposal must be able to name each one.
+    import proposals
+    assert sorted(proposals.NORTH_STARS) == list(range(1, len(north_stars.titles()) + 1))
