@@ -442,8 +442,22 @@ PROBES: dict[str, tuple[Callable[..., float], float, str]] = {
     # code doesn't change, so any rise above this resets the fix-check (#1098, verified 2026-11-09).
     "ci-onnx-download-failures": (lambda days=PROBE_WINDOW_DAYS: _ci_onnx_download_failures(days=days), 6.0,
                                   "GitHub's 'Python tests' job failures over 7 days (#1098/#1156, fixed by #1163)"),
+    # Piece 4 of the data-freshness plan (marvin#1224): a stale claim that still reached the owner. Target 0 two weeks running.
+    "stale-relay-leaked": (lambda days=PROBE_WINDOW_DAYS: _stale_relay("leaked", days), 0.0,
+                           "stale claims that reached the owner over 7 days (question log kind=stale + their own 'that's "
+                           "already fixed' replies), per Mac, summed (#1224)"),
 }
 MEASURES.update({name: fn for name, (fn, _limit, _what) in PROBES.items()})
+MEASURES["stale-relay-caught"] = lambda: _stale_relay("caught")
+
+
+def _stale_relay(key: str, days: float = PROBE_WINDOW_DAYS) -> float:
+    """One number from this Mac's stale-relay week. A week with no sessions is unknown, not 0: it raises."""
+    import stale_relay
+    w = stale_relay.week(days=days)
+    if not w["known"]:
+        raise ValueError("no sessions on this Mac in the window: unknown, not 0")
+    return float(w[key])
 
 
 def _ladder(fn: str) -> float:

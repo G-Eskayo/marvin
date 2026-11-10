@@ -2108,3 +2108,7 @@ runs no merge or test of its own and its memory is normal).
   belongs to the one repo its line names). Every ref closed: yellow with an `invalid_at` suggestion, and the
   MEMORY.md index line gains "(closed <date>)". Feedback and user notes are rules and never flagged on a closed
   ticket alone. A note is never edited; a day GitHub couldn't be read is yellow and retried, never green.
+- **Stale relay** (`lib/stale_relay.py`, health row `freshness:stale-relay`, probe `stale-relay-leaked`, marvin#1224):
+  per Mac per week, **caught** = distinct (handoff, item) pairs the resume check found changed; **leaked** = question-log
+  entries with `kind: stale` plus Gil's own short interactive replies saying a relayed claim was already done or old.
+  A week with no sessions is **unknown**, never 0. Target: leaked 0 two weeks running.
