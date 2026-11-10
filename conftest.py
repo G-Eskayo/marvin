@@ -10,6 +10,9 @@
    that need gh behaviour mock it.
 3. Only the selected tests are collected when $MARVIN_SELECTED_TESTS names a file (marvin#826, lib/affected_tests.py):
    a PR runs what its change can affect, and files it can't are never imported.
+4. chromadb ONNX model downloads are guarded by fcntl.flock across pytest-xdist workers (marvin#1156). Without locking,
+   concurrent workers race on ~/.cache/chroma and corrupt the embedded model. The guard wraps ONNXMiniLM_L6_V2 at
+   startup, serializing downloads across workers with no performance cost when single-threaded.
 """
 import atexit
 import os
@@ -48,6 +51,13 @@ os.environ["HOME"] = str(TEST_HOME)
 # passes or fails with the machine's memory (the Mini runs the suite while it is busy); test_memory_guard unpins it.
 os.environ["MARVIN_MEMORY_PRESSURE_LEVEL"] = "normal"
 atexit.register(shutil.rmtree, TEST_HOME, True)  # removes the links, never what they point to
+try:
+    from chromadb.utils.embedding_functions.onnx_mini_lm_l6_v2 import ONNXMiniLM_L6_V2
+except ImportError:
+    pass
+else:
+    import chroma_onnx_lock
+    chroma_onnx_lock.protect(ONNXMiniLM_L6_V2)
 WRITE_GUARD = real_home_guard.install_write_guard(real_home_guard.protected_roots(REAL_HOME),
                                                   resolve_under=(str(TEST_HOME / ".claude"),))
 
