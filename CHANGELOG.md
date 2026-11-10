@@ -1,5 +1,7 @@
 # Changelog
 
+- code_sync: concurrent runs race on one clone (MERGE_AUTOSTASH / HEAD lock), logged as CONFLICT ([#1189](https://github.com/G-Eskayo/marvin/pull/1189))
+
 - Auto-sync swept 12 worktrees into main as gitlinks (again, after #430) ([#1191](https://github.com/G-Eskayo/marvin/pull/1191))
 
 - Workshop: a "Part of #N" PR hides ticket #N completely (it should only fold in on "Closes #N") ([#1204](https://github.com/G-Eskayo/marvin/pull/1204))
