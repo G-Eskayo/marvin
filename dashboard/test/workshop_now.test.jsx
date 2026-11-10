@@ -364,3 +364,34 @@ describe('worker names (owner, PR #1030)', () => {
     expect(loadSaved(store).value.machines).toEqual({ a: 'A' })
   })
 })
+
+
+// marvin#1203: Gil couldn't find #1198 at all. An open "Part of #1198" PR (#1199) had swallowed its row.
+describe('only a PR that closes a ticket carries it', () => {
+  const src = (tickets, prs) => ({ prs, tickets, projects, running: [], queue: [], proposals: [], events: new Map() })
+
+  it('a "Part of" PR leaves the ticket as its own item, keeping its own step', () => {
+    const { items, sections } = buildNow(src([ticket(1198, ['needs-info', 'priority:p1'], { prs: [1199], closes: [] })], [pr(1199)]), NOW)
+    const t = items.find((i) => i.type === 'ticket' && i.number === 1198)
+    expect(t).toBeTruthy()
+    expect(sections.yours.map((i) => i.number)).toContain(1198)
+    expect(items.find((i) => i.number === 1199).covers).toEqual([])
+  })
+
+  it('a PR the board says closes the ticket still carries it (one item)', () => {
+    const { items } = buildNow(src([ticket(5, ['ready-for-agent'], { prs: [60], closes: [60] })], [pr(60)]), NOW)
+    expect(items.filter((i) => i.type === 'ticket')).toEqual([])
+    expect(items.find((i) => i.number === 60).covers).toEqual([`${REPO}#5`])
+  })
+
+  it('a ticket with both a closing and a "Part of" PR folds into the closing one only', () => {
+    const { items } = buildNow(src([ticket(5, ['ready-for-agent'], { prs: [61, 60], closes: [60] })], [pr(61), pr(60)]), NOW)
+    expect(items.find((i) => i.number === 60).covers).toEqual([`${REPO}#5`])
+    expect(items.find((i) => i.number === 61).covers).toEqual([])
+  })
+
+  it('an old saved ticket with no `closes` is shown on its own rather than hidden', () => {
+    const { items } = buildNow(src([ticket(5, ['needs-info'], { prs: [60] })], [pr(60)]), NOW)
+    expect(items.find((i) => i.type === 'ticket' && i.number === 5)).toBeTruthy()
+  })
+})
