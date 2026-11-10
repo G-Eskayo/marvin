@@ -1,5 +1,7 @@
 # Changelog
 
+- Freshness: Resume check: verify a handoff's ticket and PR claims before SessionStart surfaces it ([#1237](https://github.com/G-Eskayo/marvin/pull/1237))
+
 - code_sync: concurrent runs race on one clone (MERGE_AUTOSTASH / HEAD lock), logged as CONFLICT ([#1189](https://github.com/G-Eskayo/marvin/pull/1189))
 
 - Auto-sync swept 12 worktrees into main as gitlinks (again, after #430) ([#1191](https://github.com/G-Eskayo/marvin/pull/1191))
