@@ -96,6 +96,18 @@ def refusal(body: str, node: str | None | bool = True, cli: Path = CLI, say=lamb
     return None
 
 
+def parse(body: str, node: str | None | bool = True, cli: Path = CLI) -> dict | None:
+    """{present, problems, heading, asBuilt} from the one parser, or None when it can't run (callers decide)."""
+    node = find_node() if node is True else node
+    if not node:
+        return None
+    try:
+        p = subprocess.run([node, str(cli)], input=body or "", capture_output=True, text=True, timeout=20)
+        return json.loads(p.stdout) if p.returncode == 0 else None
+    except Exception:  # noqa: BLE001
+        return None
+
+
 def as_built(body: str, node: str | None | bool = True, cli: Path = CLI) -> bool:
     """True when the body's answered Decisions only pick what is already built, with no Note and no written answer
     (decisions.js answersAsBuilt; owner decision on PR #987, 2026-11-02). The same parser through node, so the merge
