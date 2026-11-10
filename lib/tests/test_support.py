@@ -1107,3 +1107,12 @@ def test_the_attempt_passes_the_decisions_to_the_model(tmp_path):
     support.attempt(gh, lambda p: seen.setdefault("p", p) and json.dumps({"verdict": "explain", "comment": "ok"}),
                     REPO, 1, tmp_path / "s.json", decisions="- Help goes through GitHub only.")
     assert "Help goes through GitHub only." in seen["p"]
+
+
+def test_idea_prompt_lists_every_north_star_from_the_one_source():
+    # marvin#1198: the prompt kept its own copy of the north stars ("1-4") and missed the fifth.
+    import proposals
+    text = support.idea_prompt({"number": 1, "title": "t", "body": "b"})
+    for n, name in proposals.NORTH_STARS.items():
+        assert f"{n} {name}" in text
+    assert f'"north_star": 1-{max(proposals.NORTH_STARS)}' in text

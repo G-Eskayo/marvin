@@ -35,7 +35,8 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 import inbox  # noqa: E402  (the shared file rules)
 from inbox import ID_RE, MAX_FILE_BYTES, write_atomic as _write_atomic, locked as _locked  # noqa: E402,F401
 
-NORTH_STARS = {1: "Minimise resources", 2: "Phone OS", 3: "Raise the human experience", 4: "Best tool for making tools"}
+NORTH_STARS = {1: "Minimise resources", 2: "Phone OS", 3: "Raise the human experience", 4: "Best tool for making tools",
+               5: "Every machine works, none overloaded"}
 SIZES = ("Small", "Medium", "Large")
 LIMITS = {"title": 140, "problem": 600, "fix": 600, "why": 600, "area": 40, "source": 60, "technical": 5000}
 REQUIRED = ("title", "problem", "fix", "why")
