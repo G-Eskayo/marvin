@@ -105,8 +105,13 @@ def test_the_ripgrep_tests_declare_rg(name):
 
 
 def test_the_find_file_tests_say_they_need_the_organize_folder():
+    # The declaration must come before the tool is loaded, whichever way it's loaded: a plain import, or (since the
+    # box-build VMs, which have no ~/.claude, ticket 951) pytest.importorskip. Main went red on the literal text (1192).
+    import re
     src = (ROOT / "lib" / "tests" / "test_find_file.py").read_text()
-    assert "require_path(" in src and src.index("require_path(") < src.index("import find_file")
+    load = re.search(r"^\s*import find_file\b|importorskip\(\s*[\"']find_file[\"']", src, re.M)
+    assert load, "test_find_file.py no longer loads find_file at all"
+    assert "require_path(" in src and src.index("require_path(") < load.start()
 
 
 def test_the_root_conftest_loads_the_plugin():
