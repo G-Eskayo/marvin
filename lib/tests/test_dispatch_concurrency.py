@@ -234,4 +234,6 @@ def test_refresh_dispatch_state_summary_idle_when_no_records(tmp_path, monkeypat
 
     dc.refresh_dispatch_state_summary(tasks_dir)
     state = json.loads((tmp_path / "state.json").read_text())
-    assert state == {"busy": False}
+    import stamped
+    assert {k: v for k, v in state.items() if k not in stamped.STAMP_KEYS} == {"busy": False}
+    assert state["tolerance_s"] == dc.DISPATCH_TOLERANCE_S and state["alive_at"]  # stamped (marvin#1223)

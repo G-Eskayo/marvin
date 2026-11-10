@@ -1,0 +1,24 @@
+{
+  "_doc": "Shared cases for lib/stamped.py and dashboard/electron/main/stamped.js (marvin#1223): both run every case, so the two readers can't drift. now is 2026-11-10T12:00:00Z. mtime is the file's modified time (seconds since the epoch), used only for a legacy file with no generated_at.",
+  "now": "2026-11-10T12:00:00Z",
+  "cases": [
+    {"name": "fresh", "data": {"host": "mac-mini-1", "generated_at": "2026-11-10T11:58:00Z", "tolerance_s": 1200, "x": 1},
+     "expect": {"host": "mac-mini-1", "age_s": 120, "stale": false, "legacy": false, "future": false, "value_x": 1}},
+    {"name": "exactly at tolerance is not stale", "data": {"host": "a", "generated_at": "2026-11-10T11:40:00Z", "tolerance_s": 1200},
+     "expect": {"age_s": 1200, "stale": false}},
+    {"name": "one second past tolerance is stale", "data": {"host": "a", "generated_at": "2026-11-10T11:39:59Z", "tolerance_s": 1200},
+     "expect": {"age_s": 1201, "stale": true}},
+    {"name": "alive_at newer than generated_at keeps a quiet copy current", "data": {"host": "a", "generated_at": "2026-11-09T12:00:00Z", "alive_at": "2026-11-10T11:59:00Z", "tolerance_s": 600},
+     "expect": {"age_s": 60, "stale": false}},
+    {"name": "a future generated_at is age 0, flagged, never negative", "data": {"host": "a", "generated_at": "2026-11-10T12:30:00Z", "tolerance_s": 600},
+     "expect": {"age_s": 0, "future": true, "stale": false}},
+    {"name": "legacy file: no host, dated by its own generated_at, default tolerance", "data": {"generated_at": "2026-10-29T12:00:00+00:00", "checks": []}, "default_tolerance_s": 1200,
+     "expect": {"host": null, "legacy": true, "stale": true, "age_s": 1036800}},
+    {"name": "legacy file with no time at all is dated by mtime", "data": {"busy": false}, "mtime": 1794312000, "default_tolerance_s": 3600,
+     "expect": {"legacy": true, "age_s": 0, "stale": false}},
+    {"name": "a garbled time is unknown age and stale", "data": {"host": "a", "generated_at": "yesterday", "tolerance_s": 600},
+     "expect": {"age_s": null, "stale": true}},
+    {"name": "epoch-milliseconds alive_at (the github feed's form) is understood", "data": {"host": "a", "alive_at": 1794311940000, "tolerance_s": 600},
+     "expect": {"age_s": 60, "stale": false}}
+  ]
+}

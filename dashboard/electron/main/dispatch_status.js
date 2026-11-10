@@ -1,4 +1,4 @@
-import { readFileSync, existsSync } from 'fs'
+import { readStamped } from './stamped.js'
 import { homedir } from 'os'
 import path from 'path'
 
@@ -14,12 +14,7 @@ import path from 'path'
 export const DISPATCH_STATE_PATH = path.join(homedir(), '.claude', 'dispatch-state.json')
 
 export function readDispatchStatus(statePath = DISPATCH_STATE_PATH) {
-  if (!existsSync(statePath)) return { busy: false, task: null, startedAt: null }
-  try {
-    const data = JSON.parse(readFileSync(statePath, 'utf-8'))
-    if (!data.busy) return { busy: false, task: null, startedAt: null }
-    return { busy: true, task: data.task || null, startedAt: data.started_at || null }
-  } catch {
-    return { busy: false, task: null, startedAt: null }
-  }
+  const data = readStamped(statePath, { defaultToleranceS: 3600 }).value
+  if (!data || !data.busy) return { busy: false, task: null, startedAt: null }
+  return { busy: true, task: data.task || null, startedAt: data.started_at || null }
 }

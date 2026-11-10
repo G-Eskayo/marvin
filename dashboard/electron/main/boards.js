@@ -1,4 +1,4 @@
-import { existsSync, readFileSync } from 'fs'
+import { readStamped } from './stamped.js'
 import { execFile } from 'child_process'
 import { homedir } from 'os'
 import path from 'path'
@@ -23,10 +23,9 @@ const crossProjectCache = new Map()
 export function clearCrossProjectCache() { crossProjectCache.clear() }
 
 export function readRegistry(file = REGISTRY_PATH, overrides = readOverrides()) {
-  if (!existsSync(file)) return []
   try {
-    const data = JSON.parse(readFileSync(file, 'utf-8'))
-    if (!Array.isArray(data.boards)) return []
+    const data = readStamped(file, { defaultToleranceS: 3 * 3600 }).value
+    if (!data || !Array.isArray(data.boards)) return []
     return data.boards.map((b) => {
       const o = overrides[projectId(b.repo)] || {}
       return { ...b, ...(o.due ? { due: o.due, dueHard: !!o.dueHard } : {}) }

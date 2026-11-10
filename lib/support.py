@@ -1074,7 +1074,8 @@ def diagnostics(*, home: Path | None = None, engine_dir: Path | None = None) -> 
         commit = None
     health = {"overall": "unknown", "not_green": [], "recent_errors": []}
     try:
-        data = json.loads((home / ".claude" / "logs" / "health-status.json").read_text())
+        import stamped
+        data = stamped.read(home / ".claude" / "logs" / "health-status.json").value
         if isinstance(data, dict):
             s = lambda v: scrub(str(v)[:300], home=home) if v is not None else None  # noqa: E731
             health["overall"] = s(data.get("overall")) or "unknown"

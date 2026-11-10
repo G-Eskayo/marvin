@@ -1,4 +1,5 @@
 import { readFileSync } from 'fs'
+import { readStamped } from './stamped.js'
 import { homedir } from 'os'
 import path from 'path'
 
@@ -26,12 +27,9 @@ export function groupProposals(proposals) {
 }
 
 export function readTicketAgents({ proposalsPath = PROPOSALS_PATH, configPath = CONFIG_PATH } = {}) {
-  let p
-  try {
-    p = JSON.parse(readFileSync(proposalsPath, 'utf-8'))
-  } catch {
-    return null
-  }
+  const c = readStamped(proposalsPath, { defaultToleranceS: 2 * 3600 })
+  if (c.missing) return null
+  const p = { ...c.value, copy: { host: c.host || null, ageS: c.ageS, stale: !!c.stale, legacy: !!c.legacy } }
   let config = {}
   try {
     config = JSON.parse(readFileSync(configPath, 'utf-8'))

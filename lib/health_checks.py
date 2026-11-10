@@ -34,6 +34,7 @@ from task_dispatch import TAILSCALE_BIN, TAILSCALE_ENV  # noqa: E402  (absolute 
 
 HOME = Path.home()
 STATUS_PATH = HOME / ".claude" / "logs" / "health-status.json"
+STATUS_TOLERANCE_S = 20 * 60
 LAUNCHAGENTS_DIR = HOME / "Library" / "LaunchAgents"
 SSH_OPTS = ["-o", "ConnectTimeout=5", "-o", "BatchMode=yes", "-o", "StrictHostKeyChecking=accept-new"]
 
@@ -123,13 +124,14 @@ def check_dispatch_lock(state_path: Path | None = None) -> dict:
     raw file by hand."""
     cid = "dispatch:lock-age"
     label = "Local dispatch lock"
+    import stamped
     path = state_path or (HOME / ".claude" / "dispatch-state.json")
     if not path.exists():
         return _result(cid, label, "green", "no lock file (idle)")
-    try:
-        state = json.loads(path.read_text())
-    except (json.JSONDecodeError, OSError) as exc:
-        return _result(cid, label, "red", f"lock file unreadable: {exc}")
+    copy = stamped.read(path)
+    if copy.missing:
+        return _result(cid, label, "red", "lock file unreadable (not a JSON object)")
+    state = copy.value
     if not state.get("busy"):
         return _result(cid, label, "green", "idle")
     started_at = state.get("started_at")
@@ -1839,13 +1841,10 @@ def _own_status_path() -> Path:
 
 def write_status(status: dict | None = None) -> dict:
     """Written whole or not at all (temp file + rename): a reader never sees half a file."""
+    import stamped
     status = status if status is not None else run_all()
-    path = _own_status_path()
-    path.parent.mkdir(parents=True, exist_ok=True)
-    tmp = path.with_name(path.name + ".tmp")
-    tmp.write_text(json.dumps(status, indent=2))
-    os.replace(tmp, path)
-    return status
+    # Stamped (marvin#1223): which Mac made it, and how old it may get (the sweep runs every 15 min; boot_data's 20).
+    return stamped.write(_own_status_path(), status, tolerance_s=STATUS_TOLERANCE_S)
 
 
 # A low disk result is the trigger for the cleanup sweep's rebuildable trims (2026-10-28: macOS's aerial wallpaper
