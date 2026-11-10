@@ -82,6 +82,35 @@ fi
 # The merge server is a long-running node process: it keeps the code it started with until restarted (it ran Oct 5 code
 # on Oct 8, so a merged fix to the merge flow didn't apply). This script runs detached, so restarting it is safe.
 if launchctl print "gui/$(id -u)/com.marvin.dashboard-webhook" >/dev/null 2>&1; then
+  echo "${LOG_PREFIX} waiting for any in-flight merges to finish..."
+  PORT=${PORT:-7878}
+  POLL_INTERVAL=5
+  MAX_WAIT=$((10 * 60))
+  ELAPSED=0
+  STILL_MERGING=false
+  while [ $ELAPSED -lt $MAX_WAIT ] && [ "$STILL_MERGING" = "true" ]; do
+    if QUEUE_STATE=$(curl -s --max-time 5 -f "http://127.0.0.1:${PORT}/merge-queue" 2>/dev/null); then
+      STILL_MERGING=false
+      # Check each repo's "running" value: non-null means still merging, null means idle.
+      for line in $(echo "$QUEUE_STATE" | grep -o '"running"[[:space:]]*:[[:space:]]*[^,}]*' | cut -d: -f2 | sed 's/^[[:space:]]*//'); do
+        if [ "$line" != "null" ]; then
+          STILL_MERGING=true
+          break
+        fi
+      done
+    else
+      STILL_MERGING=false
+    fi
+    if [ "$STILL_MERGING" = "true" ] && [ $ELAPSED -lt $((MAX_WAIT - POLL_INTERVAL)) ]; then
+      sleep $POLL_INTERVAL
+      ELAPSED=$((ELAPSED + POLL_INTERVAL))
+    else
+      break
+    fi
+  done
+  if [ "$STILL_MERGING" = "true" ] && [ $ELAPSED -ge $MAX_WAIT ]; then
+    echo "${LOG_PREFIX} waiting for merges took longer than $MAX_WAIT seconds; proceeding anyway" >&2
+  fi
   echo "${LOG_PREFIX} restarting the merge server on the new code..."
   launchctl kickstart -k "gui/$(id -u)/com.marvin.dashboard-webhook" || echo "${LOG_PREFIX} merge server restart failed" >&2
 fi

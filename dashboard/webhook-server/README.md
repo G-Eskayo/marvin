@@ -26,8 +26,8 @@ then one `{"type":"result","status":<the status above>,"body":<the body above>}`
 line means the webhook went away mid-merge: the dashboard shows "interrupted". Without the header the response is
 exactly as above. The same events are also posted to the dashboard's refresh port on this Mac as
 `{"topics":["merge"],"merge":{"url","event"}}`. Each merge's start, stage changes and finish are logged to
-`~/.claude/logs/dashboard-webhook.log`; merges in flight are kept in `~/.claude/logs/merge-inflight.json` and reported
-as interrupted when the webhook starts again; real durations go to `~/.claude/logs/gate-run-durations.jsonl`.
+`~/.claude/logs/dashboard-webhook.log`; merges in flight are kept in `~/.claude/logs/merge-inflight.json`, reported
+as interrupted when the webhook starts again, and then re-approved automatically (resuming from the queue); real durations go to `~/.claude/logs/gate-run-durations.jsonl`.
 
 ## Contract: `POST /deny`
 

@@ -2,7 +2,7 @@ import { describe, it, expect, beforeEach, afterEach } from 'vitest'
 import { mkdtempSync, rmSync, readFileSync, writeFileSync } from 'fs'
 import { tmpdir } from 'os'
 import path from 'path'
-import { createMergeQueue, createQueueStore, outcomeFor } from '../webhook-server/merge_queue.js'
+import { createMergeQueue, createQueueStore, outcomeFor, resumeInterrupted } from '../webhook-server/merge_queue.js'
 import { enrichForOrder, mainStateFrom } from '../webhook-server/merge_order.js'
 import { unbuiltFrom, createUnbuiltCache } from '../webhook-server/merge_facts.js'
 
@@ -548,5 +548,69 @@ describe('a conflict held too long is told once (#1183)', () => {
     now += DAY + 1
     await queue.approve(REPO, url(2))
     expect(w.merged).toEqual([2])
+  })
+})
+
+describe('resumeInterrupted', () => {
+  it('resumes each lost merge by calling queue.approve with the repo from repoOf', async () => {
+    const w = world([{ number: 100 }, { number: 101 }])
+    const { queue, store } = make(w)
+    const lost = [
+      { url: url(100) },
+      { url: url(101) }
+    ]
+    const repoOf = (u) => (String(u).includes('/pull/') ? REPO : null)
+    const results = await resumeInterrupted(queue, lost, { repoOf })
+    expect(results).toEqual([
+      { url: url(100), resumed: true },
+      { url: url(101), resumed: true }
+    ])
+    expect(store.forRepo(REPO).items).toHaveLength(2)
+    expect(store.forRepo(REPO).items[0].url).toBe(url(100))
+    expect(store.forRepo(REPO).items[1].url).toBe(url(101))
+  })
+
+  it('skips entries with no resolvable repo', async () => {
+    const w = world([{ number: 100 }])
+    const { queue, store } = make(w)
+    const lost = [
+      { url: url(100) },
+      { url: 'https://example.com/invalid' }
+    ]
+    const repoOf = (u) => (String(u).includes('github.com') ? REPO : null)
+    const results = await resumeInterrupted(queue, lost, { repoOf })
+    expect(results).toEqual([
+      { url: url(100), resumed: true },
+      { url: 'https://example.com/invalid', resumed: false, reason: 'repo not resolvable' }
+    ])
+    expect(store.forRepo(REPO).items).toHaveLength(1)
+  })
+
+  it('uses the "by" parameter when approving', async () => {
+    const w = world([{ number: 100 }])
+    const { queue, store } = make(w)
+    const lost = [{ url: url(100) }]
+    const repoOf = () => REPO
+    await resumeInterrupted(queue, lost, { repoOf, by: 'auto' })
+    expect(store.forRepo(REPO).items[0].by).toBe('auto')
+  })
+
+  it('defaults "by" to "auto"', async () => {
+    const w = world([{ number: 100 }])
+    const { queue, store } = make(w)
+    const lost = [{ url: url(100) }]
+    const repoOf = () => REPO
+    await resumeInterrupted(queue, lost, { repoOf })
+    expect(store.forRepo(REPO).items[0].by).toBe('auto')
+  })
+
+  it('handles null or undefined lost gracefully', async () => {
+    const w = world([{ number: 100 }])
+    const { queue } = make(w)
+    const repoOf = () => REPO
+    const results1 = await resumeInterrupted(queue, null, { repoOf })
+    const results2 = await resumeInterrupted(queue, undefined, { repoOf })
+    expect(results1).toEqual([])
+    expect(results2).toEqual([])
   })
 })

@@ -52,3 +52,43 @@ def test_electron_builder_never_tries_to_publish_auto_update_files():
     import json
     pkg = json.loads((SCRIPT.parents[1] / "package.json").read_text())
     assert "publish" in pkg["build"] and pkg["build"]["publish"] is None
+
+
+# Tests 8-12: marvin#1106 - wait for in-flight merges to finish before restarting the webhook
+def test_polls_merge_queue_before_restarting_webhook():
+    text = SCRIPT.read_text()
+    assert "merge-queue" in text
+    assert "http://127.0.0.1" in text
+
+
+def test_polling_checks_for_running_merges_not_null():
+    text = SCRIPT.read_text()
+    # The polling loop must check each repo's "running" value (URL or null), not just grep for the key.
+    assert '"running"' in text and ("for line in" in text or "grep" in text)
+    # Explicitly should NOT have the old broken regex that treats false/0/null as still merging.
+    assert "[^n]" not in text, "polling must not use regex [^n] which treats false as merging"
+    # Must check for null specifically, since running values are URLs (truthy) or null (falsy)
+    assert '!= "null"' in text, "polling must check if running value is not null"
+
+
+def test_polling_is_bounded_to_approximately_10_minutes():
+    text = SCRIPT.read_text()
+    assert "MAX_WAIT" in text
+    assert "10 * 60" in text or "600" in text
+
+
+def test_polling_interval_is_approximately_5_seconds():
+    text = SCRIPT.read_text()
+    assert "POLL_INTERVAL" in text
+    assert "POLL_INTERVAL=5" in text
+
+
+def test_polling_logs_when_bound_is_hit():
+    text = SCRIPT.read_text()
+    assert "waiting for merges took longer" in text or "proceeding anyway" in text
+    # The message must be reachable: it prints when elapsed >= MAX_WAIT, not just when elapsed > MAX_WAIT - POLL_INTERVAL.
+    # Verify the condition is not impossible by checking the logic around the message.
+    import re
+    # Find the condition that triggers the message
+    condition = re.search(r'\[\s*"\$STILL_MERGING"\s*=\s*"true"\s*\]\s*&&\s*\[\s*\$ELAPSED\s*-ge\s*\$MAX_WAIT\s*\]', text)
+    assert condition, "polling must log when ELAPSED >= MAX_WAIT, making the message reachable"

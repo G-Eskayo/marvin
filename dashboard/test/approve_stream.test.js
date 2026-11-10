@@ -64,7 +64,7 @@ describe('approveMrStream', () => {
     const ops = createMergeOps()
     ops.start(PR, Date.now(), 'aaa')
     const r = await approveMrStream(PR, url, { onEvent: (e) => ops.event(PR, e) })
-    expect(r).toEqual({ merged: false, interrupted: true, reason: 'The merge was interrupted when the webhook restarted. Approve again.' })
+    expect(r).toEqual({ merged: false, interrupted: true, reason: 'The merge was interrupted when the webhook restarted. Resuming from the queue.' })
     const op = ops.interrupt(PR)
     expect(op.state).toBe('interrupted')
     expect(op.progress.stages.tests.state).toBe('failed') // the card shows where it got to, and that it stopped there

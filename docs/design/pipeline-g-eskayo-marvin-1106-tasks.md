@@ -1,0 +1,11 @@
+1. `dashboard/webhook-server/merge_queue.js`: add `export function resumeInterrupted(queue, lost, { repoOf, by = 'auto' } = {})` — for each `{url}` in `lost`, resolve its repo and call `queue.approve(repo, url, { by })`; skip entries with no resolvable repo.
+2. Tests 1-5 above in `dashboard/test/merge_queue.test.js`.
+3. `dashboard/webhook-server/index.js`: in the `server.listen` startup callback, after the existing `takeInterruptedMerges()` loop that forwards refresh pings, call `resumeInterrupted(mergeQueue, lost, { repoOf: repoOfPr })` (reusing the already-defined `repoOfPr`), logging a warning on rejection. Update the now-stale comment (lines 493-495) that says "Resuming is not attempted."
+4. `dashboard/webhook-server/merge_progress.js`: update the log line in `takeInterruptedMerges()` (line 73) to say it resumes from the queue instead of "Approve again," preserving the existing matched prefix. Test 7 above; confirm test 6 still passes.
+5. Update `INTERRUPTED_REASON` in `dashboard/electron/main/merge_ops.js:12`, the literal in `dashboard/electron/main/approve_stream.js:33`, and the literal in `dashboard/src/lib/prState.js:65` to the same new wording (leave the unrelated 45-minute-expiry message in `merge_ops.js:23` alone — different failure class).
+6. Update the 4 existing test assertions listed above to match the new wording.
+7. `dashboard/scripts/rebuild_and_install.sh`: before the existing `launchctl kickstart -k "gui/$(id -u)/com.marvin.dashboard-webhook"` call, add a bounded poll of `GET http://127.0.0.1:${PORT:-7878}/merge-queue` (any repo's `running` truthy = still merging), ~5s interval, ~10-minute bound, defused against `set -e`; log once if the bound is hit; then restart unconditionally either way.
+8. Tests 8-12 above in `lib/tests/test_rebuild_script.py`.
+9. `dashboard/webhook-server/README.md:29-30`: one-clause update noting an in-flight merge resumes from the queue on restart, not just "reported as interrupted."
+10. `CONTEXT.md`'s "Merge queue" section (~line 1577): one bullet documenting that a merge the webhook finds interrupted at startup is re-approved automatically (marvin#1106), dropped like any other if it merged/closed while the webhook was down.
+11. Resolve the Decision above; if A, repeat steps 7-8's pattern for `lib/webhook_restart.py` (+ its own test file `lib/tests/test_webhook_restart.py`).

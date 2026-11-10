@@ -153,6 +153,27 @@ export function retryAt(reason, now) {
 // marvin#1183: a PR held on the same conflicting commit this long is told to the owner (onStuck), once per commit.
 export const CONFLICT_TELL_MS = 24 * 60 * 60 * 1000
 
+export async function resumeInterrupted(queue, lost, { repoOf, by = 'auto' } = {}) {
+  // The queue object should have an `_resumeInterrupted` internal method that adds without draining
+  if (!queue || typeof queue._resumeInterrupted !== 'function') return []
+  const results = []
+  for (const entry of lost || []) {
+    if (!entry?.url) continue
+    const repo = repoOf(entry.url)
+    if (!repo) {
+      results.push({ url: entry.url, resumed: false, reason: 'repo not resolvable' })
+      continue
+    }
+    try {
+      await queue._resumeInterrupted(repo, entry.url, { by })
+      results.push({ url: entry.url, resumed: true })
+    } catch (e) {
+      results.push({ url: entry.url, resumed: false, reason: String(e?.message || e) })
+    }
+  }
+  return results
+}
+
 export function createMergeQueue({ store, load, run, afterRun = async () => {}, onWaiting = () => {}, onStuck = () => {}, log = () => {}, clock = Date.now }) {
   const busy = new Set()
   const again = new Set()
@@ -262,6 +283,11 @@ export function createMergeQueue({ store, load, run, afterRun = async () => {}, 
       const { added, item } = store.add(repo, url, { by })
       if (!added) log(`[merge-queue] ${repo}: #${prNumber(url)} is already queued (approved ${new Date(item.approvedAt).toISOString()}); keeps its place`)
       return drain(repo, attach)
+    },
+    // Internal: add items to queue without draining (for resumed merges; draining happens separately via kick())
+    _resumeInterrupted(repo, url, { by = 'auto' } = {}) {
+      store.add(repo, url, { by })
+      return Promise.resolve()
     },
     // Any trigger for one repo (GitHub changed, checks finished, startup). Nothing queued: nothing to do, no reads.
     kick(repo) {

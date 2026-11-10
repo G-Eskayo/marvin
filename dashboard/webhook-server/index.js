@@ -3,7 +3,7 @@ import os from 'os'
 import path from 'path'
 import { createServer } from 'http'
 import { mergePr, baselineFailsOnMain, mergesAhead, execWithGroupTimeout, runDiskFirstAid, memoryGuardCheck, withMergeMark, forgetQueuedMerge, readMergeReady, sweepGateClones, repoJobsDone, triggerTicketPipeline } from './merge.js'
-import { createMergeQueue, createQueueStore } from './merge_queue.js'
+import { createMergeQueue, createQueueStore, resumeInterrupted } from './merge_queue.js'
 import { createUnbuiltCache, createFixTicketsCache, createQueueLoader, createBaseLookup, createFollowUpRequester, readMainHealth, readRepairFailures } from './merge_facts.js'
 import { pendingCheckHeads } from '../electron/main/mr_repos.js'
 import { snapshotExec } from './pr_snapshot.js'
@@ -486,15 +486,21 @@ function queuedPendingHeads() {
   return heads
 }
 
-server.listen(PORT, () => {
+server.listen(PORT, async () => {
   console.log(`MR-approval webhook listening on http://localhost:${PORT}/approve`)
   console.log(`GitHub credential source: ${ghTokenSource}`)
 
   // A merge that was running when the last process died is over: say so now (log + one event to an open dashboard
-  // here), instead of its card reading "Merging…" until the 45-minute limit. Resuming is not attempted: the gate's
-  // scratch worktree died with the process, and Approve again is safe (the gate starts from GitHub's state).
-  for (const { url, event } of takeInterruptedMerges()) {
+  // here), instead of its card reading "Merging…" until the 45-minute limit. The merge is then re-approved automatically
+  // from the queue (resumed from where it was, or restarted if it merged or closed while the webhook was down).
+  const { lost, events } = takeInterruptedMerges()
+  for (const { url, event } of events) {
     forwardRefreshPing(DASHBOARD_REFRESH_URL, (u) => postJson(u, { topics: ['merge'], source: 'merge', merge: { url, event } }))
+  }
+  try {
+    await resumeInterrupted(mergeQueue, lost, { repoOf: repoOfPr })
+  } catch (e) {
+    console.warn(`[merge-queue] startup resume failed: ${e?.message || e}`)
   }
   // marvin#866: ...and that merge's temporary clone (~660 MB) died with it, its finally never ran. Clear any older than
   // 2 h; a merge that has started since this process did is kept (merge.js sweepGateClones).

@@ -297,25 +297,28 @@ describe('a webhook restart mid-merge', () => {
     const store = createInflightStore()
     store.set(PR, { id: 'a1', seq: 6, stage: 'tests', startedAt: 1, machine: 'mac-mini-1' })
     const lines = []
-    const lost = takeInterruptedMerges(inflightPath(), { log: (l) => lines.push(l), now: () => 99 })
-    expect(lost).toEqual([{ url: PR, event: { id: 'a1', seq: 7, stage: 'tests', state: 'failed', interrupted: true, at: 99, detail: 'interrupted: the webhook restarted' } }])
+    const result = takeInterruptedMerges(inflightPath(), { log: (l) => lines.push(l), now: () => 99 })
+    const { events, lost } = result
+    expect(events).toEqual([{ url: PR, event: { id: 'a1', seq: 7, stage: 'tests', state: 'failed', interrupted: true, at: 99, detail: 'interrupted: the webhook restarted' } }])
     expect(lines[0]).toMatch(/G-Eskayo\/marvin#559 interrupted: the webhook restarted while it was at "tests"/)
     expect(JSON.parse(readFileSync(inflightPath(), 'utf-8'))).toEqual({})
     // ...and the dashboard's reducer turns that one event into a failed Tests row.
     let p = applyMergeEvent(emptyProgress(), { id: 'a1', seq: 6, stage: 'tests', state: 'running', at: 1 })
-    p = applyMergeEvent(p, lost[0].event)
+    p = applyMergeEvent(p, events[0].event)
     expect(p.stages.tests.state).toBe('failed')
   })
 
   it('nothing in flight, a missing file, or a corrupt one: no events, no crash', () => {
-    expect(takeInterruptedMerges(inflightPath(), { log: noop })).toEqual([])
+    let result = takeInterruptedMerges(inflightPath(), { log: noop })
+    expect(result.events).toEqual([])
     mkdirSync(path.dirname(inflightPath()), { recursive: true })
     writeFileSync(inflightPath(), '{not json')
-    expect(takeInterruptedMerges(inflightPath(), { log: noop })).toEqual([])
+    result = takeInterruptedMerges(inflightPath(), { log: noop })
+    expect(result.events).toEqual([])
     writeFileSync(inflightPath(), JSON.stringify({ 'javascript:alert(1)': { stage: 'tests' }, [PR]: { stage: '../../etc', seq: 'x' } }))
-    const lost = takeInterruptedMerges(inflightPath(), { log: noop })
-    expect(lost.map((l) => l.url)).toEqual([PR])
-    expect(lost[0].event).toMatchObject({ stage: 'queued', seq: 1 })
+    result = takeInterruptedMerges(inflightPath(), { log: noop })
+    expect(result.events.map((l) => l.url)).toEqual([PR])
+    expect(result.events[0].event).toMatchObject({ stage: 'queued', seq: 1 })
   })
 })
 

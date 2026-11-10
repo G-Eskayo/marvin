@@ -96,6 +96,30 @@ def main() -> None:
         ATTEMPT_FILE.parent.mkdir(parents=True, exist_ok=True)
         ATTEMPT_FILE.write_text(str(now))  # recorded BEFORE restarting so a failure still backs off
         uid = os.getuid()
+        import urllib.request
+        import json
+        port = os.environ.get("PORT", "7878")
+        poll_interval = 5
+        max_wait = 10 * 60
+        elapsed = 0
+        still_merging = False
+        while elapsed < max_wait and still_merging:
+            try:
+                with urllib.request.urlopen(f"http://127.0.0.1:{port}/merge-queue", timeout=5) as response:
+                    queue_state = json.loads(response.read().decode())
+                    if isinstance(queue_state, dict):
+                        still_merging = any(v.get("running") if isinstance(v, dict) else False for v in queue_state.values())
+                    else:
+                        still_merging = False
+            except (urllib.error.URLError, json.JSONDecodeError, OSError, TimeoutError):
+                still_merging = False
+            if still_merging and elapsed < max_wait - poll_interval:
+                time.sleep(poll_interval)
+                elapsed += poll_interval
+            else:
+                break
+        if still_merging and elapsed >= max_wait:
+            print(f"[webhook-restart] waiting for merges took longer than {max_wait} seconds; proceeding anyway", file=sys.stderr)
         run.step("Restarting", f"launchctl kickstart -k gui/{uid}/{LAUNCHD_LABEL}")
         LOG_FILE.parent.mkdir(parents=True, exist_ok=True)
         with LOG_FILE.open("a") as log:

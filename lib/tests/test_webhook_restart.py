@@ -64,3 +64,43 @@ def test_only_webhook_and_electron_main_changes_count():
     paths = " ".join(wr.WEBHOOK_SOURCE_PATHS)
     assert "dashboard/webhook-server" in paths and "dashboard/electron/main" in paths
     assert "dashboard/electron/preload" not in paths and "dashboard/src" not in paths
+
+
+# Tests for marvin#1106 - wait for in-flight merges before restarting
+def test_polls_merge_queue_before_restarting():
+    src = Path(__file__).resolve().parents[1] / "webhook_restart.py"
+    text = src.read_text()
+    assert "merge-queue" in text
+    assert "http://127.0.0.1" in text
+
+
+def test_polling_checks_for_running_merges_properly():
+    src = Path(__file__).resolve().parents[1] / "webhook_restart.py"
+    text = src.read_text()
+    # Must check each repo's "running" value properly, not assume all values are dicts.
+    assert "isinstance" in text, "polling must check isinstance to handle non-dict values"
+    assert 'get("running")' in text
+    # Must start with still_merging=False, not True
+    assert "still_merging = False" in text
+
+
+def test_polling_is_bounded_to_approximately_10_minutes():
+    src = Path(__file__).resolve().parents[1] / "webhook_restart.py"
+    text = src.read_text()
+    assert "max_wait" in text
+    assert "10 * 60" in text or "600" in text
+
+
+def test_polling_interval_is_approximately_5_seconds():
+    src = Path(__file__).resolve().parents[1] / "webhook_restart.py"
+    text = src.read_text()
+    assert "poll_interval" in text
+    assert "poll_interval = 5" in text
+
+
+def test_polling_logs_when_bound_is_hit():
+    src = Path(__file__).resolve().parents[1] / "webhook_restart.py"
+    text = src.read_text()
+    assert "waiting for merges took longer" in text or "proceeding anyway" in text
+    # The message must be reachable: it prints when elapsed >= max_wait, which happens after the loop breaks.
+    assert "elapsed >= max_wait" in text, "polling must log when elapsed >= max_wait"

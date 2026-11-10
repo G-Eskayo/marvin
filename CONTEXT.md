@@ -1599,6 +1599,7 @@ Mac has no push channel. Gil applies the hooks on each Mac with `marvin_hooks.py
 - **One card, both states** (owner, 2026-11-02): a queued PR's card reads "Approved: in the merge queue" with its queue
   line; when its turn comes the same card becomes the merge pipeline (the stage strip), on every Mac, whichever device
   approved it, and a Mac that opens mid-merge catches up to where the merge is.
+- **Resuming interrupted merges** (marvin#1106): a merge in flight when the webhook restarts is re-approved automatically from the queue, so the merge pipeline resumes without clicking again. If it has meanwhile merged or closed on GitHub, it leaves the queue immediately; otherwise it is retried from its gate's latest state.
 
 ## clarity-captions app-build check is now required (2026-10-05)
 

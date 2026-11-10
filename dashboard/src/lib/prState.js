@@ -60,9 +60,9 @@ function describeState(pr, { status = 'idle', errorMessage = null, progress = fa
       : base('merged', 'ready', 'Merged', null, 'hidden', 'hidden')
   }
 
-  // The webhook restarted (or went away) mid-merge (marvin#568): said at once, and Approve again is offered.
+  // The webhook restarted (or went away) mid-merge (marvin#568): said at once, and the merge resumes from the queue.
   if (status === 'interrupted') {
-    return base('interrupted', 'blocked', 'The merge was interrupted', errorMessage || 'The merge was interrupted when the webhook restarted. Approve again.', 'enabled', 'enabled')
+    return base('interrupted', 'blocked', 'The merge was interrupted', errorMessage || 'The merge was interrupted when the webhook restarted. Resuming from the queue.', 'enabled', 'enabled')
   }
 
   if (pr.sentBack) {

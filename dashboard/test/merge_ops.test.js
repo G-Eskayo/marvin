@@ -159,7 +159,7 @@ describe('a merge lost to a webhook restart reads "interrupted" at once, not "Me
     ops.event(URL, { id: 'm1', seq: 1, stage: 'tests', state: 'running', at: 1 })
     const op = ops.interrupt(URL)
     expect(op.state).toBe('interrupted')
-    expect(op.reason).toBe('The merge was interrupted when the webhook restarted. Approve again.')
+    expect(op.reason).toBe('The merge was interrupted when the webhook restarted. Resuming from the queue.')
     expect(op.progress.stages.tests).toMatchObject({ state: 'failed', detail: 'interrupted: the webhook restarted' }) // no row keeps ticking
     expect(ops.start(URL)).toBe(true) // Approve again works straight away
   })

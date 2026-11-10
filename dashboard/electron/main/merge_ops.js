@@ -9,7 +9,7 @@ import { repoFromPrUrl } from './mr_repos.js'
 // marvin#568: the op also carries the merge's progress, folded from the stage events the webhook pushes (on the
 // approve response's stream, and through the local refresh ping for a merge started elsewhere). The card reads the op
 // once when it mounts, then gets every change pushed (index.js sends 'mr:mergeEvent'); nothing re-reads on a timer.
-export const INTERRUPTED_REASON = 'The merge was interrupted when the webhook restarted. Approve again.'
+export const INTERRUPTED_REASON = 'The merge was interrupted when the webhook restarted. Resuming from the queue.'
 const KEEP_FINISHED_MS = 24 * 3600_000
 
 export function createMergeOps({ maxMergingMs = 45 * 60_000 } = {}) {

@@ -30,7 +30,7 @@ export function approveMrStream(prUrl, webhookUrl, { onEvent = () => {}, request
     const send = request || (target.protocol === 'https:' ? https.request : http.request)
     const body = JSON.stringify({ pr_url: prUrl })
     let answered = false, started = false, connected = false, connectTimer = null
-    const interrupted = () => done(resolve, { merged: false, interrupted: true, reason: 'The merge was interrupted when the webhook restarted. Approve again.' })
+    const interrupted = () => done(resolve, { merged: false, interrupted: true, reason: 'The merge was interrupted when the webhook restarted. Resuming from the queue.' })
     const done = (fn, v) => { clearTimeout(connectTimer); if (!answered) { answered = true; fn(v) } }
     const req = send(target, { method: 'POST', headers: { 'Content-Type': 'application/json', Accept: 'application/x-ndjson', 'Content-Length': Buffer.byteLength(body) } }, (res) => {
       started = true

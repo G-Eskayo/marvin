@@ -78,7 +78,7 @@ describe('MergeProgress', () => {
 describe('the card\'s status from the main process\'s op', () => {
   it('maps each op state', () => {
     expect(statusFromOp({ state: 'merging', progress: midTests })).toEqual({ status: 'approving', errorMessage: null, progress: midTests })
-    expect(statusFromOp({ state: 'interrupted', reason: 'The merge was interrupted when the webhook restarted. Approve again.' }).status).toBe('interrupted')
+    expect(statusFromOp({ state: 'interrupted', reason: 'The merge was interrupted when the webhook restarted. Resuming from the queue.' }).status).toBe('interrupted')
     expect(statusFromOp({ state: 'merged', elsewhere: true, reason: 'Merged on GitHub' })).toMatchObject({ status: 'merged', errorMessage: 'Merged on GitHub' })
     expect(statusFromOp({ state: 'merged' })).toMatchObject({ status: 'merged', errorMessage: null })
     expect(statusFromOp({ state: 'idle' }).status).toBe('idle')
@@ -87,9 +87,9 @@ describe('the card\'s status from the main process\'s op', () => {
 
   it('headlines: interrupted says so and offers Approve again; merged on GitHub says what happened', () => {
     const pr = { number: 559, checks: { state: 'passing', failing: [], pending: [] } }
-    const i = describePrState(pr, { status: 'interrupted', errorMessage: 'The merge was interrupted when the webhook restarted. Approve again.' })
+    const i = describePrState(pr, { status: 'interrupted', errorMessage: 'The merge was interrupted when the webhook restarted. Resuming from the queue.' })
     expect(i).toMatchObject({ kind: 'interrupted', headline: 'The merge was interrupted', approve: 'enabled' })
-    expect(i.detail).toBe('The merge was interrupted when the webhook restarted. Approve again.')
+    expect(i.detail).toBe('The merge was interrupted when the webhook restarted. Resuming from the queue.')
     expect(describePrState(pr, { status: 'merged', errorMessage: 'Merged on GitHub' })).toMatchObject({ headline: 'Merged on GitHub', approve: 'hidden' })
     expect(describePrState(pr, { status: 'merged' })).toMatchObject({ headline: 'Merged', tone: 'ready' })
     expect(describePrState(pr, { status: 'approving', progress: true }).detail).toBe('You can leave this screen; it carries on.')
