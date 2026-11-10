@@ -1,5 +1,7 @@
 # Changelog
 
+- Freshness: Stamped copies: one envelope and read helper, with standby Macs reading the producer ([#1247](https://github.com/G-Eskayo/marvin/pull/1247))
+
 - Tests: test_cross_machine_merge downloads an embedding model in every CI run, and parallel runs corrupt it ([#1258](https://github.com/G-Eskayo/marvin/pull/1258))
 
 - Freshness: Resume check: verify a handoff's ticket and PR claims before SessionStart surfaces it ([#1237](https://github.com/G-Eskayo/marvin/pull/1237))
