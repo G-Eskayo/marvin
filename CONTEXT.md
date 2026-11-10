@@ -2072,3 +2072,19 @@ runs no merge or test of its own and its memory is normal).
 - **Alert path**: `mr_notification._fire`, the one way MARVIN tells Gil (desktop, dashboard, and the phone once #958
   lands). An alert fires on a change to bad, then once a day while it stays bad, and once when it clears.
 - **Inbox**: one JSON file per item per pile (`lib/inbox.py`), replacing the separate markdown piles one at a time.
+
+## Data freshness: handed-forward claims (decided with Gil 2026-11-09; plan `instance/docs/plans/data-freshness-2026-11-09.md`)
+
+- **Cache**: anything MARVIN hands forward without deriving it at read time (a handoff, a memory note, a plan, a
+  config value, another Mac's file). A cache is shown only with its source and age, and is re-checked before it's
+  relayed as current. "Derive, don't store" carried past the dashboard.
+- **Handoff stamp**: a handoff's front matter `as_of` (its last real activity), `machine`, `session`, `source`
+  (`skill` or `rebuilt`). The skill's write hook stamps a live handoff with now; the transcript rebuild stamps the last
+  message's time, so a handoff rebuilt today from a Nov 3 session reads as Nov 3. Handoffs are ranked and dated by
+  `as_of`; one without it falls back to mtime and is labelled **undated**.
+- **Resume check** (`lib/resume_check.py`, marvin#1221): at SessionStart and on a cross-machine resume prompt, the
+  handoff's ticket and PR refs (read by `relations.js extractRefs` through `refs_cli.mjs`, no second parser) are
+  checked in one GraphQL call with a 5 s budget. An item **changed since** if it was closed, reopened or merged after
+  `as_of`, or a ticket's closing PR merged after it. Shown as Gil decided: each changed item listed inline under
+  "N of M changed since, treat as history", and an urgent step naming one is struck. GitHub unreachable means "as of
+  <date>, unverified", never silent. Each run is a row in `~/.agents/var/resume-checks.jsonl`.

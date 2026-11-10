@@ -7,6 +7,7 @@ SessionStart hook dropped the session report with it.
 import importlib.util
 import os
 import subprocess
+import time
 from pathlib import Path
 
 SCRIPT = Path(__file__).resolve().parents[2] / "skills" / "handoff" / "scripts" / "check_remote_session.py"
@@ -19,7 +20,8 @@ def _load(monkeypatch, tmp_path):
     spec.loader.exec_module(mod)
     monkeypatch.setattr(mod, "STATE_PATH", tmp_path / "state.json")
     monkeypatch.setattr(mod, "remote_devices", lambda: {"laptop": {"tailscale_hostname": "laptop"}})
-    monkeypatch.setattr(mod, "_check_remote", lambda d, h: {"device_id": d, "mtime": 10, "transcript_path": "/t.jsonl"})
+    monkeypatch.setattr(mod, "_check_remote", lambda d, h: {"device_id": d, "mtime": time.time() - 60,  # recent: older than 24 h is ignored (478)
+                                                            "transcript_path": "/t.jsonl"})
     monkeypatch.setattr(mod, "dispatch", lambda *a, **k: type("R", (), {"ok": True})())
     return mod
 

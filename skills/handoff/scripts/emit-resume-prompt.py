@@ -3,11 +3,26 @@
 its '## Resume prompt' section and print a paste-ready block. Deterministic — fires
 even if the model forgets to surface it (the 'wire it as a hook, don't trust prose'
 principle). Never errors the originating tool: any failure exits silently.
+
+It also stamps the handoff's front matter when it has none (marvin#1221): `as_of` now (a live session writes its
+handoff at its last activity), `machine`, `session`, `source: skill`. The resume check dates handoffs by it, not by
+mtime. An existing stamp (a rebuilt handoff's transcript date) is never overwritten here.
 """
 import json
 import re
 import sys
+from datetime import datetime, timezone
 from pathlib import Path
+
+sys.path.insert(0, str(Path.home() / ".agents" / "lib"))
+try:
+    import resume_check
+    from machine_profile import machine_label
+except Exception:  # noqa: BLE001  (never errors the originating tool)
+    resume_check = None
+
+    def machine_label():
+        return None
 
 
 def main() -> None:
@@ -30,6 +45,13 @@ def main() -> None:
         in_handoffs = False
     if not in_handoffs or p.suffix.lower() != ".md":
         return
+
+    if resume_check is not None:
+        try:
+            resume_check.stamp(p, as_of=datetime.now(timezone.utc), machine=machine_label(),
+                               session=payload.get("session_id"), source="skill")
+        except Exception:  # noqa: BLE001
+            pass
 
     try:
         text = p.read_text(errors="ignore")

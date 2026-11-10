@@ -21,17 +21,25 @@ Bounded synchronous wait (not fire-and-forget): the whole point is the
 resume prompt being there when the session opens, not a notification that
 might get missed. Only pays the ~30-90s cost on the actual "just switched
 machines" moment — every other session start is the cheap check only.
+
+Bounded (ticket 478): a remote transcript older than MAX_AGE_S is never rebuilt (a fresh state file used to let a
+months-old one through), a failed generation backs off FAIL_BACKOFF_S before it's tried again, and one hung remote
+only skips itself. The surfaced handoff is chosen by its content date and its claims are checked first
+(lib/resume_check.py, marvin#1221), so a rebuilt handoff can't relay a solved problem as current.
 """
 from __future__ import annotations
 import json
-import re
 import subprocess
 import sys
+import time
+from datetime import datetime, timezone
 from pathlib import Path
 
 sys.path.insert(0, str(Path.home() / ".agents" / "lib"))
 from machine_profile import remote_devices  # noqa: E402
 from task_dispatch import dispatch  # noqa: E402
+import machine_profile  # noqa: E402
+import resume_check  # noqa: E402
 
 STATE_PATH = Path.home() / ".claude" / ".session-continuity-state.json"
 CLAUDE_DIR_REL = ".claude"
@@ -40,6 +48,8 @@ CLAUDE_DIR_REL = ".claude"
 VENV_PYTHON = "$HOME/.agents/venv/bin/python"
 GENERATE_SCRIPT = "$HOME/.agents/skills/handoff/scripts/generate_handoff_from_transcript.py"
 CODE_SYNC = "$HOME/.agents/lib/code_sync.py"
+MAX_AGE_S = 24 * 3600        # "just switched machines" is hours, not weeks (ticket 478)
+FAIL_BACKOFF_S = 3600        # a failed generation isn't re-paid on every session start
 SSH_OPTS = ["-o", "ConnectTimeout=5", "-o", "BatchMode=yes", "-o", "StrictHostKeyChecking=accept-new"]
 
 
@@ -56,11 +66,14 @@ def _save_state(state: dict) -> None:
 
 
 def _check_remote(device_id: str, host: str) -> dict | None:
-    result = subprocess.run(
-        ["ssh", *SSH_OPTS, host, f"{VENV_PYTHON} $HOME/.agents/skills/handoff/scripts/find_freshest_session.py"],
-        capture_output=True, text=True, timeout=15,
-    )
-    if result.returncode != 0 or not result.stdout.strip():
+    try:
+        result = subprocess.run(
+            ["ssh", *SSH_OPTS, host, f"{VENV_PYTHON} $HOME/.agents/skills/handoff/scripts/find_freshest_session.py"],
+            capture_output=True, text=True, timeout=15,
+        )
+    except (subprocess.TimeoutExpired, OSError):
+        return None  # one hung remote only skips itself (ticket 478)
+    if result is None or result.returncode != 0 or not result.stdout.strip():
         return None
     try:
         info = json.loads(result.stdout)
@@ -78,13 +91,19 @@ def _surface_resume_prompt(handoff_path: Path) -> None:
         text = handoff_path.read_text(errors="ignore")
     except Exception:
         return
-    m = re.search(r"##\s*Resume prompt\s*\n(.*)$", text, re.DOTALL | re.IGNORECASE)
-    body = (m.group(1) if m else "").strip().strip("-").strip()
+    body = resume_check.resume_prompt(text)
     if not body:
         return
+    now = datetime.now(timezone.utc)
+    when = resume_check.handoff_time(handoff_path, now)
+    try:
+        report = resume_check.check(text, when, now=now)
+    except Exception as exc:  # noqa: BLE001  (labelled, never silent)
+        report = resume_check.Report("unverified", when, reason=f"the check failed ({exc.__class__.__name__})")
+    resume_check.log_run(report, handoff=handoff_path, where="remote-resume", machine=machine_profile.machine_label())
     bar = "=" * 64
-    print(f"\n{bar}\n📋 Picked up from where you left off — resume prompt:\n{bar}")
-    print(body)
+    print(f"\n{bar}\n📋 Picked up from where you left off — resume prompt:\n{resume_check.heading_line(report)}\n{bar}")
+    print(resume_check.strike_urgent(body, report))
     print(f"{bar}\n(source: {handoff_path})")
 
 
@@ -111,11 +130,19 @@ def main() -> None:
     last_seen = state.get(device_id, 0)
     if freshest["mtime"] <= last_seen:
         return  # nothing new since we last checked this machine
+    now = time.time()
+    if now - freshest["mtime"] > MAX_AGE_S:
+        return  # an old remote session isn't "just switched machines"
+    if now - state.get(f"{device_id}:failed_at", 0) < FAIL_BACKOFF_S:
+        return  # it failed recently; don't re-pay up to 180 s on every session start
 
     generate_and_push = f"{VENV_PYTHON} {GENERATE_SCRIPT} {freshest['transcript_path']} && {VENV_PYTHON} {CODE_SYNC} push $HOME/{CLAUDE_DIR_REL}"
     result = dispatch(generate_and_push, target=device_id, mode="sync", timeout=180, task_label="generate handoff from live session")
     if not result.ok:
-        return  # fail quiet — same as any other SSH-unreachable case elsewhere in MARVIN
+        state[f"{device_id}:failed_at"] = now
+        _save_state(state)
+        return  # fail quiet, but remembered: the back-off above stops the retry storm
+    state.pop(f"{device_id}:failed_at", None)
 
     # Pull to get the freshly-pushed handoff, then surface it. Deliberately
     # not a before/after filename diff — generate_handoff_from_transcript.py
@@ -123,7 +150,7 @@ def main() -> None:
     # the same UTC minute overwrite the same filename; a "which names are
     # new" comparison misses that as a real update. Since we're already past
     # the freshness gate above, we know a generation happened — take
-    # whichever handoff has the newest mtime right now.
+    # whichever handoff is newest right now, by its content date (as_of) first, mtime breaking ties.
     # Local, no shell: real paths, not the $HOME strings above (those crashed this step, 2026-10-25).
     agents = Path.home() / ".agents"
     try:
@@ -131,10 +158,9 @@ def main() -> None:
                         str(Path.home() / CLAUDE_DIR_REL)], capture_output=True)
     except OSError:
         pass  # fail quiet: surface whatever handoff is already here
-    handoffs_dir = Path.home() / ".claude" / "handoffs"
-    handoffs = list(handoffs_dir.glob("*.md")) if handoffs_dir.is_dir() else []
-    if handoffs:
-        _surface_resume_prompt(max(handoffs, key=lambda p: p.stat().st_mtime))
+    ranked = resume_check.ranked_handoffs(Path.home() / ".claude" / "handoffs", pattern="*.md")
+    if ranked:
+        _surface_resume_prompt(ranked[0][0])
 
     state[device_id] = freshest["mtime"]
     _save_state(state)
