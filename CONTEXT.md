@@ -2096,6 +2096,11 @@ runs no merge or test of its own and its memory is normal).
   (`skill` or `rebuilt`). The skill's write hook stamps a live handoff with now; the transcript rebuild stamps the last
   message's time, so a handoff rebuilt today from a Nov 3 session reads as Nov 3. Handoffs are ranked and dated by
   `as_of`; one without it falls back to mtime and is labelled **undated**.
+- **Superseded answer** (`lib/supersession.py`, marvin#1226, extends ticket 652): when Gil answers Decisions on a PR,
+  the follow-up `owner_decisions` files lists every earlier answer to the same question in CONTEXT, docs, instance
+  plans and memory: by decision id (agrees, differs, "same id, different question", or "history (kept)") and by docs
+  citing the same ticket. The PR acting on the decisions amends each with an "Amendment (date)" note or keeps it,
+  explicitly. Lists only; meaning still needs judgment, so nothing is auto-edited.
 - **Resume check** (`lib/resume_check.py`, marvin#1221): at SessionStart and on a cross-machine resume prompt, the
   handoff's ticket and PR refs (read by `relations.js extractRefs` through `refs_cli.mjs`, no second parser) are
   checked in one GraphQL call with a 5 s budget. An item **changed since** if it was closed, reopened or merged after

@@ -182,7 +182,7 @@ def pr_status(pr: dict, now: datetime, grace: float, completed_comments: set[int
             "comment_url": latest.get("url") or "", "since": latest["createdAt"], "question": parsed["question"],
             "malformed": parsed["malformed"], "texts": parsed["texts"], "addressed_by": by, "age_hours": age,
             "committed_since": committed_since, "built_since": built_since,
-            "overdue": by is None and age >= grace}
+            "overdue": by is None and age >= grace, "body": pr.get("body") or ""}
 
 
 # ── GitHub (one call) ──────────────────────────────────────────────────────────────────────────────────────────
@@ -282,6 +282,8 @@ def followup_title(number: int) -> str:
 
 
 def followup_body(s: dict) -> str:
+    earlier_ac = ("\n- [ ] Each earlier answer listed above is amended (an \"Amendment (date)\" note naming the new "
+                  "answer) or explicitly kept, in the PR that acts on these decisions." if s.get("earlier_section") else "")
     quoted = "\n".join(f"> {line}" for t in s["texts"] for line in str(t).strip().splitlines()) or "> (no notes)"
     ask = ("**The owner asked a question.** Answer it on the PR. " if s["question"] else "")
     state = ("The PR already has commits since then, but no reply says what they changed, so the owner can't tell. "
@@ -302,9 +304,9 @@ were retaken and pinned to that commit, or why not (for example "the look didn't
 answer needs the owner to choose again, give him a Decisions section (docs/agents/decisions-format.md), never a question
 in prose.
 
-## Acceptance criteria
+{s.get("earlier_section") or ""}{"" if not s.get("earlier_section") else chr(10)}## Acceptance criteria
 
-- [ ] Every chosen option is carried out or, if it can't be, the reply says why.
+- [ ] Every chosen option is carried out or, if it can't be, the reply says why.{earlier_ac}
 - [ ] Every owner question is answered in a reply on PR #{s['number']} carrying the addressed marker.
 - [ ] The reply says what changed and whether the screenshots were retaken and pinned to the new commit, or why not.
 
@@ -339,6 +341,7 @@ def _file(s: dict, run, dry_run: bool) -> str:
         return "would file"
     _gh(["label", "create", FOLLOWUP_LABEL, "--repo", repo, "--color", "fbca04", "--force",
          "--description", "Follow-up: act on owner decisions on a PR"], run)
+    s = {**s, "earlier_section": _earlier_section(s)}
     labels = ["ready-for-agent", FOLLOWUP_LABEL] + (["project:marvin"] if repo == "G-Eskayo/marvin" else [])
     import tempfile
     with tempfile.NamedTemporaryFile("w", suffix=".md", delete=False) as fh:
@@ -355,6 +358,17 @@ def _file(s: dict, run, dry_run: bool) -> str:
         return f"failed: {out.stderr.strip()[:120]}"
     _dedupe(repo, cid, run)
     return "filed " + out.stdout.strip()
+
+
+def _earlier_section(s: dict) -> str:
+    """Earlier answers to the same questions in plans, ADRs, CONTEXT and memory (lib/supersession.py, marvin#1226).
+    Never stops the follow-up: a failure says it couldn't look."""
+    import supersession
+    try:
+        hits = supersession.earlier_answers(s.get("body") or "", repo=s["repo"])
+    except Exception:  # noqa: BLE001
+        hits = None
+    return supersession.section(hits)
 
 
 def _dedupe(repo: str, cid: int, run) -> list[int]:
