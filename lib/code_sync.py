@@ -859,7 +859,8 @@ def _dirty_paths(repo: Path) -> list[str]:
     embedded repo, which `git add` can't stage (marvin#430)."""
     out = _git(repo, ["-c", "core.quotePath=false", "status", "--porcelain=v1", "-z", "--no-renames", "-uall",
                       "--ignore-submodules=dirty"])
-    return [entry[3:] for entry in out.split("\0") if len(entry) > 3]
+    # A nested worktree or repo is never work to commit: it would go in as a gitlink (see _nested_repo)
+    return [p for p in (entry[3:] for entry in out.split("\0") if len(entry) > 3) if not _nested_repo(repo, p)]
 
 
 def _merge_claude_dir(repo: Path) -> tuple[str, str, list[dict]]:
@@ -1046,6 +1047,14 @@ def _merge_remote(repo: Path) -> tuple[bool, str]:
 # (one that hasn't pulled the untrack commit) or whose .gitignore was edited. Health's history was 191 of ~200 auto-sync
 # commits on main (2026-10-17..21), each re-running CI and main-health (plan health-metrics-redo-2026-10-21, P0).
 NEVER_COMMIT = ("bench/metrics/health-monitor.*",)
+
+
+def _nested_repo(repo: Path, path: str) -> bool:
+    """A worktree or repo inside this clone (its own .git, file or folder): committing it would add a gitlink to main.
+    2026-11-09: 12 worktrees under pipeline-worktrees/ went in that way (marvin#430 was the same, in .claude/worktrees/).
+    A gitlink that is already tracked and whose folder is gone is not nested any more, so its removal still commits."""
+    p = repo / path.rstrip("/")
+    return p.is_dir() and (p / ".git").exists()
 
 
 def _never_commit(path: str) -> bool:

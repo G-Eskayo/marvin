@@ -377,3 +377,61 @@ def test_uncommitted_edit_that_clashes_with_the_remote_is_never_lost(tmp_path, m
     assert kept, "the uncommitted edit was lost"
     if (clone / "file.md").read_text() != "my uncommitted edit\n":
         assert cs._stuck_from_previous_run(clone), "a stashed edit must make the next run refuse loudly"
+
+
+# ── marvin: a worktree or repo inside the clone is never committed as a gitlink ──
+# 2026-11-09: worktrees made under ~/.agents/pipeline-worktrees/ were swept into main as 12 gitlinks by auto-sync
+# (the same failure as marvin#430, in a folder .gitignore didn't name). The sync is the choke point: it skips any
+# nested repo, wherever it is, and still lets a gitlink that's already tracked be removed.
+
+def _nested_repo(path: Path) -> None:
+    path.mkdir(parents=True)
+    _git(path, "init", "-b", "main")
+    _git(path, "-c", "user.email=a@b", "-c", "user.name=a", "commit", "--allow-empty", "-m", "x")
+
+
+def _tracked_gitlinks(clone: Path, ref: str = "origin/main") -> list[str]:
+    _git(clone, "fetch", "origin")
+    out = subprocess.run(["git", "ls-tree", "-r", ref], cwd=clone, capture_output=True, text=True).stdout
+    return [line.split("\t", 1)[1] for line in out.splitlines() if line.startswith("160000")]
+
+
+def test_a_new_nested_repo_anywhere_is_not_committed_but_real_files_beside_it_are(tmp_path, monkeypatch):
+    _quiet(monkeypatch, tmp_path / "sync-log.md")
+    clone = _make_origin_and_clone(tmp_path)
+    _nested_repo(clone / "pipeline-worktrees" / "w942")
+    _nested_repo(clone / "some" / "other" / "place")
+    (clone / "real.txt").write_text("real work\n")
+
+    cs.push(clone)
+
+    assert _tracked_gitlinks(clone) == []
+    shown = subprocess.run(["git", "show", "origin/main:real.txt"], cwd=clone, capture_output=True, text=True).stdout
+    assert shown == "real work\n"
+
+
+def test_a_nested_repo_alone_makes_no_commit(tmp_path, monkeypatch):
+    _quiet(monkeypatch, tmp_path / "sync-log.md")
+    clone = _make_origin_and_clone(tmp_path)
+    head = _origin_head(tmp_path)
+    _nested_repo(clone / "pipeline-worktrees" / "w1")
+
+    cs.push(clone)
+    cs.push(clone)
+
+    assert _origin_head(tmp_path) == head
+
+
+def test_a_tracked_gitlink_whose_worktree_was_removed_can_still_be_deleted(tmp_path, monkeypatch):
+    import shutil
+    _quiet(monkeypatch, tmp_path / "sync-log.md")
+    clone = _make_origin_and_clone(tmp_path)
+    _nested_repo(clone / "pipeline-worktrees" / "old")
+    _git(clone, "add", "-A")
+    _git(clone, "commit", "-m", "swept in before the fix")
+    _git(clone, "push", "origin", "main")
+    shutil.rmtree(clone / "pipeline-worktrees" / "old")
+
+    cs.push(clone)
+
+    assert _tracked_gitlinks(clone) == []
