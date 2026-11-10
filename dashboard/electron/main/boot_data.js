@@ -2,6 +2,7 @@ import { readFileSync, readdirSync, existsSync, statSync } from 'fs'
 import { homedir } from 'os'
 import path from 'path'
 import { HEALTH_STATUS_PATH } from './health.js'
+import { readStamped } from './stamped.js'
 
 // The boot sequence's data (#431, design in docs/design/celestial-navigation on #428). Every status the boot
 // shows comes from here, built from files that already exist -- nothing is decorative. The verdict banner says
@@ -27,14 +28,15 @@ export const DEFAULT_BOOT_PATHS = {
 
 function readHealth(healthPath) {
   try {
-    const h = JSON.parse(readFileSync(healthPath, 'utf-8'))
-    if (!h || typeof h !== 'object' || !Array.isArray(h.checks)) return null
+    const c = readStamped(healthPath, { defaultToleranceS: STALE_MINUTES * 60 }) // which Mac, how old (marvin#1223)
+    const h = c.value
+    if (!h || !Array.isArray(h.checks)) return null
     const checks = h.checks.map((c) =>
       c && typeof c === 'object'
         ? { id: String(c.id ?? ''), label: String(c.label ?? c.id ?? 'unknown check'), severity: level(c.severity), detail: String(c.detail ?? '') }
         : { id: '', label: 'unreadable check', severity: 'yellow', detail: '' }
     )
-    return { overall: h.overall, generatedAt: h.generated_at ? new Date(h.generated_at) : null, checks }
+    return { overall: h.overall, generatedAt: h.generated_at ? new Date(h.generated_at) : null, checks, host: c.host || null, ageS: c.ageS }
   } catch {
     return null
   }

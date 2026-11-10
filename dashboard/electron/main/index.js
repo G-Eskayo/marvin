@@ -16,7 +16,8 @@ import { prsForOrderCheck, listPipelinePrs, denyMr, fetchTicketContext, sentBack
 import { approveMrStream } from './approve_stream.js'
 import { readSeenNumbers, markSeen, computeReviewStatus } from './mr_seen.js'
 import { readDispatchStatus } from './dispatch_status.js'
-import { readHealthStatus, runHealthCheckNow, rebuildCodeGraph } from './health.js'
+import { readHealthStatus, readHealthStatusFresh, runHealthCheckNow, rebuildCodeGraph } from './health.js'
+import { createPeerCopies } from './peer_copy.js'
 import { createSafetyReviews } from './safety_reviews.js'
 import { buildBootData, createBootGate } from './boot_data.js'
 import { readOnboardingPlans } from './onboarding.js'
@@ -151,11 +152,13 @@ import { readSupportState, badgeCount, runSupport, ensureSupportDir, SUPPORT_DIR
 import { supportWatcher, startAppSupportWatch } from '../../webhook-server/support_sync.js'
 import { createProposals } from './proposals.js'
 const proposalsStore = createProposals()
+// A standby Mac's Health and proposals come from the producer when its own copy has gone stale (marvin#1223).
+const peerCopies = createPeerCopies()
 import { openDevSite } from './dev_site_chrome.js'
 import { listAgents } from './agents.js'
 import { buildWorkingNow } from './working.js'
 import { listJobs } from './jobs.js'
-import { readTicketAgents } from './ticket_agents.js'
+import { readTicketAgents, readTicketAgentsFresh } from './ticket_agents.js'
 import { getUsageReport } from './usage_report.js'
 import { startRefreshServer, parseRefreshPort } from './refresh_server.js'
 import { isEvidenceCapture, installCaptureGuard } from './capture_mode.js'
@@ -464,7 +467,7 @@ const bootGate = createBootGate()
 
 function registerHealthHandlers() {
   ipcMain.handle('boot:data', () => (bootGate() ? { show: true, data: buildBootData() } : { show: false }))
-  ipcMain.handle('health:status', () => readHealthStatus())
+  ipcMain.handle('health:status', () => readHealthStatusFresh(peerCopies))
   ipcMain.handle('health:agents', () => listAgents())
   // Health ▸ Safety reviews: the quarantine's parser and one writer are process_quarantine_reviews.py's (list/answer).
   ipcMain.handle('safety:reviews', () => safetyReviews.list())
@@ -499,7 +502,7 @@ function registerHealthHandlers() {
       return { ok: false, output: String(err.stdout || err.stderr || err.message) }
     }
   })
-  ipcMain.handle('health:ticketAgents', () => readTicketAgents())
+  ipcMain.handle('health:ticketAgents', () => readTicketAgentsFresh(peerCopies))
   ipcMain.handle('health:refresh', async () => {
     await runHealthCheckNow(execFileAsync)
     return readHealthStatus()

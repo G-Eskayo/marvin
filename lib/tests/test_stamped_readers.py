@@ -12,6 +12,13 @@ STAMPED = ("health-status.json", "ticket-agent-proposals.json", "dispatch-state.
 CODE = [*ROOT.glob("lib/*.py"), *ROOT.glob("skills/*/scripts/*.py"), *ROOT.glob("dashboard/electron/main/*.js"),
         *ROOT.glob("dashboard/webhook-server/*.js")]
 HELPERS = {"lib/stamped.py", "dashboard/electron/main/stamped.js"}
+# The readers the plan names (data-freshness §3): Health tab, boot verdict, morning brief, support, loops, the registry
+# and proposal readers. Some read through a path passed in (boot_data's healthPath), which no grep can follow, so
+# they are listed: each must use the helper.
+READERS = ("dashboard/electron/main/health.js", "dashboard/electron/main/boot_data.js", "dashboard/electron/main/boards.js",
+           "dashboard/electron/main/ticket_agents.js", "dashboard/electron/main/dispatch_status.js", "lib/morning_brief.py",
+           "lib/support.py", "lib/loops.py", "lib/board_registry.py", "lib/ticket_agents.py", "lib/task_dispatch.py",
+           "lib/pr_ticket_check.py")
 RAW = re.compile(r"read_text\(|readFileSync\(|json\.load\(\s*open\(|\.open\(")
 
 
@@ -40,6 +47,12 @@ def offenders() -> list[str]:
                     any(re.search(rf"\b{c}\b", line) for c in consts):
                 out.append(f"{rel}:{n}: {line.strip()[:120]}")
     return out
+
+
+def test_every_named_reader_uses_the_helper():
+    pat = re.compile(r"^\s*(import stamped|from stamped import)|from '\./(stamped|peer_copy)\.js'|import\s+stamped\b", re.M)
+    missing = [r for r in READERS if not pat.search((ROOT / r).read_text())]
+    assert missing == [], f"these readers don't read through stamped: {missing}"
 
 
 def test_no_raw_reads_of_stamped_files():
