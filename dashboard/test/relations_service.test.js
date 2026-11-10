@@ -209,6 +209,15 @@ describe('a PR names its ticket as Closes or Part of, in any repo (marvin#1004)'
     expect(p.ok).toBe(true)
   })
 
+  it('openTickets marks which PRs close a ticket, so a "Part of" PR never hides it (marvin#1203)', async () => {
+    const s = make({ getBoardData: async () => ({ issues: [issue(1), issue(2)], prs: [pr(7, 'Closes #1\nPart of #2'), pr(8, 'Part of #1')] }) })
+    const t = Object.fromEntries((await s.openTickets()).tickets.map((x) => [x.number, x]))
+    expect(t[1].closes).toEqual([7])
+    expect(t[1].prs).toEqual(expect.arrayContaining([7, 8]))
+    expect(t[2].closes).toEqual([])
+    expect(t[2].prs).toEqual([7])
+  })
+
   it('the relation index has a part-of edge that is not a closes edge', async () => {
     const s = make({ getBoardData: async () => ({ issues: [issue(2)], prs: [pr(7, 'Part of #2')] }) })
     expect((await s.forPr('G-Eskayo/marvin', 7)).tickets).toEqual([expect.objectContaining({ number: 2, relation: 'part of' })])

@@ -195,13 +195,16 @@ export function buildNow(sources = {}, now = Date.now()) {
       worker: ticketKey ? workerOf(ticketKey) : null, events: ticketKey ? events.get(ticketKey) || [] : [] }
     items.push(item)
   }
-  // Tickets a board pairs with an open PR (closes it) that MR Review's list didn't pair by its body.
+  // Tickets a board pairs with an open PR that closes it, which MR Review's list didn't pair by its body.
   const prNumbers = new Set(prs.map((p) => keyOf(p.repo, p.number)))
   for (const t of tickets) {
     const key = keyOf(t.repo, t.number)
     if (covered.has(key)) continue
-    if ((t.prs || []).some((n) => prNumbers.has(keyOf(t.repo, n)))) {
-      const host = items.find((i) => i.type === 'pr' && i.repo === t.repo && (t.prs || []).includes(i.number))
+    // Only a PR that closes the ticket carries it (marvin#1203): a "Part of" PR used to swallow its parent ticket, so
+    // #1198 vanished behind #1199. A saved ticket from before `closes` existed is shown on its own, never hidden.
+    const closes = Array.isArray(t.closes) ? t.closes : []
+    if (closes.some((n) => prNumbers.has(keyOf(t.repo, n)))) {
+      const host = items.find((i) => i.type === 'pr' && i.repo === t.repo && closes.includes(i.number))
       host.covers.push(key)
       if (!host.priority) host.priority = priorityOf(t.labels)
       covered.add(key)

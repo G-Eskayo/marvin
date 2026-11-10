@@ -154,7 +154,9 @@ export function createRelationsService({ getRepos, getBoardData, getDocs, getPro
             labels: (t.labels || []).map((l) => l?.name || l).filter(Boolean),
             createdAt: t.createdAt || null, updatedAt: t.updatedAt || null,
             column: card?.column || null, reason: card?.reason || null,
-            prs: (card?.prs || []).map((p) => p.number)
+            prs: (card?.prs || []).map((p) => p.number),
+            // Only these carry the ticket in the Workshop; a "Part of" PR leaves it visible on its own (marvin#1203).
+            closes: (card?.prs || []).filter((p) => p.relation === 'closes').map((p) => p.number)
           }
         })
       return { at: b.at, tickets, projects: getProjects() }
