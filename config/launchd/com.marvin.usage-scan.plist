@@ -9,6 +9,10 @@
     <key>ProgramArguments</key>
     <array>
         <string>/Users/gileskayo/.agents/venv/bin/python</string>
+        <string>/Users/gileskayo/.agents/lib/job_report.py</string>
+        <string>usage-scan</string>
+        <string>--</string>
+        <string>/Users/gileskayo/.agents/venv/bin/python</string>
         <string>/Users/gileskayo/.agents/lib/usage_report.py</string>
         <string>scan</string>
     </array>

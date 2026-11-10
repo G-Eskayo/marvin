@@ -3,7 +3,7 @@ import { pathToFileURL } from 'url'
 import { instrumentIpc } from './timing.js'
 import { installDevSiteCors } from './dev_site_cors.js'
 import { join, dirname } from 'path'
-import { existsSync, mkdirSync, appendFileSync, statSync, readFileSync } from 'fs'
+import { existsSync, mkdirSync, appendFileSync, statSync, readFileSync, writeFileSync, renameSync } from 'fs'
 import { homedir } from 'os'
 import { execFile } from 'child_process'
 import { promisify } from 'util'
@@ -165,6 +165,7 @@ import { createImageLoader, mediaFileFor } from './pr_images.js'
 import { createMockupSource, MOCKUP_SCHEME } from './mockups.js'
 import { createMockupWindows } from './mockup_window.js'
 import { createShowWindows } from './show_window.js'
+import { varPath } from './marvin_paths.js'
 import { allowedRoots } from './show.js'
 import { createBoundsStore } from './show_bounds.js'
 import { readFileForView, fileFromBuffer } from './outbox.js'
@@ -175,6 +176,7 @@ import { createChatsReader, createChatSender } from './chat_tabs.js'
 import { isPullOnlyNode, createFeedSource, feedOnlyGh, readNetworkRegistry, assertActsHere as assertPullOnlyActs, canMergeHere, withReadOnlyReason } from './github_feed.js'
 import { createAccounts } from './accounts.js'
 import { createAlerts } from './alerts.js'
+import { createLoops } from './loops.js'
 
 // The pipeline's screenshot copy runs unattended beside the real dashboard: log, never show a modal (#384).
 if (isEvidenceCapture(process.env)) installCaptureGuard(process)
@@ -185,6 +187,7 @@ instrumentIpc(ipcMain)
 const execFileAsync = promisify(execFile)
 const accountsView = createAccounts({ machine: () => resolveDeviceId(), execFile: execFileAsync })
 const alertsView = createAlerts({ execFile: execFileAsync })
+const loopsView = createLoops({ execFile: execFileAsync, renew: (account) => accountsView.renew(account, null) })
 
 // marvin#954: a pull-only node (mac-mini-2012, ADR 0069) holds no GitHub credential. Its dashboard reads the open PRs
 // and boards from the Mini's feed (github_feed.js) and every other GitHub read or write here is refused in plain words,
@@ -511,6 +514,8 @@ function registerHealthHandlers() {
   ipcMain.handle('accounts:list', (_event, opts) => accountsView.list({ fresh: !!opts?.fresh }))
   ipcMain.handle('alerts:status', () => alertsView.status())
   ipcMain.handle('alerts:test', () => alertsView.test())
+  ipcMain.handle('loops:status', () => loopsView.status())
+  ipcMain.handle('loops:fix', (_event, id) => loopsView.fix(String(id || '')))
   ipcMain.handle('accounts:renew', (_event, id, machine) => accountsView.renew(String(id || ''), machine ? String(machine) : null))
   ipcMain.handle('health:setMergeFromDashboard', async (_event, repo, value) => {
     if (value === true) {
@@ -1291,6 +1296,16 @@ function registerShowHandlers() {
     fileFromBuffer,
     focusApp: () => app.focus({ steal: true }),
     devOrigin: process.env['ELECTRON_RENDERER_URL'] || null,
+    // Each project's earlier items (the history strip), per machine: ~/.agents/var/show-history.json.
+    history: {
+      load: () => JSON.parse(readFileSync(varPath('show-history.json'), 'utf8')),
+      save: (obj) => {
+        const file = varPath('show-history.json')
+        mkdirSync(dirname(file), { recursive: true })
+        writeFileSync(`${file}.tmp`, JSON.stringify(obj))
+        renameSync(`${file}.tmp`, file)
+      }
+    },
     // Owner's answers on PR #1029: a web address renders in the window, and a new window opens where the last one
     // was moved to.
     WebContentsView,
@@ -1299,6 +1314,7 @@ function registerShowHandlers() {
   })
   ipcMain.handle('show:current', (event) => showWindows.current(event.sender))
   ipcMain.handle('show:read', (event) => showWindows.read(event.sender))
+  ipcMain.handle('show:select', (event, id) => showWindows.select(event.sender, String(id || '')))
   ipcMain.handle('show:image', (event, src) => showWindows.image(event.sender, src))
   ipcMain.handle('show:webBounds', (event, rect) => showWindows.setWebBounds(event.sender, rect))
   ipcMain.handle('show:openLink', (_event, url) => openLink(String(url || ''), { openExternal: shell.openExternal }))

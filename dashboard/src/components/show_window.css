@@ -35,3 +35,12 @@
 /* 5px clear of the header so its diamond nodes (4px below its edge) stay visible over the page. */
 .show-web { position: relative; margin-top: 5px; height: calc(100% - 5px); }
 .show-web .show-empty { position: absolute; left: 16px; top: 14px; }
+/* The history strip (#715): this project's earlier items under the header; the current one in amber. */
+.show-history { border-bottom: 1px solid var(--line); }
+.show-history-item { border: 1px solid var(--line); border-radius: 2px; padding: 4px 8px; background: transparent;
+  color: var(--moon); cursor: pointer; transition: color .15s, border-color .15s; }
+.show-history-item:hover, .show-history-item:focus-visible { border-color: var(--green); color: var(--green); outline: none; }
+.show-history-item.is-current { border-color: var(--amber); color: var(--amber); cursor: default; }
+.show-history-label { font: 12px/1.3 var(--mono); }
+.show-history-meta { font: 600 9px/1.3 var(--display); letter-spacing: 1.5px; text-transform: uppercase; color: var(--dim); }
+.show-notice { font: 12px var(--mono); color: var(--red); border-bottom: 1px solid var(--line); }

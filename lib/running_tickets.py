@@ -61,4 +61,15 @@ def current(unreadable: list | None = None) -> list[dict]:
     import task_dispatch as td
     import ticket_pipeline as tp
     machines = {td.registry_id(): None, **{d: info["tailscale_hostname"] for d, info in td.remote_devices().items()}}
-    return all_running(machines, _local_ps, _remote_ps, tp.REPO, unreadable)
+    # The box runs no run_ticket.py on its host (a box build runs inside its VM), so the box's ps is not read here
+    # (ADR 0069: no ticket work on the host); this Mac's box-build records say what it has in flight there.
+    machines = {d: h for d, h in machines.items() if d != "mac-mini-2012"}
+    return all_running(machines, _local_ps, _remote_ps, tp.REPO, unreadable) + box_running()
+
+
+def box_running() -> list[dict]:
+    try:
+        import box_build
+        return [{"machine": box_build.BOX, "repo": r["repo"], "number": int(r["ticket"])} for r in box_build.running()]
+    except Exception:  # noqa: BLE001 -- unreadable records: count nothing, the box's own lock still holds
+        return []

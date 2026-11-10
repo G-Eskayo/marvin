@@ -1,0 +1,591 @@
+{
+ "_about": "MARVIN's feedback loops (ADR 0083, marvin#1123). Read only by lib/loops.py; status is derived, never stored. Seeded from the 2026-11-04 audit.",
+ "loops": [
+  {
+   "id": "alerts",
+   "name": "Alerts reach you",
+   "watches": "job:alerts",
+   "broken_when": "failed_runs:1",
+   "action": "job:alerts",
+   "verify": "job:alerts",
+   "cycle_days": 30,
+   "owner": "marvin",
+   "fix": {
+    "level": "one_tap",
+    "kind": "ticket"
+   },
+   "wired": true,
+   "ticket": 1123
+  },
+  {
+   "id": "health-sweep",
+   "name": "Health checks run and report",
+   "watches": "check:jobs:exit",
+   "broken_when": "failed_runs:3",
+   "action": "job:health-check",
+   "verify": "check:jobs:placement",
+   "cycle_days": 1,
+   "owner": "marvin",
+   "fix": {
+    "level": "one_tap",
+    "kind": "rerun",
+    "arg": "health-check"
+   },
+   "wired": true,
+   "ticket": 1123
+  },
+  {
+   "id": "sync",
+   "name": "Code sync recovers by itself",
+   "watches": "check:repo:sync",
+   "broken_when": "red",
+   "action": "job:code-sync-push",
+   "verify": "check:repo:sync",
+   "cycle_days": 1,
+   "owner": "marvin",
+   "fix": {
+    "level": "one_tap",
+    "kind": "rerun",
+    "arg": "code-sync-push"
+   },
+   "wired": false,
+   "ticket": 1123,
+   "why": "Tier 1: auto-recover from leftover stashes and machine-specific files"
+  },
+  {
+   "id": "deploy-verify",
+   "name": "Deploys are checked live, with rollback",
+   "watches": "none",
+   "broken_when": "red",
+   "action": "job:snapshot-deploy-reactive",
+   "verify": "none",
+   "cycle_days": 7,
+   "owner": "marvin",
+   "fix": {
+    "level": "one_tap",
+    "kind": "rollback",
+    "arg": "1123"
+   },
+   "wired": false,
+   "ticket": 1123,
+   "why": "Tier 1: a ship step in every project profile and a live check after each deploy"
+  },
+  {
+   "id": "history-backup",
+   "name": "History backup is verified",
+   "watches": "none",
+   "broken_when": "red",
+   "action": "job:history-load",
+   "verify": "none",
+   "cycle_days": 1,
+   "owner": "marvin",
+   "fix": {
+    "level": "one_tap",
+    "kind": "rerun",
+    "arg": "history-load"
+   },
+   "wired": false,
+   "ticket": 1123,
+   "why": "Tier 1: verify the backup, plus a monthly restore drill (no Time Machine)"
+  },
+  {
+   "id": "morning-brief",
+   "name": "Morning brief is built and read",
+   "watches": "contract:morning-brief",
+   "broken_when": "failed_runs:3",
+   "action": "job:morning-brief",
+   "verify": "contract:morning-brief",
+   "cycle_days": 1,
+   "owner": "marvin",
+   "fix": {
+    "level": "one_tap",
+    "kind": "install_job",
+    "arg": "morning-brief"
+   },
+   "wired": true,
+   "ticket": 1123
+  },
+  {
+   "id": "daily-digest",
+   "name": "Daily digest feeds the brief",
+   "watches": "contract:daily-digest",
+   "broken_when": "failed_runs:3",
+   "action": "job:daily-digest",
+   "verify": "contract:daily-digest",
+   "cycle_days": 1,
+   "owner": "marvin",
+   "fix": {
+    "level": "one_tap",
+    "kind": "rerun",
+    "arg": "daily-digest"
+   },
+   "wired": true,
+   "ticket": 1123
+  },
+  {
+   "id": "research-digest",
+   "name": "Research digest feeds the brief",
+   "watches": "contract:research-digest",
+   "broken_when": "failed_runs:3",
+   "action": "job:research-colony",
+   "verify": "contract:research-digest",
+   "cycle_days": 1,
+   "owner": "marvin",
+   "fix": {
+    "level": "one_tap",
+    "kind": "rerun",
+    "arg": "research-colony"
+   },
+   "wired": true,
+   "ticket": 1123
+  },
+  {
+   "id": "design-build",
+   "name": "An approved mock-up starts the build",
+   "watches": "none",
+   "broken_when": "red",
+   "action": "the dashboard's Approve on a mock-up PR",
+   "verify": "none",
+   "cycle_days": 2,
+   "owner": "marvin",
+   "fix": {
+    "level": "decision",
+    "kind": "decision",
+    "arg": "729"
+   },
+   "wired": false,
+   "ticket": 729,
+   "why": "Tier 3: #729"
+  },
+  {
+   "id": "routing",
+   "name": "Work is routed to the cheapest model that holds quality",
+   "watches": "check:route:intent-routing-collection",
+   "broken_when": "red",
+   "action": "the router (route.py)",
+   "verify": "none",
+   "cycle_days": 7,
+   "owner": "marvin",
+   "fix": {
+    "level": "one_tap",
+    "kind": "ticket"
+   },
+   "wired": false,
+   "ticket": 560,
+   "why": "Tier 2: #560 and #1037, in progress"
+  },
+  {
+   "id": "improvement-queue",
+   "name": "Improvement queue is fixed or dropped",
+   "watches": "contract:improvement-sweep",
+   "broken_when": "failed_runs:3",
+   "action": "job:auto-fix",
+   "verify": "contract:improvement-sweep",
+   "cycle_days": 14,
+   "owner": "marvin",
+   "fix": {
+    "level": "one_tap",
+    "kind": "rerun",
+    "arg": "auto-fix"
+   },
+   "wired": true,
+   "ticket": 1123
+  },
+  {
+   "id": "safety-reviews",
+   "name": "Safety reviews are answered",
+   "watches": "contract:safety-monitor",
+   "broken_when": "failed_runs:3",
+   "action": "job:process-quarantine-reviews",
+   "verify": "contract:safety-monitor",
+   "cycle_days": 7,
+   "owner": "gil",
+   "fix": {
+    "level": "decision",
+    "kind": "decision",
+    "arg": "1123"
+   },
+   "wired": true,
+   "ticket": 1123
+  },
+  {
+   "id": "architecture-suggestions",
+   "name": "Architecture suggestions become tickets",
+   "watches": "contract:architecture-review",
+   "broken_when": "failed_runs:3",
+   "action": "job:architecture-review",
+   "verify": "contract:architecture-review",
+   "cycle_days": 14,
+   "owner": "marvin",
+   "fix": {
+    "level": "one_tap",
+    "kind": "rerun",
+    "arg": "architecture-review"
+   },
+   "wired": true,
+   "ticket": 1123
+  },
+  {
+   "id": "decisions-act",
+   "name": "Owner answers are acted on (ADR 0080 I3)",
+   "watches": "none",
+   "broken_when": "red",
+   "action": "the decisions trigger and the hourly scan",
+   "verify": "none",
+   "cycle_days": 1,
+   "owner": "marvin",
+   "fix": {
+    "level": "one_tap",
+    "kind": "ticket"
+   },
+   "wired": false,
+   "ticket": 1123,
+   "why": "Tier 3: answers in chat written back to the PR; nothing waits more than 24 h"
+  },
+  {
+   "id": "disk",
+   "name": "Disk stays above its safe line",
+   "watches": "check:disk:headroom",
+   "broken_when": "failed_runs:3",
+   "action": "job:cleanup-sweep",
+   "verify": "check:disk:space",
+   "cycle_days": 1,
+   "owner": "marvin",
+   "fix": {
+    "level": "one_tap",
+    "kind": "rerun",
+    "arg": "cleanup-sweep"
+   },
+   "wired": true,
+   "ticket": 1123
+  },
+  {
+   "id": "self-repair",
+   "name": "Regressions are fixed by MARVIN",
+   "watches": "check:main:green",
+   "broken_when": "red",
+   "action": "job:ticket-pipeline",
+   "verify": "check:main:green",
+   "cycle_days": 1,
+   "owner": "marvin",
+   "fix": {
+    "level": "one_tap",
+    "kind": "rerun",
+    "arg": "ticket-pipeline"
+   },
+   "wired": false,
+   "ticket": 1123,
+   "why": "Tier 1: incident tickets jump the test queue"
+  },
+  {
+   "id": "pipeline-breaker",
+   "name": "The pipeline's failure breaker tells you when it trips",
+   "watches": "check:pipeline:breaker",
+   "broken_when": "red",
+   "action": "job:ticket-pipeline",
+   "verify": "check:pipeline:breaker",
+   "cycle_days": 1,
+   "owner": "marvin",
+   "fix": {
+    "level": "one_tap",
+    "kind": "rerun",
+    "arg": "ticket-pipeline"
+   },
+   "wired": false,
+   "ticket": 1123,
+   "why": "Tier 1: alert when the breaker trips"
+  },
+  {
+   "id": "seal-beta-feedback",
+   "name": "Seal Speak beta feedback is read and answered",
+   "watches": "none",
+   "broken_when": "red",
+   "action": "job:seal-beta-ingest",
+   "verify": "none",
+   "cycle_days": 7,
+   "owner": "marvin",
+   "fix": {
+    "level": "one_tap",
+    "kind": "rerun",
+    "arg": "seal-beta-ingest"
+   },
+   "wired": false,
+   "ticket": 409,
+   "why": "Tier 3: #409 comments only on a change; read the Xcode feedback cache"
+  },
+  {
+   "id": "onboarding",
+   "name": "New projects finish onboarding",
+   "watches": "none",
+   "broken_when": "red",
+   "action": "project onboarding (ADR 0036)",
+   "verify": "none",
+   "cycle_days": 7,
+   "owner": "marvin",
+   "fix": {
+    "level": "one_tap",
+    "kind": "ticket"
+   },
+   "wired": false,
+   "ticket": 1123,
+   "why": "Stalled in the audit; not plugged in yet"
+  },
+  {
+   "id": "handoffs",
+   "name": "Handoff open items become tickets",
+   "watches": "none",
+   "broken_when": "red",
+   "action": "the handoff skill",
+   "verify": "none",
+   "cycle_days": 7,
+   "owner": "marvin",
+   "fix": {
+    "level": "one_tap",
+    "kind": "ticket"
+   },
+   "wired": false,
+   "ticket": 1123,
+   "why": "Tier 3: open items matched to tickets"
+  },
+  {
+   "id": "roadmap-decisions",
+   "name": "Roadmap decisions reach the brief",
+   "watches": "none",
+   "broken_when": "red",
+   "action": "the morning brief",
+   "verify": "none",
+   "cycle_days": 7,
+   "owner": "gil",
+   "fix": {
+    "level": "one_tap",
+    "kind": "ticket"
+   },
+   "wired": false,
+   "ticket": 1123,
+   "why": "Tier 3"
+  },
+  {
+   "id": "playbook-harvester",
+   "name": "Lessons become playbook updates",
+   "watches": "none",
+   "broken_when": "red",
+   "action": "self-improve",
+   "verify": "none",
+   "cycle_days": 14,
+   "owner": "marvin",
+   "fix": {
+    "level": "one_tap",
+    "kind": "ticket"
+   },
+   "wired": false,
+   "ticket": 1123,
+   "why": "Tier 3: proposes playbook updates as Decisions; the web playbook first"
+  },
+  {
+   "id": "research-action",
+   "name": "Research becomes proposals",
+   "watches": "contract:research-digest",
+   "broken_when": "red",
+   "action": "research -> proposals (#533), on local qwen",
+   "verify": "none",
+   "cycle_days": 14,
+   "owner": "marvin",
+   "fix": {
+    "level": "one_tap",
+    "kind": "ticket"
+   },
+   "wired": false,
+   "ticket": 533,
+   "why": "Tier 4: #533"
+  },
+  {
+   "id": "open-loops",
+   "name": "Open loops are closed or dismissed",
+   "watches": "none",
+   "broken_when": "red",
+   "action": "job:open-loops",
+   "verify": "none",
+   "cycle_days": 7,
+   "owner": "gil",
+   "fix": {
+    "level": "one_tap",
+    "kind": "rerun",
+    "arg": "open-loops"
+   },
+   "wired": false,
+   "ticket": 1123,
+   "why": "Moves into the inbox with dismiss-until"
+  },
+  {
+   "id": "glossary",
+   "name": "Glossary and conversation playbook stay current",
+   "watches": "none",
+   "broken_when": "red",
+   "action": "playbook slices 3-4",
+   "verify": "none",
+   "cycle_days": 30,
+   "owner": "marvin",
+   "fix": {
+    "level": "one_tap",
+    "kind": "ticket"
+   },
+   "wired": false,
+   "ticket": 1123,
+   "why": "Tier 4"
+  },
+  {
+   "id": "seal-site-verify",
+   "name": "Seal Speak site is checked live",
+   "watches": "none",
+   "broken_when": "red",
+   "action": "the site's ship step",
+   "verify": "none",
+   "cycle_days": 7,
+   "owner": "marvin",
+   "fix": {
+    "level": "one_tap",
+    "kind": "ticket"
+   },
+   "wired": false,
+   "ticket": 1123,
+   "why": "Tier 1: one live check shared by the site checkers"
+  },
+  {
+   "id": "profile-parity",
+   "name": "Profiles match the facts file",
+   "watches": "none",
+   "broken_when": "red",
+   "action": "profile parity check",
+   "verify": "none",
+   "cycle_days": 30,
+   "owner": "gil",
+   "fix": {
+    "level": "one_tap",
+    "kind": "ticket"
+   },
+   "wired": false,
+   "ticket": 1123,
+   "why": "Tier 3: never ran; merge the facts file and add feature coverage"
+  },
+  {
+   "id": "jobs-coverage",
+   "name": "Every scheduled job reports its runs",
+   "watches": "check:jobs:exit",
+   "broken_when": "red",
+   "action": "job:health-check",
+   "verify": "check:jobs:placement",
+   "cycle_days": 1,
+   "owner": "marvin",
+   "fix": {
+    "level": "one_tap",
+    "kind": "install_job",
+    "arg": "health-check"
+   },
+   "wired": false,
+   "ticket": 1123,
+   "why": "Phase 2: move the hand-written plists to config/jobs so job_report wraps them"
+  },
+  {
+   "id": "peers",
+   "name": "The Macs look after each other",
+   "watches": "check:machine",
+   "broken_when": "red",
+   "action": "peer care (ADR 0081)",
+   "verify": "check:machine",
+   "cycle_days": 1,
+   "owner": "marvin",
+   "fix": {
+    "level": "one_tap",
+    "kind": "ticket"
+   },
+   "wired": false,
+   "ticket": 1123,
+   "why": "Tier 1: install watch-ipn and watch the laptop too"
+  },
+  {
+   "id": "logins",
+   "name": "Logins are renewed before they run out",
+   "watches": "check:token",
+   "broken_when": "red",
+   "action": "the accounts sweep (in health-check)",
+   "verify": "check:auth",
+   "cycle_days": 1,
+   "owner": "gil",
+   "fix": {
+    "level": "one_tap",
+    "kind": "relogin",
+    "arg": "github-token"
+   },
+   "wired": true,
+   "ticket": 1123,
+   "why": "Tier 1 adds reminders 3 days and 1 day before expiry"
+  },
+  {
+   "id": "question-log",
+   "name": "Questions get answered",
+   "watches": "none",
+   "broken_when": "red",
+   "action": "question_log.py",
+   "verify": "none",
+   "cycle_days": 7,
+   "owner": "marvin",
+   "fix": {
+    "level": "one_tap",
+    "kind": "ticket"
+   },
+   "wired": false,
+   "ticket": 1123,
+   "why": "Tier 4: an answered status and a weekly readout"
+  },
+  {
+   "id": "knowledge-base",
+   "name": "The knowledge base earns its place",
+   "watches": "none",
+   "broken_when": "red",
+   "action": "the retrieval eval",
+   "verify": "none",
+   "cycle_days": 30,
+   "owner": "marvin",
+   "fix": {
+    "level": "one_tap",
+    "kind": "ticket"
+   },
+   "wired": false,
+   "ticket": 1123,
+   "why": "Tier 4: add it to the retrieval eval, or prune it"
+  },
+  {
+   "id": "memory",
+   "name": "Memory lint fixes itself",
+   "watches": "check:memory:lint",
+   "broken_when": "red",
+   "action": "memory_lint",
+   "verify": "check:memory:lint",
+   "cycle_days": 7,
+   "owner": "marvin",
+   "fix": {
+    "level": "one_tap",
+    "kind": "ticket"
+   },
+   "wired": false,
+   "ticket": 1123,
+   "why": "Tier 4"
+  },
+  {
+   "id": "code-graph",
+   "name": "The code graph stays current",
+   "watches": "check:graphify:fresh",
+   "broken_when": "red",
+   "action": "the graph rebuild hook (#691)",
+   "verify": "check:graphify:fresh",
+   "cycle_days": 1,
+   "owner": "marvin",
+   "fix": {
+    "level": "one_tap",
+    "kind": "ticket"
+   },
+   "wired": true,
+   "ticket": 1123
+  }
+ ]
+}

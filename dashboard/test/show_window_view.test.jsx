@@ -4,7 +4,7 @@
 import { describe, it, expect, vi } from 'vitest'
 import { readFileSync } from 'fs'
 import { renderToStaticMarkup } from 'react-dom/server'
-import ShowWindow, { ShowBody, itemTag } from '../src/components/ShowWindow.jsx'
+import ShowWindow, { ShowBody, HistoryStrip, itemTag } from '../src/components/ShowWindow.jsx'
 
 const api = { current: vi.fn(async () => null), onItem: vi.fn(), onWeb: vi.fn(), read: vi.fn(), image: vi.fn(), openLink: vi.fn(), openInDocs: vi.fn(), setWebBounds: vi.fn() }
 const project = { id: 'seal', name: 'Seal Speak' }
@@ -80,5 +80,19 @@ describe('a web address', () => {
     const html = body({ kind: 'html', label: 'index.html', frameUrl: 'marvin-mockup://f1/index.html', project })
     expect(html).toContain('sandbox="allow-scripts"')
     expect(html).not.toContain('allow-same-origin')
+  })
+})
+
+describe('HistoryStrip', () => {
+  const history = [{ id: 'h2', label: 'plan.md', kind: 'markdown', at: 0 }, { id: 'h1', label: 'shot.png', kind: 'image', at: 0 }]
+  it('lists the project\'s items newest first and marks the current one', () => {
+    const html = renderToStaticMarkup(<HistoryStrip history={history} currentId="h2" onSelect={() => {}} />)
+    expect(html.indexOf('plan.md')).toBeLessThan(html.indexOf('shot.png'))
+    expect(html).toMatch(/aria-current="true"[^>]*title="plan.md"|title="plan.md"[^>]*aria-current="true"/)
+    expect(html).toContain('Doc') // the same kind words as the header tag (itemTag)
+    expect(html).toContain('Image')
+  })
+  it('is hidden with only one item', () => {
+    expect(renderToStaticMarkup(<HistoryStrip history={history.slice(0, 1)} currentId="h2" onSelect={() => {}} />)).toBe('')
   })
 })

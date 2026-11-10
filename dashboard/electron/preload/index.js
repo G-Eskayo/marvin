@@ -130,6 +130,10 @@ contextBridge.exposeInMainWorld('api', {
     setMergeFromDashboard: (repo, value) => ipcRenderer.invoke('health:setMergeFromDashboard', repo, value),
     setDispatch: (repo, value) => ipcRenderer.invoke('health:setDispatch', repo, value)
   },
+  loops: {
+    status: () => ipcRenderer.invoke('loops:status'),
+    fix: (id) => ipcRenderer.invoke('loops:fix', id)
+  },
   alerts: {
     status: () => ipcRenderer.invoke('alerts:status'),
     test: () => ipcRenderer.invoke('alerts:test')
@@ -171,6 +175,7 @@ contextBridge.exposeInMainWorld('api', {
   show: {
     current: () => ipcRenderer.invoke('show:current'),
     read: () => ipcRenderer.invoke('show:read'),
+    select: (id) => ipcRenderer.invoke('show:select', id),
     image: (src) => ipcRenderer.invoke('show:image', src),
     openInDocs: () => ipcRenderer.invoke('show:openInDocs'),
     openLink: (url) => ipcRenderer.invoke('show:openLink', url),

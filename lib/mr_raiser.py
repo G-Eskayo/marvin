@@ -19,6 +19,7 @@ committed) is testable without hitting the real GitHub API.
 """
 from __future__ import annotations
 import re
+import os
 import subprocess
 import sys
 from pathlib import Path
@@ -77,6 +78,12 @@ def _subject(ticket_ref: str) -> str:
     return f"{title} (#{ticket_ref.rpartition('#')[2]})" if title else f"Implement {ticket_ref}"
 
 
+def _author_args() -> list[str]:
+    """The owner authors a Mac pipeline commit. A box build (lib/box_build.py sets MARVIN_BOX_BUILD=1 in its VM) wrote
+    the code in an untrusted VM as the bot, so it commits as the bot (GIT_AUTHOR_* from the VM), never as the owner."""
+    return [] if os.environ.get("MARVIN_BOX_BUILD") == "1" else [f"--author={AUTHOR}"]
+
+
 def _commit_and_push(worktree_path: Path, ticket_ref: str) -> str:
     branch = _current_branch(worktree_path)
     subprocess.run(["git", "add", "-A"], cwd=worktree_path, check=True)
@@ -86,7 +93,7 @@ def _commit_and_push(worktree_path: Path, ticket_ref: str) -> str:
     ).stdout
     if status.strip():
         subprocess.run(
-            ["git", "commit", f"--author={AUTHOR}", "-m", _subject(ticket_ref), "-m", CO_AUTHOR],
+            ["git", "commit", *_author_args(), "-m", _subject(ticket_ref), "-m", CO_AUTHOR],
             cwd=worktree_path, check=True, capture_output=True,
         )
     # A ticket sent back and re-dispatched is rebuilt from the current main under the SAME branch name, while

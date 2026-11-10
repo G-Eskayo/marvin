@@ -111,7 +111,9 @@ const short = (s, max = 80) => {
 //   later: nothing to watch (the machine, a blip): tried again on a later trigger, after a back-off
 export const HOLD_UNTIL = {
   CI_PENDING: 'checks', MAIN_RED: 'main', NO_UI_EVIDENCE: 'head', IMAGES_STALE: 'head', IMAGES_UNPINNED: 'head',
-  GATE_INFRA: 'later', UI_EVIDENCE_UNCHECKED: 'later', DECISIONS_UNCHECKED: 'later'
+  GATE_INFRA: 'later', UI_EVIDENCE_UNCHECKED: 'later', DECISIONS_UNCHECKED: 'later',
+  // marvin#1184: GitHub or the network failing for a while (failure.js's retryable codes): try again later, bounded
+  RATE_LIMITED: 'later', GITHUB_OUTAGE: 'later', TRANSIENT_NETWORK: 'later', BASE_MOVED: 'later'
 }   // MEMORY_PRESSURE has its own resume: the memory queue re-approves when pressure is normal (#940)
 const HOLD_TEXT = { checks: 'waits for its checks to change', head: 'waits for a new commit', main: 'waits for main to change',
   later: 'tries again shortly' }

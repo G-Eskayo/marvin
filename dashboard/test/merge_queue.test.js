@@ -427,3 +427,126 @@ describe('temporary refusals hold, they never drop the PR', () => {
     expect(w.merged).toEqual([10, 11])
   })
 })
+
+// marvin#1184: a merge that failed for a temporary reason (GitHub's rate limit, a GitHub outage, the network, main
+// moving mid-merge) stays queued and is tried again later. #1118 left the queue on 2026-11-09 for a rate limit and
+// only the owner noticing brought it back.
+describe('temporary failures stay queued and retry (#1184)', () => {
+  const refuse = (code, message = code) => ({ body: { code, message } })
+  const RATE = 'gh-gate: API rate limit: interactive call deferred, cooldown until 11:44 (burst)'
+
+  it('outcomeFor holds every retryable code for later', () => {
+    for (const c of ['RATE_LIMITED', 'GITHUB_OUTAGE', 'TRANSIENT_NETWORK', 'BASE_MOVED']) {
+      expect(outcomeFor(refuse(c, 'x'))).toMatchObject({ kind: 'hold', until: 'later', code: c })
+    }
+    expect(outcomeFor({ result: { merged: false, code: 'RATE_LIMITED', reason: RATE } })).toMatchObject({ kind: 'hold', until: 'later' })
+  })
+
+  it('a rate-limited merge stays queued, and merges on a later trigger after the back-off', async () => {
+    let now = 1000
+    const w = world([{ number: 1118 }])
+    w.outcome = () => (w.runs.length === 1 ? refuse('RATE_LIMITED', RATE) : { result: { merged: true } })
+    const { queue, store } = make(w, { clock: () => now })
+    await queue.approve(REPO, url(1118))
+    const q = store.forRepo(REPO)
+    expect(q.failed[url(1118)]).toBeUndefined()
+    expect(q.items[0].hold).toMatchObject({ code: 'RATE_LIMITED', until: 'later', tries: 1 })
+    await queue.kick(REPO)
+    expect(w.runs.length).toBe(1)                      // not before its back-off
+    now += 300_001
+    await queue.kick(REPO)
+    expect(w.merged).toEqual([1118])
+  })
+
+  it('the back-off honours a stated cooldown that ends later than the default', async () => {
+    const at = new Date(2026, 10, 9, 11, 0, 0).getTime()
+    const w = world([{ number: 2 }])
+    w.outcome = () => refuse('RATE_LIMITED', RATE)
+    const { queue, store } = make(w, { clock: () => at })
+    await queue.approve(REPO, url(2))
+    expect(store.forRepo(REPO).items[0].hold.notBefore).toBe(new Date(2026, 10, 9, 11, 44, 0).getTime())
+  })
+
+  it('a cooldown already past, or absurdly far off, falls back to the default back-off', async () => {
+    const at = new Date(2026, 10, 9, 12, 0, 0).getTime()
+    const w = world([{ number: 3 }])
+    w.outcome = () => refuse('RATE_LIMITED', RATE)       // 11:44 is already past at 12:00
+    const { queue, store } = make(w, { clock: () => at })
+    await queue.approve(REPO, url(3))
+    expect(store.forRepo(REPO).items[0].hold.notBefore).toBe(at + 300_000)
+  })
+
+  it('it keeps failing: after a bounded number of tries it leaves the queue with its reason', async () => {
+    let now = 1000
+    const w = world([{ number: 4 }])
+    w.outcome = () => refuse('GITHUB_OUTAGE', 'remote: Internal Server Error')
+    const { queue, store } = make(w, { clock: () => now })
+    await queue.approve(REPO, url(4))
+    for (let i = 0; i < 20; i++) { now += 3_600_001; await queue.kick(REPO) }
+    expect(w.runs.length).toBe(6)
+    expect(store.forRepo(REPO).items).toEqual([])
+    expect(store.forRepo(REPO).failed[url(4)]).toMatchObject({ code: 'GITHUB_OUTAGE' })
+    expect(store.forRepo(REPO).failed[url(4)].reason).toMatch(/6 tries/)
+  })
+
+  it('a different temporary failure after a hold starts its own count', async () => {
+    let now = 1000
+    const w = world([{ number: 5 }])
+    const seq = ['RATE_LIMITED', 'RATE_LIMITED', 'TRANSIENT_NETWORK']
+    w.outcome = () => (w.runs.length <= seq.length ? refuse(seq[w.runs.length - 1]) : { result: { merged: true } })
+    const { queue, store } = make(w, { clock: () => now })
+    await queue.approve(REPO, url(5))
+    now += 3_600_001; await queue.kick(REPO)
+    now += 3_600_001; await queue.kick(REPO)
+    expect(store.forRepo(REPO).items[0].hold).toMatchObject({ code: 'TRANSIENT_NETWORK', tries: 1 })
+    now += 3_600_001; await queue.kick(REPO)
+    expect(w.merged).toEqual([5])
+  })
+
+  it('a real failure still leaves at once', async () => {
+    const w = world([{ number: 6 }])
+    w.outcome = () => ({ result: { merged: false, code: 'GATE_TESTS_FAILED', reason: 'Failing tests (1)' } })
+    const { queue, store } = make(w)
+    await queue.approve(REPO, url(6))
+    expect(store.forRepo(REPO).failed[url(6)]).toBeTruthy()
+  })
+})
+
+// marvin#1183: a PR held on a conflict waited from 2026-11-05 to 11-09 and nothing said so. After a day held on the
+// same commit, the owner is told once; a new commit starts over.
+describe('a conflict held too long is told once (#1183)', () => {
+  const DAY = 24 * 60 * 60 * 1000
+  it('tells once after a day on the same commit, never before, and again only for a new conflicting commit', async () => {
+    let now = 1000
+    const w = world([{ number: 942 }])
+    w.outcome = () => ({ body: { code: 'NOT_MERGEABLE', message: 'conflicts with main' } })
+    const told = []
+    const { queue, store } = make(w, { clock: () => now, onStuck: (repo, pr, info) => told.push([pr.number, info.head]) })
+    await queue.approve(REPO, url(942))
+    expect(store.forRepo(REPO).items[0]).toMatchObject({ conflictHead: 'sha942', conflictAt: 1000 })
+    now += DAY - 1
+    await queue.kick(REPO)
+    expect(told).toEqual([])
+    now += 2
+    await queue.kick(REPO)
+    await queue.kick(REPO)
+    expect(told).toEqual([[942, 'sha942']])                         // once, not every trigger
+    w.prs.get(942).headRefOid = 'sha942b'                            // a new commit: tried again, conflicts again
+    await queue.kick(REPO)
+    expect(store.forRepo(REPO).items[0]).toMatchObject({ conflictHead: 'sha942b', conflictAt: now })
+    now += DAY + 1
+    await queue.kick(REPO)
+    expect(told).toEqual([[942, 'sha942'], [942, 'sha942b']])
+  })
+
+  it('a telling that throws never stops the queue', async () => {
+    let now = 1000
+    const w = world([{ number: 1 }, { number: 2 }])
+    w.outcome = (n) => (n === 1 ? { body: { code: 'NOT_MERGEABLE', message: 'x' } } : { result: { merged: true } })
+    const { queue } = make(w, { clock: () => now, onStuck: () => { throw new Error('no notifier') } })
+    await queue.approve(REPO, url(1))
+    now += DAY + 1
+    await queue.approve(REPO, url(2))
+    expect(w.merged).toEqual([2])
+  })
+})

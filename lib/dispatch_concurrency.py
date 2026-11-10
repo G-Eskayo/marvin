@@ -30,7 +30,14 @@ DEFAULTS = {
     # Extra slots that open only while that machine's API credit is ready (#849): the plan's slots come first.
     "credit_slots": {},
     "guards": {"min_disk_gb": 15, "min_github_budget_pct": 20},
+    # Ticket builds on mac-mini-2012, each in a disposable VM (lib/box_build.py, marvin #951). Off unless the file turns
+    # them on; at most BOX_MAX_SLOTS at once (ADR 0069 amendment 2). memory_mb is the VM's; reserve_mb stays free on the
+    # box for its own trial and test work; timeout_s bounds the whole VM run.
+    "box_builds": {"slots": 0, "memory_mb": 6144, "vcpus": 4, "timeout_s": 5400, "reserve_mb": 3072},
 }
+BOX_MAX_SLOTS = 1
+# (low, high) for each box_builds number; slots is checked against BOX_MAX_SLOTS.
+_BOX_RANGES = {"memory_mb": (1024, 12288), "vcpus": (1, 8), "timeout_s": (600, 4 * 3600), "reserve_mb": (0, 8192)}
 
 
 def _whole(v) -> bool:
@@ -65,6 +72,17 @@ def validate(raw: dict) -> tuple[dict, list[str]]:
                 out["credit_slots"][machine] = n
             else:
                 problems.append(f"credit_slots.{machine} must be a whole number from 0 to {MAX_LIMIT}")
+    box = raw.get("box_builds")
+    if box is not None and not isinstance(box, dict):
+        problems.append("box_builds must be an object")
+    for key, v in (box or {}).items() if isinstance(box, dict) else ():
+        lo, hi = (0, BOX_MAX_SLOTS) if key == "slots" else _BOX_RANGES.get(key, (None, None))
+        if lo is None:
+            continue   # an unknown key is ignored, like every other section
+        if isinstance(v, int) and not isinstance(v, bool) and lo <= v <= hi:
+            out["box_builds"][key] = v
+        else:
+            problems.append(f"box_builds.{key} must be a whole number from {lo} to {hi}")
     guards = raw.get("guards")
     if isinstance(guards, dict):
         for key, hi in (("min_disk_gb", 10_000), ("min_github_budget_pct", 100)):
@@ -108,6 +126,26 @@ def effective_limit(settings: dict, machine: str, credit_ready: bool = False) ->
         return 1
     plan = max(1, min(settings["machine_slots"].get(machine, 1), settings["max_total"]))
     return plan + (settings.get("credit_slots", {}).get(machine, 0) if credit_ready else 0)
+
+
+def box_settings(settings: dict) -> dict:
+    """The box_builds section, every field present (defaults for what's missing or invalid)."""
+    return {**DEFAULTS["box_builds"], **(settings.get("box_builds") or {})}
+
+
+def box_slots(settings: dict) -> int:
+    n = box_settings(settings).get("slots")
+    return n if isinstance(n, int) and not isinstance(n, bool) and 0 <= n <= BOX_MAX_SLOTS else 0
+
+
+def can_start_box_build(settings: dict, in_flight: int) -> tuple[bool, str | None]:
+    """May this Mac start another box build? The box holds its own lock too, so two dispatchers can't both get in."""
+    slots = box_slots(settings)
+    if slots < 1:
+        return False, "box builds are off (config/dispatch.json box_builds.slots)"
+    if in_flight >= slots:
+        return False, f"the box is full: {in_flight} of {slots} box build{'s' if slots > 1 else ''} running"
+    return True, None
 
 
 def _safe(reader, *args):
