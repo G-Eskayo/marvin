@@ -1,0 +1,7 @@
+1. [ ] Get the owner's answers on the two Decisions above (recurrence-probe approach; whether to add the file-local regression test).
+2. [ ] Write `test_sync_paper_knowledge_never_downloads_the_embedding_model` (and its local `no_download`-style fixture) in `skills/improve/scripts/tests/test_cross_machine_merge.py` — only if Decision `regression-test` says yes.
+3. [ ] If `recurrence-probe` = A or B: write the new probe's tests in `lib/tests/test_purpose_metrics.py` first (per the list above), confirm they fail against today's `purpose_metrics.py` (no such function/registration exists yet).
+4. [ ] Implement `_ci_onnx_download_failures(...)` in `lib/purpose_metrics.py`, reusing `_ci_python_minutes`'s run/job-listing shape, per the chosen option (A: + bounded log-text fetch on failed jobs only; B: conclusion-only count). Register it in `PROBES` with baseline documentation pointing at #1098/#1156.
+5. [ ] Run the new and existing tests green; re-run `skills/improve/scripts/tests/test_cross_machine_merge.py` once more under `-n 6` (twice) to reconfirm no regression.
+6. [ ] If `recurrence-probe` = C: skip 3–5; instead draft the closing comment for #1098 citing #1156/PR #1163 and the verification evidence above, and confirm the PR's fit check only warns (doesn't block) with no Recurrence check registered.
+7. [ ] Open the PR (or, if C and no code changed at all, close #1098 directly with the evidence comment) naming #1098, referencing #1156/PR #1163 as prior art, and carrying the Decisions section above for anything not yet answered.

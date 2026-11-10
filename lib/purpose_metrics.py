@@ -365,6 +365,52 @@ def _model_run_timeouts(days: float = PROBE_WINDOW_DAYS, path: Path | None = Non
     return float(count)
 
 
+def _ci_onnx_download_failures(fetch=None, repo: str = "G-Eskayo/marvin", runs: int = 20,
+                               days: float = PROBE_WINDOW_DAYS, now: datetime | None = None) -> float:
+    """#1098/#1156 (2026-11-09): GitHub's 'Python tests' job failures in the 7-day window. Option B: counts the job's
+    `conclusion` field without inspecting logs, respecting the PROBES convention (no network-dependent log fetching).
+    Reuses _ci_python_minutes' run-listing shape: 1 + `runs` REST calls. Noisier than exact-symptom-match but stable
+    across API changes. Fixed 2026-11-10: paginate until cut date is reached (don't rely on runs=20 limit), and filter
+    to head_branch == 'main' to exclude PR branches."""
+    fetch = fetch or (lambda path: _gh_json(path))
+    now = now or datetime.now(timezone.utc)
+    cut = _cut(now, days)
+    count = 0
+    page = 1
+
+    while True:
+        listed = fetch(f"repos/{repo}/actions/workflows/ci.yml/runs?status=completed&per_page={runs}&page={page}")
+        workflow_runs = listed.get("workflow_runs", [])
+        if not workflow_runs:
+            break
+
+        all_outside_window = True
+        for run in workflow_runs:
+            run_created = _when(run.get("created_at"))
+            if not run_created:
+                continue
+
+            all_outside_window = False
+            if run_created < cut:
+                # Runs are in reverse chronological order; once we hit one older than cut, we're done
+                return float(count)
+
+            # Filter to main branch only to exclude PR branches (which are noisy)
+            if run.get("head_branch") != "main":
+                continue
+
+            for job in fetch(f"repos/{repo}/actions/runs/{run['id']}/jobs").get("jobs", []):
+                if job.get("name") == "Python tests" and job.get("conclusion") in ("failure", "timed_out"):
+                    count += 1
+
+        if all_outside_window:
+            # All runs in this page are outside the window
+            break
+        page += 1
+
+    return float(count)
+
+
 # name -> (symptom counter, the most it may read while the fix holds, what it counts). Summed across Macs like any
 # measure; the logs are per Mac (~/.claude/logs doesn't sync), so nothing is counted twice.
 # Each counter takes `days` (default the 7-day window): a watched incident is re-measured over the time since its last
@@ -391,6 +437,11 @@ PROBES: dict[str, tuple[Callable[..., float], float, str]] = {
     "missing-bundled-model": (lambda days=PROBE_WINDOW_DAYS: _missing_model_failures(days=days), 0.0,
                               "pipeline builds that failed on a missing Resources/Models folder over 7 days, all Macs "
                               "(#1114)"),
+    # Six is one six-failure run in a week; at six per week the symptom is steady-state, not a regression. Higher would
+    # be alarming, and the ONNX download lock's design (conftest fixture + per-process monkeypatch) can't be reached if
+    # code doesn't change, so any rise above this resets the fix-check (#1098, verified 2026-11-09).
+    "ci-onnx-download-failures": (lambda days=PROBE_WINDOW_DAYS: _ci_onnx_download_failures(days=days), 6.0,
+                                  "GitHub's 'Python tests' job failures over 7 days (#1098/#1156, fixed by #1163)"),
 }
 MEASURES.update({name: fn for name, (fn, _limit, _what) in PROBES.items()})
 
