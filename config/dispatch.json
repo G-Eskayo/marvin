@@ -3,11 +3,11 @@
   "max_total": 4,
   "max_per_project": 3,
   "machine_slots": {
-    "mac-mini-1": 2,
+    "mac-mini-1": 1,
     "macbook-pro-1": 2
   },
   "credit_slots": {
-    "mac-mini-1": 2,
+    "mac-mini-1": 0,
     "macbook-pro-1": 0
   },
   "guards": {
@@ -15,7 +15,7 @@
     "min_github_budget_pct": 20
   },
   "box_builds": {
-    "slots": 1,
+    "slots": 2,
     "memory_mb": 6144,
     "vcpus": 6,
     "timeout_s": 9000,
