@@ -32,7 +32,9 @@ import {
   triggerRebuildIfDashboardChanged,
   triggerTicketPipeline,
   triggerDiskCleanup,
+  triggerWebhookRestartCheck,
   triggerAfterMerge,
+  withMergeMark,
   isBehindMain,
   rebaseAndRetest,
   freeDiskBytes,
@@ -366,6 +368,68 @@ describe('triggerDiskCleanup', () => {
     expect(args.slice(1)).toEqual(['after-merge'])
     expect(opts).toMatchObject({ detached: true, stdio: 'ignore' })
     expect(unref).toHaveBeenCalled()
+  })
+})
+
+describe('triggerWebhookRestartCheck', () => {
+  it('spawns webhook_restart.py --immediate detached', () => {
+    const unref = vi.fn()
+    const spawnFn = vi.fn().mockReturnValue({ unref })
+    triggerWebhookRestartCheck(spawnFn)
+    expect(spawnFn).toHaveBeenCalledTimes(1)
+    const [pythonPath, args, opts] = spawnFn.mock.calls[0]
+    expect(pythonPath).toMatch(/venv\/bin\/python$/)
+    expect(args[0]).toMatch(/lib\/webhook_restart\.py$/)
+    expect(args.slice(1)).toEqual(['--immediate'])
+    expect(opts).toMatchObject({ detached: true, stdio: 'ignore' })
+    expect(unref).toHaveBeenCalled()
+  })
+
+  it('never breaks a merge if spawn throws', () => {
+    const spawnFn = vi.fn().mockImplementation(() => { throw new Error('spawn EAGAIN') })
+    expect(() => triggerWebhookRestartCheck(spawnFn)).not.toThrow()
+  })
+})
+
+describe('withMergeMark', () => {
+  it('calls the merge function and returns its result', async () => {
+    const mergeResult = { merged: true }
+    const mergeFn = vi.fn().mockResolvedValue(mergeResult)
+    const holdFn = vi.fn().mockResolvedValue({ release: vi.fn().mockResolvedValue(undefined) })
+    const kickFn = vi.fn()
+    const restartCheckFn = vi.fn()
+    const result = await withMergeMark(mergeFn, { hold: holdFn, kick: kickFn, restartCheck: restartCheckFn })
+    expect(result).toBe(mergeResult)
+  })
+
+  it('calls kick and restartCheck in the finally block on successful merge', async () => {
+    const mergeFn = vi.fn().mockResolvedValue({ merged: true })
+    const holdFn = vi.fn().mockResolvedValue({ release: vi.fn().mockResolvedValue(undefined) })
+    const kickFn = vi.fn()
+    const restartCheckFn = vi.fn()
+    await withMergeMark(mergeFn, { hold: holdFn, kick: kickFn, restartCheck: restartCheckFn })
+    expect(kickFn).toHaveBeenCalled()
+    expect(restartCheckFn).toHaveBeenCalled()
+  })
+
+  it('calls kick and restartCheck in the finally block even when merge throws', async () => {
+    const mergeFn = vi.fn().mockRejectedValue(new Error('merge failed'))
+    const holdFn = vi.fn().mockResolvedValue({ release: vi.fn().mockResolvedValue(undefined) })
+    const kickFn = vi.fn()
+    const restartCheckFn = vi.fn()
+    await expect(withMergeMark(mergeFn, { hold: holdFn, kick: kickFn, restartCheck: restartCheckFn })).rejects.toThrow('merge failed')
+    expect(kickFn).toHaveBeenCalled()
+    expect(restartCheckFn).toHaveBeenCalled()
+  })
+
+  it('calls restartCheck fire-and-forget: its errors never propagate', async () => {
+    const mergeFn = vi.fn().mockResolvedValue({ merged: true })
+    const holdFn = vi.fn().mockResolvedValue({ release: vi.fn().mockResolvedValue(undefined) })
+    const kickFn = vi.fn()
+    const restartCheckFn = vi.fn().mockImplementation(() => { throw new Error('restart check failed') })
+    const result = await withMergeMark(mergeFn, { hold: holdFn, kick: kickFn, restartCheck: restartCheckFn })
+    expect(result).toEqual({ merged: true })
+    expect(restartCheckFn).toHaveBeenCalled()
   })
 })
 

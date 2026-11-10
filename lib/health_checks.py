@@ -1053,6 +1053,7 @@ if [ -f "$APP" ]; then echo "app_built_ts=$(stat -f %m "$APP")"; else echo "app_
 git -C "$HOME/.agents" fetch -q origin >/dev/null 2>&1
 echo "dashboard_commit_ts=$(git -C "$HOME/.agents" log -1 --format=%ct origin/main -- dashboard/src dashboard/electron dashboard/index.html dashboard/package.json dashboard/package-lock.json dashboard/electron.vite.config.js dashboard/tailwind.config.js dashboard/postcss.config.js dashboard/resources 2>/dev/null)"
 echo "webhook_commit_ts=$(git -C "$HOME/.agents" log -1 --format=%ct origin/main -- dashboard/webhook-server dashboard/electron/main 2>/dev/null)"
+echo "webhook_commit_sha=$(git -C "$HOME/.agents" log -1 --format=%h origin/main -- dashboard/webhook-server dashboard/electron/main 2>/dev/null)"
 WEBHOOK_PID=$(/bin/launchctl list 2>/dev/null | /usr/bin/awk '$3 ~ /com\.marvin\.dashboard-webhook/ {print $1}')
 if [ -n "$WEBHOOK_PID" ] && [ "$WEBHOOK_PID" != "-" ] && [ "$WEBHOOK_PID" -gt 0 ] 2>/dev/null; then
   ELAPSED=$(/bin/ps -o etime= -p "$WEBHOOK_PID" 2>/dev/null | /usr/bin/awk '__ETIME_AWK__')
@@ -1140,6 +1141,7 @@ def parse_machine_state(text: str) -> dict:
 
     return {"app_built_ts": num("app_built_ts"), "dashboard_commit_ts": num("dashboard_commit_ts"),
             "webhook_server_start_ts": num("webhook_server_start_ts"), "webhook_commit_ts": num("webhook_commit_ts"),
+            "webhook_commit_sha": raw.get("webhook_commit_sha", "").strip(),
             "gh_token": raw.get("gh_token", "").strip(),
             "desktoplive": raw.get("desktoplive", "").strip(),
             "disk_free_kb": num("disk_free_kb"), "disk_total_kb": num("disk_total_kb"),
@@ -1298,6 +1300,9 @@ def evaluate_machine_state(state: dict, now: datetime) -> list[tuple[str, str, s
         age = (now - datetime.fromtimestamp(server_start, tz=timezone.utc)).total_seconds() / 86400
         sev = "red" if behind_h >= SYNC_RED_AFTER_HOURS else "yellow" if behind_h >= SYNC_YELLOW_AFTER_HOURS else "green"
         detail = f"webhook-server started {age:.0f}d ago, {behind_h:.0f}h older than the latest webhook code change -- run launchctl kickstart -k gui/$(id -u)/com.marvin.dashboard-webhook"
+        sha = state.get("webhook_commit_sha", "").strip()
+        if sev != "green" and sha:
+            detail += f" (main is now at `{sha}`)"
         out.append(("webhook:build", sev, detail if sev != "green" else "webhook-server is current"))
     tok = state["gh_token"]
     if tok == "ok":

@@ -28,6 +28,7 @@ const TICKET_PIPELINE_SCRIPT = path.resolve(__dirname, '..', '..', 'lib', 'ticke
 const MERGE_BACKUP_SCRIPT = path.resolve(__dirname, '..', '..', 'lib', 'merge_backup.py')
 const DISK_TRIGGERS_SCRIPT = path.resolve(__dirname, '..', '..', 'lib', 'disk_triggers.py')
 const MEMORY_GUARD_SCRIPT = path.resolve(__dirname, '..', '..', 'lib', 'memory_guard.py')
+const WEBHOOK_RESTART_SCRIPT = path.resolve(__dirname, '..', '..', 'lib', 'webhook_restart.py')
 const VENV_PYTHON = path.resolve(__dirname, '..', '..', 'venv', 'bin', 'python')
 const PROFILE_SCRIPT = path.resolve(__dirname, '..', '..', 'lib', 'project_profile.py')
 const GENERATED_SCRIPT = path.resolve(__dirname, '..', '..', 'lib', 'generated_paths.py')
@@ -1176,7 +1177,7 @@ export function kickMemoryGuard(spawnFn = spawn) {
 // end, so new helpers wait while it runs (memory_guard.py) and other test runs let it go first. The mark is let go
 // before the kick, so the drain the kick starts already sees the merge over. A mark that can't be taken never stops
 // the merge; the merge's own error comes through unchanged.
-export async function withMergeMark(merge, { hold = holdTestSlot, kick = kickMemoryGuard } = {}) {
+export async function withMergeMark(merge, { hold = holdTestSlot, kick = kickMemoryGuard, restartCheck = triggerWebhookRestartCheck } = {}) {
   let mark = null
   try { mark = await hold(['hold-merge']) } catch { /* unmarked: the merge goes ahead */ }
   try {
@@ -1184,11 +1185,16 @@ export async function withMergeMark(merge, { hold = holdTestSlot, kick = kickMem
   } finally {
     try { await mark?.release() } catch { /* the holder ends with this process anyway */ }
     kick()
+    try { restartCheck() } catch { /* restart check is fire-and-forget */ }
   }
 }
 
 export function triggerDiskCleanup(spawnFn = spawn) {
   spawnFn(VENV_PYTHON, [DISK_TRIGGERS_SCRIPT, 'after-merge'], { detached: true, stdio: 'ignore' }).unref()
+}
+
+export function triggerWebhookRestartCheck(spawnFn = spawn) {
+  try { spawnFn(VENV_PYTHON, [WEBHOOK_RESTART_SCRIPT, '--immediate'], { detached: true, stdio: 'ignore' }).unref() } catch { /* never breaks a merge */ }
 }
 
 // What a merge starts once the other open PRs are checked: the pipeline scan and the disk cleanup. Each is started on
