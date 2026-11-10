@@ -1,5 +1,7 @@
 # Changelog
 
+- Tests: test_cross_machine_merge downloads an embedding model in every CI run, and parallel runs corrupt it ([#1258](https://github.com/G-Eskayo/marvin/pull/1258))
+
 - Freshness: Resume check: verify a handoff's ticket and PR claims before SessionStart surfaces it ([#1237](https://github.com/G-Eskayo/marvin/pull/1237))
 
 - code_sync: concurrent runs race on one clone (MERGE_AUTOSTASH / HEAD lock), logged as CONFLICT ([#1189](https://github.com/G-Eskayo/marvin/pull/1189))
