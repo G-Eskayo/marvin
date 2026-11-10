@@ -26,10 +26,16 @@ export function groupProposals(proposals) {
   return out
 }
 
-export function readTicketAgents({ proposalsPath = PROPOSALS_PATH, configPath = CONFIG_PATH } = {}) {
-  const c = readStamped(proposalsPath, { defaultToleranceS: 2 * 3600 })
+// The standby's read (marvin#1223): the producer's live proposals when ours are past their tolerance.
+export async function readTicketAgentsFresh(peers, { proposalsPath = PROPOSALS_PATH, configPath = CONFIG_PATH } = {}) {
+  const c = await peers.read('ticket-agent-proposals', proposalsPath, { defaultToleranceS: 2 * 3600 })
+  return readTicketAgents({ proposalsPath, configPath, copy: c })
+}
+
+export function readTicketAgents({ proposalsPath = PROPOSALS_PATH, configPath = CONFIG_PATH, copy = null } = {}) {
+  const c = copy || readStamped(proposalsPath, { defaultToleranceS: 2 * 3600 })
   if (c.missing) return null
-  const p = { ...c.value, copy: { host: c.host || null, ageS: c.ageS, stale: !!c.stale, legacy: !!c.legacy } }
+  const p = { ...c.value, copy: { host: c.host || null, ageS: c.ageS, stale: !!c.stale, legacy: !!c.legacy, from: c.from || 'local' } }
   let config = {}
   try {
     config = JSON.parse(readFileSync(configPath, 'utf-8'))

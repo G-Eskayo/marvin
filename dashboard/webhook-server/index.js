@@ -13,6 +13,7 @@ import { sendFeedback, dropEntirely } from './deny.js'
 import { forwardRefreshPing } from './refresh_relay.js'
 import { announceMergeHost, relayMergeHostUp } from './merge_host_announce.js'
 import { createStageRelay, createLiveMerges, allowedPeerAddress, cleanStageMessage, stageFanOut } from './merge_stage_relay.js'
+import { copyRoute } from './copy_route.js'
 import { loadGhToken } from './gh_auth.js'
 import { useGhGate } from '../electron/main/path.js'
 import { failureResponse } from './failure.js'
@@ -101,6 +102,8 @@ function readJsonBody(req) {
 
 const server = createServer(async (req, res) => {
   timeRequest(req, res) // every route timed into ~/.claude/logs/dashboard-timing.jsonl (#236)
+  // This Mac's own stamped copies for a peer whose copy went stale (marvin#1223). Tailscale and loopback only.
+  if (copyRoute(req, res)) return
   // mr_raiser.py hits this the moment a PR is raised (any machine) so an
   // already-open dashboard on THIS machine refreshes immediately instead
   // of waiting on its own fallback poll. Responds before the forward

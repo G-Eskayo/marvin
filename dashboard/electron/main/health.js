@@ -46,5 +46,13 @@ export function readHealthStatus(statusPath = HEALTH_STATUS_PATH) {
   if (c.missing) return EMPTY_STATUS
   return { ...c.value, copy: copyMeta(c) }
 }
+// The standby's read (marvin#1223): past its tolerance on a Mac that isn't the producer, the producer's live copy
+// (peer_copy.js); `copy.from` says which one this is.
+export async function readHealthStatusFresh(peers, statusPath = HEALTH_STATUS_PATH) {
+  const c = await peers.read('health-status', statusPath, { defaultToleranceS: 20 * 60 })
+  if (c.missing) return EMPTY_STATUS
+  return { ...c.value, copy: { ...copyMeta(c), from: c.from, producerUnreachable: !!c.producerUnreachable } }
+}
+
 const copyMeta = (c) => ({ host: c.host || null, ageS: c.ageS, stale: !!c.stale, legacy: !!c.legacy, toleranceS: c.toleranceS ?? null })
 
