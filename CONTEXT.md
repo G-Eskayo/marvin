@@ -2130,3 +2130,6 @@ runs no merge or test of its own and its memory is normal).
   reliably on the lower tier, never on a hunch.
 - **Tier escalation**: a failed run's retry moves up one tier (fast → workhorse → frontier), never below the job's
   floor. Escalation is triggered by a recorded failure, never by guessing how hard a task looks from its wording.
+- **Tier layer set**: what a job gets on a given tier. Lower tiers get fewer context layers and more structure (a
+  step list, a worked example, a strict output format the result is checked against). Frontier gets the full
+  context and loose instructions. A job's default tier moves down together with that tier's layer set, never alone.
