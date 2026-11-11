@@ -2117,3 +2117,12 @@ runs no merge or test of its own and its memory is normal).
   per Mac per week, **caught** = distinct (handoff, item) pairs the resume check found changed; **leaked** = question-log
   entries with `kind: stale` plus Gil's own short interactive replies saying a relayed claim was already done or old.
   A week with no sessions is **unknown**, never 0. Target: leaked 0 two weeks running.
+
+## Model tiers (in design, grilling with Gil 2026-11-11, marvin#46)
+
+- **Capability tier**: how capable a model is, independent of which vendor or which job. MARVIN's tiers, highest
+  first: **frontier** (Opus, Fable), **workhorse** (Sonnet), **fast** (Haiku), **local** (Ollama models on MARVIN's own
+  machines), **on-device** (Apple's Foundation Models on the phone or Mac). A tier is not a model: when a new model
+  ships it joins a tier, and nothing that names the tier changes.
+- **Job**: a kind of work MARVIN hands a model (chat, builder, reviewer, scan, summarizer, voice, embedding). A job
+  is not a tier. Each job names the **lowest tier it may run on**, and what it gets at each tier it allows.
