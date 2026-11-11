@@ -3,6 +3,8 @@ import { homedir } from 'os'
 import path from 'path'
 import { HEALTH_STATUS_PATH } from './health.js'
 import { readStamped } from './stamped.js'
+import { readNetworkRegistry } from './github_feed.js'
+import { resolveDeviceId } from './device_identity.js'
 
 // The boot sequence's data (#431, design in docs/design/celestial-navigation on #428). Every status the boot
 // shows comes from here, built from files that already exist -- nothing is decorative. The verdict banner says
@@ -19,9 +21,15 @@ const up = (s) => String(s ?? '').toUpperCase()
 const HEALTH = { tab: 'health' }
 const onCheck = (c) => (c?.id ? { tab: 'health', check: c.id } : HEALTH)
 
+export function homeMemoryDir() {
+  const home = homedir()
+  const slug = home.replace(/\//g, '-')
+  return path.join(home, '.claude', 'projects', slug, 'memory')
+}
+
 export const DEFAULT_BOOT_PATHS = {
   healthPath: HEALTH_STATUS_PATH,
-  memoryDir: path.join(homedir(), '.claude', 'projects', '-Users-gileskayo', 'memory'),
+  memoryDir: homeMemoryDir(),
   skillsDir: path.join(homedir(), '.agents', 'skills'),
   handoffsDir: path.join(homedir(), '.claude', 'handoffs')
 }
@@ -42,7 +50,8 @@ function readHealth(healthPath) {
   }
 }
 
-function syncLine(checks) {
+function syncLine(checks, freshInstall) {
+  if (freshInstall) return { chip: 'SYNC', level: 'lock', text: 'MEMORY SYNC · PENDING', target: null }
   const sync = checks.filter((c) => c.id.startsWith('repo:sync:~/.claude') || c.id.startsWith('sync:stuck') || c.id === 'repo:integrity:~/.claude')
   if (!sync.length) return { chip: 'SYNC', level: 'yellow', text: 'MEMORY SYNC · UNKNOWN', target: HEALTH }
   const lvl = worst(sync.map((c) => c.severity))
@@ -50,7 +59,7 @@ function syncLine(checks) {
   return { chip: 'SYNC', level: lvl, text: 'MEMORY SYNC · MBP ⇄ MINI' + (bad ? ' · ' + up(bad.label) : ''), target: onCheck(bad ?? sync[0]) }
 }
 
-function memoryLine({ memoryDir, skillsDir }) {
+function memoryLine({ memoryDir, skillsDir }, freshInstall) {
   // A skill is a folder holding a SKILL.md; ~/.claude/commands also holds third-party commands and dead links.
   let skills = 0
   try {
@@ -60,28 +69,49 @@ function memoryLine({ memoryDir, skillsDir }) {
         .some((f) => f.name === 'SKILL.md' && f.isFile())).length
   } catch { /* no skills dir: 0 */ }
   const indexPath = path.join(memoryDir, 'MEMORY.md')
-  if (!existsSync(indexPath)) return { chip: 'WARN', level: 'yellow', text: `MEMORY INDEX MISSING · ${skills} SKILLS WIRED` }
+  if (!existsSync(indexPath)) return { chip: 'WARN', level: freshInstall ? 'lock' : 'yellow', text: `MEMORY INDEX${freshInstall ? '' : ' MISSING'} · ${skills} SKILLS WIRED` }
   const links = [...readFileSync(indexPath, 'utf-8').matchAll(/\]\(([^)]+\.md)\)/g)].map((m) => m[1])
   const broken = links.filter((l) => !existsSync(path.join(memoryDir, l))).length
   const text = `${links.length} MEMORIES CHARTED · ${skills} SKILLS WIRED`
-  return broken
-    ? { chip: 'WARN', level: 'yellow', text: `${text} · ${broken} BROKEN LINK${broken > 1 ? 'S' : ''}` }
-    : { chip: 'OK', level: 'green', text }
+  if (broken) return { chip: 'WARN', level: freshInstall ? 'lock' : 'yellow', text: `${text} · ${broken} BROKEN LINK${broken > 1 ? 'S' : ''}` }
+  return { chip: 'OK', level: 'green', text }
 }
 
-function miniReason(c) {
+function deviceReason(c) {
   const pct = c.detail.match(/\((\d+)%\)/)
   if (c.id.startsWith('disk:space') && pct) return `DISK ${pct[1]}% FREE`
   if (c.id.startsWith('jobs:exit')) return `${(c.detail.match(/exit \d+/g) || []).length} JOBS FAILED`
   return up(c.detail.split(/ -- |; |:/)[0]).slice(0, 40) || up(c.label)
 }
 
-function miniLine(checks) {
-  const keys = checks.filter((c) => ['machine:mac-mini-1', 'disk:space@mac-mini-1', 'jobs:exit@mac-mini-1'].includes(c.id))
-  if (!keys.length) return { chip: 'LINK', level: 'yellow', text: 'MAC-MINI · UNKNOWN', target: HEALTH }
-  const lvl = worst(keys.map((c) => c.severity))
-  const reason = keys.find((c) => c.severity === lvl && lvl !== 'green')
-  return { chip: 'LINK', level: lvl, text: 'MAC-MINI · ' + (reason ? miniReason(reason) : 'NOMINAL'), target: onCheck(reason ?? keys[0]) }
+function deviceLines(checks, registry, selfId, freshInstall) {
+  if (!registry || typeof registry !== 'object') registry = {}
+  const lines = []
+
+  for (const deviceId of Object.keys(registry || {})) {
+    if (deviceId === selfId) continue
+    const prefix = ['machine:' + deviceId, 'disk:space@' + deviceId, 'jobs:exit@' + deviceId]
+    const keys = checks.filter((c) => prefix.includes(c.id))
+    if (!keys.length) continue
+
+    const lvl = worst(keys.map((c) => c.severity))
+    const reason = keys.find((c) => c.severity === lvl && lvl !== 'green')
+    // Use display name if set in registry, otherwise use the device ID
+    const displayName = registry[deviceId]?.display_name || registry[deviceId]?.display || registry[deviceId]?.name || deviceId
+    lines.push({ chip: 'LINK', level: lvl, text: String(displayName).toUpperCase() + ' · ' + (reason ? deviceReason(reason) : 'NOMINAL'), target: onCheck(reason ?? keys[0]) })
+  }
+
+  // Fallback only when no devices in registry
+  if (!Object.keys(registry).length) {
+    const keys = checks.filter((c) => ['machine:mac-mini-1', 'disk:space@mac-mini-1', 'jobs:exit@mac-mini-1'].includes(c.id))
+    if (keys.length) {
+      const lvl = worst(keys.map((c) => c.severity))
+      const reason = keys.find((c) => c.severity === lvl && lvl !== 'green')
+      lines.push({ chip: 'LINK', level: lvl, text: 'MAC-MINI · ' + (reason ? deviceReason(reason) : 'NOMINAL'), target: onCheck(reason ?? keys[0]) })
+    }
+  }
+
+  return lines.length ? lines : [{ chip: 'LINK', level: freshInstall ? 'lock' : 'yellow', text: 'DEVICES · ' + (freshInstall ? 'PENDING' : 'UNKNOWN'), target: freshInstall ? null : HEALTH }]
 }
 
 function handoffLine(handoffsDir) {
@@ -93,20 +123,22 @@ function handoffLine(handoffsDir) {
       if (!newest || m > newest.m) newest = { f, m }
     }
   } catch { /* no handoffs dir */ }
-  if (!newest) return { chip: 'PLOT', level: 'yellow', text: 'HANDOFF · NONE' }
+  if (!newest) return { chip: 'PLOT', level: 'lock', text: 'HANDOFF · NONE' }
   const m = newest.f.replace(/\.md$/, '').match(/^handoff-(\d{4}-\d{2}-\d{2})(?:-\d{2}-\d{2})?-?(.*)$/)
   const name = m ? m[1] + (m[2] ? ' · ' + m[2].replace(/-/g, ' ') : '') : newest.f
   return { chip: 'PLOT', level: 'lock', text: ('HANDOFF · ' + up(name)).slice(0, 54) }
 }
 
-function testLine(checks) {
+function testLine(checks, freshInstall) {
+  if (freshInstall) return { chip: 'TEST', level: 'lock', text: 'TESTS · PENDING', target: null }
   const t = checks.find((c) => c.id === 'main:green')
   if (!t) return { chip: 'TEST', level: 'yellow', text: 'TESTS · UNKNOWN', target: HEALTH }
   const counts = t.detail.match(/\d+ (?:passed|failed|skipped|errors?)/g) || []
   return { chip: 'TEST', level: t.severity, text: 'TESTS · ' + (counts.length ? up(counts.join(' · ')) : up(t.detail).slice(0, 40)), target: onCheck(t) }
 }
 
-function verdictOf(health, counts, ageMin) {
+function verdictOf(health, counts, ageMin, freshInstall) {
+  if (freshInstall) return { nominal: false, tone: 'first-run', text: 'MARVIN STARTING' }
   if (!health || !counts.total) return { nominal: false, tone: 'unknown', text: 'HEALTH UNKNOWN · OPEN HEALTH' }
   const parts = [counts.red && `${counts.red} CRITICAL`, counts.yellow && `${counts.yellow} WARNING${counts.yellow > 1 ? 'S' : ''}`].filter(Boolean)
   if (parts.length) return { nominal: false, tone: 'issues', text: parts.join(' · ') + ' · OPEN HEALTH' }
@@ -125,13 +157,18 @@ export function buildBootData(opts = {}) {
   const counts = { green: 0, yellow: 0, red: 0, total: checks.length }
   for (const c of checks) counts[c.severity]++
 
+  const registry = opts.registry ?? readNetworkRegistry()
+  const selfId = opts.selfId !== undefined ? opts.selfId : resolveDeviceId()
+  const peers = selfId ? Object.keys(registry || {}).filter((id) => id !== selfId) : []
+  const freshInstall = health === null && selfId !== null && peers.length === 0
+
   const lines = [
     { chip: 'LOCK', level: 'lock', text: 'ORIGIN · MARVIN' },
-    syncLine(checks),
-    memoryLine(p),
-    miniLine(checks),
+    syncLine(checks, freshInstall),
+    memoryLine(p, freshInstall),
+    ...deviceLines(checks, registry, selfId, freshInstall),
     handoffLine(p.handoffsDir),
-    testLine(checks)
+    testLine(checks, freshInstall)
   ]
   if (health && (ageMin === null || ageMin > STALE_MINUTES)) {
     lines.push({ chip: 'STALE', level: 'yellow', text: ageMin === null ? 'HEALTH SNAPSHOT UNDATED' : `HEALTH SNAPSHOT ${ageMin} MIN OLD`, target: HEALTH })
@@ -140,7 +177,7 @@ export function buildBootData(opts = {}) {
     generatedAt: now.toISOString(),
     healthAt: health?.generatedAt && !isNaN(health.generatedAt) ? health.generatedAt.toISOString() : null,
     counts,
-    verdict: verdictOf(health, counts, ageMin),
+    verdict: verdictOf(health, counts, ageMin, freshInstall),
     lines,
     feed: checks.map((c) => ({ label: c.label, level: c.severity }))
   }

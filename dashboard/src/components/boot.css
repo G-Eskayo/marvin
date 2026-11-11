@@ -38,10 +38,15 @@
 .boot-banner.nominal { border-color: var(--orange); color: var(--orange); background: repeating-linear-gradient(-45deg, #ff6a1fcc 0 12px, var(--dash) 12px 24px); }
 .boot-banner.issues { border-color: var(--red); color: var(--red); background: repeating-linear-gradient(-45deg, #ff3b2fcc 0 12px, var(--dash) 12px 24px); }
 .boot-banner.unknown { border-color: var(--amber); color: var(--amber); background: repeating-linear-gradient(-45deg, #f0b32acc 0 12px, var(--dash) 12px 24px); }
+.boot-banner.first-run { border-color: var(--green); color: var(--green); background: repeating-linear-gradient(-45deg, #54ff8acc 0 12px, var(--dash) 12px 24px); }
 
 .boot-title { left: 50%; top: calc(50% + 90px); transform: translateX(-50%); text-align: center; white-space: nowrap; }
 .boot-title h1 { margin: 0; font: 800 60px/1 'Saira Condensed', 'Arial Narrow', sans-serif; color: var(--green); letter-spacing: 10px; padding-left: 10px; text-shadow: 0 0 18px #54ff8a99; }
 .boot-title .boot-sub { margin-top: 8px; font: 600 13px 'Saira Condensed', 'Arial Narrow', sans-serif; letter-spacing: 6px; color: var(--orange); }
+.boot-title .boot-sub.nominal { color: var(--orange); }
+.boot-title .boot-sub.issues { color: var(--red); }
+.boot-title .boot-sub.unknown { color: var(--amber); }
+.boot-title .boot-sub.first-run { color: var(--green); }
 .boot-lock-lbl { font: 11px 'Share Tech Mono', ui-monospace, monospace; fill: var(--orange); letter-spacing: 1px; }
 
 /* #433: clickable items glow and grow slightly on hover. The styles sit on inner elements, because the boot's

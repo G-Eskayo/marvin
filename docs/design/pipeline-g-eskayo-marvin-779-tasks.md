@@ -1,0 +1,10 @@
+1. `dashboard/electron/main/boot_data.js`: add `homeMemoryDir()`; import `readNetworkRegistry`, `resolveDeviceId`, `machineNames`; replace `syncLine`+`miniLine` with a single `deviceLines(checks, registry, selfId)` producing per-remote-device SYNC/LINK pairs (rename `miniReason`→`deviceReason`); make `handoffLine`'s empty case neutral (`level:'lock'`); add the `freshInstall` (health===null && no peers) signal, threaded into `testLine` and `verdictOf`'s new first-run branch; guard against non-object `registry`.
+2. `dashboard/src/lib/boot_view.js`: extend `bannerTone`/`bannerTarget` for `'first-run'`; add `subtitleText(verdict)`.
+3. `dashboard/src/components/BootSequence.jsx`: drive the `.boot-sub` text and tone class from `data.verdict` via `bannerTone`/`subtitleText` instead of the hardcoded `SYSTEMS ONLINE`.
+4. `dashboard/src/lib/boot_animation.js`: gate the system-check feed/progress-bar block on `data.verdict?.tone !== 'first-run'`, collapsing `CHK_END` to `C0` when skipped so downstream timing stays coherent.
+5. `dashboard/src/components/boot.css`: add `.boot-banner.first-run` and per-tone `.boot-sub` color rules.
+6. `lib/tests/instance_grandfathered.txt`: remove the `dashboard/electron/main/boot_data.js` line.
+7. `dashboard/test/boot_data.test.js`: extend `tree()` with `registry`/`selfId`, update the one changed `SYNC` target assertion, add tests 1–13 above.
+8. `dashboard/test/boot_view.test.js`: add tests 14–16 above.
+9. Run the full dashboard suite plus `lib/tests/test_instance.py` (both ratchet tests) to confirm the grandfathered-list removal doesn't regress.
+10. Capture and pin 900px and 1440px screenshots on the PR for both a one-Mac/fresh-install boot and Gil's normal two-Mac boot (AC4 — visible output changes in both the summary lines and the subtitle/banner).

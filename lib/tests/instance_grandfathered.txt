@@ -10,7 +10,6 @@ brain-map/publish_map.py
 brain-map/scripts/facts.py
 dashboard/electron/main/activity.js
 dashboard/electron/main/boards.js
-dashboard/electron/main/boot_data.js
 dashboard/electron/main/deliverables.js
 dashboard/electron/main/docs.js
 dashboard/electron/main/docs_local.js

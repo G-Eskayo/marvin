@@ -3,7 +3,7 @@ import '@fontsource/saira-condensed/600.css'
 import '@fontsource/saira-condensed/800.css'
 import '@fontsource/share-tech-mono/400.css'
 import './boot.css'
-import { shouldPlay } from '../lib/boot_view.js'
+import { shouldPlay, bannerTone, subtitleText } from '../lib/boot_view.js'
 import { runBoot } from '../lib/boot_animation.js'
 
 // Celestial-navigation boot sequence (#431, design on #428). Plays over the dashboard on the first load of each
@@ -58,7 +58,7 @@ export default function BootSequence({ onNavigate }) {
         </defs>
         <g data-b="field" /><g data-b="mark" /><g data-b="lock" />
       </svg>
-      <div className="boot-hud boot-title" data-b="title"><h1>MARVIN</h1><div className="boot-sub">SYSTEMS ONLINE</div></div>
+      <div className="boot-hud boot-title" data-b="title"><h1>MARVIN</h1><div className="boot-sub" data-b="sub" /></div>
       <div className="boot-check">
         <div className="boot-hdr" data-b="hw"><span>SYSTEM CHECK</span><span data-b="chkN">000/000</span></div>
         <div className="boot-win"><div data-b="fw"><div className="boot-feed" data-b="feed" /></div></div>
