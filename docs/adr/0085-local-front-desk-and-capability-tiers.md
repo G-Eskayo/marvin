@@ -39,6 +39,11 @@ anything is measured) and both surfaces at once (twice the risk, the same learni
    paid tokens per finished task). Clearing the gate is the first goal.
 5. **Reinvested savings** may buy a higher frontier model for tasks, but only while the bench shows it meets edge
    cases and acceptance criteria measurably better. Otherwise the choice is reconsidered.
+6. **Both, for every job (Gil, 2026-11-11):** for each job, MARVIN measures the best base model that fits *and* that
+   model tuned (QLoRA on MARVIN's own data), and keeps whichever measures best. That includes jobs where the
+   literature expects little gain from tuning (coding), so the pattern is found from our own numbers. Starting
+   point from the review: Qwen3.5-9B on the Mini for the local tier (Qwen3.5-4B fallback), and the coding floor
+   stays on Claude until the bench says otherwise.
 
 ## Consequences
 
@@ -50,6 +55,8 @@ anything is measured) and both surfaces at once (twice the risk, the same learni
   only to hand-offs.
 - Risk: a confident local answer that should have gone up. Mitigations: the job floors, the override, and the
   override rate in the gate.
-- Open, pending the local-model review (`docs/research/local-models-review-2026-11-11.md`): which models fill
-  the local and on-device tiers on 16 GB machines, and whether tuning them (LoRA on MARVIN's own data) beats
-  picking better base models.
+- The evidence is `docs/research/local-models-review-2026-11-11.md`. Tuning a 4B model fits on a 16 GB Mac.
+  A 9B model is tight, and anything bigger needs an NVIDIA GPU ([[reference-nvidia-gpu-for-marvin-build]]).
+- Open: whether Claude pipeline transcripts may be used as training data. Anthropic's Consumer Terms forbid using
+  the service to build competing models. Until that's settled, tuning uses only MARVIN's own outcomes (review
+  verdicts, merges and send-backs, Gil's own edits).
