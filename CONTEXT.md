@@ -2126,3 +2126,7 @@ runs no merge or test of its own and its memory is normal).
   ships it joins a tier, and nothing that names the tier changes.
 - **Job**: a kind of work MARVIN hands a model (chat, builder, reviewer, scan, summarizer, voice, embedding). A job
   is not a tier. Each job names the **lowest tier it may run on**, and what it gets at each tier it allows.
+- **Default tier**: the tier a job's runs start on. It moves down only when the bench shows the job passing
+  reliably on the lower tier, never on a hunch.
+- **Tier escalation**: a failed run's retry moves up one tier (fast → workhorse → frontier), never below the job's
+  floor. Escalation is triggered by a recorded failure, never by guessing how hard a task looks from its wording.
