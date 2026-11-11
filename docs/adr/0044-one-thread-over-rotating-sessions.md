@@ -2,7 +2,7 @@
 
 ## Status
 
-Accepted (2026-10-05)
+Accepted (2026-10-05). **Amended by [[0085]] (2026-11-11):** the Thread talks to a local front desk first; a Claude Code Session opens only when the front desk hands a brief up.
 
 ## Context
 

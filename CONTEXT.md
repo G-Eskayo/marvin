@@ -2117,3 +2117,34 @@ runs no merge or test of its own and its memory is normal).
   per Mac per week, **caught** = distinct (handoff, item) pairs the resume check found changed; **leaked** = question-log
   entries with `kind: stale` plus Gil's own short interactive replies saying a relayed claim was already done or old.
   A week with no sessions is **unknown**, never 0. Target: leaked 0 two weeks running.
+
+## Model tiers (in design, grilling with Gil 2026-11-11, marvin#46)
+
+- **Capability tier**: how capable a model is, independent of which vendor or which job. MARVIN's tiers, highest
+  first: **frontier** (Opus, Fable), **workhorse** (Sonnet), **fast** (Haiku), **local** (Ollama models on MARVIN's own
+  machines), **on-device** (Apple's Foundation Models on the phone or Mac). A tier is not a model: when a new model
+  ships it joins a tier, and nothing that names the tier changes.
+- **Job**: a kind of work MARVIN hands a model (chat, builder, reviewer, scan, summarizer, voice, embedding). A job
+  is not a tier. Each job names the **lowest tier it may run on**, and what it gets at each tier it allows.
+- **Default tier**: the tier a job's runs start on. It moves down only when the bench shows the job passing
+  reliably on the lower tier, never on a hunch.
+- **Tier escalation**: a failed run's retry moves up one tier (fast → workhorse → frontier), never below the job's
+  floor. Escalation is triggered by a recorded failure, never by guessing how hard a task looks from its wording.
+- **Tier layer set**: what a job gets on a given tier. Lower tiers get fewer context layers and more structure (a
+  step list, a worked example, a strict output format the result is checked against). Frontier gets the full
+  context and loose instructions. A job's default tier moves down together with that tier's layer set, never alone.
+- **Front desk**: the local model Gil talks to first. It gathers context and either handles the work itself or
+  writes a **brief** for a paid tier. A paid model gets the brief, never the raw conversation. The front desk
+  never acts on code, a repo or GitHub by itself: for those it only drafts the brief.
+- **Brief**: what the front desk hands up: the task, the context it gathered, and the acceptance check the
+  result is judged by.
+- **Hand-off**: the front desk sending a brief to a paid tier. It happens when the work's job has a floor above
+  local (always), when a local attempt has a recorded failure (tier escalation), or when Gil says "send this up".
+  Gil's "keep it local" holds it back.
+- **Front-desk gate**: the measured bar the front desk must clear before it replaces the terminal chat, over
+  2 weeks of real Mobile use: at least 90% of hand-offs acted on without the paid model asking for missing
+  context, Gil overriding a local answer ("send this up") under 10% of the time, and paid tokens per finished
+  task down at least 30% against the baseline. Clearing it is the first goal of the tier work.
+- **Reinvested savings**: tokens saved on the front desk may buy a higher frontier model for tasks, but only
+  while the bench shows that model meets edge cases and acceptance criteria measurably better. If it doesn't,
+  the choice is reconsidered.
