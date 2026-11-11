@@ -7,6 +7,11 @@ a mutation score of at least 80 % (ADR 0063, #339; no score yet = wait). The fir
 Gil then did with it (merged, closed, reverted) is recorded. A PR by a ramp author (mac-mini-2012's bot, ADR 0069
 rule 5) also needs that author's own ramp open; each run records the author's closed PRs into it (#952).
 
+Mutation checks run on a time budget per scan (default 10 min, respecting timeouts from #1180/#1181). Each hourly run
+scores as many unscored PRs as the budget allows; errors are logged to error_log with source="auto_merge_shadow";
+elapsed time, scored count, and disk usage are recorded in state after each run. The _score_many() function
+respects the budget and tracks cost to inform future scan_budget tuning.
+
 After SHADOW_DAYS the report says how many PRs it would have merged and lists every one Gil closed or reverted (a
 disagreement). The report reaches Gil in the session-start report, the morning brief and an MR Review banner.
 Switch-on: only by Gil (`switch-on`), only once the report is ready, and only with no disagreements.
@@ -181,11 +186,83 @@ def switch_on(by: str, path: Path = STATE_PATH, now: float | None = None) -> str
     return "on"
 
 
-def pick_unscored(prs: list[dict], scored: dict) -> dict | None:
-    """The oldest open PR whose current commit hasn't been scored yet (a new push means a new score)."""
+def pick_unscored(prs: list[dict], scored: dict, attempted: set[str] | None = None) -> dict | None:
+    """The oldest open PR whose current commit hasn't been scored yet (a new push means a new score).
+    Excludes PRs in attempted (this run's failures) to avoid hammering them."""
     todo = [p for p in prs if scored.get(p["url"]) != p.get("headRefOid")
-            and (mutation_score(p.get("body", "")) is None or p["url"] in scored)]
+            and (mutation_score(p.get("body", "")) is None or p["url"] in scored)
+            and p["url"] not in (attempted or set())]
     return min(todo, key=lambda p: p["number"]) if todo else None
+
+
+def last_scan_cost(path: Path = STATE_PATH) -> dict:
+    """Read the cost of the last scan (elapsed_sec, scored_count, disk_kb_or_reason), or {}."""
+    st = _read(path)
+    return st.get("last_scan_cost", {}) if st else {}
+
+
+def why_unscored(pr: dict, now: float, scored: dict, error_log_entries: list[dict], path: Path | None = None) -> str | None:
+    """Why a PR hasn't been scored yet, or None if it's too new (under 24h open).
+    Returns: None | "queued-behind-N" | "mutation-check-unavailable" | "repeated-failure" | "unknown".
+    If path is provided, reads first_seen from the state; otherwise uses pr.get("first_seen", now)."""
+    first_seen = pr.get("first_seen", now)
+    st = None
+    if path:
+        st = _read(path)
+        if st and pr.get("url") in st.get("prs", {}):
+            first_seen = st["prs"][pr["url"]].get("first_seen", first_seen)
+
+    if now - first_seen < 86400:  # 24 hours
+        return None
+
+    # Count how many earlier PRs (by number) are unscored (not in scored dict)
+    # Only count OPEN PRs (in the current prs dict), not all PRs ever seen
+    if pr.get("url") not in scored:
+        try:
+            this_number = pr.get("number", 999999)
+            # Only count earlier PRs that are still open in state
+            earlier_unscored = 0
+            if st:
+                for url, entry in st.get("prs", {}).items():
+                    pr_num = entry.get("number")
+                    # Count only if: has a number, is earlier, hasn't been scored at current sha
+                    if isinstance(pr_num, int) and pr_num < this_number:
+                        pr_sha = entry.get("current", {}).get("score") if isinstance(entry.get("current"), dict) else None
+                        # If no current score info, check if this PR's URL is in the scored dict
+                        if url not in scored:
+                            earlier_unscored += 1
+            if earlier_unscored > 0:
+                return f"queued-behind-{earlier_unscored}"
+        except (ValueError, AttributeError):
+            pass
+
+    # Check for THIS PR's repeated failures first (before global mutation-check check)
+    # to avoid hiding per-PR failures behind the global flag
+    pr_number = pr.get('number')
+    if pr_number is not None:
+        count = 0
+        for entry in error_log_entries:
+            if entry.get("source") == "auto_merge_shadow":
+                msg = entry.get("message", "")
+                # Use exact match to avoid PR 1 matching #12: require space after number
+                if f"PR #{pr_number} " in msg and "failed" in msg:
+                    count += 1
+        if count >= 2:
+            return "repeated-failure"
+
+    # Check for mutation check unavailable (only if this PR's score is pending, not failed per-PR)
+    for entry in error_log_entries:
+        if entry.get("source") == "auto_merge_shadow":
+            msg_parts = []
+            if isinstance(entry.get("message"), str):
+                msg_parts.append(entry["message"])
+            if isinstance(entry.get("raw"), str):
+                msg_parts.append(entry["raw"])
+            msg = " ".join(msg_parts)
+            if "mutation_check" in msg or "mutation check" in msg.lower():
+                return "mutation-check-unavailable"
+
+    return "unknown"
 
 
 # ── the bot's own trust ramp (ADR 0069 rule 5, #952) ────────────────────────
@@ -263,37 +340,99 @@ def _gh(args):
     return subprocess.run(["gh", *args], capture_output=True, text=True, check=True, timeout=60, env=env).stdout
 
 
-def _score_one(prs: list[dict], repo: str, path: Path) -> None:
-    """Score one unscored PR with the mutation check (#339) in a scratch worktree, and write the section into its body
-    (one per hourly run: each check can take 10 minutes). Best effort; no check installed = nothing scored."""
+def _score_many(prs: list[dict], repo: str, path: Path, budget_sec: float = 600) -> None:
+    """Score unscored PRs with the mutation check (#339) in a scratch worktree, respecting a time budget.
+    Writes the section into each PR's body and records elapsed time and disk usage.
+    Best effort; no check installed = nothing scored. Excludes this-run's failed URLs to avoid hammering."""
     import subprocess
     import tempfile
     try:
+        import disk_ledger
+        import error_log as el
         import mutation_check as mc
         mc.render_section, mc.merge_bodies                       # the reviewed engine (PR #351)
     except (ImportError, AttributeError):
         return
+
+    # Read scored dict BEFORE the loop to avoid stale state reads inside _Locked
     st = _read(path) or {}
-    pr = pick_unscored(prs, st.get("scored", {}))
-    if pr is None:
-        return
+    scored = st.get("scored", {})
+    start_time = time.time()
+    attempted = set()
+    scored_count = 0
+    disk_measurements = []
     clone = Path.home() / ".agents"
-    scratch = Path(tempfile.mkdtemp(prefix="shadow-mutation-"))
-    try:
-        subprocess.run(["git", "fetch", "-q", "origin", "main", pr["headRefName"]], cwd=clone, timeout=120, check=True)
-        subprocess.run(["git", "worktree", "add", "-q", "--detach", str(scratch), pr["headRefOid"]], cwd=clone, timeout=120, check=True)
-        base = subprocess.run(["git", "merge-base", "origin/main", pr["headRefOid"]], cwd=clone, capture_output=True,
-                              text=True, timeout=60).stdout.strip()
-        result = mc.run_mutation_check(str(scratch), pr["headRefName"], "main", base)
-        body = mc.merge_bodies(pr.get("body") or "", mc.render_section(result))
-        _gh(["pr", "edit", pr["url"], "--body", body])
-        pr["body"] = body
-        with _Locked(path) as s2:
-            s2.setdefault("scored", {})[pr["url"]] = pr["headRefOid"]
-    except Exception as e:  # noqa: BLE001 -- try again next hour
-        print(f"auto-merge shadow: scoring PR #{pr['number']} failed: {e}", file=sys.stderr)
-    finally:
-        subprocess.run(["git", "worktree", "remove", "--force", str(scratch)], cwd=clone, capture_output=True, timeout=60)
+
+    while True:
+        elapsed = time.time() - start_time
+        # Budget check before picking, so we don't start a 10-min check at 599s
+        if elapsed >= budget_sec:
+            break
+
+        pr = pick_unscored(prs, scored, attempted=attempted)
+        if pr is None:
+            break
+
+        # Check again after pick in case time passed during pick_unscored
+        elapsed = time.time() - start_time
+        if elapsed >= budget_sec:
+            break
+
+        scratch = Path(tempfile.mkdtemp(prefix="shadow-mutation-"))
+        try:
+            subprocess.run(["git", "fetch", "-q", "origin", "main", pr["headRefName"]], cwd=clone, timeout=120, check=True)
+            subprocess.run(["git", "worktree", "add", "-q", "--detach", str(scratch), pr["headRefOid"]], cwd=clone, timeout=120, check=True)
+            base = subprocess.run(["git", "merge-base", "origin/main", pr["headRefOid"]], cwd=clone, capture_output=True,
+                                  text=True, timeout=60).stdout.strip()
+            result = mc.run_mutation_check(str(scratch), pr["headRefName"], "main", base)
+            body = mc.merge_bodies(pr.get("body") or "", mc.render_section(result))
+            _gh(["pr", "edit", pr["url"], "--body", body])
+            pr["body"] = body
+            # Record this PR as scored and update local scored dict to avoid re-picking
+            scored[pr["url"]] = pr["headRefOid"]
+            with _Locked(path) as s2:
+                s2.setdefault("scored", {})[pr["url"]] = pr["headRefOid"]
+            scored_count += 1
+        except Exception as e:  # noqa: BLE001 -- record and try next PR
+            attempted.add(pr["url"])
+            el.record("auto_merge_shadow", f"scoring PR #{pr['number']} failed: {e}", raw=str(e)[:500])
+            print(f"auto-merge shadow: scoring PR #{pr['number']} failed: {e}", file=sys.stderr)
+        finally:
+            try:
+                du = disk_ledger.du_kb(scratch, timeout=30)
+                if isinstance(du, int):
+                    disk_measurements.append(du)
+                else:
+                    disk_measurements.append(str(du))  # Store reason string as string
+            except Exception as e:  # noqa: BLE001
+                disk_measurements.append(f"du_kb failed: {e}")
+            finally:
+                subprocess.run(["git", "worktree", "remove", "--force", str(scratch)], cwd=clone, capture_output=True, timeout=60)
+
+    elapsed = time.time() - start_time
+    # Calculate total disk usage: sum integers, use first non-int reason if any
+    total_disk_kb = 0
+    disk_reason = None
+    for m in disk_measurements:
+        if isinstance(m, int):
+            total_disk_kb += m
+        else:
+            if disk_reason is None:
+                disk_reason = str(m) if m else None
+
+    disk_kb_or_reason = disk_reason if disk_reason else total_disk_kb
+
+    with _Locked(path) as s3:
+        s3["last_scan_cost"] = {
+            "elapsed_sec": round(elapsed, 1),
+            "scored_count": scored_count,
+            "disk_kb_or_reason": disk_kb_or_reason if isinstance(disk_kb_or_reason, int) else str(disk_kb_or_reason)
+        }
+
+
+def _score_one(prs: list[dict], repo: str, path: Path) -> None:
+    """Deprecated: use _score_many instead."""
+    _score_many(prs, repo, path, budget_sec=600)
 
 
 def run(repo: str = "G-Eskayo/marvin", path: Path = STATE_PATH) -> list[dict]:
@@ -302,7 +441,7 @@ def run(repo: str = "G-Eskayo/marvin", path: Path = STATE_PATH) -> list[dict]:
     import trust_ramp
     prs = json.loads(_gh(["pr", "list", "--repo", repo, "--state", "open", "--limit", "100",
                           "--json", "number,url,title,body,files,headRefName,headRefOid,author"]))
-    _score_one(prs, repo, path)
+    _score_many(prs, repo, path, budget_sec=600)
     clone = Path.home() / ".agents"
     tops = {l for l in subprocess.run(["git", "ls-tree", "--name-only", "-d", "origin/main"], cwd=clone,
                                       capture_output=True, text=True).stdout.split()}

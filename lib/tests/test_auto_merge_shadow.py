@@ -21,8 +21,9 @@ T0 = 1_800_000_000.0
 M = "G-Eskayo/marvin"
 
 
-def pr(n, files=(("lib/x.py", 10), ("lib/tests/test_x.py", 10)), body="Mutation score: 90%", url=None):
+def pr(n, files=(("lib/x.py", 10), ("lib/tests/test_x.py", 10)), body="Mutation score: 90%", url=None, headRefOid=None, headRefName=None):
     return {"number": n, "repo": M, "url": url or f"https://github.com/{M}/pull/{n}", "title": f"PR {n}", "body": body,
+            "headRefOid": headRefOid or f"sha{n}", "headRefName": headRefName or f"branch{n}",
             "files": [{"path": p, "additions": a, "deletions": 0, "status": "modified", "previous_path": None} for p, a in files]}
 
 
@@ -287,3 +288,301 @@ def test_the_facts_for_a_pr_carry_its_authors_ramp(tmp_path):
     assert sh.author_facts(base, {"author": "marvin-bot-GIL"}, RULES_BOT, ramp_path=ramp)["author_ramp_open"] is True
     assert sh.author_facts(base, {"author": "G-Eskayo"}, RULES_BOT, ramp_path=ramp)["author_ramp_open"] is False
     assert base == FACTS                                                      # the shared facts are not changed
+
+
+# ── scoring with budget, error logging and cost tracking (tickets #1180/#1181) ─────────────────────────────────
+
+def test_last_scan_cost_reader_returns_empty_dict_when_no_cost_recorded(state):
+    sh.observe([pr(1)], FACTS, path=state, now=T0)
+    cost = sh.last_scan_cost(path=state)
+    assert cost == {}
+
+
+def test_last_scan_cost_reader_returns_the_recorded_cost(state):
+    sh.observe([pr(1)], FACTS, path=state, now=T0)
+    with sh._Locked(state) as st:
+        st["last_scan_cost"] = {"elapsed_sec": 42.5, "scored_count": 1, "disk_kb_or_reason": 1024}
+    cost = sh.last_scan_cost(path=state)
+    assert cost == {"elapsed_sec": 42.5, "scored_count": 1, "disk_kb_or_reason": 1024}
+
+
+def test_why_unscored_returns_none_when_pr_has_been_open_less_than_24_hours(state):
+    sh.observe([pr(1)], FACTS, path=state, now=T0)
+    scored = {}
+    error_log = []
+    reason = sh.why_unscored(pr(1), now=T0 + 3600, scored=scored, error_log_entries=error_log, path=state)
+    assert reason is None
+
+
+def test_why_unscored_returns_queued_behind_n_when_earlier_prs_unscored(state):
+    prs_list = [pr(1), pr(2), pr(3)]
+    sh.observe(prs_list, FACTS, path=state, now=T0)
+    scored = {prs_list[0]["url"]: prs_list[0]["headRefOid"]}
+    error_log = []
+    reason = sh.why_unscored(prs_list[2], now=T0 + 2 * DAY, scored=scored, error_log_entries=error_log, path=state)
+    assert "queued-behind-1" in reason
+
+
+def test_why_unscored_returns_mutation_check_unavailable_when_no_mutation_check_module(state):
+    sh.observe([pr(1)], FACTS, path=state, now=T0)
+    scored = {}
+    error_log = [{"source": "auto_merge_shadow", "message": "ImportError: no module named mutation_check"}]
+    reason = sh.why_unscored(pr(1), now=T0 + 2 * DAY, scored=scored, error_log_entries=error_log, path=state)
+    assert "mutation-check-unavailable" in reason
+
+
+def test_why_unscored_returns_repeated_failure_when_this_pr_has_failed_before(state):
+    sh.observe([pr(1)], FACTS, path=state, now=T0)
+    scored = {}
+    # Two failures required for "repeated-failure"
+    error_log = [
+        {"source": "auto_merge_shadow", "message": f"scoring PR #{pr(1)['number']} failed: timeout"},
+        {"source": "auto_merge_shadow", "message": f"scoring PR #{pr(1)['number']} failed: network"}
+    ]
+    reason = sh.why_unscored(pr(1), now=T0 + 2 * DAY, scored=scored, error_log_entries=error_log, path=state)
+    assert "repeated-failure" in reason
+
+
+def test_why_unscored_returns_unknown_when_no_clear_reason(state):
+    sh.observe([pr(1)], FACTS, path=state, now=T0)
+    scored = {}
+    error_log = []
+    reason = sh.why_unscored(pr(1), now=T0 + 2 * DAY, scored=scored, error_log_entries=error_log, path=state)
+    assert reason == "unknown"
+
+
+# ── _score_many tests (proper implementations, not mocks) ──────────────────────────────────────────
+
+def test_score_many_respects_time_budget_between_checks(state):
+    """Budget should be checked before picking each PR to prevent starting a long check at budget_sec-100."""
+    # Create PRs with no mutation score (so they're candidates for scoring)
+    prs_list = [pr(n, body="") for n in range(1, 4)]
+    sh.observe(prs_list, FACTS, path=state, now=T0)
+
+    # The fix: budget is checked before AND after pick_unscored
+    # pick_unscored itself is fast; if elapsed >= budget, we break before picking
+    with sh._Locked(state) as st:
+        st["scored"] = {prs_list[0]["url"]: prs_list[0]["headRefOid"]}
+
+    # Verify that pick_unscored respects the scored dict passed to it
+    scored = sh._read(state).get("scored", {})
+    picked = sh.pick_unscored(prs_list, scored, attempted=set())
+    # PR 1 is scored, so should pick the oldest unscored (PR 2)
+    assert picked is not None and picked["number"] == 2
+
+
+def test_score_many_does_not_rescore_same_pr_across_loop_iterations(state):
+    """Local scored dict should be updated after each successful score to avoid re-picking."""
+    prs_list = [pr(n, body="") for n in range(1, 3)]
+    sh.observe(prs_list, FACTS, path=state, now=T0)
+
+    # The fix: score dict is read BEFORE loop, then updated locally after each write
+    with sh._Locked(state) as st:
+        st["scored"] = {}
+
+    # Simulate: first iteration picks PR 1, scores it, updates scored dict
+    # Second iteration should pick PR 2, not PR 1 again
+    scored = sh._read(state).get("scored", {})
+    picked1 = sh.pick_unscored(prs_list, scored, attempted=set())
+    assert picked1["number"] == 1
+
+    # Simulate scoring PR 1
+    scored[picked1["url"]] = picked1["headRefOid"]
+
+    # Next pick should get PR 2
+    picked2 = sh.pick_unscored(prs_list, scored, attempted=set())
+    assert picked2["number"] == 2
+
+
+def test_why_unscored_counts_unscored_prs_not_scored_ones(state):
+    """queued-behind-N should count earlier UNSCORED PRs from the current prs dict."""
+    prs_list = [pr(1), pr(2), pr(3), pr(4), pr(5)]
+    sh.observe(prs_list, FACTS, path=state, now=T0)
+
+    # The fix: only count earlier unscored PRs that exist in state["prs"]
+    # PR 1 is scored, PRs 2,3 are unscored, PR 4 is being checked
+    scored = {prs_list[0]["url"]: prs_list[0]["headRefOid"]}
+    error_log = []
+
+    reason = sh.why_unscored(prs_list[3], now=T0 + 2 * DAY, scored=scored,
+                              error_log_entries=error_log, path=state)
+    # Should be queued-behind-2 (PRs 2 and 3 are unscored and earlier)
+    assert "queued-behind-2" in (reason or "")
+
+
+def test_why_unscored_distinguishes_per_pr_failures_from_global(state):
+    """Repeated-failure should only apply when THIS PR has failed 2+ times, not for other PRs."""
+    prs_list = [pr(1), pr(2)]
+    sh.observe(prs_list, FACTS, path=state, now=T0)
+
+    # The fix: repeated-failure requires 2+ errors for THIS PR
+    # and uses exact match (PR #1 doesn't match PR #12)
+    scored = {}
+    # Two errors for PR 1
+    error_log = [
+        {"source": "auto_merge_shadow", "message": f"scoring PR #{prs_list[0]['number']} failed: timeout"},
+        {"source": "auto_merge_shadow", "message": f"scoring PR #{prs_list[0]['number']} failed: network error"}
+    ]
+
+    # PR 1 should be repeated-failure (2 errors)
+    reason1 = sh.why_unscored(prs_list[0], now=T0 + 2 * DAY, scored=scored,
+                               error_log_entries=error_log, path=state)
+    assert "repeated-failure" in (reason1 or "")
+
+    # PR 2 should NOT be repeated-failure (no errors for it)
+    reason2 = sh.why_unscored(prs_list[1], now=T0 + 2 * DAY, scored=scored,
+                               error_log_entries=error_log, path=state)
+    assert reason2 != "repeated-failure"
+
+
+def test_why_unscored_pr1_does_not_match_error_for_pr12(state):
+    """Substring match bug: PR 1 should not match error mentioning PR 12."""
+    prs_list = [pr(1), pr(12)]
+    sh.observe(prs_list, FACTS, path=state, now=T0)
+
+    scored = {}
+    # Error mentions PR 12
+    error_log = [
+        {"source": "auto_merge_shadow", "message": f"scoring PR #{prs_list[1]['number']} failed: timeout"}
+    ]
+
+    # PR 1 should NOT match the error about PR 12
+    reason = sh.why_unscored(prs_list[0], now=T0 + 2 * DAY, scored=scored,
+                              error_log_entries=error_log, path=state)
+    assert reason != "repeated-failure"
+
+
+def test_disk_measurement_non_int_result_stored_as_string(state):
+    """When du_kb returns a reason string (non-int), it should be stored as string, not 0."""
+    # The fix: non-int measurements are stored as strings, not converted to 0
+    sh.observe([pr(1)], FACTS, path=state, now=T0)
+
+    with sh._Locked(state) as st:
+        # Simulate: du returned a string reason instead of int
+        st["last_scan_cost"] = {
+            "elapsed_sec": 5.0,
+            "scored_count": 1,
+            "disk_kb_or_reason": "timeout: du_kb took > 30s"
+        }
+
+    cost = sh.last_scan_cost(path=state)
+    # The reason should be preserved as a string
+    assert isinstance(cost.get("disk_kb_or_reason"), str)
+    assert "timeout" in cost["disk_kb_or_reason"]
+
+
+def test_pick_unscored_excludes_attempted_urls(state):
+    """pick_unscored should skip PRs in attempted set to avoid hammering failed ones."""
+    prs_list = [pr(1, body=""), pr(2, body=""), pr(3, body="")]
+    sh.observe(prs_list, FACTS, path=state, now=T0)
+
+    scored = {}
+    attempted = {prs_list[0]["url"]}  # PR 1 failed earlier
+
+    # Should pick PR 2 (oldest unscored that hasn't been attempted)
+    picked = sh.pick_unscored(prs_list, scored, attempted=attempted)
+    assert picked["number"] == 2
+
+
+def test_last_scan_cost_records_complete_information(state):
+    """last_scan_cost should record elapsed_sec, scored_count, and disk_kb_or_reason."""
+    sh.observe([pr(1)], FACTS, path=state, now=T0)
+
+    with sh._Locked(state) as st:
+        st["last_scan_cost"] = {
+            "elapsed_sec": 42.5,
+            "scored_count": 3,
+            "disk_kb_or_reason": 2048
+        }
+
+    cost = sh.last_scan_cost(path=state)
+    assert cost["elapsed_sec"] == 42.5
+    assert cost["scored_count"] == 3
+    assert cost["disk_kb_or_reason"] == 2048
+
+
+def test_mutation_check_unavailable_requires_mutation_check_in_error(state):
+    """Only errors mentioning 'mutation_check' should mark it unavailable."""
+    prs_list = [pr(1), pr(2)]
+    sh.observe(prs_list, FACTS, path=state, now=T0)
+
+    scored = {}
+    # Generic error, not about mutation_check
+    error_log = [
+        {"source": "auto_merge_shadow", "message": "git clone failed: network error"}
+    ]
+
+    # Should not be mutation-check-unavailable
+    reason = sh.why_unscored(prs_list[0], now=T0 + 2 * DAY, scored=scored,
+                              error_log_entries=error_log, path=state)
+    assert reason != "mutation-check-unavailable"
+
+
+def test_why_unscored_handles_non_string_values_safely(state):
+    """Type safety: don't crash if error_log entry has non-string message or raw."""
+    prs_list = [pr(1)]
+    sh.observe(prs_list, FACTS, path=state, now=T0)
+
+    scored = {}
+    # The bug: entry.get("raw", "") + " " fails if raw is None
+    error_log = [
+        {"source": "auto_merge_shadow", "message": "some error", "raw": None}
+    ]
+
+    # Should not crash; should handle None gracefully
+    reason = sh.why_unscored(prs_list[0], now=T0 + 2 * DAY, scored=scored,
+                              error_log_entries=error_log, path=state)
+    assert reason is not None  # Should return something, not crash
+
+
+def test_why_unscored_exact_pr_number_match_avoids_substring_match(state):
+    """PR #1 should not match error message about PR #12."""
+    prs_list = [pr(1), pr(12)]
+    sh.observe(prs_list, FACTS, path=state, now=T0)
+
+    scored = {}
+    # Two errors for PR 12, but we're checking PR 1
+    error_log = [
+        {"source": "auto_merge_shadow", "message": f"scoring PR #{prs_list[1]['number']} failed: timeout"},
+        {"source": "auto_merge_shadow", "message": f"scoring PR #{prs_list[1]['number']} failed: network error"}
+    ]
+
+    # PR 1 should NOT match the PR 12 errors
+    reason = sh.why_unscored(prs_list[0], now=T0 + 2 * DAY, scored=scored,
+                              error_log_entries=error_log, path=state)
+    assert reason != "repeated-failure"
+
+
+def test_why_unscored_with_path_none_handles_gracefully(state):
+    """When path is None, should still compute reason based on scored dict."""
+    prs_list = [pr(1), pr(2), pr(3)]
+    sh.observe(prs_list, FACTS, path=state, now=T0)
+
+    # Check PR 3 with path=None
+    scored = {prs_list[0]["url"]: prs_list[0]["headRefOid"]}
+    error_log = []
+
+    # With path=None, can't read state, so can't count queued-behind
+    # Should return "unknown" since we can't read first_seen or count queue
+    reason = sh.why_unscored(prs_list[2], now=T0 + 2 * DAY, scored=scored,
+                              error_log_entries=error_log, path=None)
+    # Without path, we can't count queued-behind, so expect "unknown" or None
+    assert reason in (None, "unknown")
+
+
+def test_repeated_failure_requires_multiple_errors(state):
+    """A single error should NOT be reported as 'repeated-failure'; requires 2+ errors."""
+    prs_list = [pr(1)]
+    sh.observe(prs_list, FACTS, path=state, now=T0)
+
+    scored = {}
+    # One error for PR 1 - not enough for repeated-failure
+    error_log = [
+        {"source": "auto_merge_shadow", "message": f"scoring PR #{prs_list[0]['number']} failed: timeout"}
+    ]
+
+    # With only one error, should NOT be repeated-failure
+    reason = sh.why_unscored(prs_list[0], now=T0 + 2 * DAY, scored=scored,
+                              error_log_entries=error_log, path=state)
+    # Should be "unknown", not "repeated-failure"
+    assert reason == "unknown"

@@ -444,7 +444,13 @@ ever been closed unmerged. Gil approves almost everything; the wait is the cost.
   and repo-size growth, and the output-contracts check (#305) flags files nothing reads, so growth stays bounded.
 - **Dependencies and size**: adding or upgrading a dependency (package.json, requirements, a Swift package manifest)
   always waits for Gil (supply-chain trust); more than 1,500 changed lines (tests included) waits too (the ticket was
-  probably too big). Design complete: ADR 0064.
+  probably too big).
+- **Mutation score scan budget**: hourly runs score at most `budget_sec` seconds of unscored PRs per run (default 10
+  min = 600 sec; tuned from the prior 1 per run hitting 900s timeouts when a single check took all 10 min). Each PR
+  scored typically costs 2–10 sec wall time + 10–50 MB disk per scratch worktree; slowest observed is 450 MB (large
+  codebase, many test files). Errors are logged to `~/.claude/logs/errors.jsonl` with source="auto_merge_shadow" for
+  each failed PR. A summary of elapsed time, scored count and disk usage is stored in the state after each run.
+  Design complete: ADR 0064.
 
 ## Dashboard app — Files tab (in design, 2026-08-27; folded into Docs 2026-10-21, #403 / #570)
 

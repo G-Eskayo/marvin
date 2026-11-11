@@ -1,0 +1,11 @@
+1. `lib/error_log.py`: no change needed — reuse `record()` as-is.
+2. `lib/auto_merge_shadow.py`: refactor `_score_one` into `_score_many(prs, repo, path, budget_sec)` — loops `pick_unscored` (excluding this-run attempted-and-failed URLs) until `budget_sec` is spent; wire `error_log.record(source="auto_merge_shadow", ...)` into its exception handler (keep the stderr print); wrap it with `time.time()` and `disk_ledger.du_kb(scratch, timeout=...)` on each scratch worktree just before removal; persist `{"elapsed_sec", "scored_count", "disk_kb_or_reason"}` as `last_scan_cost` in state.
+3. `lib/auto_merge_shadow.py`: add `last_scan_cost(path=STATE_PATH) -> dict` reader.
+4. `lib/auto_merge_shadow.py`: add `why_unscored(pr, now, scored, error_log_entries)` — None under 24h open; else "queued-behind-N" / "mutation-check-unavailable" / "repeated-failure" / "unknown".
+5. `lib/mutation_check.py`: generalize `merge_bodies(current_body, new_section, start_marker=..., end_marker=...)` with today's markers as defaults *(only if Decision `stated_reason_channel` picks A)*.
+6. `lib/auto_merge_shadow.py`: add the idempotent stated-reason write per the `stated_reason_channel` decision, guarded by a `reason_stated` flag (cause + commit) in shadow state.
+7. `lib/ticket_pipeline.py:_auto_merge_shadow`: extend the `step(...)` line with the cost from `last_scan_cost()`.
+8. Write tests 1–18 above in `lib/tests/test_auto_merge_shadow.py` first; confirm each fails against current code; then implement steps 2–7 to pass them.
+9. Update `lib/auto_merge_shadow.py`'s module docstring and `CONTEXT.md`'s Auto-merge section (§ designed 2026-10-09, ADR 0064) with the decided `scan_budget` and a real measured per-scan cost, replacing the "each check can take 10 minutes" line.
+10. Run the full test suite plus the new tests; do **not** run a real scoring pass against live GitHub inside this session — the prior two attempts both hit a 900s launcher timeout partly from doing exactly that (#1180/#1181 are the actual launcher-timeout tickets, per the issue's needs-info-sweep comment). The merged code drains whatever backlog exists on the next real hourly scan.
+11. `graphify update .` after the code changes.
