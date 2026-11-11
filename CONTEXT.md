@@ -2133,3 +2133,11 @@ runs no merge or test of its own and its memory is normal).
 - **Tier layer set**: what a job gets on a given tier. Lower tiers get fewer context layers and more structure (a
   step list, a worked example, a strict output format the result is checked against). Frontier gets the full
   context and loose instructions. A job's default tier moves down together with that tier's layer set, never alone.
+- **Front desk**: the local model Gil talks to first. It gathers context and either handles the work itself or
+  writes a **brief** for a paid tier. A paid model gets the brief, never the raw conversation. The front desk
+  never acts on code, a repo or GitHub by itself: for those it only drafts the brief.
+- **Brief**: what the front desk hands up: the task, the context it gathered, and the acceptance check the
+  result is judged by.
+- **Hand-off**: the front desk sending a brief to a paid tier. It happens when the work's job has a floor above
+  local (always), when a local attempt has a recorded failure (tier escalation), or when Gil says "send this up".
+  Gil's "keep it local" holds it back.
