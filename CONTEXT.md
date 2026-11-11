@@ -2141,3 +2141,10 @@ runs no merge or test of its own and its memory is normal).
 - **Hand-off**: the front desk sending a brief to a paid tier. It happens when the work's job has a floor above
   local (always), when a local attempt has a recorded failure (tier escalation), or when Gil says "send this up".
   Gil's "keep it local" holds it back.
+- **Front-desk gate**: the measured bar the front desk must clear before it replaces the terminal chat, over
+  2 weeks of real Mobile use: at least 90% of hand-offs acted on without the paid model asking for missing
+  context, Gil overriding a local answer ("send this up") under 10% of the time, and paid tokens per finished
+  task down at least 30% against the baseline. Clearing it is the first goal of the tier work.
+- **Reinvested savings**: tokens saved on the front desk may buy a higher frontier model for tasks, but only
+  while the bench shows that model meets edge cases and acceptance criteria measurably better. If it doesn't,
+  the choice is reconsidered.
