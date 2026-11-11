@@ -483,3 +483,36 @@ def test_reclaim_also_trims_pytest_temp_dirs(monkeypatch):
     monkeypatch.setattr(cs, "trim_pytest_temps", lambda **k: {"removed": ["pytest-1"], "kept": [], "freed_bytes": 4 * GiB})
     r = dt.reclaim()
     assert r["freed_bytes"] == 4 * GiB and "pytest temp" in r["detail"]
+
+
+# ── parkable hint for refusal messages ──────────────────────────────────────────────────────────────────────────
+
+def test_preflight_refusal_mentions_a_parkable_folder_with_local_bytes(monkeypatch):
+    """Low-disk refusal includes a parkable hint when local bytes exist."""
+    hint_calls = []
+
+    def fake_hint(**k):
+        hint_calls.append(k)
+        return "~/eval bench has 100 MB, use: marvin-cold park ~/eval bench"
+
+    r = dt.preflight("helper: x", free=_free_seq(1 * GiB, 1 * GiB),
+                     reclaim=lambda: {"freed_bytes": 0, "detail": "nothing"},
+                     parkable_hint=fake_hint)
+    assert r["ok"] is False
+    assert "100 MB" in r["message"]
+    assert hint_calls == [{"what": "helper: x"}]
+
+
+def test_preflight_refusal_hint_is_silent_when_cold_store_cannot_be_read(monkeypatch):
+    """Parkable hint failing never blocks preflight; it just stays quiet."""
+
+    def boom(**k):
+        raise RuntimeError("cold store unreachable")
+
+    r = dt.preflight("helper: x", free=_free_seq(1 * GiB, 1 * GiB),
+                     reclaim=lambda: {"freed_bytes": 0, "detail": "nothing"},
+                     parkable_hint=boom)
+    assert r["ok"] is False
+    assert "parkable" not in r["message"].lower()   # hint silently failed
+
+

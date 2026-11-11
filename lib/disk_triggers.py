@@ -112,6 +112,32 @@ def load_config() -> dict:
 
 # ── pre-flight ──────────────────────────────────────────────────────────────────────────────────────────────────
 
+def _parkable_hint(store=None, what: str = "") -> str:
+    """Local-only hint for refusal messages: folders with local bytes from partial ensures.
+    No ssh (reads cold_store.Store's local catalog and marker()). Fails open: any error returns empty string."""
+    try:
+        if store is None:
+            import cold_store
+            store, _ = cold_store.default_store()
+        parkable = []
+        for entry in store.catalog_all():
+            if entry.get("origin_machine") != store.machine:
+                continue
+            path = store.home / entry.get("origin_path", "")[2:] if entry.get("origin_path", "").startswith("~/") else None
+            if path and path.exists() and store.marker(path):
+                local_b = cold_store._local_bytes(path)
+                if local_b > 0:
+                    parkable.append((entry.get("name"), local_b, entry.get("origin_path")))
+        if not parkable:
+            return ""
+        msg = "Folders with bytes on disk (use `marvin-cold park PATH` to free them):\n"
+        for name, b, origin in sorted(parkable, key=lambda x: -x[1])[:3]:
+            msg += f"    {origin}: {b / 1e9:.1f} GB\n"
+        return msg
+    except Exception:
+        return ""
+
+
 def reclaim() -> dict:
     """Everything already ruled disposable, in one pass: the sweep's first aid (old aerial videos, disk_trim's
     allowlisted caches), merged PRs' worktrees on this Mac, old unused pytest temp folders (#866), and the download
@@ -135,12 +161,13 @@ def reclaim() -> dict:
 
 
 def preflight(what: str, floor: int = FLOOR_BYTES, free: Callable[[], int | None] | None = None,
-              reclaim: Callable[[], dict] | None = None) -> dict:
+              reclaim: Callable[[], dict] | None = None, parkable_hint: Callable[[str], str] | None = None) -> dict:
     """Before heavy work starts. Above the floor: go, touching nothing. Below it: reclaim once (no retry loop), then
     go if that was enough, else refuse with a message a person can act on. Free space that can't be read never blocks
-    (as #690). Returns {"ok", "free_before", "free_after", "reclaimed", "message"}."""
+    (as #690). Includes parkable hint (local-only, no ssh) when below floor. Returns {"ok", "free_before", "free_after", "reclaimed", "message"}."""
     free = free or free_bytes
     reclaim = reclaim or globals()["reclaim"]
+    parkable_hint = parkable_hint or _parkable_hint
     before = free()
     if before is None or before >= floor:
         return {"ok": True, "free_before": before, "free_after": before, "reclaimed": None, "message": ""}
@@ -154,6 +181,13 @@ def preflight(what: str, floor: int = FLOOR_BYTES, free: Callable[[], int | None
     message = "" if ok else (
         f"Not starting {what}: the disk has {GB(after)} free and work needs {GB(floor)}. "
         f"Cleanup already ran ({detail}). Free up space on this Mac (Health shows what is using it), then start it again.")
+    if not ok:
+        try:
+            hint = parkable_hint(what=what)
+            if hint:
+                message += " " + hint
+        except Exception:  # noqa: BLE001 - parkable hint errors must not block preflight
+            pass
     record("preflight", freed, detail, what=what, ok=ok, free_before=before)
     return {"ok": ok, "free_before": before, "free_after": after, "reclaimed": detail, "message": message}
 

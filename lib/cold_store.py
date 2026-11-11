@@ -21,18 +21,20 @@ park:   hash (O(B) time, O(F) memory for F files, B bytes) -> rsync up, resumabl
         (O(B) there) -> compare; on a mismatch one --checksum repair pass and compare again -> write the entry ->
         re-stat the folder (anything written since the hash aborts) -> swap the folder for the marker with two
         renames on one filesystem -> delete. Until the swap nothing local is touched, so an interrupted park is
-        simply run again: rsync resumes where it stopped.
+        simply run again: rsync resumes where it stopped. If the folder is already parked (marker present) with local
+        files from a partial ensure, re-park instead: upload only changed files, verify, swap (O(B_changed)).
 ensure: no marker -> return (O(1): one stat, one exists check). Marker -> take a per-name lock (two callers never
         fetch twice; the second waits, then finds the data there) -> sizes already present (O(F_part) stats) ->
         free space check before any byte moves -> reachability (calm message when the cold host is asleep or off)
         -> rsync -c down -> sha256 every fetched file against the trusted manifest (O(B_part)) -> drop the marker
         (whole folder) or record the part (--part SUB).
+--then-park: after the command finishes, re-park the folder (if it's managed). Exit code is the command's exit code.
 
 Exit codes for scripts: 0 ok, 2 not parked / bad input, 3 cold host unreachable, 4 not enough free space,
 5 verification failed, 6 folder in use or changed while parking, 7 a copy stopped part way (run again).
 
 Usage: marvin-cold park PATH [--name NAME]
-       marvin-cold ensure PATH|NAME [--part SUB] [--optional] [--min-free-gb N]   (prints the local path)
+       marvin-cold ensure PATH|NAME [--part SUB] [--optional] [--min-free-gb N] [--then-park COMMAND ...]
        marvin-cold list            (alias: where) what is parked, sizes, free space on every machine
 """
 from __future__ import annotations
@@ -125,6 +127,22 @@ def stat_snapshot(folder: Path) -> dict:
             st = os.lstat(p)
             out[os.path.relpath(p, folder)] = (st.st_size, st.st_mtime_ns)
     return out
+
+
+def _local_bytes(path: Path) -> int:
+    """Total bytes of local files (excluding marker files): cheap stat_snapshot-based, no hashing."""
+    try:
+        total = 0
+        for base, dirs, names in os.walk(path):
+            for n in names:
+                if n in (MARKER_JSON, MARKER_TXT):
+                    continue
+                p = os.path.join(base, n)
+                if not os.path.islink(p) and os.path.isfile(p):
+                    total += os.path.getsize(p)
+        return total
+    except OSError:
+        return 0
 
 
 def manifest_bytes(manifest: dict) -> bytes:
@@ -362,25 +380,138 @@ class Store:
             fcntl.flock(f, fcntl.LOCK_EX)
         return f
 
+    # ---- repark ------------------------------------------------------------------------------------------------
+    def _repark(self, path: Path, existing: dict) -> dict:
+        """Re-park a partially-fetched folder: upload changed/new files, verify, swap for a fresh marker.
+        Called under lock, so marker and remote entry remain stable. Time O(B_changed) (hash changes, copy, verify),
+        same safety as park: nothing local is touched until swap."""
+        name = existing["name"]
+        # Re-check the marker and local state under the lock
+        m = self.marker(path)
+        if not m:
+            self._finish_swap(path)
+            return existing
+        # Check if the folder is in use
+        busy = self.in_use(path)
+        if busy:
+            raise ColdError(BUSY, f"{path} is in use, nothing was moved: {', '.join(busy[:5])}")
+        # Get the trusted manifest from before
+        manifest_before = self._trusted_manifest(existing)
+        # Get the current local manifest
+        local_here = local_manifest(path)
+        # Find what changed: files that differ from the trusted manifest
+        changed_files = []
+        for rel, (size, sha) in local_here.get("files", {}).items():
+            if rel not in manifest_before.get("files", {}):
+                changed_files.append(rel)
+            else:
+                if manifest_before["files"][rel] != [size, sha]:
+                    changed_files.append(rel)
+        # Also include symlinks that changed
+        for rel, target in local_here.get("links", {}).items():
+            if rel not in manifest_before.get("links", {}):
+                changed_files.append(rel)
+            elif manifest_before["links"][rel] != target:
+                changed_files.append(rel)
+        # Build the new manifest by merging what we have locally with what's on the cold host
+        new_manifest = {
+            "files": {**manifest_before.get("files", {}), **local_here.get("files", {})},
+            "links": {**manifest_before.get("links", {}), **local_here.get("links", {})}
+        }
+        new_manifest_sha = manifest_sha(new_manifest)
+        # Before uploading, check if the remote already matches the expected state
+        # If there are mismatches that we won't fix (files we didn't change), fail early
+        remote_before = self.remote_manifest(name)
+        problems_before = compare(new_manifest, remote_before)
+        if problems_before:
+            # Check if all problems are in files we're about to change
+            # Problem format is like "differs file/path" or "missing file/path" or "unexpected file/path"
+            problem_files = set()
+            for problem in problems_before:
+                # Remove the first word (the problem type) to get the file path
+                parts = problem.split(None, 1)  # Split on first whitespace
+                if len(parts) == 2:
+                    problem_files.add(parts[1])
+            unchanged_problems = problem_files - set(changed_files)
+            if unchanged_problems:
+                # There are mismatches in files we're not changing; fail without uploading
+                raise ColdError(VERIFY_FAILED, f"the copy on {self.host_id} doesn't match and won't be fixed by this repark, "
+                                               f"nothing local was removed: {'; '.join(sorted(unchanged_problems)[:5])}")
+        # Take snapshot before upload to detect changes during upload
+        snap_before = stat_snapshot(path)
+        # Upload changed files if there are any
+        if changed_files:
+            self.say(f"re-parking {path}: {len(changed_files)} file(s) changed")
+            # Create a temporary file listing the changed paths
+            files_to_upload = "\n".join(changed_files)
+            tmp_list = path.parent / f".{path.name}.rsync-files"
+            tmp_list.write_text(files_to_upload)
+            try:
+                dst = self._spec(self._rpath(name, "data") + "/")
+                self._rsync(f"{path}/", dst, "--files-from", str(tmp_list))
+                problems = compare(new_manifest, self.remote_manifest(name))
+                if problems:
+                    self.say(f"{len(problems)} file(s) differ on {self.host_id}; one repair pass with --checksum")
+                    # Repair pass uploads all files (not just changed) to fix any corruption in files we changed
+                    self._rsync(f"{path}/", dst, "--checksum")
+                    problems = compare(new_manifest, self.remote_manifest(name))
+                if problems:
+                    raise ColdError(VERIFY_FAILED, f"the copy on {self.host_id} doesn't match, nothing local was removed: "
+                                                   f"{'; '.join(problems[:5])}")
+            finally:
+                tmp_list.unlink(missing_ok=True)
+        # Re-stat the folder to ensure nothing changed after upload
+        snap_after = stat_snapshot(path)
+        if snap_before != snap_after:
+            raise ColdError(BUSY, f"{path} changed while it was being parked; nothing local was removed. Run again "
+                                  f"when nothing is writing to it.")
+        busy = self.in_use(path)
+        if busy:
+            raise ColdError(BUSY, f"{path} came into use while parking, nothing local was removed: {busy[:5]}")
+        # Write the new manifest and entry
+        entry = {k: v for k, v in existing.items() if k != "parts"}
+        entry["manifest_sha256"] = new_manifest_sha
+        self._remote_write(self._rpath(name, "manifest.json"), manifest_bytes(new_manifest))
+        self._remote_write(self._rpath(name, "entry.json"), json.dumps(entry, sort_keys=True).encode() + b"\n")
+        self._save_catalog(name, {**entry, "state": "parked", "manifest": new_manifest})
+        # Final swap
+        self._swap(path, entry)
+        self.say(f"re-parked {existing.get('origin_path')} on {self.host_id}: {len(changed_files)} file(s) updated")
+        return entry
+
     # ---- park ------------------------------------------------------------------------------------------------
     def park(self, path: Path, name: str | None = None) -> dict:
         """Move a folder to the cold host and leave a marker. Idempotent: an already parked folder returns its entry.
-        Time O(B) (hash here, copy, hash there), memory O(F)."""
+        Time O(B) (hash here, copy, hash there), memory O(F). If there's a marker with local files, re-parks instead."""
         path = Path(os.path.abspath(os.path.expanduser(str(path))))
         if self.machine == self.host_id:
             raise ColdError(NOT_PARKED, "this machine is the cold host; park from the machine that owns the folder")
         existing = self.marker(path)
         if existing:
+            local_files = local_manifest(path)
+            name = existing["name"]
+            if local_files.get("files") or local_files.get("links"):
+                with self._lock(name):
+                    # Re-read the marker inside the lock to get fresh state
+                    m = self.marker(path)
+                    if m:
+                        return self._repark(path, m)
             self._finish_swap(path)
             return existing
+        # existing is None: marker doesn't exist or is malformed
         if path.is_symlink() or not path.is_dir():
             raise ColdError(NOT_PARKED, f"{path} is not a folder")
         rel = home_relative(path, self.home)
         if path == self.home or any(rel == f"~/{r}" or rel.startswith(f"~/{r}/") for r in REFUSED):
             raise ColdError(NOT_PARKED, f"{rel} may hold secrets or MARVIN's own state; the cold host runs untrusted "
                                         f"code (ADR 0069), so it is never parked there")
+        # If marker files exist but marker() returned None, they're malformed: clean them up and proceed with fresh park
         if (path / MARKER_JSON).exists() or (path / MARKER_TXT).exists():
-            raise ColdError(NOT_PARKED, f"{path} already holds a {MARKER_JSON} or {MARKER_TXT}; refusing to guess")
+            self.say(f"marker files at {path} are malformed; removing and doing a fresh park")
+            shutil.rmtree(path / MARKER_JSON, ignore_errors=True)
+            shutil.rmtree(path / MARKER_TXT, ignore_errors=True)
+            (path / MARKER_JSON).unlink(missing_ok=True)
+            (path / MARKER_TXT).unlink(missing_ok=True)
         name = slug(name or path.name)
         with self._lock(name):
             prior = self.remote_entry(name)
@@ -394,6 +525,16 @@ class Store:
             snap = stat_snapshot(path)
             manifest = build_manifest(str(path))
             total = sum(s for s, _ in manifest["files"].values())
+            # If there's a prior entry, verify the remote still matches before uploading any changes
+            # This ensures we don't upload new changes on top of pre-existing corruption
+            if prior:
+                trusted_manifest = self._trusted_manifest(prior)
+                remote_before = self.remote_manifest(name)
+                problems_before = compare(trusted_manifest, remote_before)
+                if problems_before:
+                    # Remote has changed from what was previously parked; fail without uploading
+                    raise ColdError(VERIFY_FAILED, f"the remote copy doesn't match what was previously parked, "
+                                                   f"nothing local was removed: {'; '.join(problems_before[:5])}")
             self.say(f"copying {total / 1e9:.2f} GB to {self.host_id}")
             r = self._remote(f"mkdir -p {shlex.quote(self._rpath(name, 'data'))}", timeout=60)
             if r.returncode != 0:
@@ -589,7 +730,7 @@ class Store:
     # ---- list ------------------------------------------------------------------------------------------------
     def listing(self, devices: dict[str, str] | None = None) -> dict:
         """What is parked (the cold host's view when it answers, else this machine's catalog) and free GB on each
-        machine. One ssh call per machine."""
+        machine. One ssh call per machine. Includes local_bytes for entries with a marker on this machine."""
         out = {"host": self.host_id, "reachable": True, "parked": [], "free_gb": {}}
         try:
             out["parked"] = self.remote_entries()
@@ -600,6 +741,10 @@ class Store:
             for e in out["parked"]:
                 if e.get("name") == rec.get("name") and rec.get("origin_machine") == self.machine:
                     e["here"] = rec.get("state")
+                    # Add local_bytes for entries with a marker on this machine
+                    path = from_home_relative(rec.get("origin_path", ""), self.home)
+                    if path.exists() and self.marker(path):
+                        e["local_bytes"] = _local_bytes(path)
         out["free_gb"][self.machine] = round(shutil.disk_usage(self.home).free / 1e9, 1)
         for dev, host in (devices or {}).items():
             if dev == self.machine:
@@ -643,8 +788,9 @@ def _print_listing(out: dict) -> None:
         print("  nothing parked")
     for e in out["parked"]:
         here = f", here: {e['here']}" if e.get("here") else ""
+        local = f", local: {e.get('local_bytes', 0) / 1e9:.2f} GB" if e.get("local_bytes", 0) > 0 else ""
         print(f"  {e.get('name')}: {e.get('bytes', 0) / 1e9:.2f} GB, {e.get('files')} files, from "
-              f"{e.get('origin_machine')}:{e.get('origin_path')} on {e.get('parked_at')}{here}")
+              f"{e.get('origin_machine')}:{e.get('origin_path')} on {e.get('parked_at')}{here}{local}")
     print("free space:")
     for dev, gb in out["free_gb"].items():
         print(f"  {dev}: {'not reachable' if gb is None else f'{gb:g} GB'}")
@@ -661,9 +807,20 @@ def main(argv: list[str] | None = None) -> int:
     e.add_argument("--part", help="fetch only this sub-folder or file")
     e.add_argument("--optional", action="store_true", help="succeed quietly when nothing by that name is parked")
     e.add_argument("--min-free-gb", type=float, help="free space to leave after the fetch (default: pipeline floor)")
+    e.add_argument("--then-park", action="store_true", help="after the command finishes, re-park the folder")
     sub.add_parser("list", help="what is parked, and free space on each machine")
     sub.add_parser("where", help="same as list")
-    a = ap.parse_args(argv)
+    # Check for --then-park before parsing to extract the command
+    then_park = "--then-park" in (argv or [])
+    if then_park and (argv or []).index("--then-park") < len(argv or []) - 1:
+        # Split argv at --then-park for proper parsing
+        then_park_idx = (argv or []).index("--then-park")
+        ensure_args = argv[:then_park_idx + 1]
+        command_args = argv[then_park_idx + 1:]
+    else:
+        ensure_args = argv
+        command_args = []
+    a = ap.parse_args(ensure_args)
     store, hosts = default_store()
     try:
         if a.cmd == "park":
@@ -671,6 +828,23 @@ def main(argv: list[str] | None = None) -> int:
         elif a.cmd == "ensure":
             floor = None if a.min_free_gb is None else int(a.min_free_gb * 1e9)
             got = store.ensure(a.target, a.part, a.optional, floor)
+            if a.then_park:
+                # Run the command and re-park afterward
+                if got is not None:
+                    print(got)
+                # Check if this is a managed folder
+                path, entry, _ = store._resolve(a.target, optional=True)
+                is_managed = entry is not None or (path.exists() and store.marker(path))
+                try:
+                    r = subprocess.run(command_args) if command_args else subprocess.CompletedProcess(args=[], returncode=0)
+                    exit_code = r.returncode
+                finally:
+                    if is_managed and path.exists():
+                        try:
+                            store.park(path)
+                        except ColdError:
+                            pass  # Ignore re-park errors; job's exit code takes precedence
+                return exit_code
             if got is not None:
                 print(got)
         else:

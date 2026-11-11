@@ -7,12 +7,14 @@ from __future__ import annotations
 import json
 import os
 import shutil
+import subprocess
 import threading
 from pathlib import Path
 
 import pytest
 
 import cold_store as cs
+from cold_store import _local_bytes
 
 FAKE_SSH = """#!/bin/sh
 # ssh HOST CMD...: run CMD here through a shell, like the remote login shell. DOWN next to this file = host off.
@@ -398,3 +400,293 @@ def test_the_cli_prints_the_path_and_returns_the_exit_code(world, monkeypatch, c
     assert cs.main(["ensure", str(world["data"]), "--part", "results"]) == 0
     assert capsys.readouterr().out.strip() == str(world["data"] / "results")
     assert cs.main(["list"]) == 0 and "eval-bench" in capsys.readouterr().out
+
+
+# ---- repark --------------------------------------------------------------------------------------------------------
+
+def test_repark_after_ensure_drops_the_fetched_part_and_frees_the_disk(world):
+    """park → ensure --part SUB → park again: part's files gone locally, marker's parts == [], zero new rsync calls."""
+    _rsync_wrapper(world, 'exec "$REAL" "$@"')
+    before = _tree(world["data"])
+    world["store"].park(world["data"])
+    calls_after_park = _rsync_calls(world)
+    world["store"].ensure(str(world["data"]), part="models/release/he model")
+    assert (world["data"] / "models" / "release" / "he model" / "weights.bin").exists()
+    partial_tree = _tree(world["data"])
+    assert "models/release/he model" in world["store"].marker(world["data"])["parts"]
+    calls_after_ensure = _rsync_calls(world)
+    # Re-park the partial folder
+    world["store"].park(world["data"])
+    assert _rsync_calls(world) == calls_after_ensure                     # unchanged bytes: zero new rsync calls
+    # Marker stays, but parts is cleared and local files are dropped
+    marker = world["store"].marker(world["data"])
+    assert marker is not None
+    assert marker.get("parts", []) == []
+    # Local bytes should be zero after re-park
+    assert _local_bytes(world["data"]) == 0
+    # Verify the remote copy has everything back
+    assert _tree(world["cold"] / "eval-bench" / "data") == before
+
+
+def test_repark_keeps_a_file_changed_locally_after_ensure(world):
+    """park → ensure --part SUB → edit file → park: new content on cold host, manifest_sha changes, ensure returns new bytes."""
+    _rsync_wrapper(world, 'exec "$REAL" "$@"')
+    entry_before = world["store"].park(world["data"])
+    original_sha = entry_before["manifest_sha256"]
+    world["store"].ensure(str(world["data"]), part="results/run 203.jsonl")
+    old_content = (world["data"] / "results" / "run 203.jsonl").read_text()
+    new_content = old_content + "MODIFIED\n"
+    (world["data"] / "results" / "run 203.jsonl").write_text(new_content)
+    entry_after = world["store"].park(world["data"])
+    assert entry_after["manifest_sha256"] != original_sha
+    shutil.rmtree(world["data"])
+    world["store"].ensure(str(world["data"]))
+    assert (world["data"] / "results" / "run 203.jsonl").read_text() == new_content
+
+
+def test_repark_interrupted_halfway_is_finished_by_the_next_call(world):
+    """Interrupt repark mid-way: nothing local lost, second park() finishes it."""
+    # First, do an initial successful park without interference
+    world["store"].park(world["data"])
+    world["store"].ensure(str(world["data"]))  # Full ensure to bring back all data
+
+    # Modify a local file after ensure to trigger actual changed files
+    (world["data"] / "results" / "run 203.jsonl").write_text('{"new": "data"}\n')
+
+    # Now set up wrapper to interrupt on the next rsync call (which will be from repark)
+    _rsync_wrapper(world, f"""
+"$REAL" "$@"; rc=$?
+if [ ! -f "$here/once" ]; then touch "$here/once"; exit 20; fi
+exit $rc
+""")
+    before = _tree(world["data"])
+    with pytest.raises(cs.ColdError) as e:
+        world["store"].park(world["data"])
+    assert e.value.code == cs.COPY_STOPPED
+    assert _tree(world["data"]) == before
+    world["store"].park(world["data"])
+
+
+def test_repark_of_a_folder_in_use_is_refused_and_nothing_moves(world):
+    """in_use() returns a hit: BUSY, nothing moved."""
+    world["store"].park(world["data"])
+    world["store"].ensure(str(world["data"]), part="models")
+    world["store"].in_use = lambda p: ["python3 12345"]
+    with pytest.raises(cs.ColdError) as e:
+        world["store"].park(world["data"])
+    assert e.value.code == cs.BUSY and "12345" in str(e.value)
+    assert world["store"].marker(world["data"]) is not None
+
+
+def test_a_repark_manifest_mismatch_on_the_cold_host_stops_and_keeps_local_data(world):
+    """Remote manifest mismatch during repark: VERIFY_FAILED, local untouched, nothing uploaded."""
+    world["store"].park(world["data"])
+    world["store"].ensure(str(world["data"]))  # Full ensure
+
+    # Corrupt a file on the remote side (weights.bin)
+    target = world["cold"] / "eval-bench" / "data" / "models" / "release" / "he model" / "weights.bin"
+    original = target.read_bytes()
+    target.write_bytes(original[:-100] + b"X" * 100)
+
+    # Modify a different local file to trigger repark
+    (world["data"] / "models" / "big.bin").write_bytes(b"modified content")
+
+    before = _tree(world["data"])
+    with pytest.raises(cs.ColdError) as e:
+        world["store"].park(world["data"])
+    assert e.value.code == cs.VERIFY_FAILED
+    assert _tree(world["data"]) == before
+
+
+def test_repark_corruption_in_transit_is_caught_and_repaired(world):
+    """Upload corruption during repark is caught and repaired with --checksum pass."""
+    world["store"].park(world["data"])
+    world["store"].ensure(str(world["data"]))  # Full ensure
+
+    # Capture expected state before modification
+    expected = _tree(world["data"])
+
+    # Modify a file to trigger upload
+    (world["data"] / "venv" / "bin" / "python3.12").write_text("#!/bin/sh\nv2\n")
+
+    target = world["cold"] / "eval-bench" / "data" / "results" / "run 203.jsonl"
+    _rsync_wrapper(world, f"""
+"$REAL" "$@"; rc=$?
+if [ ! -f "$here/once" ]; then touch "$here/once"; printf 'X' | dd of="{target}" bs=1 seek=100 conv=notrunc 2>/dev/null; fi
+exit $rc
+""")
+    world["store"].park(world["data"])
+    world["store"].ensure(str(world["data"]))  # Bring back the data after park
+    # Repair pass should have fixed the corruption
+    assert _tree(world["data"]) == expected
+
+
+def test_repark_corruption_that_keeps_happening_fails_and_keeps_the_local_copy(world):
+    """Corruption that persists after repair during repark: VERIFY_FAILED, local untouched."""
+    world["store"].park(world["data"])
+    world["store"].ensure(str(world["data"]))  # Full ensure
+
+    # Modify a file to trigger upload
+    (world["data"] / "venv" / "bin" / "python3.12").write_text("#!/bin/sh\nv2\n")
+
+    target = world["cold"] / "eval-bench" / "data" / "results" / "run 203.jsonl"
+    _rsync_wrapper(world, f"""
+"$REAL" "$@"; rc=$?
+printf 'X' | dd of="{target}" bs=1 seek=100 conv=notrunc 2>/dev/null
+exit $rc
+""")
+    before = _tree(world["data"])
+    with pytest.raises(cs.ColdError) as e:
+        world["store"].park(world["data"])
+    assert e.value.code == cs.VERIFY_FAILED
+    assert _tree(world["data"]) == before
+
+
+def test_repark_a_folder_written_to_during_the_repark_is_not_deleted(world):
+    """Late write during re-park: BUSY, nothing swapped."""
+    world["store"].park(world["data"])
+    world["store"].ensure(str(world["data"]), part="models")  # Partial ensure, leaves marker with local files
+
+    # Modify a local file to trigger upload
+    (world["data"] / "models" / "big.bin").write_bytes(b"modified")
+
+    _rsync_wrapper(world, f"""
+"$REAL" "$@"; rc=$?
+echo late >> "{world['data']}/models/big.bin"
+exit $rc
+""")
+    with pytest.raises(cs.ColdError) as e:
+        world["store"].park(world["data"])
+    assert e.value.code == cs.BUSY
+    assert world["store"].marker(world["data"]) is not None
+
+
+def test_a_file_written_next_to_the_marker_outside_any_ensure_part_is_repacked_too(world):
+    """A brand-new file in the parked folder (never fetched): picked up and uploaded by re-park."""
+    world["store"].park(world["data"])
+    world["store"].ensure(str(world["data"]), part="models")
+    # Write a new file at the root (not in any part)
+    (world["data"] / "new_file.txt").write_text("new data")
+    world["store"].park(world["data"])
+    # Verify it made it to the cold host
+    assert (world["cold"] / "eval-bench" / "data" / "new_file.txt").read_text() == "new data"
+
+
+def test_list_shows_local_bytes_for_a_partially_fetched_entry(world):
+    """listing() reports nonzero local_bytes after a part-fetch, zero after a re-park."""
+    world["store"].park(world["data"])
+    listing1 = world["store"].listing()
+    entry1 = listing1["parked"][0]
+    assert entry1.get("local_bytes", 0) == 0
+    world["store"].ensure(str(world["data"]), part="models")
+    listing2 = world["store"].listing()
+    entry2 = listing2["parked"][0]
+    assert entry2.get("local_bytes", 0) > 0
+    world["store"].park(world["data"])
+    listing3 = world["store"].listing()
+    entry3 = listing3["parked"][0]
+    assert entry3.get("local_bytes", 0) == 0
+
+
+def test_repark_with_a_concurrent_second_caller_only_reparks_once(world):
+    """Two threads calling park() on the same partially-fetched folder: one winner."""
+    _rsync_wrapper(world, 'sleep 1; exec "$REAL" "$@"')
+    world["store"].park(world["data"])
+    world["store"].ensure(str(world["data"]), part="models")
+    results, errors = [], []
+
+    def run():
+        try:
+            results.append(world["store"].park(world["data"]))
+        except Exception as e:  # noqa: BLE001
+            errors.append(e)
+    threads = [threading.Thread(target=run) for _ in range(2)]
+    [t.start() for t in threads]
+    [t.join() for t in threads]
+    assert not errors
+    assert len(results) == 2
+    assert results[0] == results[1]
+
+
+def test_repark_when_the_cold_host_goes_unreachable_mid_way_changes_nothing_local(world):
+    """Cold host unreachable during re-park: UNREACHABLE, local untouched."""
+    world["store"].park(world["data"])
+    world["store"].ensure(str(world["data"]), part="models")
+    (world["bin"] / "DOWN").touch()
+    before = _tree(world["data"])
+    with pytest.raises(cs.ColdError) as e:
+        world["store"].park(world["data"])
+    assert e.value.code == cs.UNREACHABLE
+    assert _tree(world["data"]) == before
+
+
+def test_repark_of_a_folder_whose_marker_json_is_malformed_falls_back_to_a_fresh_park(world):
+    """Corrupted .marvin-cold.json: marker() returns None, park() treats it as unparked."""
+    world["store"].park(world["data"])
+    world["store"].ensure(str(world["data"]), part="models")
+    # Corrupt the marker
+    (world["data"] / cs.MARKER_JSON).write_text("not json")
+    # park() should treat this as unparked and do a fresh park
+    entry = world["store"].park(world["data"])
+    assert entry is not None
+    # Should have created a new valid marker
+    assert (world["data"] / cs.MARKER_JSON).exists()
+    # Verify the new marker is valid
+    new_entry = world["store"].marker(world["data"])
+    assert new_entry is not None
+
+
+def test_the_cli_then_park_runs_the_job_and_reparks_when_it_ends(world, monkeypatch, capsys):
+    """ensure --then-park COMMAND: runs job, re-parks when managed."""
+    monkeypatch.setattr(cs, "default_store", lambda: (world["store"], {}))
+    world["store"].park(world["data"])
+    world["store"].ensure(str(world["data"]), part="models")
+    job_ran = []
+
+    original_run = subprocess.run
+    def fake_run(*a, **k):
+        # Only mock the job command, not rsync
+        if len(a[0]) > 0 and a[0][0] in ("echo", "true", "false"):
+            job_ran.append(True)
+            return subprocess.CompletedProcess(args=a[0], returncode=0)
+        return original_run(*a, **k)
+    monkeypatch.setattr(subprocess, "run", fake_run)
+    result = cs.main(["ensure", str(world["data"]), "--then-park", "echo", "test"])
+    assert result == 0
+    assert job_ran
+    assert not (world["data"] / cs.MARKER_JSON).exists()
+
+
+def test_the_cli_then_park_still_reparks_when_the_wrapped_job_fails(world, monkeypatch):
+    """ensure --then-park: exit code is job's, re-park runs even if job fails."""
+    monkeypatch.setattr(cs, "default_store", lambda: (world["store"], {}))
+    world["store"].park(world["data"])
+    world["store"].ensure(str(world["data"]), part="models")
+
+    original_run = subprocess.run
+    def fake_run(*a, **k):
+        if len(a[0]) > 0 and a[0][0] in ("false", "true", "echo"):
+            return subprocess.CompletedProcess(args=a[0], returncode=42)
+        return original_run(*a, **k)
+    monkeypatch.setattr(subprocess, "run", fake_run)
+    result = cs.main(["ensure", str(world["data"]), "--then-park", "false"])
+    assert result == 42
+    assert not (world["data"] / cs.MARKER_JSON).exists()
+
+
+def test_then_park_on_a_plain_never_parked_folder_runs_the_job_but_does_not_park_it(world, monkeypatch):
+    """ensure --then-park on unmanaged folder: job runs, no parking."""
+    monkeypatch.setattr(cs, "default_store", lambda: (world["store"], {}))
+    unmanaged = world["home"] / "regular"
+    unmanaged.mkdir()
+    (unmanaged / "f").write_text("data")
+
+    original_run = subprocess.run
+    def fake_run(*a, **k):
+        if len(a[0]) > 0 and a[0][0] in ("true", "false", "echo"):
+            return subprocess.CompletedProcess(args=a[0], returncode=0)
+        return original_run(*a, **k)
+    monkeypatch.setattr(subprocess, "run", fake_run)
+    result = cs.main(["ensure", str(unmanaged), "--then-park", "true"])
+    assert result == 0
+    assert not (unmanaged / cs.MARKER_JSON).exists()

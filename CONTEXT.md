@@ -2060,6 +2060,11 @@ runs no merge or test of its own and its memory is normal).
   When the data is here it returns at once with no network. When the folder is parked it fetches the data back
   (locked, space-checked, verified) and returns. A path inside a parked folder fetches only that part. This is the
   trigger: nothing polls.
+- **Re-park** (marvin#1271, 2026-11-11): when `park()` is called on a folder that's already parked but has local files
+  from a partial `ensure --part`, it uploads only the changed files, verifies, and drops the local bytes. Zero network
+  calls if nothing changed. Used by `--then-park` to free disk after a command finishes.
+- **--then-park**: `marvin-cold ensure PATH --then-park COMMAND ...` runs the command (forwarding its exit code), then
+  re-parks the folder if it's managed. Low-cost disk cleanup for helpers and scripts that fetch partial data.
 
 ## Stamped copies (marvin#1223, decided with Gil 2026-11-09)
 
