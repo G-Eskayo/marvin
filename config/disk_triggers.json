@@ -1,4 +1,11 @@
 {
   "aerial_watch_trim": false,
-  "download_cache_cap_gb": 10
+  "download_cache_cap_gb": 10,
+  "parked": {
+    "aerial_watch_trim": {
+      "decision": "G-Eskayo/marvin#1250",
+      "review_by": "2026-11-17",
+      "what": "trim the aerial wallpaper folder as it grows"
+    }
+  }
 }

@@ -1,0 +1,20 @@
+{
+  "_readme": "Choices parked on the owner that have no config file of their own (lib/parked.py, marvin#1222). Each names its decision ticket (with a Decisions block) and a review-by date at most 7 days out; the hourly scan puts a due one back in Needs you, and Health row parked:overdue shows it.",
+  "parked": {
+    "auto_merge": {
+      "decision": "G-Eskayo/marvin#1249",
+      "review_by": "2026-11-17",
+      "what": "switch auto-merge on (shadow since ADR 0064)"
+    },
+    "quarantine_network": {
+      "decision": "G-Eskayo/marvin#1251",
+      "review_by": "2026-11-17",
+      "what": "quarantine VM runs through Whonix (lib/vm_run.py)"
+    },
+    "outcome_check_block": {
+      "decision": "G-Eskayo/marvin#1252",
+      "review_by": "2026-11-17",
+      "what": "refuse a fix with no outcome check (lib/fit_check.py)"
+    }
+  }
+}

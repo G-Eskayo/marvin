@@ -12,6 +12,12 @@ trend (#342). Never blocked, but logged: auto-sync commits (MARVIN_COMMIT_KIND=a
 the working tree). Not re-checked: merges, rebases, cherry-picks and reverts (their commits were checked when made).
 `git commit --no-verify` skips any hook; the Health trend still sees code that landed without tests.
 
+Parked choices (marvin#1222; Gil 2026-11-09: refuse, with a logged override): text in `config/` or `instance/config/`
+that parks a choice on the owner ("until <name> decides", "once the owner decides", "ask <Name>") is refused unless the
+choice has a home: in a JSON file, a non-empty "parked" entry (lib/parked.py's grammar: decision ticket + review_by);
+in any other file, a "parked as <id>" pointer to one. Code blocks don't count. MARVIN_PARKED_OK="<reason>" lets one
+commit through, logged to ~/.claude/logs/parked-overrides.jsonl.
+
     commit_check.py install [repo]     put the hook in <repo>/.git/hooks (never over a different commit-msg hook)
 """
 from __future__ import annotations
@@ -53,6 +59,40 @@ def reason_in(message: str) -> str | None:
     return None
 
 
+# Any one-word name (each install's owner differs, ADR 0071) or "the owner"; "ask <Name>" only with a capitalised name.
+PARKING = re.compile(r"\b(?i:until|once|till)\s+(?:(?i:the owner)|\w+)\s+(?i:decides|answers|says)\b|\b[Aa]sk [A-Z][a-z]+\b(?! (?:for|about|to)\b)")
+_CONFIG = re.compile(r"^(?:instance/)?config/")
+_FENCE = re.compile(r"```.*?```", re.S)
+
+
+def _parked_log() -> Path:
+    return Path(os.environ.get("MARVIN_PARKED_LOG") or Path.home() / ".claude" / "logs" / "parked-overrides.jsonl")
+
+
+def parking_problems(repo: Path) -> list[str]:
+    """Staged config files that park a choice on the owner without giving it a home."""
+    names = subprocess.run(["git", "diff", "--cached", "--name-only", "--diff-filter=ACMR"], cwd=repo,
+                           capture_output=True, text=True).stdout.split("\n")
+    out = []
+    for path in filter(None, names):
+        if not _CONFIG.match(path):
+            continue
+        text = subprocess.run(["git", "show", f":{path}"], cwd=repo, capture_output=True, text=True).stdout
+        if not PARKING.search(_FENCE.sub(" ", text)):
+            continue
+        if path.endswith(".json"):
+            try:
+                data = json.loads(text)
+            except ValueError:
+                data = None
+            if isinstance(data, dict) and isinstance(data.get("parked"), dict) and data["parked"]:
+                continue
+        elif re.search(r"\bparked as [\w.-]+", text, re.I):
+            continue
+        out.append(path)
+    return out
+
+
 def _replaying(repo: Path) -> bool:
     gitdir = Path(subprocess.run(["git", "rev-parse", "--git-dir"], cwd=repo, capture_output=True, text=True).stdout.strip())
     gitdir = gitdir if gitdir.is_absolute() else repo / gitdir
@@ -63,6 +103,22 @@ def check(repo: Path, message: str, env=os.environ) -> tuple[bool, str]:
     repo = Path(repo)
     if _replaying(repo):
         return True, "replaying commits that were checked when made"
+    parks = parking_problems(repo)
+    if parks and env.get("MARVIN_COMMIT_KIND") != "auto-sync":
+        override = (env.get("MARVIN_PARKED_OK") or "").strip()
+        if not override:
+            return False, (f"{', '.join(parks)} parks a choice on the owner in free text, where nothing will ever "
+                           f"bring it back. Give it a home: a ticket with a Decisions block, and in the file a "
+                           f'"parked": {{"<id>": {{"decision": "owner/repo#N", "review_by": "YYYY-MM-DD"}}}} entry '
+                           f"(or, outside JSON, \"parked as <id>\" pointing at one). See lib/parked.py. "
+                           f'MARVIN_PARKED_OK="<reason>" lets one commit through, logged.')
+        try:
+            lp = _parked_log()
+            lp.parent.mkdir(parents=True, exist_ok=True)
+            with open(lp, "a") as f:
+                f.write(json.dumps({"at": time.time(), "repo": str(repo), "files": parks, "reason": override[:300]}) + "\n")
+        except OSError:
+            pass
     changes = tcr.staged_changes(repo)
     ok, why = tcr.check(changes, tcr.MARVIN_RULES)
     if ok:

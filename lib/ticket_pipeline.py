@@ -215,6 +215,17 @@ def _owner_decisions() -> str:
         return f"skipped ({str(exc)[:120]})"
 
 
+def _parked() -> str:
+    """Parked choices whose review-by passed or whose blocker closed go back to Needs you, once (marvin#1222).
+    The hourly scan is the clock, as for owner decisions. Never breaks the scan."""
+    try:
+        import parked
+        moved = parked.sweep(parked.report())
+        return (", ".join(moved) + " back in Needs you") if moved else "none due"
+    except Exception as exc:  # noqa: BLE001 -- a failed side step must not stop dispatch
+        return f"skipped ({str(exc)[:120]})"
+
+
 def _requeue_all(repos) -> list[str]:
     return [f"{r.split('/')[-1]}#{n}" for r in repos for n in _requeue_conflicted_prs(r)]
 
@@ -928,6 +939,8 @@ def _scan(run, dry_run: bool) -> str | None:
         step("Conflicted PRs", ", ".join(sent) + " sent back" if sent else "none")
         step("Owner decisions", "PRs whose owner decisions went unanswered (#607)")
         step("Owner decisions", _owner_decisions())
+        step("Parked choices", "choices parked on the owner whose review-by passed (#1222)")
+        step("Parked choices", _parked())
 
     # Cross-ticket circuit breaker, per project: the same failure across different tickets of one
     # project means ITS environment is broken, not the tickets -- stop feeding that project more

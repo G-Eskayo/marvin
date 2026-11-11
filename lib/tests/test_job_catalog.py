@@ -41,8 +41,8 @@ def test_jobs_that_were_unplaced_are_now_placed():
 
 
 def test_a_switched_off_job_is_never_reported_missing():
-    # open-loops stays off until goals exist (Gil, 2026-10-26)
-    assert jc.JOBS["open-loops"]["machine"] == "none"
+    # aerial-watch stays off until its parked choice is answered (marvin#1250)
+    assert jc.JOBS["aerial-watch"]["machine"] == "none"
     sev, detail = hc.evaluate_job_placement([j for j, w in hc.JOB_PLACEMENT.items() if w in ("both", "mini")], "mini")
     assert sev == "green", detail
 

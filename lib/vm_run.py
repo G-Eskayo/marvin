@@ -5,8 +5,8 @@ Each run gets a throwaway copy of a frozen golden image, boots it, optionally co
 command over SSH, and is ALWAYS destroyed afterwards -- on success, failure, timeout or a crash mid-run.
 
 - marvin-test: clean MARVIN test environment (role b2). NAT network, so it can install what a test needs.
-- quarantine: untrusted outside code (role b1). Host-only network with no route out, until Gil decides whether
-  quarantine runs may go through Whonix.
+- quarantine: untrusted outside code (role b1). Host-only network with no route out; whether quarantine runs may go
+  through Whonix is parked as quarantine_network (config/parked.json, marvin#1251).
 - marvin-build: a ticket build (marvin #949). NAT, the test key; made from marvin-test by
   config/mac-mini-2012/build-builder-image.sh (`--freeze-to`), so it lives in a folder the box's user can write.
 
