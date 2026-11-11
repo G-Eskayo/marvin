@@ -1,5 +1,7 @@
 # Changelog
 
+- Freshness: Parked choices: one grammar, one overdue check, refused at write time ([#1256](https://github.com/G-Eskayo/marvin/pull/1256))
+
 - Decision: model-adaptive harness — what changes per model ([#1273](https://github.com/G-Eskayo/marvin/pull/1273))
 
 - Freshness: Decision supersession (extend ticket 652): answered Decisions find and flag earlier answers to the same question ([#1257](https://github.com/G-Eskayo/marvin/pull/1257))
