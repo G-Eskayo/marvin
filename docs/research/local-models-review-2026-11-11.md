@@ -198,6 +198,23 @@ Then, only if measurement 3 shows a gap: a QLoRA pilot on routing and triage lab
 - **Churn and noise:** several 2026 "best model" sites list hardware and models I couldn't verify, such as a "Mac mini M6" [S21]. Every pick here was checked against its Hugging Face card. Re-check quarterly through the research colony, and pick by measurement, not by leaderboard.
 - **Ollama's Mac backend has changed twice in 2026** [S20]. Speed numbers go stale.
 
+## Measured on the laptop: Apple's on-device model (2026-11-11)
+
+The owner accepted the `fm` licence. These are single runs on the MacBook Pro M1 16 GB (macOS 27.0.1), with
+normal work running, so treat them as first readings, not a benchmark.
+
+| Test | Result |
+|---|---|
+| `fm available` | System model available |
+| Speed: a ~250-word explanation, `fm respond --no-stream` | 364 tokens in 15.3 s = **23.7 tok/s**, including start-up |
+| Front-desk brief: a JSON schema (task, context, acceptance check, job, tier needed), one real request | Valid JSON in **3.3 s**. It picked the right job (builder) and tier (workhorse, the builder's floor) and wrote a usable acceptance check. Its "context" only repeated the prompt: it can't gather context on its own, so the front desk's tools have to supply that. |
+
+What this changes: on the laptop, Apple's model is about **2.5× faster than the estimate for a local 9B** (8–9
+tok/s, above) and needs no download or disk. Its limits still stand: a 4,096-token context [S15], and one report
+that `fm serve` ignores tool calling. So it suits short structured jobs (brief-writing, tagging, triage) on the
+laptop and the phones, and the Mini's Qwen stays the front desk for long conversations. #1272 runs the same
+two tests on the Mini's candidates so the numbers compare.
+
 ## Sources (accessed 2026-11-11 unless noted)
 
 - [S1] Qwen3.5-9B model card, 2026-02-27. https://huggingface.co/Qwen/Qwen3.5-9B
