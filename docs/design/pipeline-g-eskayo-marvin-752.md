@@ -1,0 +1,37 @@
+## North-star fit
+
+Reuses, verbatim, two things that already exist rather than adding anything new in production code:
+- **`lib/model_cache.py`** (built by #1114, closed) — the generic "link a project's gitignored model into a worktree from a sha-checked per-machine cache" helper. Its docstring already names this exact scenario ("A pipeline worktree **or merge-gate checkout** is a fresh clone... Seal Speak's Parakeet Ultra and Sortformer").
+- **`lib/project_profile.py`'s `Measurer._setup`/`verify_dir`** — already runs a profile's `setup` steps (which is where `model_cache.py link` is invoked) *before* its `verify` tiers (where `xcodegen`/`xcodebuild` runs), for both the ticket pipeline and the dashboard merge gate (`dashboard/webhook-server/merge.js:658` calls `project_profile.py verify <repo> <dir>`, which is `verify_dir`, one layer under `main()`).
+
+I checked the actual state rather than trusting the ticket's "Fix" section at face value:
+- `~/.agents/instance/config/projects/clarity-captions.json` (private instance, ADR 0071 — not part of this repo) **already has both setup steps** (`asr-model` linking `ParakeetUltra`, `diarizer-model` linking `Sortformer_v2.1.mlmodelc`), both via `model_cache.py link`.
+- `CONTEXT.md:1605` already documents this as done, crediting #1114.
+- PR `G-Eskayo/clarity-captions#175` (the PR named in this ticket's AC2) is **merged**. Its history shows two denials with exactly this ticket's error (2026-10-28, 2026-10-29), then a clean merge.
+- Dozens of later clarity-captions PRs (#239 through #294, spanning 2026-10-30 to 2026-11-11) have merged through the same gate with no recurrence of "missing source directory ... ParakeetUltra/Sortformer".
+
+So **the root-cause fix already shipped** (via #1114, a sibling ticket the issue itself cross-links: "Same cause as #752"). This ticket's own "Fix" section describes work that is already done — I'm not working around a recorded decision, I'm confirming one. The remaining gap is narrower than the ticket implies: AC3 ("fails with a clear message, not a spec error") has **no regression test** anywhere in `lib/tests` — nothing asserts the ordering guarantee (setup-before-verify) using the *real* `model_cache.py` subprocess in a profile shaped like clarity-captions's. `test_model_cache.py` tests `model_cache.py` in isolation (already covers corrupt caches, races, bad fetches, CLI exit codes — I will not duplicate any of that). `test_project_profile.py`'s existing setup-step tests (`test_a_failing_setup_is_an_error_naming_the_step_not_a_zero_test_result`, etc.) prove the ordering generically with `npm ci`, never with a real `model_cache.py` subprocess or an xcodegen-shaped verify tier.
+
+Token/resource cost: zero new production code anticipated (I'll say so plainly if the tests go green unmodified, per the headless-agent instruction, rather than inventing a fix for a bug that isn't there). Spend is three focused tests plus verification legwork (already partly done above via `gh`). This leaves the user with a closeable ticket backed by evidence, not a re-run of work #1114 already paid for — more capable (a real regression guard against this exact failure recurring) rather than passive busywork.
+
+## Tests to write first
+
+The ticket has no "How we'll try to break it" section, so I derive cases from the Done-when checklist plus standard misuse, scoped to the one real gap (AC3) to avoid redundant re-testing of `model_cache.py` internals already covered by #1114's suite.
+
+Location: new section appended to `lib/tests/test_model_cache.py` (reuses its `repo`, `root`, `fetcher()` fixtures — the "real collaborator" pattern already used there — plus `project_profile.verify_dir`/`Measurer`, imported the same way `model_cache` is at the top of that file).
+
+1. **T1 — happy path, real subprocess, real ordering.** A profile shaped like clarity-captions: one `setup` step whose command is the real `model_cache.py link ... -- <fetcher(tmp_path)>` (succeeds, cheap fake files, no network), one `verify` tier whose command is `test -d Resources/Models/M && echo ok || { echo 'Spec validation error: Target "CaptionSpike" has a missing source directory ...'; exit 65; }` (mimics the real xcodegen failure text). Call `pp.verify_dir(profile, repo)` with no runner override (so it's the real `_default_runner`, real subprocesses). Assert `ok is True` and the verify tier actually ran against a model directory that exists — proving setup really ran before verify, through the real script, not a mock.
+2. **T2 — the core AC3 case: model missing on host.** Same shape, but `fetcher(tmp_path, fail=True)` (the existing "curl: Could not resolve host" fixture). Assert `verify_dir` returns `ok=False`, and its `summary`/`output_tail` names the model and model_cache's own clear guidance, but contains **no** "Spec validation error" or "missing source directory" text anywhere — because the verify tier (asserted via a sentinel file it would otherwise create) never ran. This is the literal regression guard for AC3.
+3. **T3 — resource cost across repeated gate runs.** Two separate worktree dirs (simulating two merge-gate temp clones, or a pipeline worktree followed by a gate clone) sharing one `root` cache, both needing the uncached model. Run `verify_dir` against each in turn with a succeeding `fetcher()`. Assert the fetch command's counter file shows exactly 1 run and both worktrees pass — the ~700 MB (north star 1) is paid once per machine, not once per gate run, which is the whole point of #1114 and worth guarding explicitly since the gate is where it was reported broken.
+
+If any of these fail, that's a real gap and I fix it at the point the test names (most likely `Measurer._setup`'s ordering or `_default_runner`'s cwd/env handling) — but based on the code read above, I expect all three to pass unmodified, which itself is the deliverable: proof the fix holds.
+
+No Decisions block: there is no open design choice here for the owner to pick between — the fix is already built and the remaining work is verification plus closing a test gap.
+
+## Task List
+
+1. Add T1–T3 to `lib/tests/test_model_cache.py`, run the full `lib/tests` suite to confirm no regression and that T1–T3 pass against current code unmodified.
+2. If (and only if) a test fails: fix the specific function it names in `lib/project_profile.py` or `lib/model_cache.py`, re-run, confirm green.
+3. On the Mini (the only machine with `xcodegen` + the model cache, per CONTEXT.md:1605 and the `ios-app` playbook's machine table), run `project_profile.py selftest G-Eskayo/clarity-captions` against `origin/main` as direct evidence for AC1 (a fresh worktree gets both models and the spike-app build passes) — this is an operational step, not a code change, and must run on that machine via the dashboard/webhook, not from this sandboxed worktree.
+4. Record AC2 as already satisfied with evidence: `G-Eskayo/clarity-captions#175` is merged; cite its two historical denials (2026-10-28/29) matching this ticket's exact error, and its clean merge once the fix (#1114) was live, plus the unbroken run of later clarity-captions PRs (#239–#294) through the same gate.
+5. Close #752 referencing #1114 as the actual fix, with the new tests (step 1) and the selftest evidence (step 3) attached as proof; note the `missing-bundled-model` probe's recurrence check is dated 2026-11-12 (tomorrow) in #1114 and will formally confirm no regression at that point.
