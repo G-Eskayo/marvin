@@ -201,8 +201,30 @@ def _refresh_main_health() -> None:
         print(f"{LOG_PREFIX} main health check not started: {e}", file=sys.stderr)
 
 
+def _cold_store_sweep() -> None:
+    """Re-park locally-present data from the cold store if disk is under the pipeline's min-free floor.
+    Never breaks the scan."""
+    try:
+        free_gb = _free_disk_gb()
+        if free_gb is None:
+            return
+        min_disk_gb = dispatch_concurrency.load()["guards"]["min_disk_gb"]
+        if free_gb >= min_disk_gb:
+            return
+        import cold_store
+        store, _ = cold_store.default_store()
+        results = store.sweep_local_bytes()
+        if results:
+            for name, status in sorted(results.items()):
+                if status != "ok":
+                    print(f"{LOG_PREFIX} cold-store re-park {name}: {status}", file=sys.stderr)
+    except Exception as exc:  # noqa: BLE001 -- a failed side step must not stop dispatch
+        print(f"{LOG_PREFIX} cold-store sweep skipped: {str(exc)[:120]}", file=sys.stderr)
+
+
 def _background_checks() -> None:
     _refresh_main_health()
+    _cold_store_sweep()
 
 
 def _owner_decisions() -> str:

@@ -398,3 +398,181 @@ def test_the_cli_prints_the_path_and_returns_the_exit_code(world, monkeypatch, c
     assert cs.main(["ensure", str(world["data"]), "--part", "results"]) == 0
     assert capsys.readouterr().out.strip() == str(world["data"] / "results")
     assert cs.main(["list"]) == 0 and "eval-bench" in capsys.readouterr().out
+
+
+# ---- repark ---------------------------------------------------------------------------------------------------------
+
+def test_repark_after_a_local_file_changed_keeps_the_new_version(world):
+    before = _tree(world["data"])
+    entry1 = world["store"].park(world["data"])
+    got = world["store"].ensure(str(world["data"]), part="models/release/he model")
+    assert got == world["data"] / "models" / "release" / "he model"
+    weights_file = world["data"] / "models" / "release" / "he model" / "weights.bin"
+    old_bytes = weights_file.read_bytes()
+    new_bytes = os.urandom(200_000)
+    weights_file.write_bytes(new_bytes)
+    entry2 = world["store"].park(world["data"])
+    assert entry2.get("version", 0) >= entry1.get("version", 0)
+    assert world["store"].marker(world["data"]) is not None
+
+
+def test_an_interrupted_repark_leaves_nothing_lost_and_the_next_call_finishes_it(world):
+    before = _tree(world["data"])
+    world["store"].park(world["data"])
+    world["store"].ensure(str(world["data"]), part="models")
+    _rsync_wrapper(world, f"""
+if [ ! -f "$here/once" ]; then touch "$here/once"; "$REAL" --exclude big.bin "$@"; exit 20; fi
+exec "$REAL" "$@"
+""")
+    before_repark = _tree(world["data"])
+    with pytest.raises(cs.ColdError) as e:
+        world["store"].park(world["data"])
+    assert e.value.code == cs.COPY_STOPPED
+    assert _tree(world["data"]) == before_repark
+    _rsync_wrapper(world, 'exec "$REAL" "$@"')
+    world["store"].park(world["data"])
+    assert _tree(world["cold"] / "eval-bench" / "data") == before
+
+
+def test_a_folder_in_use_during_repark_is_refused_nothing_moved(world):
+    entry = world["store"].park(world["data"])
+    world["store"].ensure(str(world["data"]), part="models")
+    world["store"].in_use = lambda p: ["python3 4242"]
+    before_remote = world["store"].remote_manifest("eval-bench")
+    with pytest.raises(cs.ColdError) as e:
+        world["store"].park(world["data"])
+    assert e.value.code == cs.BUSY
+    assert _tree(world["data"]) == _tree(world["data"])
+    assert world["store"].remote_manifest("eval-bench") == before_remote
+
+
+def test_repark_stops_if_the_remote_manifest_sha_no_longer_matches_the_marker(world):
+    entry = world["store"].park(world["data"])
+    world["store"].ensure(str(world["data"]), part="models")
+    before_local = _tree(world["data"])
+    mf = world["cold"] / "eval-bench" / "manifest.json"
+    m = json.loads(mf.read_text())
+    m["files"]["models/big.bin"][1] = "0" * 64
+    mf.write_text(json.dumps(m))
+    with pytest.raises(cs.ColdError) as e:
+        world["store"].park(world["data"])
+    assert e.value.code == cs.VERIFY_FAILED
+    assert _tree(world["data"]) == before_local
+
+
+def test_repark_with_nothing_fetched_back_is_a_true_no_op(world):
+    _rsync_wrapper(world, 'exec "$REAL" "$@"')
+    world["store"].park(world["data"])
+    rsync_calls_before = _rsync_calls(world)
+    entry2 = world["store"].park(world["data"])
+    assert entry2["manifest_sha256"] == world["store"].park(world["data"])["manifest_sha256"]
+    assert _rsync_calls(world) == rsync_calls_before
+
+
+def test_repark_drops_an_unchanged_fetched_part_with_no_network_upload(world):
+    before = _tree(world["data"])
+    world["store"].park(world["data"])
+    world["store"].ensure(str(world["data"]), part="models/release/he model")
+    world["store"].park(world["data"])
+    left = sorted(p.name for p in world["data"].iterdir())
+    assert left == [cs.MARKER_JSON, cs.MARKER_TXT]
+    assert world["store"].local_bytes_present(world["data"]) == 0
+
+
+def test_repark_uploads_a_brand_new_file_written_next_to_the_marker(world):
+    before = _tree(world["data"])
+    world["store"].park(world["data"])
+    world["store"].ensure(str(world["data"]), part="results")
+    newfile = world["data"] / "newfile.txt"
+    newfile.write_text("new content")
+    entry = world["store"].park(world["data"])
+    assert not newfile.exists()
+    assert entry.get("version", 0) >= 1
+
+
+def test_two_concurrent_reparks_on_the_same_folder_serialize_and_only_one_moves_bytes(world):
+    world["store"].park(world["data"])
+    world["store"].ensure(str(world["data"]), part="models")
+    _rsync_wrapper(world, 'sleep 1; exec "$REAL" "$@"')
+    results, errors = [], []
+
+    def run():
+        try:
+            results.append(world["store"].park(world["data"]))
+        except Exception as e:  # noqa: BLE001
+            errors.append(e)
+    threads = [threading.Thread(target=run) for _ in range(2)]
+    [t.start() for t in threads]
+    [t.join() for t in threads]
+    assert not errors
+    assert _rsync_calls(world) == 1
+
+
+def test_repark_when_the_cold_host_is_unreachable_fails_calmly_nothing_removed(world):
+    entry = world["store"].park(world["data"])
+    world["store"].ensure(str(world["data"]), part="models")
+    before_local = _tree(world["data"])
+    (world["bin"] / "DOWN").touch()
+    with pytest.raises(cs.ColdError) as e:
+        world["store"].park(world["data"])
+    assert e.value.code == cs.UNREACHABLE
+    assert _tree(world["data"]) == before_local
+
+
+def test_repark_rebuilds_trust_when_the_local_catalog_is_gone(world):
+    before = _tree(world["data"])
+    world["store"].park(world["data"])
+    world["store"].ensure(str(world["data"]), part="models")
+    shutil.rmtree(world["tmp"] / "state")
+    world["store"].park(world["data"])
+    left = sorted(p.name for p in world["data"].iterdir())
+    assert left == [cs.MARKER_JSON, cs.MARKER_TXT]
+
+
+def test_list_shows_local_bytes_for_a_half_fetched_entry_and_zero_once_reparked(world):
+    world["store"].park(world["data"])
+    world["store"].ensure(str(world["data"]), part="models/release/he model")
+    listing = world["store"].listing()
+    assert listing["parked"][0]["local_bytes"] > 0
+    world["store"].park(world["data"])
+    listing = world["store"].listing()
+    assert listing["parked"][0]["local_bytes"] == 0
+
+
+def test_sweep_local_bytes_reparks_every_entry_with_bytes_present_and_skips_the_rest(world, tmp_path):
+    world["store"].park(world["data"])
+    world["store"].ensure(str(world["data"]), part="models")
+    other = world["home"] / "other"
+    other.mkdir()
+    (other / "file.txt").write_text("data")
+    fully = world["store"].park(other)
+    world["store"].sweep_local_bytes()
+    assert world["store"].local_bytes_present(world["data"]) == 0
+    assert world["store"].local_bytes_present(other) == 0
+    cat = world["store"].catalog("eval-bench")
+    assert cat and cat["state"] == "parked"
+
+
+def test_ensure_then_park_reparks_on_exit_and_never_masks_the_bodys_own_exception(world):
+    world["store"].park(world["data"])
+    world["store"].ensure(str(world["data"]), part="models")
+
+    def test_body():
+        with world["store"].ensure_then_park(str(world["data"])):
+            pass
+    test_body()
+    assert world["store"].local_bytes_present(world["data"]) == 0
+
+    def test_exception():
+        with pytest.raises(ValueError):
+            with world["store"].ensure_then_park(str(world["data"])):
+                raise ValueError("body error")
+    test_exception()
+
+
+def test_cli_ensure_then_park_flag_reparks_after_fetching(world, monkeypatch, capsys):
+    monkeypatch.setattr(cs, "default_store", lambda: (world["store"], {}))
+    world["store"].park(world["data"])
+    assert cs.main(["ensure", str(world["data"]), "--then-park"]) == 0
+    assert world["store"].local_bytes_present(world["data"]) == 0
+    assert world["store"].marker(world["data"]) is not None

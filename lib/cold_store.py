@@ -47,6 +47,7 @@ import shlex
 import shutil
 import subprocess
 import sys
+from contextlib import contextmanager
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
@@ -149,6 +150,22 @@ def compare(want: dict, have: dict, under: str | None = None) -> list[str]:
         problems += [f"unexpected {k}" for k in sorted(set(h) - set(w))]
         problems += [f"differs {k}" for k in sorted(set(w) & set(h)) if w[k] != h[k]]
     return problems
+
+
+def diff_manifest(trusted: dict, remote: dict) -> tuple[set[str], set[str]]:
+    """Return (matched_keys, changed_or_new_keys) between trusted and remote manifests (all paths)."""
+    matched = set()
+    changed_or_new = set()
+    for kind in ("files", "links"):
+        trusted_keys = set(trusted.get(kind, {}).keys())
+        remote_keys = set(remote.get(kind, {}).keys())
+        for k in trusted_keys & remote_keys:
+            if trusted[kind][k] == remote[kind][k]:
+                matched.add(k)
+            else:
+                changed_or_new.add(k)
+        changed_or_new.update(trusted_keys - remote_keys)
+    return matched, changed_or_new
 
 
 def local_manifest(path: Path, part: str | None = None) -> dict:
@@ -276,11 +293,16 @@ class Store:
         raise ColdError(COPY_STOPPED, f"rsync stopped (exit {r.returncode}); nothing local was removed, run again to "
                                       f"resume: {r.stderr.strip()[-300:]}")
 
-    def remote_manifest(self, name: str) -> dict:
-        r = self._remote(f"python3 - {shlex.quote(self._rpath(name, 'data'))}", stdin=REMOTE_MANIFEST_PY.encode())
+    def remote_manifest(self, name: str, part: str | None = None) -> dict:
+        """The manifest of the parked folder or a part of it (sub-folder or file), keyed relative to the folder."""
+        path = self._rpath(name, "data", part or "")
+        r = self._remote(f"python3 - {shlex.quote(path)}", stdin=REMOTE_MANIFEST_PY.encode())
         if r.returncode != 0:
             raise ColdError(VERIFY_FAILED, f"couldn't hash the copy on {self.host_id}: {r.stderr.decode()[-300:]}")
-        return json.loads(r.stdout)
+        manifest = json.loads(r.stdout)
+        if not part:
+            return manifest
+        return {k: {f"{part}/{f}" if f else part: v for f, v in d.items()} for k, d in manifest.items()}
 
     def remote_entries(self) -> list[dict]:
         r = self._remote(f"cat {shlex.quote(self.root)}/*/entry.json 2>/dev/null; true", timeout=60)
@@ -351,6 +373,21 @@ class Store:
             f"Only one sub-folder:\n    ~/.agents/bin/marvin-cold ensure {entry['origin_path']} --part SUB/FOLDER\n"
             f"What is parked:\n    ~/.agents/bin/marvin-cold list\n")
 
+    def local_bytes_present(self, path: Path) -> int:
+        """Bytes of physically present files under path (stat-only, no hashing), excluding markers. 0 if path doesn't exist."""
+        total = 0
+        if not path.is_dir():
+            return 0
+        for base, dirs, names in os.walk(path):
+            for n in names:
+                if n in (MARKER_JSON, MARKER_TXT):
+                    continue
+                try:
+                    total += (path / os.path.relpath(os.path.join(base, n), path)).stat().st_size
+                except OSError:
+                    pass
+        return total
+
     # ---- lock ------------------------------------------------------------------------------------------------
     def _lock(self, name: str):
         self.state_dir.mkdir(parents=True, exist_ok=True)
@@ -365,14 +402,20 @@ class Store:
     # ---- park ------------------------------------------------------------------------------------------------
     def park(self, path: Path, name: str | None = None) -> dict:
         """Move a folder to the cold host and leave a marker. Idempotent: an already parked folder returns its entry.
-        Time O(B) (hash here, copy, hash there), memory O(F)."""
+        Time O(B) (hash here, copy, hash there), memory O(F). Re-parks if data has been re-added locally."""
         path = Path(os.path.abspath(os.path.expanduser(str(path))))
         if self.machine == self.host_id:
             raise ColdError(NOT_PARKED, "this machine is the cold host; park from the machine that owns the folder")
         existing = self.marker(path)
         if existing:
             self._finish_swap(path)
-            return existing
+            local_bytes = self.local_bytes_present(path)
+            if local_bytes == 0:
+                return existing
+            rel = home_relative(path, self.home)
+            ename = existing.get("name") or slug(name or path.name)
+            with self._lock(ename):
+                return self._repark(path, existing, ename, rel)
         if path.is_symlink() or not path.is_dir():
             raise ColdError(NOT_PARKED, f"{path} is not a folder")
         rel = home_relative(path, self.home)
@@ -423,6 +466,54 @@ class Store:
             self._swap(path, entry)
             self.say(f"parked {rel} on {self.host_id}: {total / 1e9:.2f} GB, {len(manifest['files'])} files verified")
             return entry
+
+    def _repark(self, path: Path, entry: dict, name: str, rel: str) -> dict:
+        """Re-park a folder that already has a marker: upload changed/new data and update the cold copy."""
+        busy = self.in_use(path)
+        if busy:
+            raise ColdError(BUSY, f"{path} is in use, nothing was moved: {', '.join(busy[:5])}")
+        self.say(f"hashing {path}")
+        snap = stat_snapshot(path)
+        here = local_manifest(path)
+        here_total = sum(s for s, _ in here["files"].values())
+        if here_total == 0:
+            return entry
+        r = self._remote(f"cat {shlex.quote(self._rpath(name, 'manifest.json'))}")
+        if r.returncode != 0:
+            raise ColdError(VERIFY_FAILED, f"no manifest for {name} on {self.host_id}: {r.stderr.decode()}")
+        trusted = json.loads(r.stdout)
+        if manifest_sha(trusted) != entry.get("manifest_sha256"):
+            raise ColdError(VERIFY_FAILED, f"the manifest for {name} on {self.host_id} doesn't match the "
+                                           f"sha256 recorded when it was parked; not trusting it")
+        self.say(f"uploading {here_total / 1e9:.2f} GB to {self.host_id}")
+        dst = self._spec(self._rpath(name, "data") + "/")
+        self._rsync(f"{path}/", dst, f"--exclude={MARKER_JSON}", f"--exclude={MARKER_TXT}", "--checksum")
+        merged = {"files": {**trusted.get("files", {}), **here.get("files", {})},
+                  "links": {**trusted.get("links", {}), **here.get("links", {})}}
+        remote_after = self.remote_manifest(name)
+        problems = compare(merged, remote_after)
+        if problems:
+            raise ColdError(VERIFY_FAILED, f"the remote copy doesn't match after upload: {'; '.join(problems[:5])}")
+        entry_copy = {k: v for k, v in entry.items() if k != "manifest_sha256"}
+        entry_copy["manifest_sha256"] = manifest_sha(merged)
+        if "version" not in entry_copy:
+            entry_copy["version"] = 1
+        else:
+            entry_copy["version"] += 1
+        self._remote_write(self._rpath(name, "manifest.json"), manifest_bytes(merged))
+        self._remote_write(self._rpath(name, "entry.json"), json.dumps(entry_copy, sort_keys=True).encode() + b"\n")
+        self._save_catalog(name, {**entry_copy, "state": "parked", "manifest": merged})
+        if stat_snapshot(path) != snap:
+            raise ColdError(BUSY, f"{path} changed while it was being re-parked; nothing local was removed. Run again "
+                                  f"when nothing is writing to it.")
+        busy = self.in_use(path)
+        if busy:
+            raise ColdError(BUSY, f"{path} came into use while re-parking, nothing local was removed: {busy[:5]}")
+        shutil.rmtree(path)
+        self._write_marker(path, entry_copy, [])
+        num_files = len(merged.get("files", {})) + len(merged.get("links", {}))
+        self.say(f"re-parked {rel} on {self.host_id}: {here_total / 1e9:.2f} GB, {num_files} file(s)")
+        return entry_copy
 
     def _trash(self, path: Path) -> Path:
         return path.parent / f".{path.name}.cold-trash"
@@ -586,6 +677,50 @@ class Store:
             self.say(f"{name}{'/' + part if part else ''} is back and verified ({need / 1e9:.2f} GB fetched)")
             return path / part if part else path
 
+    def folder_for(self, target: str) -> Path:
+        """Resolve a target (path or name) to its local folder path, ensuring it's present."""
+        path, entry, inner = self._resolve(target, optional=False)
+        if inner:
+            raise ColdError(NOT_PARKED, f"target must be a folder, not a path inside one: {target}")
+        if entry is None or (path.is_dir() and not self.marker(path)):
+            return path
+        ensure = self.ensure(target)
+        return ensure if ensure else path
+
+    @contextmanager
+    def ensure_then_park(self, target: str):
+        """Context manager: ensure target is local, yield the path, then park it on exit."""
+        path = self.folder_for(target)
+        try:
+            yield path
+        finally:
+            try:
+                self.park(path)
+            except ColdError as e:
+                self.say(f"failed to re-park after context: {e}")
+
+    def sweep_local_bytes(self) -> dict[str, str]:
+        """Re-park every entry owned by this machine with local bytes present. Catches per-entry errors so one bad
+        entry doesn't stop the rest. Returns {name: status} where status is "ok" or error message."""
+        results = {}
+        for rec in self.catalog_all():
+            if rec.get("origin_machine") != self.machine:
+                continue
+            name = rec.get("name")
+            if not name:
+                continue
+            try:
+                path = from_home_relative(rec.get("origin_path", ""), self.home)
+                local_bytes = self.local_bytes_present(path)
+                if local_bytes == 0:
+                    continue
+                rel = rec.get("origin_path", "")
+                self._repark(path, rec, name, rel)
+                results[name] = "ok"
+            except ColdError as e:
+                results[name] = str(e)[:120]
+        return results
+
     # ---- list ------------------------------------------------------------------------------------------------
     def listing(self, devices: dict[str, str] | None = None) -> dict:
         """What is parked (the cold host's view when it answers, else this machine's catalog) and free GB on each
@@ -600,6 +735,8 @@ class Store:
             for e in out["parked"]:
                 if e.get("name") == rec.get("name") and rec.get("origin_machine") == self.machine:
                     e["here"] = rec.get("state")
+                    local_path = from_home_relative(e.get("origin_path", ""), self.home)
+                    e["local_bytes"] = self.local_bytes_present(local_path)
         out["free_gb"][self.machine] = round(shutil.disk_usage(self.home).free / 1e9, 1)
         for dev, host in (devices or {}).items():
             if dev == self.machine:
@@ -643,8 +780,10 @@ def _print_listing(out: dict) -> None:
         print("  nothing parked")
     for e in out["parked"]:
         here = f", here: {e['here']}" if e.get("here") else ""
+        local_bytes = e.get("local_bytes", 0)
+        local_str = f", {local_bytes / 1e9:.2f} GB local" if local_bytes else ""
         print(f"  {e.get('name')}: {e.get('bytes', 0) / 1e9:.2f} GB, {e.get('files')} files, from "
-              f"{e.get('origin_machine')}:{e.get('origin_path')} on {e.get('parked_at')}{here}")
+              f"{e.get('origin_machine')}:{e.get('origin_path')} on {e.get('parked_at')}{here}{local_str}")
     print("free space:")
     for dev, gb in out["free_gb"].items():
         print(f"  {dev}: {'not reachable' if gb is None else f'{gb:g} GB'}")
@@ -661,6 +800,7 @@ def main(argv: list[str] | None = None) -> int:
     e.add_argument("--part", help="fetch only this sub-folder or file")
     e.add_argument("--optional", action="store_true", help="succeed quietly when nothing by that name is parked")
     e.add_argument("--min-free-gb", type=float, help="free space to leave after the fetch (default: pipeline floor)")
+    e.add_argument("--then-park", action="store_true", help="park the folder again after fetching (for updating)")
     sub.add_parser("list", help="what is parked, and free space on each machine")
     sub.add_parser("where", help="same as list")
     a = ap.parse_args(argv)
@@ -673,6 +813,8 @@ def main(argv: list[str] | None = None) -> int:
             got = store.ensure(a.target, a.part, a.optional, floor)
             if got is not None:
                 print(got)
+                if a.then_park and not a.part:
+                    store.park(got)
         else:
             _print_listing(store.listing(hosts))
     except ColdError as err:

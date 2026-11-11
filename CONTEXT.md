@@ -2047,7 +2047,7 @@ another way.
 _Avoid_: "failed" for an approval that waits for memory; "idle" meaning the owner is away (here it means the machine
 runs no merge or test of its own and its memory is normal).
 
-## Cold store (built 2026-11-03, marvin#1081)
+## Cold store (built 2026-11-03, marvin#1081; re-park & local-bytes 2026-11-11)
 
 - **Cold store**: big folders nobody is using, kept on the **cold host** (`config/cold_store.json`, today
   mac-mini-2012) instead of a Mac. This is placement by role (storage plan section 5), not striping. `lib/cold_store.py`,
@@ -2060,6 +2060,12 @@ runs no merge or test of its own and its memory is normal).
   When the data is here it returns at once with no network. When the folder is parked it fetches the data back
   (locked, space-checked, verified) and returns. A path inside a parked folder fetches only that part. This is the
   trigger: nothing polls.
+- **Re-park**: when a parked folder has data written to its marker location again (bytes present locally), `park()` or
+  `marvin-cold ensure --then-park` detects it and uploads only the changed/new paths to the cold host, updating the
+  manifest. The old entry is bumped to a new version, and the marker is rewritten. Resumable like the first park.
+- **Local bytes**: amount of file data physically present under a parked folder's marker (stat-only, no hashing). When
+  `>0`, the folder is a candidate for re-parking; the ticket pipeline watches this and re-parks automatically when disk
+  falls below the pipeline's min-free floor.
 
 ## Stamped copies (marvin#1223, decided with Gil 2026-11-09)
 
