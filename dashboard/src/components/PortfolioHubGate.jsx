@@ -1,10 +1,12 @@
 import { useEffect, useState } from 'react'
 import PortfolioHub from './PortfolioHub.jsx'
 import { AddonNotSetUp } from './AddonNotSetUp.jsx'
+import { enableAddon } from '../lib/addon_enable.js'
 
 export default function PortfolioHubGate() {
   const [features, setFeatures] = useState(null)
   const [loading, setLoading] = useState(true)
+  const [error, setError] = useState(null)
 
   useEffect(() => {
     async function checkFeatures() {
@@ -29,14 +31,14 @@ export default function PortfolioHubGate() {
     return (
       <AddonNotSetUp
         addon="portfolio"
+        error={error}
         onEnable={async (name) => {
-          try {
-            await window.api.instance.setFeature(name, true)
-            // Refresh features after enabling
-            const f = await window.api.instance.features()
-            setFeatures(f)
-          } catch (e) {
-            console.error('Failed to enable feature:', e)
+          setError(null)
+          const result = await enableAddon(name, window.api.instance)
+          if (result.error) {
+            setError(result.error)
+          } else {
+            setFeatures(result.features)
           }
         }}
       />

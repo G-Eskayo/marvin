@@ -103,6 +103,114 @@ describe('instance', () => {
   })
 })
 
+describe('setFeature', () => {
+  it('successfully sets a feature to true', async () => {
+    at({ config: {} })
+    const handlers = inst.createInstanceHandlers()
+    const result = await handlers.setFeature(null, 'portfolio', true)
+    expect(result).toEqual({ ok: true })
+    expect(inst.featureEnabled('portfolio')).toBe(true)
+  })
+
+  it('successfully sets a feature to false', async () => {
+    at({ config: { features: { portfolio: true } } })
+    const handlers = inst.createInstanceHandlers()
+    const result = await handlers.setFeature(null, 'portfolio', false)
+    expect(result).toEqual({ ok: true })
+    expect(inst.featureEnabled('portfolio')).toBe(false)
+  })
+
+  it('throws on unknown add-on', async () => {
+    at({ config: {} })
+    const handlers = inst.createInstanceHandlers()
+    await expect(handlers.setFeature(null, 'unknown', true)).rejects.toThrow('Unknown add-on')
+  })
+
+  it('refuses to write when the config file is corrupt (unparseable JSON)', async () => {
+    at({ config: '{not json' })
+    const handlers = inst.createInstanceHandlers()
+    await expect(handlers.setFeature(null, 'portfolio', true)).rejects.toThrow('corrupted or invalid')
+  })
+
+  it('refuses to write when the config file is invalid (wrong shape)', async () => {
+    at({ config: '[]' })
+    const handlers = inst.createInstanceHandlers()
+    await expect(handlers.setFeature(null, 'portfolio', true)).rejects.toThrow('corrupted or invalid')
+  })
+
+  it('guards features to a plain object when it is null', async () => {
+    at({ config: { features: null } })
+    const handlers = inst.createInstanceHandlers()
+    const result = await handlers.setFeature(null, 'portfolio', true)
+    expect(result).toEqual({ ok: true })
+    expect(inst.featureEnabled('portfolio')).toBe(true)
+  })
+
+  it('guards features to a plain object when it is a string', async () => {
+    at({ config: { features: 'yes' } })
+    const handlers = inst.createInstanceHandlers()
+    const result = await handlers.setFeature(null, 'portfolio', true)
+    expect(result).toEqual({ ok: true })
+    expect(inst.featureEnabled('portfolio')).toBe(true)
+  })
+
+  it('guards features to a plain object when it is an array', async () => {
+    at({ config: { features: [true] } })
+    const handlers = inst.createInstanceHandlers()
+    const result = await handlers.setFeature(null, 'portfolio', true)
+    expect(result).toEqual({ ok: true })
+    expect(inst.featureEnabled('portfolio')).toBe(true)
+  })
+
+  it('creates instance.json if it does not exist', async () => {
+    const dir = at({})
+    const handlers = inst.createInstanceHandlers()
+    const result = await handlers.setFeature(null, 'portfolio', true)
+    expect(result).toEqual({ ok: true })
+    expect(inst.featureEnabled('portfolio')).toBe(true)
+  })
+
+  it('creates instance dir if it does not exist', async () => {
+    const root = mkdtempSync(path.join(tmpdir(), 'instance-test-'))
+    const engine = mkdtempSync(path.join(root, 'engine-'))
+    execFileSync('git', ['init', '-q', engine])
+    const instDir = path.join(root, 'nonexistent', 'inst')
+    process.env.MARVIN_ENGINE_DIR = engine
+    process.env.MARVIN_INSTANCE_DIR = instDir
+    inst.reset()
+    const handlers = inst.createInstanceHandlers()
+    const result = await handlers.setFeature(null, 'portfolio', true)
+    expect(result).toEqual({ ok: true })
+    expect(inst.featureEnabled('portfolio')).toBe(true)
+    rmSync(root, { recursive: true, force: true })
+  })
+
+  it('resets cache after write so the next read gets fresh data', async () => {
+    at({ config: { owner: 'pat' } })
+    expect(inst.owner()).toBe('pat')
+    const handlers = inst.createInstanceHandlers()
+    await handlers.setFeature(null, 'portfolio', true)
+    // Change the file on disk (simulating an external write)
+    const configPath = inst.instancePath('instance.json')
+    writeFileSync(configPath, JSON.stringify({ owner: 'changed', features: { portfolio: true } }))
+    // Without reset, we'd still see 'pat'; with it, we see 'changed'
+    expect(inst.owner()).toBe('changed')
+  })
+
+  it('multiple calls in sequence work independently', async () => {
+    at({ config: {} })
+    const handlers = inst.createInstanceHandlers()
+    await handlers.setFeature(null, 'portfolio', true)
+    expect(inst.featureEnabled('portfolio')).toBe(true)
+    await handlers.setFeature(null, 'resume_tailor', true)
+    expect(inst.featureEnabled('portfolio')).toBe(true)
+    expect(inst.featureEnabled('resume_tailor')).toBe(true)
+    await handlers.setFeature(null, 'portfolio', false)
+    expect(inst.featureEnabled('portfolio')).toBe(false)
+    expect(inst.featureEnabled('resume_tailor')).toBe(true)
+  })
+})
+
 describe('dashboard readers point at the instance (ADR 0071 step 2)', () => {
   it('reads run results and project profiles from the private instance, not the public engine', async () => {
     process.env.MARVIN_INSTANCE_DIR = path.join(root, 'inst')

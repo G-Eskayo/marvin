@@ -1,6 +1,6 @@
 import React from 'react'
 
-export function AddonNotSetUp({ addon, onEnable }) {
+export function AddonNotSetUp({ addon, onEnable, error }) {
   const addonInfo = {
     portfolio: {
       name: 'Portfolio',
@@ -24,6 +24,7 @@ export function AddonNotSetUp({ addon, onEnable }) {
 
   return (
     <div className="addon-not-set-up">
+      {error && <div role="alert" className="mb-3 rounded-lg border border-red-700 bg-red-950/50 px-4 py-3 text-sm text-red-200">{error}</div>}
       <div className="addon-header">
         <h2>{info.name}</h2>
         <p className="addon-description">{info.description}</p>

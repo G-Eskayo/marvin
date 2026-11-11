@@ -23,20 +23,34 @@ export const instancePath = (...parts) => path.join(instanceDir(), ...parts)
 
 let cache = null
 
+function readConfigFile() {
+  let config = {}
+  let parseFailed = false
+  try {
+    const data = JSON.parse(readFileSync(instancePath('instance.json'), 'utf8'))
+    if (data && typeof data === 'object' && !Array.isArray(data)) {
+      config = data
+    } else {
+      parseFailed = true
+    }
+  } catch (err) {
+    if (err.code !== 'ENOENT') {
+      parseFailed = true
+    }
+  }
+  return { config, parseFailed }
+}
+
 function load() {
   if (cache) return cache
-  let config = {}
-  try {
-    const data = JSON.parse(readFileSync(path.join(instanceDir(), 'instance.json'), 'utf8'))
-    if (data && typeof data === 'object' && !Array.isArray(data)) config = data
-  } catch {}
+  const { config, parseFailed } = readConfigFile()
   let origin = null
   try {
     const url = execFileSync('git', ['-C', engineDir(), 'remote', 'get-url', 'origin'], { encoding: 'utf8', timeout: 5000, stdio: ['ignore', 'pipe', 'ignore'] }).trim()
     const m = GITHUB.exec(url)
     if (m) origin = `${m[1]}/${m[2]}`
   } catch {}
-  cache = { config, origin }
+  cache = { config, origin, parseFailed }
   return cache
 }
 
@@ -77,13 +91,16 @@ export function createInstanceHandlers() {
       if (!KNOWN_ADDONS.includes(name)) {
         throw new Error(`Unknown add-on: ${name}`)
       }
-      const config = load().config
-      if (!config.features) {
+      const { config, parseFailed } = readConfigFile()
+      if (parseFailed) {
+        throw new Error('Config file is corrupted or invalid')
+      }
+      if (!config.features || typeof config.features !== 'object' || Array.isArray(config.features)) {
         config.features = {}
       }
       config.features[name] = value
       // Write back to instance.json
-      const configPath = path.join(instanceDir(), 'instance.json')
+      const configPath = instancePath('instance.json')
       const dir = path.dirname(configPath)
       if (!existsSync(dir)) {
         mkdirSync(dir, { recursive: true })
