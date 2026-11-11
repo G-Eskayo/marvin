@@ -57,6 +57,4 @@ anything is measured) and both surfaces at once (twice the risk, the same learni
   override rate in the gate.
 - The evidence is `docs/research/local-models-review-2026-11-11.md`. Tuning a 4B model fits on a 16 GB Mac.
   A 9B model is tight, and anything bigger needs an NVIDIA GPU.
-- Open: whether Claude pipeline transcripts may be used as training data. Anthropic's Consumer Terms forbid using
-  the service to build competing models. Until that's settled, tuning uses only MARVIN's own outcomes (review
-  verdicts, merges and send-backs, Gil's own edits).
+- Training data (Gil, 2026-11-11): **only MARVIN's own outcomes** (review verdicts, merges and send-backs, Gil's own edits and answers), no Claude-written text. Anthropic's Consumer Terms (§3) forbid using the service to build competing models, and this data is clean either way.
