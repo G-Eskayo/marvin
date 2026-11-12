@@ -28,7 +28,7 @@ const SEVERITY_COLOR = {
   unmonitored: { bg: 'bg-neutral-900', border: 'border-neutral-700', dot: 'bg-neutral-600', text: 'text-neutral-400' }
 }
 
-function MoonIcon({ className = '' }) {
+export function MoonIcon({ className = '' }) {
   return (
     <svg
       viewBox="0 0 24 24"

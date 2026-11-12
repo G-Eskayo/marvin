@@ -1,0 +1,11 @@
+1. [ ] Export `MoonIcon` from `HealthDashboard.jsx`; export `agoShort` from `DispatchStatusBadge.jsx`. No behavior change.
+2. [ ] Add `grace_hours: float = 0.0` param to `lib/health_checks.py:classify_unreachable()`; extend the `kind != "laptop"` branch to consult `peer["last_seen"]` and return `"yellow"` within grace / `"red"` past it, clamping negative elapsed time to `0` (clock-skew guard). Default behavior unchanged for existing callers.
+3. [ ] Write/extend `lib/tests/test_health_checks.py` for tests 2, 6, 7, 9, 10 above before touching `device_status.py`.
+4. [ ] Add `peer_lookup` and `now` parameters to `lib/device_status.py:device_statuses()`; for the "offline in Tailscale" branch and the CANT_CHECK branch, call `peer_lookup(host)` and `health_checks.classify_unreachable(kind, peer, now, grace_hours=...)` (grace value from Decision `grace`), attach `severity` and `lastSeen` (ISO, clock-skew-clamped) to the row, keep existing `state`/`why` semantics for backward compatibility.
+5. [ ] Wire `main()` to pass the real `peer_lookup=health_checks._tailscale_peer` (lazy import, matching existing style) and `now=datetime.now(timezone.utc)`.
+6. [ ] Write/extend `lib/tests/test_device_status.py` for tests 1, 3, 4, 5, 8, 11, 12, 13 before wiring the frontend.
+7. [ ] Update `DeviceColumns.jsx`: extend `DOT`/`describeDevice()` to branch on the new `severity` field (asleep → moon icon + sky tone; yellow → amber tone; red unchanged), render `lastSeen` via `agoShort` ("last seen 20 min ago"), use the plain-sentence `why` instead of raw ssh wording.
+8. [ ] Write/extend the dashboard-side test (new or existing `dashboard/test/device_columns*.test.jsx`, matching the directory's existing naming convention) for tests 15, 16.
+9. [ ] Resolve Decisions `grace` and `cantcheck` into the actual constant/branch (owner answers on the PR; code should read cleanly for whichever answer lands — don't hardcode a guess).
+10. [ ] Take screenshots at 900px and 1440px of Activity showing an asleep laptop and an amber/red always-on device; pin on the PR via `marvin-show` (AC3).
+11. [ ] Run the full Python + dashboard test suites (not just the touched files) before opening the PR, per the hand-merge/full-suite rule.

@@ -210,6 +210,25 @@ def test_desktop_with_no_tailscale_state_stays_red():
     assert sev == "red"
 
 
+def test_always_on_device_within_grace_period_is_yellow():
+    sev, detail = hc.classify_unreachable("desktop", _peer(False, hours_ago=1), NOW, grace_hours=2)
+    assert sev == "yellow"
+    assert "grace" in detail.lower()
+
+
+def test_always_on_device_past_grace_period_is_red():
+    sev, detail = hc.classify_unreachable("desktop", _peer(False, hours_ago=3), NOW, grace_hours=2)
+    assert sev == "red"
+    assert "always-on" in detail.lower()
+
+
+def test_grace_period_clamps_negative_time_to_zero():
+    # Clock skew: now is before last_seen, which shouldn't happen
+    future_peer = {"online": False, "last_seen": NOW + timedelta(hours=1)}
+    sev, detail = hc.classify_unreachable("desktop", future_peer, NOW, grace_hours=2)
+    assert sev == "yellow"  # Within grace (0 hours)
+
+
 def test_check_machine_reachability_reports_asleep_for_a_closed_laptop(monkeypatch):
     monkeypatch.setattr(hc.machine_profile, "remote_devices", lambda: {
         "macbook-pro-1": {"kind": "laptop", "tailscale_hostname": "lap"}})

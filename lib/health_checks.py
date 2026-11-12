@@ -1542,15 +1542,24 @@ def _tailscale_peer(host: str) -> dict | None:
     return None
 
 
-def classify_unreachable(kind: str, peer: dict | None, now: datetime) -> tuple[str, str]:
+def classify_unreachable(kind: str, peer: dict | None, now: datetime, grace_hours: float = 0.0) -> tuple[str, str]:
     """Severity for a device we could not reach over ssh. 'red' is reserved for
     "needs your immediate attention", so a normal lid-close must not be red.
     A laptop that Tailscale reports OFFLINE recently is `asleep` (neutral);
     online-but-unreachable is a real fault; an always-on desktop being down is
     red; and when Tailscale can't say, a laptop is `yellow` (unknown), never
     silently asleep. Remotely, sleep and a crash look the same -- this is a
-    heuristic keyed on device kind + how long it has been gone."""
+    heuristic keyed on device kind + how long it has been gone.
+
+    grace_hours allows always-on devices a grace period: within grace, yellow;
+    past grace, red. Clamped to >= 0 to guard against clock skew."""
     if kind != "laptop":
+        if grace_hours > 0 and peer is not None:
+            last = peer.get("last_seen")
+            if last is not None:
+                hours = max(0, (now - last).total_seconds() / 3600)
+                if hours <= grace_hours:
+                    return "yellow", "unreachable (always-on, within grace period)"
         return "red", "unreachable (always-on device)"
     if peer is None:
         return "yellow", "unreachable and cannot tell if it is asleep (Tailscale state unavailable)"

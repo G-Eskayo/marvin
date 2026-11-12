@@ -95,3 +95,96 @@ def test_tailscale_that_cannot_be_checked_is_not_reported_as_offline():
     for row in r[1:]:
         assert row["state"] == "unreachable"
         assert "can't check" in row["why"] and "not online" not in row["why"]
+
+
+def test_severity_field_attached_to_unreachable_devices():
+    from datetime import datetime, timezone, timedelta
+    now = datetime(2026, 10, 2, 12, 0, tzinfo=timezone.utc)
+
+    def peer_lookup(host):
+        if host == "mbp":
+            return {"online": False, "last_seen": now - timedelta(hours=1)}
+        return None
+
+    r = ds.device_statuses(
+        DEVICES, self_id="mac-mini-1",
+        local=lambda: {"busy": False},
+        online=lambda: set(),  # offline in Tailscale
+        probe=lambda h: {"busy": False},
+        peer_lookup=peer_lookup,
+        now=now,
+        grace_hours=0.0
+    )
+    rows_dict = {row["id"]: row for row in r}
+    assert "severity" in rows_dict["macbook-pro-1"]
+    assert rows_dict["macbook-pro-1"]["severity"] == "asleep"  # laptop offline recently
+
+
+def test_last_seen_field_attached_when_peer_info_available():
+    from datetime import datetime, timezone, timedelta
+    now = datetime(2026, 10, 2, 12, 0, tzinfo=timezone.utc)
+    last_seen = now - timedelta(hours=2)
+
+    def peer_lookup(host):
+        if host == "n3":
+            return {"online": False, "last_seen": last_seen}
+        return None
+
+    r = ds.device_statuses(
+        DEVICES, self_id="mac-mini-1",
+        local=lambda: {"busy": False},
+        online=lambda: set(),
+        probe=lambda h: {"busy": False},
+        peer_lookup=peer_lookup,
+        now=now,
+        grace_hours=0.0
+    )
+    rows_dict = {row["id"]: row for row in r}
+    assert "lastSeen" in rows_dict["node-3"]
+    assert rows_dict["node-3"]["lastSeen"] == last_seen.isoformat()
+
+
+def test_grace_period_yellow_for_always_on_within_grace():
+    from datetime import datetime, timezone, timedelta
+    now = datetime(2026, 10, 2, 12, 0, tzinfo=timezone.utc)
+
+    def peer_lookup(host):
+        if host == "n3":
+            return {"online": False, "last_seen": now - timedelta(hours=1)}
+        return None
+
+    r = ds.device_statuses(
+        DEVICES, self_id="mac-mini-1",
+        local=lambda: {"busy": False},
+        online=lambda: set(),
+        probe=lambda h: {"busy": False},
+        peer_lookup=peer_lookup,
+        now=now,
+        grace_hours=2.0  # device offline for 1h, within 2h grace
+    )
+    rows_dict = {row["id"]: row for row in r}
+    assert rows_dict["node-3"]["severity"] == "yellow"
+
+
+def test_clock_skew_clamping_in_last_seen():
+    from datetime import datetime, timezone, timedelta
+    now = datetime(2026, 10, 2, 12, 0, tzinfo=timezone.utc)
+    future_time = now + timedelta(hours=1)  # clock skew
+
+    def peer_lookup(host):
+        if host == "n3":
+            return {"online": False, "last_seen": future_time}
+        return None
+
+    r = ds.device_statuses(
+        DEVICES, self_id="mac-mini-1",
+        local=lambda: {"busy": False},
+        online=lambda: set(),
+        probe=lambda h: {"busy": False},
+        peer_lookup=peer_lookup,
+        now=now,
+        grace_hours=0.0
+    )
+    rows_dict = {row["id"]: row for row in r}
+    # lastSeen should be clamped to now (or earlier)
+    assert rows_dict["node-3"]["lastSeen"] <= now.isoformat()

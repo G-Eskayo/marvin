@@ -28,6 +28,22 @@ describe('describeDevice', () => {
   })
   it('unreachable says why', () =>
     expect(describeDevice({ state: 'unreachable', why: 'not online in Tailscale' }, NOW)).toMatchObject({ label: 'Unreachable', tone: 'down', detail: 'not online in Tailscale' }))
+  it('unreachable asleep shows moon icon and sky tone', () => {
+    const d = describeDevice({ state: 'unreachable', severity: 'asleep', lastSeen: '2026-10-05T10:00:00Z' }, NOW)
+    expect(d).toMatchObject({ label: 'Asleep', tone: 'asleep', icon: 'moon' })
+    expect(d.detail).toContain('last seen')
+    expect(d.detail).toContain('min')
+  })
+  it('unreachable yellow shows amber tone', () => {
+    const d = describeDevice({ state: 'unreachable', severity: 'yellow', lastSeen: '2026-10-05T09:00:00Z' }, NOW)
+    expect(d).toMatchObject({ label: 'Unreachable', tone: 'yellow' })
+    expect(d.detail).toContain('last seen')
+  })
+  it('unreachable red without lastSeen uses why', () => {
+    const d = describeDevice({ state: 'unreachable', severity: 'red', why: 'ssh timeout' }, NOW)
+    expect(d).toMatchObject({ label: 'Unreachable', tone: 'down' })
+    expect(d.detail).toBe('ssh timeout')
+  })
 })
 
 describe('slotsLabel', () => {

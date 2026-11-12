@@ -46,9 +46,12 @@ def _row(device_id, device_entry, is_self, state, why=None, slotsUsed=None, slot
 _CANT_CHECK = object()  # online() answered None: Tailscale itself couldn't be asked (marvin#889)
 
 
-def device_statuses(devices: dict, self_id: str, local, online, probe, local_slots=None, remote_slots=None) -> list[dict]:
+def device_statuses(devices: dict, self_id: str, local, online, probe, local_slots=None, remote_slots=None, peer_lookup=None, now=None, grace_hours=0.0) -> list[dict]:
+    from datetime import datetime, timezone
     local_slots = local_slots or (lambda m: None)
     remote_slots = remote_slots or (lambda h, m: None)
+    peer_lookup = peer_lookup or (lambda h: None)
+    now = now or datetime.now(timezone.utc)
 
     def add_slot_info(row, device_id, is_self):
         if is_self:
@@ -68,6 +71,8 @@ def device_statuses(devices: dict, self_id: str, local, online, probe, local_slo
                 row["tickets"] = tickets
         return row
 
+    import health_checks as hc
+
     local_state = local()
     out = [add_slot_info(_row(self_id, devices.get(self_id, {}), True, local_state), self_id, True)]
     online_hosts = None
@@ -79,12 +84,20 @@ def device_statuses(devices: dict, self_id: str, local, online, probe, local_slo
             if online_hosts is None:
                 online_hosts = _CANT_CHECK
         host = info.get("tailscale_hostname")
+        kind = info.get("kind", "desktop")
+
         if online_hosts is _CANT_CHECK:
             out.append({**_row(device_id, info, False, None), "state": "unreachable",
                         "why": "can't check: Tailscale isn't answering on this Mac (CLI missing or failing)"})
             continue
         if host not in online_hosts:
-            out.append({**_row(device_id, info, False, None), "state": "unreachable", "why": "not online in Tailscale"})
+            peer = peer_lookup(host) if host else None
+            severity, why = hc.classify_unreachable(kind, peer, now, grace_hours=grace_hours)
+            row = {**_row(device_id, info, False, None), "state": "unreachable", "why": why, "severity": severity}
+            if peer and peer.get("last_seen"):
+                last_seen = min(now, peer["last_seen"])
+                row["lastSeen"] = last_seen.isoformat()
+            out.append(row)
             continue
         state = probe(host)
         if state is not None:
@@ -95,9 +108,11 @@ def device_statuses(devices: dict, self_id: str, local, online, probe, local_slo
 
 
 def main() -> None:
+    from datetime import datetime, timezone
     import task_dispatch as td
     from machine_profile import registry_id, _load_registry
     import dispatch_concurrency as dc
+    import health_checks as hc
 
     def local():
         s = td._read_local_dispatch_state()
@@ -121,7 +136,8 @@ def main() -> None:
             return None
 
     print(json.dumps(device_statuses(_load_registry(), registry_id(), local, td.tailscale_online_hosts_or_none, probe_remote,
-                                    local_slots=local_slots_reader, remote_slots=remote_slots_reader)))
+                                    local_slots=local_slots_reader, remote_slots=remote_slots_reader,
+                                    peer_lookup=hc._tailscale_peer, now=datetime.now(timezone.utc))))
 
 
 if __name__ == "__main__":
