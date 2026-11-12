@@ -22,6 +22,18 @@ export function docsClickHandlers({ docsService, docsIndexer, outbox }) {
   }
 }
 
+// Build the master doc by running the tidy agent script
+export async function runMasterBuild({ exec, python, script, timeout = 300_000, ...opts }) {
+  try {
+    await exec(python, [script, '--dry-run'], { timeout, ...opts })
+    return { ok: true }
+  } catch (err) {
+    const str = (err?.stderr || err?.message || String(err)).trim()
+    const output = (str && str !== '[object Object]' && str.split('\n').pop()) || 'unknown error'
+    return { ok: false, output }
+  }
+}
+
 // The docs-phrase tier's text per project: CONTEXT.md, README.md and docs/adr/*.md, lowercased (the files the design's
 // measurement read). From the local clone when there is one, else the saved copy of its GitHub docs. Never the network.
 export function docsTextFor(projects, { saved = null } = {}) {

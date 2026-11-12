@@ -138,7 +138,7 @@ import { openLink, windowOpenHandler } from './external_links.js'
 import { readOutboxFile, readOutboxImage, outboxRevealPath, outboxOpenPath, outboxRoot, listOutboxDir, summarizeOutbox, outboxPreview } from './outbox.js'
 import { createDeliverables } from './deliverables.js'
 import { createThumbs } from './thumbs.js'
-import { docsTextFor, maxNumbers, docsClickHandlers } from './docs_handlers.js'
+import { docsTextFor, maxNumbers, docsClickHandlers, runMasterBuild } from './docs_handlers.js'
 import { readCatalog, readMasterDoc, readOverrides, CATALOG_DIR, MASTER_DOC_PATH } from './catalog.js'
 import { readHelperTabs } from './helper_tabs.js'
 import { withOverrides } from '../../src/lib/project_names.js'
@@ -640,6 +640,7 @@ const deviceId = () => (cachedDeviceId === undefined ? (cachedDeviceId = resolve
 const CATALOG_SCRIPT = join(homedir(), '.agents', 'lib', 'project_catalog.py')
 const AGENTS_PYTHON = join(homedir(), '.agents', 'venv', 'bin', 'python')
 const FIND_FILE_SCRIPT = join(homedir(), '.claude', 'organize', 'find_file.py') // the `findit` command
+const TIDY_AGENT_SCRIPT = join(homedir(), '.claude', 'organize', 'tidy_agent.py')
 
 function registerDocsHandlers() {
   // The Docs tab is driven by the project catalog (lib/project_catalog.py): every project gets a
@@ -861,6 +862,7 @@ function registerDocsHandlers() {
     watchSources()
     return docsService.repos()
   })
+  ipcMain.handle('docs:build', () => runMasterBuild({ exec: execFileAsync, python: AGENTS_PYTHON, script: TIDY_AGENT_SCRIPT }))
   // "Files on this Mac": the same Spotlight search as the `findit` command, attributed to projects.
   ipcMain.handle('docs:files', (_event, query) =>
     searchFiles(String(query || ''), {
