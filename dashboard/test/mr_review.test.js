@@ -199,6 +199,36 @@ describe('parseTicketRef', () => {
   it('returns null when there is no closing reference', () => {
     expect(parseTicketRef('No ticket reference here.')).toBe(null)
   })
+
+  it('when no repo filter is given, returns the first closing reference regardless of its repo', () => {
+    const body = 'Closes G-Eskayo/clarity-captions#35\n\nMore text\n\nCloses G-Eskayo/marvin#42'
+    expect(parseTicketRef(body)).toBe('35')
+  })
+
+  it('when a repo filter is given, returns a bare closing reference even if other repos are mentioned', () => {
+    const body = 'Closes G-Eskayo/clarity-captions#35\n\nCloses #42'
+    expect(parseTicketRef(body, 'G-Eskayo/marvin')).toBe('42')
+  })
+
+  it('when a repo filter is given, skips closing references from other repos and finds a matching one', () => {
+    const body = 'Closes G-Eskayo/clarity-captions#35\n\nCloses G-Eskayo/marvin#42\n\nCloses #99'
+    expect(parseTicketRef(body, 'G-Eskayo/marvin')).toBe('42')
+  })
+
+  it('when a repo filter is given and multiple matches exist for that repo, returns the first one', () => {
+    const body = 'Closes G-Eskayo/marvin#42\n\nCloses G-Eskayo/marvin#43'
+    expect(parseTicketRef(body, 'G-Eskayo/marvin')).toBe('42')
+  })
+
+  it('performs case-insensitive repo matching', () => {
+    const body = 'Closes g-eskayo/MARVIN#42'
+    expect(parseTicketRef(body, 'G-Eskayo/marvin')).toBe('42')
+  })
+
+  it('returns null when a repo filter is given but no matching repo is found', () => {
+    const body = 'Closes G-Eskayo/clarity-captions#35\n\nCloses G-Eskayo/seal#40'
+    expect(parseTicketRef(body, 'G-Eskayo/marvin')).toBe(null)
+  })
 })
 
 describe('listPipelinePrs', () => {
@@ -254,7 +284,7 @@ describe('listPipelinePrs', () => {
     const result = await listPipelinePrs(listOpenPrs)
     expect(result[0].hasSchema).toBe(false)
     expect(result[0].evidence).toBe(null)
-    expect(result[0].ticketNumber).toBe(null)
+    expect(result[0].ticketNumber).toBe(70)
     expect(result[0].rawBody).toBe(NON_SCHEMA_BODY) // untruncated -- MrDetail needs the whole thing
   })
 
@@ -470,6 +500,47 @@ describe('listPipelinePrs: sent-back tickets (marvin #129)', () => {
     const result = await listPipelinePrs(async () => prs(), { sentBackTickets: async () => { throw new Error('gh down') } })
     expect(result).toHaveLength(4)
     expect(result.every((r) => r.sentBack === false)).toBe(true)
+  })
+})
+
+describe('listPipelinePrs: repo-aware ticket reference parsing (#806)', () => {
+  it('when a PR has multiple closing references, prefers the one matching its own repo', async () => {
+    const body = 'Closes G-Eskayo/clarity-captions#35\n\nCloses G-Eskayo/marvin#42'
+    const listOpenPrs = vi.fn().mockResolvedValue([
+      { number: 100, title: 'Cross-repo ref', url: 'https://x/100', repo: 'G-Eskayo/marvin', body }
+    ])
+    const result = await listPipelinePrs(listOpenPrs)
+    expect(result[0].ticketRef).toBe('42')
+    expect(result[0].ticketNumber).toBe(42)
+  })
+
+  it('when a PR has a non-schema body with a cross-repo reference, finds its own repo\'s ticket', async () => {
+    const body = 'Closes G-Eskayo/seal#30\n\nCloses G-Eskayo/clarity-captions#35'
+    const listOpenPrs = vi.fn().mockResolvedValue([
+      { number: 55, title: 'Non-schema CC PR', url: 'https://x/55', repo: 'G-Eskayo/clarity-captions', body }
+    ])
+    const result = await listPipelinePrs(listOpenPrs)
+    expect(result[0].hasSchema).toBe(false)
+    expect(result[0].ticketRef).toBe('35')
+    expect(result[0].ticketNumber).toBe(35)
+  })
+
+  it('when a PR body lists multiple same-repo tickets, uses the first one', async () => {
+    const body = 'Closes G-Eskayo/marvin#42\n\nCloses G-Eskayo/marvin#43'
+    const listOpenPrs = vi.fn().mockResolvedValue([
+      { number: 101, title: 'Duplicate closes', url: 'https://x/101', repo: 'G-Eskayo/marvin', body }
+    ])
+    const result = await listPipelinePrs(listOpenPrs)
+    expect(result[0].ticketRef).toBe('42')
+  })
+
+  it('when no matching repo is found and only a bare reference exists, uses the bare reference', async () => {
+    const body = 'Closes G-Eskayo/seal#30\n\nCloses #88'
+    const listOpenPrs = vi.fn().mockResolvedValue([
+      { number: 56, title: 'Fallback bare ref', url: 'https://x/56', repo: 'G-Eskayo/clarity-captions', body }
+    ])
+    const result = await listPipelinePrs(listOpenPrs)
+    expect(result[0].ticketRef).toBe('88')
   })
 })
 
