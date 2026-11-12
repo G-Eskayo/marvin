@@ -283,3 +283,36 @@ describe('describePrState: drafts (marvin#848)', () => {
     expect(state({ isDraft: false })).toMatchObject({ kind: 'ready', approve: 'enabled' })
   })
 })
+
+describe('describePrState: merge server unavailable (marvin#797)', () => {
+  const ready = { sentBack: false, conflicts: false, checks: { state: 'passing', failing: [], pending: [] }, waitingOn: [], baseProblem: null }
+  const state = (over = {}, ui = {}) => describePrState({ ...ready, ...over }, { status: 'idle', errorMessage: null, ...ui })
+
+  it('when mergeServerDown is true, both Approve and Deny are disabled', () => {
+    const s = state({ mergeServerDown: true })
+    expect(s).toMatchObject({ kind: 'merge-server-down', approve: 'disabled', deny: 'disabled', tone: 'wait' })
+    expect(s.headline).toMatch(/Mac mini.*isn't answering/)
+    expect(s.detail).toMatch(/approvals.*deferred/i)
+    expect(s.detail).toMatch(/denials.*deferred/i)
+  })
+
+  it('content blockers still win over merge server down', () => {
+    expect(state({ sentBack: true, mergeServerDown: true }).kind).toBe('sent-back')
+    expect(state({ conflicts: true, mergeServerDown: true }).kind).toBe('conflict')
+    expect(state({ checks: { state: 'failing', failing: ['test'], pending: [] }, mergeServerDown: true }).kind).toBe('checks-failed')
+    expect(state({ needsImages: { files: [] }, mergeServerDown: true }).kind).toBe('needs-images')
+    expect(state({ vague: { reasons: ['missing'] }, mergeServerDown: true }).kind).toBe('needs-options')
+  })
+
+  it('local click states still win over merge server down', () => {
+    expect(state({ mergeServerDown: true }, { status: 'approving' }).kind).toBe('merging')
+    expect(state({ mergeServerDown: true }, { status: 'queued' }).kind).toBe('queued')
+    expect(state({ mergeServerDown: true }, { status: 'merged' }).kind).toBe('merged')
+  })
+
+  it('when merge server is up (falsy), normal state applies', () => {
+    expect(state({ mergeServerDown: false }).kind).toBe('ready')
+    expect(state({ mergeServerDown: undefined }).kind).toBe('ready')
+    expect(state({ mergeServerDown: null }).kind).toBe('ready')
+  })
+})

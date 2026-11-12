@@ -301,17 +301,19 @@ export function queueLines(prs, { queue = null, issuesFor = () => [], sentBackKe
   return out
 }
 
-export async function listPipelinePrs(listOpenPrs, { canMerge = canMergeFromDashboard, sentBackTickets = null, reworkStatus = null, rebaseStatus = null, closedTickets = null, autoMergeShadow = null, uiPathsFor = () => [], mergeQueue = null, issuesFor = null } = {}) {
+export async function listPipelinePrs(listOpenPrs, { canMerge = canMergeFromDashboard, sentBackTickets = null, reworkStatus = null, rebaseStatus = null, closedTickets = null, autoMergeShadow = null, uiPathsFor = () => [], mergeQueue = null, issuesFor = null, mergeServerHealth = null } = {}) {
   const prs = await listOpenPrs()
-  // The webhook's post-merge rebase results, by PR url (#225). Best effort: without them a card just doesn't say.
-  let rebased = {}
-  if (rebaseStatus) {
+
+  // Merge server health (marvin#797): when down, skip the three reads that depend on it.
+  let serverHealth = { down: false }
+  if (mergeServerHealth) {
     try {
-      rebased = (await rebaseStatus()) || {}
+      serverHealth = (await mergeServerHealth()) || { down: false }
     } catch {
-      rebased = {}
+      serverHealth = { down: false }
     }
   }
+
   // Which tickets were sent back for rework ("repo#number" keys), asked once for the repos that have PRs. A failing
   // lookup never hides a PR: it just means nothing is flagged (the merge webhook refuses sent-back PRs on its own).
   let sentBackKeys = new Set()
@@ -322,15 +324,7 @@ export async function listPipelinePrs(listOpenPrs, { canMerge = canMergeFromDash
       sentBackKeys = new Set()
     }
   }
-  // Auto-merge's shadow verdicts by PR url (#341), from the mini's merge server. Best effort.
-  let shadow = {}
-  if (autoMergeShadow) {
-    try {
-      shadow = ((await autoMergeShadow()) || {}).prs || {}
-    } catch {
-      shadow = {}
-    }
-  }
+
   // Tickets already closed ("repo#number"): a PR still open for one is probably a duplicate (#326). Best effort.
   let closedKeys = new Set()
   if (closedTickets) {
@@ -340,6 +334,58 @@ export async function listPipelinePrs(listOpenPrs, { canMerge = canMergeFromDash
       closedKeys = new Set()
     }
   }
+
+  // The webhook's post-merge rebase results, by PR url (#225). Best effort: without them a card just doesn't say.
+  // Auto-merge's shadow verdicts by PR url (#341), from the mini's merge server. Best effort.
+  // The merge queue's line for each PR (marvin#231). Best effort, like the rebase results.
+  // When the merge server is down, skip all three.
+  let rebased = {}
+  let shadow = {}
+  let lines = {}
+  if (!serverHealth.down) {
+    try {
+      const [rebaseResult, shadowResult, queueResult] = await Promise.all([
+        (async () => {
+          if (!rebaseStatus) return {}
+          try {
+            return (await rebaseStatus()) || {}
+          } catch {
+            return {}
+          }
+        })(),
+        (async () => {
+          if (!autoMergeShadow) return {}
+          try {
+            return ((await autoMergeShadow()) || {}).prs || {}
+          } catch {
+            return {}
+          }
+        })(),
+        (async () => {
+          if (!mergeQueue) return { provided: false }
+          let queue = null
+          try { queue = await mergeQueue() } catch { queue = null }
+          return { provided: true, queue }
+        })()
+      ])
+      rebased = rebaseResult
+      shadow = shadowResult
+      // Compute queue lines after Promise.all resolves, passing the actual rebaseResult
+      // Only compute lines if mergeQueue was provided as an option
+      if (queueResult.provided) {
+        try {
+          lines = queueLines(prs, { queue: queueResult.queue, issuesFor: issuesFor || (() => []), sentBackKeys, rebased: rebaseResult })
+        } catch {
+          lines = {}
+        }
+      }
+    } catch {
+      rebased = {}
+      shadow = {}
+      lines = {}
+    }
+  }
+
   // Where each sent-back ticket's rework stands (running, queued at position N, paused and why, held, needs a person).
   // Best effort: without it the card still says it was sent back.
   let rework = {}
@@ -353,13 +399,7 @@ export async function listPipelinePrs(listOpenPrs, { canMerge = canMergeFromDash
   // Each PR with the facts that decide whether it can be waited on (sent back for rework; conflicts), so merge order skips the
   // ones that cannot merge as they stand.
   const withState = markBlocked(markSentBack(prs, sentBackKeys), uiPathsFor)
-  // The merge queue's line for each PR (marvin#231). Best effort, like the rebase results.
-  let lines = {}
-  if (mergeQueue) {
-    let queue = null
-    try { queue = await mergeQueue() } catch { queue = null }
-    try { lines = queueLines(prs, { queue, issuesFor: issuesFor || (() => []), sentBackKeys, rebased }) } catch { lines = {} }
-  }
+
   return prs.map((pr) => {
     const ticketRef = parseTicketRef(pr.body || '')
     const hasSchema = hasEvidenceSchema(pr.body)
@@ -413,7 +453,8 @@ export async function listPipelinePrs(listOpenPrs, { canMerge = canMergeFromDash
       // Full body, untruncated -- MrDetail.jsx needs the whole thing since
       // it's exactly the "drill in and actually read it" view; PrCard.jsx
       // truncates its own display slice for the compact list card.
-      rawBody: hasSchema ? null : pr.body || ''
+      rawBody: hasSchema ? null : pr.body || '',
+      ...(mergeServerHealth && { mergeServerDown: !!serverHealth.down })
     }
   })
 }

@@ -5,6 +5,7 @@ import {
   parseTicketRef,
   fetchTicketContext,
   listPipelinePrs,
+  queueLines,
   sentBackKeys,
   approveMr,
   denyMr
@@ -504,5 +505,126 @@ describe('listPipelinePrs: post-merge rebase result (#225)', () => {
     expect(withIt.rebase).toEqual({ state: 'conflict', after: 229, files: ['a.js'] })
     const [without] = await listPipelinePrs(list, { rebaseStatus: async () => { throw new Error('webhook down') } })
     expect(without.rebase).toBe(null)
+  })
+})
+
+describe('listPipelinePrs: merge server health', () => {
+  const url = 'https://github.com/G-Eskayo/marvin/pull/200'
+  const pr = { number: 200, title: 'Test', url, body: '' }
+  const prs = async () => [pr]
+
+  it('runs rebaseStatus, autoMergeShadow, and mergeQueue concurrently, not sequentially', async () => {
+    const startTimes = {}
+    const createInstrumentedFn = (name) => {
+      return async () => {
+        startTimes[name] = Date.now()
+        await new Promise(r => setTimeout(r, 10))
+        return name === 'rebaseStatus' ? { [url]: {} } : {}
+      }
+    }
+    await listPipelinePrs(prs, {
+      rebaseStatus: createInstrumentedFn('rebaseStatus'),
+      autoMergeShadow: createInstrumentedFn('autoMergeShadow'),
+      mergeQueue: createInstrumentedFn('mergeQueue')
+    })
+    const times = Object.values(startTimes)
+    const maxDiff = Math.max(...times) - Math.min(...times)
+    expect(maxDiff).toBeLessThan(20) // All should start within 20ms of each other
+  })
+
+  it('skips rebaseStatus, autoMergeShadow, mergeQueue when mergeServerHealth reports down', async () => {
+    const rebaseStatus = vi.fn()
+    const autoMergeShadow = vi.fn()
+    const mergeQueue = vi.fn()
+    const [result] = await listPipelinePrs(prs, {
+      mergeServerHealth: async () => ({ down: true }),
+      rebaseStatus,
+      autoMergeShadow,
+      mergeQueue
+    })
+    expect(rebaseStatus).not.toHaveBeenCalled()
+    expect(autoMergeShadow).not.toHaveBeenCalled()
+    expect(mergeQueue).not.toHaveBeenCalled()
+    expect(result.rebase).toBe(null)
+    expect(result.autoMerge).toBe(null)
+    expect(result.mergeQueue).toBe(null)
+    expect(result.mergeServerDown).toBe(true)
+  })
+
+  it('calls all three when mergeServerHealth reports up', async () => {
+    const rebaseStatus = vi.fn().mockResolvedValue({ [url]: { state: 'ready' } })
+    const autoMergeShadow = vi.fn().mockResolvedValue({})
+    const mergeQueue = vi.fn().mockResolvedValue({ repos: {} })
+    const [result] = await listPipelinePrs(prs, {
+      mergeServerHealth: async () => ({ down: false }),
+      rebaseStatus,
+      autoMergeShadow,
+      mergeQueue
+    })
+    expect(rebaseStatus).toHaveBeenCalled()
+    expect(autoMergeShadow).toHaveBeenCalled()
+    expect(mergeQueue).toHaveBeenCalled()
+    expect(result.mergeServerDown).toBe(false)
+  })
+
+  it('per-read failure handling unchanged when server is up', async () => {
+    const rebaseStatus = vi.fn().mockRejectedValue(new Error('webhook down'))
+    const [result] = await listPipelinePrs(prs, {
+      mergeServerHealth: async () => ({ down: false }),
+      rebaseStatus,
+      autoMergeShadow: async () => ({}),
+      mergeQueue: async () => ({ repos: {} })
+    })
+    expect(result.rebase).toBe(null) // Failed read defaults to null, PR not hidden
+    expect(result.mergeServerDown).toBe(false)
+  })
+
+  it('defaults to "assume up" if mergeServerHealth itself throws', async () => {
+    const [result] = await listPipelinePrs(prs, {
+      mergeServerHealth: async () => { throw new Error('probe error') },
+      rebaseStatus: async () => ({}),
+      autoMergeShadow: async () => ({}),
+      mergeQueue: async () => ({ repos: {} })
+    })
+    expect(result.mergeServerDown).toBe(false) // Defaults to not-down
+  })
+
+  it('omitting mergeServerHealth altogether means mergeServerDown is absent, no regression', async () => {
+    const [result] = await listPipelinePrs(prs, {
+      rebaseStatus: async () => ({}),
+      autoMergeShadow: async () => ({}),
+      mergeQueue: async () => ({ repos: {} })
+    })
+    expect(result.mergeServerDown).toBeUndefined()
+  })
+
+  it('passes the actual rebaseResult to queueLines, not an empty object', async () => {
+    const url = 'https://github.com/G-Eskayo/marvin/pull/200'
+    const pr = { number: 200, title: 'Test', url, body: 'Closes G-Eskayo/marvin#100', mergeable: 'CONFLICTING' }
+    const rebaseStatus = vi.fn().mockResolvedValue({ [url]: { state: 'conflict', after: 199, files: [] } })
+    const mergeQueue = vi.fn().mockResolvedValue({
+      repos: {
+        'G-Eskayo/marvin': {
+          items: [{ pr_url: url }],
+          failed: {}
+        }
+      },
+      facts: { tickets: { 'G-Eskayo/marvin': [{ number: 100, state: 'OPEN' }] } }
+    })
+    const [result] = await listPipelinePrs(async () => [pr], {
+      mergeServerHealth: async () => ({ down: false }),
+      rebaseStatus,
+      autoMergeShadow: async () => ({ prs: {} }),
+      mergeQueue,
+      issuesFor: () => []
+    })
+    // With the actual rebaseResult passed to queueLines, the conflict state should be in the queue reason
+    expect(result.mergeQueue).toBeDefined()
+    expect(mergeQueue).toHaveBeenCalled()
+    // The queue line should reflect the conflict state passed via rebaseResult
+    // The enrichForOrder uses rebaseResult to detect conflicts and set conflictAfter (after: 199)
+    // mergeOrder uses conflictAfter to set a reason that references the conflict state
+    expect(result.mergeQueue.reason).toBeDefined()
+    expect(result.mergeQueue.conflict).toBe(true)
   })
 })

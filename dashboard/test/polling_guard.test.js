@@ -36,6 +36,7 @@ export const ALLOWLIST = {
   'electron/main/devices.js': { ttl: [1, 'read-through cache bound (8 s) on an ssh round-trip; no timer, never triggers a read'] },
   'electron/main/github_state.js': { ttl: [1, 'the cache itself: its 30-min safety lifetime (#557 removed the ttlFor hook)'] },
   'electron/main/index.js': { interval: [1, `starts ${CHECK_WATCH}`] },
+  'electron/main/merge_server_health.js': { ttl: [2, 'health probe cache (30 s TTL) and per-probe timeout (3 s); 30 s window avoids hammering the server on rapid list refreshes, triggered by mr:list'] },
   'electron/main/queue.js': { ttl: [1, 'read-through cache bound (60 s) on ticket_queue.py; no timer of its own'] },
   'electron/main/relations_service.js': { ttl: [1, 'read-through cache bound (60 s), invalidated by the board/docs triggers'] },
   'electron/main/rework.js': { ttl: [1, 'read-through cache bound (60 s); index.js calls it through github_state with minInterval'] },

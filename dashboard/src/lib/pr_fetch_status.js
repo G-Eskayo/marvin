@@ -8,6 +8,9 @@ const CAUSES = [
 ]
 export const plainCause = (msg) => (CAUSES.find(([re]) => re.test(msg || '')) || [null, String(msg || 'unknown error').split('\n')[0].slice(0, 120)])[1]
 
+// marvin#797: message shown when merge server is unreachable. Must match MERGE_SERVER_DOWN_MESSAGE in merge_server_health.js.
+const MERGE_SERVER_DOWN_MESSAGE = 'The Mac mini isn\'t answering, so approvals will wait.'
+
 function ago(ms) {
   const m = Math.round(ms / 60_000)
   return m < 1 ? 'just now' : m < 60 ? `${m} min ago` : `${Math.round(m / 60)} h ago`
@@ -25,13 +28,17 @@ function miniBanner(source, errors) {
   return { tone: source.state === 'missing' ? 'red' : 'amber', text: source.text }
 }
 
-export function prFetchBanner({ errors = [], projects = 0, lastGoodAt = null, source = null } = {}, now = Date.now()) {
+export function prFetchBanner({ errors = [], projects = 0, lastGoodAt = null, source = null, mergeServer = null } = {}, now = Date.now()) {
   if (source?.from === 'mini') return miniBanner(source, errors)
-  if (!errors.length) return null
-  const causes = [...new Set(errors.map((e) => plainCause(e.message)))].join('; ')
-  const all = projects > 0 && errors.length >= projects
-  const shown = lastGoodAt ? `Showing the list from ${ago(now - lastGoodAt)}.` : 'No list to show yet; it will load once GitHub answers.'
-  if (all) return { tone: 'red', text: `Couldn't reach GitHub for all ${projects} projects (${causes}). ${shown}` }
-  const names = errors.map((e) => String(e.repo).split('/').pop()).join(', ')
-  return { tone: 'amber', text: `Couldn't read ${errors.length} project${errors.length === 1 ? '' : 's'} (${names}: ${causes}). Their PRs may be missing or out of date.` }
+  if (!errors.length && !mergeServer?.down) return null
+  if (errors.length) {
+    const causes = [...new Set(errors.map((e) => plainCause(e.message)))].join('; ')
+    const all = projects > 0 && errors.length >= projects
+    const shown = lastGoodAt ? `Showing the list from ${ago(now - lastGoodAt)}.` : 'No list to show yet; it will load once GitHub answers.'
+    if (all) return { tone: 'red', text: `Couldn't reach GitHub for all ${projects} projects (${causes}). ${shown}` }
+    const names = errors.map((e) => String(e.repo).split('/').pop()).join(', ')
+    return { tone: 'amber', text: `Couldn't read ${errors.length} project${errors.length === 1 ? '' : 's'} (${names}: ${causes}). Their PRs may be missing or out of date.` }
+  }
+  if (mergeServer?.down) return { tone: 'amber', text: MERGE_SERVER_DOWN_MESSAGE }
+  return null
 }

@@ -13,6 +13,7 @@ import { createGithubState, repoOfSource, gateCooldownUntil } from './github_sta
 import { startCheckWatch, createCheckProbe, createTreeProbe, startChangeWatch, createGithubProbe } from '../../webhook-server/gh_watch.js'
 import { createStackRetarget } from './stack_retarget.js'
 import { prsForOrderCheck, listPipelinePrs, denyMr, fetchTicketContext, sentBackKeys, clearSentBackLabel } from './mr_review.js'
+import { getMergeServerHealth } from './merge_server_health.js'
 import { approveMrStream } from './approve_stream.js'
 import { readSeenNumbers, markSeen, computeReviewStatus } from './mr_seen.js'
 import { readDispatchStatus } from './dispatch_status.js'
@@ -1024,7 +1025,7 @@ function registerMrReviewHandlers() {
   })
   ipcMain.handle('mr:history', (_event, opts) => mrHistory.get({ fresh: !!opts?.fresh }))
   // #422: whether the last Open list read every project, and if not which failed and why.
-  ipcMain.handle('mr:listStatus', () => prFetch)
+  ipcMain.handle('mr:listStatus', async () => ({ ...prFetch, mergeServer: await getMergeServerHealthProbe() }))
   // One merged (or refused) PR as the usual detail view, read-only: never mergeable from here.
   ipcMain.handle('mr:historyDetail', async (_event, url) => {
     const repo = repoFromPrUrl(url)
@@ -1068,6 +1069,10 @@ function registerMrReviewHandlers() {
     const res = await fetch(MR_WEBHOOK_URL.replace(/\/approve$/, '/merge-queue'), { signal: AbortSignal.timeout(3000) })
     return res.ok ? res.json() : null
   }
+  // marvin#797: merge server health check; caches for 30s to avoid hammering the server on rapid list refreshes.
+  const getMergeServerHealthProbe = async () => {
+    return getMergeServerHealth({ url: MR_WEBHOOK_URL.replace(/\/approve$/, '/health'), fetchImpl: fetch })
+  }
   // A repo's open tickets from the boards already in memory (main-red, incident, sent back): no extra GitHub read.
   const boardIssuesFor = (repo) => (remembered('board').find((b) => b.repo === repo)?.value?.issues || []).filter((i) => i && i.state === 'OPEN')
   // Safety net for stacked PRs whose parent merged without the post-merge move (stack_retarget.js). Reads the PR list
@@ -1107,12 +1112,13 @@ function registerMrReviewHandlers() {
       autoMergeShadow: getAutoMergeShadow,
       uiPathsFor: (repo) => readUiPaths(repo),
       mergeQueue: getMergeQueue,
+      mergeServerHealth: getMergeServerHealthProbe,
       issuesFor: boardIssuesFor
     })
     return cards.find((p) => p.url === url) || null
   }
   const mrList = coalesce(
-    () => listPipelinePrs(fixturePrs || listOpenPrs, { canMerge: (repo) => canMergeHere(pullOnly, canMergeFromDashboard(repo, readMergeableRepos())), sentBackTickets, reworkStatus: reworkFromMemory, rebaseStatus: getRebaseStatus, closedTickets, autoMergeShadow: getAutoMergeShadow, uiPathsFor: (repo) => readUiPaths(repo), mergeQueue: getMergeQueue, issuesFor: boardIssuesFor })
+    () => listPipelinePrs(fixturePrs || listOpenPrs, { canMerge: (repo) => canMergeHere(pullOnly, canMergeFromDashboard(repo, readMergeableRepos())), sentBackTickets, reworkStatus: reworkFromMemory, rebaseStatus: getRebaseStatus, closedTickets, autoMergeShadow: getAutoMergeShadow, uiPathsFor: (repo) => readUiPaths(repo), mergeQueue: getMergeQueue, mergeServerHealth: getMergeServerHealthProbe, issuesFor: boardIssuesFor })
       .then((prs) => withReadOnlyReason(prs, pullOnly)),
     () => `${githubState.localSeq()}:${githubState._genOf(null)}`
   )
@@ -1251,6 +1257,10 @@ function registerMrReviewHandlers() {
   ipcMain.handle('mr:deny', async (_event, { number, url, ticketNumber, action, reasons, comment }) => {
     assertActsHere()
     assertMergeable(url)
+    const serverHealth = await getMergeServerHealthProbe()
+    if (serverHealth.down) {
+      throw new Error('The Mac mini isn\'t answering, so denials are deferred until it\'s back.')
+    }
     const isDrop = action === 'drop'
     const { response } = await dialog.showMessageBox(mainWindow, {
       type: 'warning',

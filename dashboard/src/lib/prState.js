@@ -163,6 +163,13 @@ function describeState(pr, { status = 'idle', errorMessage = null, progress = fa
   // An older PR changing the same files no longer holds this one (marvin#231): Approve queues it, and the queue rebases
   // and retests it on the main of its turn; a conflict then goes to the resolver.
 
+  // marvin#797: merge server is unreachable; approvals and denials are blocked.
+  if (pr.mergeServerDown) {
+    return base('merge-server-down', 'wait', 'The Mac mini isn\'t answering',
+      'Approvals and denials are deferred until the merge server is back.',
+      'disabled', 'disabled')
+  }
+
   if (ci.state === 'pending') {
     // Gil, 2026-10-21: with each check known, the progress view (N of M done, what's running, last checked) replaces
     // the sentence. Without the rows (older data), the sentence stays.

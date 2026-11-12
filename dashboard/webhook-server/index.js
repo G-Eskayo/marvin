@@ -104,6 +104,11 @@ const server = createServer(async (req, res) => {
   timeRequest(req, res) // every route timed into ~/.claude/logs/dashboard-timing.jsonl (#236)
   // This Mac's own stamped copies for a peer whose copy went stale (marvin#1223). Tailscale and loopback only.
   if (copyRoute(req, res)) return
+  // Health probe (marvin#797): lightweight status check for merge server availability.
+  if (req.method === 'GET' && req.url === '/health') {
+    res.writeHead(200, { 'Content-Type': 'application/json' }).end(JSON.stringify({ ok: true }))
+    return
+  }
   // mr_raiser.py hits this the moment a PR is raised (any machine) so an
   // already-open dashboard on THIS machine refreshes immediately instead
   // of waiting on its own fallback poll. Responds before the forward
