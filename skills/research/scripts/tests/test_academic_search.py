@@ -3,6 +3,7 @@
 """
 import json
 import sys
+import xml.etree.ElementTree as ET
 from pathlib import Path
 from unittest.mock import patch
 import importlib
@@ -88,17 +89,14 @@ def test_search_semantic_scholar_routes_through_get_with_retry(monkeypatch):
     assert timeout == 15
 
 
-def test_search_semantic_scholar_returns_empty_on_error(monkeypatch, capsys):
+def test_search_semantic_scholar_raises_on_error(monkeypatch):
     def fake_get_with_retry(url, params, timeout, max_retries=8, headers=None):
         raise Exception("Network error")
 
     monkeypatch.setattr(s2_client, "get_with_retry", fake_get_with_retry)
 
-    results = search_semantic_scholar("test")
-
-    assert results == []
-    captured = capsys.readouterr()
-    assert "Semantic Scholar search failed" in captured.err
+    with pytest.raises(Exception, match="Network error"):
+        search_semantic_scholar("test")
 
 
 def test_search_semantic_scholar_extracts_correct_fields(monkeypatch):
@@ -210,17 +208,14 @@ def test_search_arxiv_routes_through_get_with_retry(monkeypatch):
     assert timeout == 15
 
 
-def test_search_arxiv_returns_empty_on_error(monkeypatch, capsys):
+def test_search_arxiv_raises_on_error(monkeypatch):
     def fake_get_with_retry(url, params, timeout, max_retries=8, headers=None):
         raise Exception("Network error")
 
     monkeypatch.setattr(s2_client, "get_with_retry", fake_get_with_retry)
 
-    results = search_arxiv("test")
-
-    assert results == []
-    captured = capsys.readouterr()
-    assert "arXiv search failed" in captured.err
+    with pytest.raises(Exception, match="Network error"):
+        search_arxiv("test")
 
 
 def test_search_arxiv_handles_multiple_authors(monkeypatch):
@@ -370,6 +365,198 @@ def test_main_json_output_both_sources(monkeypatch, capsys):
     assert len(output["arxiv"]) == 1
 
 
+def test_search_semantic_scholar_passes_max_retries_3(monkeypatch):
+    called = []
+
+    def fake_get_with_retry(url, params, timeout, max_retries=8, headers=None):
+        called.append((url, max_retries))
+
+        class FakeResponse:
+            status_code = 200
+
+            def json(self):
+                return {"data": []}
+
+            def raise_for_status(self):
+                pass
+
+        return FakeResponse()
+
+    monkeypatch.setattr(s2_client, "get_with_retry", fake_get_with_retry)
+
+    search_semantic_scholar("test")
+
+    assert len(called) == 1
+    _, max_retries = called[0]
+    assert max_retries == 3
+
+
+def test_search_arxiv_uses_default_max_retries(monkeypatch):
+    called = []
+
+    arxiv_atom = """<?xml version="1.0" encoding="UTF-8"?>
+    <feed xmlns="http://www.w3.org/2005/Atom">
+    </feed>"""
+
+    class FakeResponse:
+        status_code = 200
+        text = arxiv_atom
+        encoding = "utf-8"
+
+        def raise_for_status(self):
+            pass
+
+    def fake_get_with_retry(url, params, timeout, max_retries=8, headers=None):
+        called.append((url, max_retries))
+        return FakeResponse()
+
+    monkeypatch.setattr(s2_client, "get_with_retry", fake_get_with_retry)
+
+    search_arxiv("test")
+
+    assert len(called) == 1
+    _, max_retries = called[0]
+    assert max_retries == 8  # Default shared value
+
+
+def test_search_arxiv_raises_on_xml_parse_error(monkeypatch):
+    def fake_get_with_retry(url, params, timeout, max_retries=8, headers=None):
+        class FakeResponse:
+            status_code = 200
+            text = "not valid xml"
+            encoding = "utf-8"
+
+            def raise_for_status(self):
+                pass
+
+        return FakeResponse()
+
+    monkeypatch.setattr(s2_client, "get_with_retry", fake_get_with_retry)
+
+    with pytest.raises(ET.ParseError):
+        search_arxiv("test")
+
+
+def test_search_arxiv_handles_non_digit_year_string(monkeypatch):
+    arxiv_atom = """<?xml version="1.0" encoding="UTF-8"?>
+    <feed xmlns="http://www.w3.org/2005/Atom">
+      <entry>
+        <id>http://arxiv.org/abs/2301.00001v1</id>
+        <title>Bad Date Paper</title>
+        <author><name>Alice</name></author>
+        <published>abcd-01-01T00:00:00Z</published>
+        <summary>This has a non-digit year.</summary>
+      </entry>
+    </feed>"""
+
+    class FakeResponse:
+        status_code = 200
+        text = arxiv_atom
+        encoding = "utf-8"
+
+        def raise_for_status(self):
+            pass
+
+    monkeypatch.setattr(s2_client, "get_with_retry",
+        lambda url, params, timeout, max_retries=8, headers=None: FakeResponse())
+
+    results = search_arxiv("test")
+
+    assert len(results) == 1
+    assert results[0]["year"] is None
+
+
+def test_main_json_output_includes_errors_when_one_source_fails(monkeypatch, capsys):
+    s2_response = {"data": []}
+
+    class FakeResponse:
+        status_code = 200
+
+        def json(self):
+            return s2_response
+
+        def raise_for_status(self):
+            pass
+
+    def fake_get_with_retry(url, params, timeout, max_retries=8, headers=None):
+        if "export.arxiv.org" in url:
+            raise Exception("arXiv timeout")
+        return FakeResponse()
+
+    monkeypatch.setattr(s2_client, "get_with_retry", fake_get_with_retry)
+
+    with patch.object(sys, "argv", ["academic_search.py", "--query", "test", "--format", "json"]):
+        main()
+
+    captured = capsys.readouterr()
+    output = json.loads(captured.out)
+    assert "errors" in output
+    assert "arxiv" in output["errors"]
+    assert output["errors"]["arxiv"] == "arXiv timeout"
+
+
+def test_main_json_output_omits_errors_when_both_sources_succeed(monkeypatch, capsys):
+    s2_response = {"data": []}
+    arxiv_atom = """<?xml version="1.0" encoding="UTF-8"?>
+    <feed xmlns="http://www.w3.org/2005/Atom">
+    </feed>"""
+
+    class FakeResponse:
+        status_code = 200
+        text = arxiv_atom
+        encoding = "utf-8"
+
+        def json(self):
+            return s2_response
+
+        def raise_for_status(self):
+            pass
+
+    def fake_get_with_retry(url, params, timeout, max_retries=8, headers=None):
+        return FakeResponse()
+
+    monkeypatch.setattr(s2_client, "get_with_retry", fake_get_with_retry)
+
+    with patch.object(sys, "argv", ["academic_search.py", "--query", "test", "--format", "json"]):
+        main()
+
+    captured = capsys.readouterr()
+    output = json.loads(captured.out)
+    assert "errors" not in output
+
+
+def test_main_markdown_prints_error_warnings(monkeypatch, capsys):
+    s2_response = {"data": [{"title": "Paper"}]}
+    arxiv_atom = """<?xml version="1.0" encoding="UTF-8"?>
+    <feed xmlns="http://www.w3.org/2005/Atom">
+    </feed>"""
+
+    class FakeResponse:
+        status_code = 200
+        text = arxiv_atom
+        encoding = "utf-8"
+
+        def json(self):
+            return s2_response
+
+        def raise_for_status(self):
+            pass
+
+    def fake_get_with_retry(url, params, timeout, max_retries=8, headers=None):
+        if "export.arxiv.org" in url:
+            raise Exception("arXiv API error")
+        return FakeResponse()
+
+    monkeypatch.setattr(s2_client, "get_with_retry", fake_get_with_retry)
+
+    with patch.object(sys, "argv", ["academic_search.py", "--query", "test", "--format", "markdown"]):
+        main()
+
+    captured = capsys.readouterr()
+    assert "⚠️ arXiv unavailable" in captured.out
+    assert "arXiv API error" in captured.out
+
+
 def test_main_graceful_degradation_when_one_source_fails(monkeypatch, capsys):
     s2_response = {"data": [{"title": "S2 Paper", "authors": []}]}
 
@@ -399,5 +586,7 @@ def test_main_graceful_degradation_when_one_source_fails(monkeypatch, capsys):
     assert "arxiv" in output
     assert len(output["semantic_scholar"]) == 1
     assert not output["arxiv"]
+    assert "errors" in output
+    assert "arxiv" in output["errors"]
     # Error should be on stderr
     assert "arXiv search failed" in captured.err

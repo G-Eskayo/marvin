@@ -22,6 +22,7 @@ Two different question types need two different source ladders — don't apply t
 1. **Structured academic search** — run `scripts/academic_search.py --query "<question>" --source both` (searches Semantic Scholar + arXiv together, handles rate-limiting automatically). Parse the resulting structured JSON rather than browsing. 
    - Semantic Scholar (200M+ papers, comprehensive indexing)
    - arXiv (CS/math/physics/ML preprints, real-time)
+   - **Important**: Check the JSON output for an `errors` key; if present, one source failed. State which source failed and note that results are incomplete. Never report a missing source's absent results as an absence of literature in the field — that's a technical failure, not evidence.
 2. Official documentation / authoritative technical sources (AWS docs, Anthropic docs, RFCs)
 3. General web — last resort only, when 1–2 don't cover the topic
 
