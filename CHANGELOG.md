@@ -1,5 +1,7 @@
 # Changelog
 
+- research/SKILL.md links epistemic-framework.md relatively, so /research (read via the commands symlink) can't find it ([#1294](https://github.com/G-Eskayo/marvin/pull/1294))
+
 - PRs without the evidence template lose their ticket: Deny and Drop don't touch it, details show "Not available" ([#1285](https://github.com/G-Eskayo/marvin/pull/1285))
 
 - A gate refusal can vanish, leaving "Ready to merge" with Approve enabled ([#1288](https://github.com/G-Eskayo/marvin/pull/1288))
