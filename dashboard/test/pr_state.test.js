@@ -283,3 +283,109 @@ describe('describePrState: drafts (marvin#848)', () => {
     expect(state({ isDraft: false })).toMatchObject({ kind: 'ready', approve: 'enabled' })
   })
 })
+
+describe('describePrState: image refusals (marvin#807, marvin#743)', () => {
+  it('IMAGES_STALE rejection shows the stale images state', () => {
+    const s = state({}, { status: 'error', errorMessage: 'IMAGES_STALE at webhook: images are older than the latest commit' })
+    expect(s).toMatchObject({ kind: 'images-stale', tone: 'blocked', headline: 'Images are older than the latest change', approve: 'hidden', deny: 'enabled' })
+    expect(s.detail).toMatch(/older than the latest/)
+  })
+
+  it('IMAGES_STALE is not mirrored: once the images are updated, the card can be approved without an explicit state change', () => {
+    // Before pinning: webhook error blocks the PR (status='error', errorMessage is the gate's rejection)
+    const blocked = state({}, { status: 'error', errorMessage: 'IMAGES_STALE at webhook: images are older than commit abc123' })
+    expect(blocked.kind).toBe('images-stale')
+    expect(blocked.approve).toBe('hidden')
+
+    // After the user pins/updates images, the PR body changes (triggering a webhook recheck)
+    // The webhook runs again on the same commit and clears the error (no state change, just error gone)
+    // This is the non-mirroring behavior: the error was checked server-side, not reproduced client-side
+    const cleared = state({}, { status: 'idle', errorMessage: null })
+    expect(cleared.kind).toBe('ready')
+
+    // Even if errorMessage was still present from the old webhook run, idle + anything = ready
+    // (idle never reads errorMessage), proving the error doesn't persist client-side
+    expect(state({}, { status: 'idle', errorMessage: 'IMAGES_STALE at webhook: ...' }).kind).toBe('ready')
+  })
+
+  it('NO_UI_EVIDENCE rejection shows the needs-images state', () => {
+    const s = state({}, { status: 'error', errorMessage: 'NO_UI_EVIDENCE at webhook: no UI evidence provided' })
+    expect(s).toMatchObject({ kind: 'needs-images', tone: 'blocked', headline: 'Needs images', approve: 'hidden', deny: 'enabled' })
+  })
+
+  it('IMAGES_UNPINNED rejection shows the needs-images state', () => {
+    const s = state({}, { status: 'error', errorMessage: 'IMAGES_UNPINNED at webhook: images not pinned to commits' })
+    expect(s).toMatchObject({ kind: 'needs-images', tone: 'blocked', headline: 'Needs images', approve: 'hidden', deny: 'enabled' })
+  })
+
+  it('image evidence refusals are not mirrored: once images are pinned/added, the card can be approved', () => {
+    // Before pinning: webhook error blocks the PR
+    const s = state({}, { status: 'error', errorMessage: 'NO_UI_EVIDENCE at webhook: x' })
+    expect(s.kind).toBe('needs-images')
+    // Approve is hidden; the user waits for the webhook to recheck once images are pinned/added
+    expect(s.approve).toBe('hidden')
+    // Once pinning happens and the PR body changes, the next webhook run clears the error
+    expect(state({}, { status: 'idle' }).kind).toBe('ready')
+  })
+
+  it('image refusals take precedence over generic errors', () => {
+    // Image refusal alone → blocked by the image error
+    const stale = state({}, { status: 'error', errorMessage: 'IMAGES_STALE at webhook: ...' })
+    expect(stale.kind).toBe('images-stale')
+    expect(stale.detail).toBeDefined()
+
+    const evidence = state({}, { status: 'error', errorMessage: 'NO_UI_EVIDENCE at webhook: ...' })
+    expect(evidence.kind).toBe('needs-images')
+  })
+
+  it('but real blockers still win over image refusals (image errors are inserted late in the cascade)', () => {
+    // A real conflict beats an image refusal: the PR has both, but conflict is the message shown
+    const conflictWins = state({ conflicts: true }, { status: 'error', errorMessage: 'IMAGES_STALE at webhook: ...' })
+    expect(conflictWins.kind).toBe('conflict')
+    expect(conflictWins.kind).not.toBe('images-stale')
+
+    // Similarly, failing checks beat an image refusal
+    const checksWin = state({ checks: { state: 'failing', failing: ['Unit tests'], pending: [] } }, { status: 'error', errorMessage: 'IMAGES_STALE at webhook: ...' })
+    expect(checksWin.kind).toBe('checks-failed')
+    expect(checksWin.kind).not.toBe('images-stale')
+
+    // Evidence refusal also loses to a real blocker
+    const conflictBeatsEvidence = state({ conflicts: true }, { status: 'error', errorMessage: 'NO_UI_EVIDENCE at webhook: ...' })
+    expect(conflictBeatsEvidence.kind).toBe('conflict')
+  })
+
+  it('a stale image refusal carries the error message as detail', () => {
+    const msg = 'IMAGES_STALE at webhook: commit abc123 has newer changes than the screenshot'
+    const s = state({}, { status: 'error', errorMessage: msg })
+    expect(s.detail).toBe(msg)
+  })
+
+  it('stale image refusals hide Approve; the webhook will clear the error automatically once re-pinned', () => {
+    const msg = 'IMAGES_STALE at webhook: latest commit is abc123 but screenshot is from xyz789'
+    const s = state({}, { status: 'error', errorMessage: msg })
+    expect(s.kind).toBe('images-stale')
+    expect(s.approve).toBe('hidden') // waiting for webhook recheck after re-pinning; no need to click Approve
+    expect(s.deny).toBe('enabled')
+  })
+
+  it('an image evidence refusal carries the error message as detail', () => {
+    const msg = 'IMAGES_UNPINNED at webhook: screenshot not linked to commit'
+    const s = state({}, { status: 'error', errorMessage: msg })
+    expect(s.detail).toBe(msg)
+  })
+
+  it('the needs-images state from a webhook error is distinct from the card\'s own pr.needsImages check', () => {
+    // The card's own check (pr.needsImages) still works independently: says to add/pin images
+    const cardOwn = state({ needsImages: { files: ['App.tsx'], unpinned: [] } })
+    expect(cardOwn.kind).toBe('needs-images')
+    expect(cardOwn.detail).toMatch(/changes how the app looks/)
+    expect(cardOwn.detail).not.toMatch(/NO_UI_EVIDENCE/) // not the webhook message
+
+    // A webhook error also shows needs-images, but with the webhook's message, not the card's default
+    const webhookMsg = 'NO_UI_EVIDENCE at webhook: no UI evidence provided for the changed screens'
+    const webhookError = state({}, { status: 'error', errorMessage: webhookMsg })
+    expect(webhookError.kind).toBe('needs-images')
+    expect(webhookError.detail).toBe(webhookMsg) // carries the webhook's error message, not the card's pattern
+    expect(webhookError.detail).not.toMatch(/changes how the app looks/) // not the card's detail
+  })
+})

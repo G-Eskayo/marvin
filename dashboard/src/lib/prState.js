@@ -8,8 +8,14 @@
 // you it is coming. Order is the merge queue's (marvin#231): a stacked PR can be approved, and waits in the queue.
 
 // Refusals the screen already explains with a state of its own. If one of these is left over from an earlier
-// click it is stale as soon as the state changes, so it is never shown as an error.
-const MIRRORED_REFUSALS = /^(SENT_BACK|CI_PENDING|CI_FAILED|WRONG_BASE|NO_UI_EVIDENCE|IMAGES_UNPINNED|IMAGES_STALE|DECISIONS_PENDING|DECISIONS_UNSTRUCTURED)\b/
+// click it is stale as soon as the state changes, so it is never shown as an error. IMAGES_STALE and image evidence
+// refusals (NO_UI_EVIDENCE, IMAGES_UNPINNED) are excluded here because staleness isn't computed client-side at all;
+// the webhook may reject an image error once, then the images get pinned/updated, and the next webhook run succeeds
+// without the PR's state changing. So the card's own pr.needsImages check (which is state-driven) does not diverge
+// from what the webhook rejects.
+const MIRRORED_REFUSALS = /^(SENT_BACK|CI_PENDING|CI_FAILED|WRONG_BASE|DECISIONS_PENDING|DECISIONS_UNSTRUCTURED)\b/
+const IMAGES_STALE_REFUSAL = /^IMAGES_STALE\b/
+const IMAGE_EVIDENCE_REFUSAL = /^(NO_UI_EVIDENCE|IMAGES_UNPINNED)\b/
 
 // The owner's answer on #767 (marvin#848): a draft offers no Approve until it's marked ready for review. A merge
 // already under way (merging, saved, merged) is shown as it is.
@@ -174,6 +180,14 @@ function describeState(pr, { status = 'idle', errorMessage = null, progress = fa
   if (status === 'error' && /^GITHUB_OUTAGE\b/.test(errorMessage || '')) {
     return base('github-outage', 'wait', 'GitHub is having an outage',
       'The last merge attempt hit a GitHub server error (githubstatus.com). Nothing is wrong with this PR and it was not sent back. Approve again once GitHub recovers.', 'enabled', 'enabled')
+  }
+
+  if (status === 'error' && IMAGES_STALE_REFUSAL.test(errorMessage || '')) {
+    return base('images-stale', 'blocked', 'Images are older than the latest change', errorMessage, 'hidden', 'enabled')
+  }
+
+  if (status === 'error' && IMAGE_EVIDENCE_REFUSAL.test(errorMessage || '')) {
+    return base('needs-images', 'blocked', 'Needs images', errorMessage, 'hidden', 'enabled')
   }
 
   if (status === 'error' && errorMessage && !MIRRORED_REFUSALS.test(errorMessage)) {
