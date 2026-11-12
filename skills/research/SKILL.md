@@ -12,7 +12,7 @@ Rigorous research that acknowledges uncertainty rather than papering over it.
 
 No claim is treated as objectively true. Every finding is assigned a confidence tier based on the quality and convergence of evidence. The goal is accurate uncertainty, not false confidence.
 
-See [epistemic-framework.md](epistemic-framework.md) for confidence tier definitions.
+See [epistemic-framework.md](~/.agents/skills/research/epistemic-framework.md) for confidence tier definitions.
 
 ## Source Priority
 
@@ -80,7 +80,7 @@ Clearly distinguish:
 
 ### 6. State your confidence
 
-End each major finding with a confidence tier from [epistemic-framework.md](epistemic-framework.md).
+End each major finding with a confidence tier from [epistemic-framework.md](~/.agents/skills/research/epistemic-framework.md).
 
 Example output format:
 > **Finding**: X is associated with Y in controlled studies.
