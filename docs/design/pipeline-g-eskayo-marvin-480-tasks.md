@@ -1,0 +1,5 @@
+1. Edit `~/.agents/skills/audit/SKILL.md`'s dispatch prompt (the paragraph under "## How to dispatch", ~line 47-49): replace `"architecture-review's exact entry format (## [date] [title], Status: pending, Impact, Effort, Why, What, How)"` with a pointer to architecture-review/SKILL.md's "Entry format:" block plus the full field list, naming `**Priority**` and `**Added**` explicitly, and dropping `## [date] [title]` entirely.
+2. Add `~/.agents/lib/tests/test_audit_entry_format_sync.py` with the three tests above (field-presence check, fixture-drift check, stale-header check), using small regex helpers to extract architecture-review's Entry-format block and audit's dispatch-prompt section.
+3. Add `~/.agents/skills/architecture-review/scripts/tests/test_sort_suggestions.py` with the `_sort_key()` missing-Priority ranking test.
+4. Run the full test suite (not just the new files) per the full-suites-before-hand-merge rule, confirm the new tests fail against the pre-edit SKILL.md text (sanity-check via git stash of the edit) and pass after it.
+5. Show Gil the diff of `audit/SKILL.md` via `marvin-show` before considering this done.
