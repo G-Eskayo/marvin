@@ -15,12 +15,14 @@ import ItButton from '@components/ItButton.jsx'
 import WorkshopTab, { useWorkshopNow } from '@components/WorkshopTab.jsx'
 import { visibleTabs } from './lib/tabs.js'
 import { ScrollArea, useScrollArea } from '@components/ScrollPlaces.jsx'
+import { reviewDotStatus } from './lib/pr_fetch_status.js'
 
 
 const DOT_COLOR = {
   red: 'bg-red-500',
   blue: 'bg-blue-500',
-  green: 'bg-emerald-500'
+  green: 'bg-emerald-500',
+  grey: 'bg-neutral-500'
 }
 
 const STATUS_LABEL = {
@@ -134,9 +136,10 @@ export default function App() {
         <h1 className="mr-6 whitespace-nowrap text-sm font-semibold tracking-wide text-neutral-400">MARVIN METRICS</h1>
         <nav className="flex flex-wrap gap-1">
           {visibleTabs(support.role).map((tab) => {
-            const dot = tab.id === 'mr-review' ? reviewStatus?.status : tab.id === 'health' ? healthOverall : null
+            const { dot: mrDot, note: mrNote } = tab.id === 'mr-review' && reviewStatus ? reviewDotStatus(reviewStatus) : { dot: null, note: null }
+            const dot = tab.id === 'mr-review' ? mrDot : tab.id === 'health' ? healthOverall : null
             const dotColorMap = tab.id === 'health' ? HEALTH_DOT_COLOR : DOT_COLOR
-            const title = tab.id === 'mr-review' ? STATUS_LABEL[dot] : tab.id === 'health' && dot ? `Overall: ${dot}` : undefined
+            const title = tab.id === 'mr-review' && dot ? (mrDot === 'grey' ? mrNote : `${STATUS_LABEL[dot]}${mrNote ? ` — ${mrNote}` : ''}`) : tab.id === 'health' && dot ? `Overall: ${dot}` : undefined
             return (
               <button
                 key={tab.id}
