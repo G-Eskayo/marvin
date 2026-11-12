@@ -1,5 +1,7 @@
 # Changelog
 
+- MR Review dot turns green ("Nothing awaiting review") when GitHub can't be reached ([#1280](https://github.com/G-Eskayo/marvin/pull/1280))
+
 - Enabling an add-on can wipe instance.json ([#1279](https://github.com/G-Eskayo/marvin/pull/1279))
 
 - Boot: derive its device lines and memory path from this install, and give a fresh install a first-run verdict ([#1278](https://github.com/G-Eskayo/marvin/pull/1278))
