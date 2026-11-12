@@ -1,5 +1,7 @@
 # Changelog
 
+- Workshop: parked tickets (needs-info after failed builds) and held tickets show as Stuck instead of Yours / On hold ([#1297](https://github.com/G-Eskayo/marvin/pull/1297))
+
 - Docs: "Where things are" shows a raw IPC error on a fresh install ([#1283](https://github.com/G-Eskayo/marvin/pull/1283))
 
 - A sleeping or closed Mac shows as red "Unreachable" on Activity ([#1281](https://github.com/G-Eskayo/marvin/pull/1281))
