@@ -120,3 +120,77 @@ def test_check_skill_cli_flag_is_registered():
     args = ap.parse_args(["--check-skill", "grill-with-docs", "--model", "haiku"])
     assert args.check_skill == "grill-with-docs"
     assert args.model == "haiku"
+
+
+# ── recall model: session model (not Haiku) ────────────────────────────────────
+
+def test_recall_intent_uses_session_model():
+    """Recall routing uses session model (None), not Haiku."""
+    assert route.INTENTS["recall"]["model"] is None
+
+
+def test_research_intent_uses_haiku():
+    """Research routing still uses Haiku for cost efficiency."""
+    assert route.INTENTS["research"]["model"] == "claude-haiku-4-5-20251001"
+
+
+def test_model_for_launch_flag_is_registered():
+    """--model-for-launch flag is registered in the argument parser."""
+    ap = route._build_arg_parser()
+    args = ap.parse_args(["--model-for-launch", "what did we discuss"])
+    assert args.model_for_launch == "what did we discuss"
+
+
+def test_model_for_launch_resolves_intent_and_returns_model(monkeypatch, capsys):
+    """--model-for-launch resolves intent and prints model ID."""
+    monkeypatch.setattr(
+        route, "resolve_intent",
+        lambda desc, use_embed: ("research", 2, "keyword")
+    )
+    ap = route._build_arg_parser()
+    args = ap.parse_args(["--model-for-launch", "what is the state of the art"])
+
+    if args.model_for_launch:
+        intent, _, _ = route.resolve_intent(args.model_for_launch, use_embed=route._use_embed(args))
+        model = route.INTENTS[intent].get("model")
+        print(model or "")
+
+    captured = capsys.readouterr()
+    assert captured.out == "claude-haiku-4-5-20251001\n"
+
+
+def test_model_for_launch_returns_empty_line_for_none_model(monkeypatch, capsys):
+    """--model-for-launch prints empty line when resolved intent has None model."""
+    monkeypatch.setattr(
+        route, "resolve_intent",
+        lambda desc, use_embed: ("recall", 2, "keyword")
+    )
+    ap = route._build_arg_parser()
+    args = ap.parse_args(["--model-for-launch", "what did we discuss"])
+
+    if args.model_for_launch:
+        intent, _, _ = route.resolve_intent(args.model_for_launch, use_embed=route._use_embed(args))
+        model = route.INTENTS[intent].get("model")
+        print(model or "")
+
+    captured = capsys.readouterr()
+    assert captured.out == "\n"
+
+
+def test_model_for_launch_uses_embedding_classifier_by_default(monkeypatch):
+    """--model-for-launch uses embedding classifier by default (ADR 0023)."""
+    called_with_embed = None
+
+    def mock_resolve(desc, use_embed):
+        nonlocal called_with_embed
+        called_with_embed = use_embed
+        return ("architecture", 1, "keyword")
+
+    monkeypatch.setattr(route, "resolve_intent", mock_resolve)
+    ap = route._build_arg_parser()
+    args = ap.parse_args(["--model-for-launch", "design a system"])
+
+    if args.model_for_launch:
+        intent, _, _ = route.resolve_intent(args.model_for_launch, use_embed=route._use_embed(args))
+
+    assert called_with_embed is True

@@ -79,7 +79,7 @@ def test_the_real_hidden_checks_fail_on_the_seeded_buggy_files(tmp_path):
 
 # ── qa tasks can run outside home ─────────────────────────────────────────
 
-def test_qa_task_with_tmp_cwd_runs_in_a_fresh_folder_outside_home(tmp_path, monkeypatch):
+def test_qa_task_with_tmp_cwd_runs_in_a_reused_folder_outside_home(tmp_path, monkeypatch):
     """cwd = home makes Claude Code load ~/.claude/CLAUDE.md as project instructions, even for clean."""
     seen = {}
 
@@ -92,7 +92,7 @@ def test_qa_task_with_tmp_cwd_runs_in_a_fresh_folder_outside_home(tmp_path, monk
     task = {"id": "t", "type": "qa", "cwd": "tmp", "prompt": "Q", "dir": tmp_path}
     run = bench.run_once(task, "clean", prompt_prefix="Caveman mode. ")
     assert seen["empty"] and Path.home() not in seen["cwd"].resolve().parents
-    assert not seen["cwd"].exists()          # cleaned up afterwards
+    assert seen["cwd"].exists()          # reused folder, not deleted
     assert seen["prompt"] == "Caveman mode. Q"
     assert "check" not in run
 
@@ -227,3 +227,59 @@ def test_load_names_a_model_override_in_the_cell(tmp_path):
     f.write_text(json.dumps({"task": "t1", "tag": "", "model": "claude-haiku-4-5-20251001",
                              "runs": [{"profile": "marvin", **_run(0.1)}]}))
     assert set(cr.load_cells([f])["t1"]) == {"marvin@haiku"}
+
+
+# ── workdir reuse ────────────────────────────────────────────────────────────
+
+def test_get_workdir_returns_deterministic_path():
+    """_get_workdir returns the same path for the same (task_id, profile, model)."""
+    w1 = bench._get_workdir("task-x", "clean", None)
+    w2 = bench._get_workdir("task-x", "clean", None)
+    assert w1 == w2
+
+
+def test_get_workdir_creates_directory_if_missing(tmp_path, monkeypatch):
+    """_get_workdir creates the directory if it doesn't exist."""
+    monkeypatch.setattr(bench, "ROOT", tmp_path)
+    workdir = bench._get_workdir("t1", "marvin", "claude-haiku-4-5-20251001")
+    assert workdir.exists()
+    assert workdir.is_dir()
+
+
+def test_get_workdir_keys_by_task_profile_and_model():
+    """_get_workdir produces different paths for different (task, profile, model) tuples."""
+    w1 = bench._get_workdir("t1", "clean", None)
+    w2 = bench._get_workdir("t1", "marvin", None)
+    w3 = bench._get_workdir("t1", "clean", "claude-haiku-4-5-20251001")
+    assert w1 != w2
+    assert w1 != w3
+    assert w2 != w3
+
+
+def test_workdir_is_emptied_at_start_not_deleted_after(tmp_path, monkeypatch):
+    """Workdir is emptied before each run, kept after (not deleted)."""
+    monkeypatch.setattr(bench, "ROOT", tmp_path)
+
+    call_count = [0]
+
+    def fake_run(cmd, cwd=None, **kw):
+        call_count[0] += 1
+        workdir = Path(cwd)
+        # On the second call, check that the directory was emptied before we run
+        if call_count[0] == 2:
+            # The directory should exist but be empty (previous files cleaned)
+            assert workdir.exists()
+            assert list(workdir.iterdir()) == []
+        # Create a file during the "run"
+        workdir.joinpath("output.txt").write_text("result")
+        return bench.subprocess.CompletedProcess(cmd, 0, "", "")
+
+    monkeypatch.setattr(bench.subprocess, "run", fake_run)
+
+    task = {"id": "t1", "type": "fs", "prompt": "Q", "dir": tmp_path, "timeout": 600}
+    # First run
+    bench.run_once(task, "clean", prompt_prefix="")
+
+    # Second run should empty the directory at the start
+    # (fake_run will verify this by checking for empty directory on call_count == 2)
+    bench.run_once(task, "clean", prompt_prefix="")

@@ -31,7 +31,7 @@ import model_registry  # noqa: E402
 INTENTS: dict[str, dict] = {
     "recall": {
         "profile":    "marvin",
-        "model":      "claude-haiku-4-5-20251001",
+        "model":      None,
         "config_dir": "~/.claude",
         "alias":      "claude-recall",
         "keywords": [
@@ -40,9 +40,9 @@ INTENTS: dict[str, dict] = {
             "we discussed", "we decided", "handoff", "resume", "do you remember",
             "from last time", "stored", "you know", "what was the",
         ],
-        "why": "Memory retrieval — MARVIN's ChromaDB holds the answer. "
-               "Haiku handles recall at ~60% Sonnet cost (bench Run 8).",
-        "savings": "~60% vs MARVIN + Sonnet",
+        "why": "Memory retrieval — MARVIN's ChromaDB holds the answer on the session model. "
+               "Keeps 'Delegate, never switch' and avoids uncached mid-session model cost.",
+        "savings": "baseline (session model avoids mid-session cache miss)",
     },
     "research": {
         "profile":    "marvin",
@@ -282,6 +282,7 @@ def _build_arg_parser() -> argparse.ArgumentParser:
     )
     ap.add_argument("task", nargs="?", default="", help="task description to classify")
     ap.add_argument("--launch", action="store_true", help="exec claude with the routed settings")
+    ap.add_argument("--model-for-launch", metavar="TASK", help="resolve and print the model ID for a task (or empty line if None)")
     ap.add_argument("--table", action="store_true", help="print the full routing table and exit")
     ap.add_argument("--aliases", action="store_true", help="print shell alias definitions and exit")
     ap.add_argument(
@@ -325,6 +326,12 @@ def main() -> None:
 
     if args.aliases:
         print_aliases()
+        return
+
+    if args.model_for_launch:
+        intent, _, _ = resolve_intent(args.model_for_launch, use_embed=_use_embed(args))
+        model = INTENTS[intent].get("model")
+        print(model or "")
         return
 
     if args.check_skill:

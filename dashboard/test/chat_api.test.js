@@ -309,6 +309,146 @@ describe('chat_api', () => {
       expect(res.statusCode).toBe(400)
       expect(res.getBody()).toContain('Invalid JSON')
     })
+
+    it('resolves model via route.py when starting a new session', async () => {
+      let capturedModel = null
+      const customMockRunSession = async function* (opts) {
+        capturedModel = opts.model
+        yield* createMockRunSession()(opts)
+      }
+
+      const mockExec = (cmd) => {
+        if (cmd.includes('--model-for-launch')) {
+          return 'claude-haiku-4-5-20251001'
+        }
+        return ''
+      }
+
+      const router = createChatApiRouter({
+        threadStore,
+        runSession: customMockRunSession,
+        exec: mockExec
+      })
+
+      const req = new MockRequest('POST', '/chat', JSON.stringify({ message: 'recall: what did we discuss' }))
+      const res = new MockResponse()
+
+      await router(req, res)
+
+      expect(capturedModel).toBe('claude-haiku-4-5-20251001')
+    })
+
+    it('does not resolve model when resuming an existing session', async () => {
+      let capturedModel = undefined
+      const customMockRunSession = async function* (opts) {
+        capturedModel = opts.model
+        yield* createMockRunSession()(opts)
+      }
+
+      const mockExec = () => {
+        throw new Error('exec should not be called')
+      }
+
+      const router = createChatApiRouter({
+        threadStore,
+        runSession: customMockRunSession,
+        exec: mockExec
+      })
+
+      threadStore.setCurrentSession('existing-sess-123')
+
+      const req = new MockRequest('POST', '/chat', JSON.stringify({ message: 'continue' }))
+      const res = new MockResponse()
+
+      await router(req, res)
+
+      expect(capturedModel).toBeUndefined()
+    })
+
+    it('fails gracefully when route.py errors during model resolution', async () => {
+      let capturedModel = undefined
+      const customMockRunSession = async function* (opts) {
+        capturedModel = opts.model
+        yield* createMockRunSession()(opts)
+      }
+
+      const mockExec = () => {
+        throw new Error('route.py timeout')
+      }
+
+      const router = createChatApiRouter({
+        threadStore,
+        runSession: customMockRunSession,
+        exec: mockExec
+      })
+
+      const req = new MockRequest('POST', '/chat', JSON.stringify({ message: 'hello' }))
+      const res = new MockResponse()
+
+      await router(req, res)
+
+      // Should not have passed a model, failing open
+      expect(capturedModel).toBeUndefined()
+      expect(res.statusCode).toBe(200)
+    })
+
+    it('uses resolved model for the session run', async () => {
+      let capturedOpts = null
+      const customMockRunSession = async function* (opts) {
+        capturedOpts = opts
+        yield* createMockRunSession()(opts)
+      }
+
+      const mockExec = (cmd) => {
+        if (cmd.includes('--model-for-launch')) {
+          return 'claude-haiku-4-5-20251001\n'
+        }
+        return ''
+      }
+
+      const router = createChatApiRouter({
+        threadStore,
+        runSession: customMockRunSession,
+        exec: mockExec
+      })
+
+      const req = new MockRequest('POST', '/chat', JSON.stringify({ message: 'research: what is AI' }))
+      const res = new MockResponse()
+
+      await router(req, res)
+
+      expect(capturedOpts.model).toBe('claude-haiku-4-5-20251001')
+      expect(capturedOpts.message).toContain('research: what is AI')
+    })
+
+    it('extracts empty string from route.py (None model)', async () => {
+      let capturedModel = undefined
+      const customMockRunSession = async function* (opts) {
+        capturedModel = opts.model
+        yield* createMockRunSession()(opts)
+      }
+
+      const mockExec = (cmd) => {
+        if (cmd.includes('--model-for-launch')) {
+          return ''  // Empty string for None model
+        }
+        return ''
+      }
+
+      const router = createChatApiRouter({
+        threadStore,
+        runSession: customMockRunSession,
+        exec: mockExec
+      })
+
+      const req = new MockRequest('POST', '/chat', JSON.stringify({ message: 'recall: test' }))
+      const res = new MockResponse()
+
+      await router(req, res)
+
+      // Empty model should not be passed
+      expect(capturedModel).toBeUndefined()
+    })
   })
 
   describe('GET /thread', () => {

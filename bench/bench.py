@@ -61,6 +61,17 @@ def _is_infra_error(result_text: str) -> bool:
 OLLAMA_BASE = "http://localhost:11434"
 
 
+def _get_workdir(task_id: str, profile: str, model: str | None = None) -> Path:
+    """Return a deterministic, reused work directory keyed by (task_id, profile, model).
+
+    The folder is created if it doesn't exist. Returns a stable path that can be
+    emptied at the start of each run instead of deleted after."""
+    model_key = model or "default"
+    workdir = ROOT / "workdirs" / f"{task_id}-{profile}-{model_key}"
+    workdir.mkdir(parents=True, exist_ok=True)
+    return workdir
+
+
 def _load_marvin_context() -> str:
     """Load MEMORY.md + all linked memory files for Ollama context injection.
 
@@ -266,7 +277,11 @@ def run_once(task: dict, profile: str, capture_snapshot: bool = False, model: st
     # skills. A qa task that compares profiles should set "cwd": "tmp" — a fresh empty
     # folder outside home, so only the profile decides what is loaded.
     if is_fs or task.get("cwd") == "tmp":
-        workdir = Path(tempfile.mkdtemp(prefix=f"mb-{task['id']}-{profile}-"))
+        workdir = _get_workdir(task['id'], profile, model)
+        # Empty the workdir at the start of each run instead of deleting after
+        if workdir.exists():
+            shutil.rmtree(workdir, ignore_errors=True)
+        workdir.mkdir(parents=True, exist_ok=True)
         if is_fs and (task["dir"] / "files").exists():
             shutil.copytree(task["dir"] / "files", workdir, dirs_exist_ok=True)
         cleanup = True
@@ -332,7 +347,7 @@ def run_once(task: dict, profile: str, capture_snapshot: bool = False, model: st
             check = run_hidden_check(task, workdir)
             if check is not None:
                 parsed["check"] = check
-        shutil.rmtree(workdir, ignore_errors=True)
+        # workdir is kept for reuse; emptied at the start of the next run instead
 
     return parsed
 

@@ -79,7 +79,7 @@ export function normaliseEvent(rawEvent) {
 
 // Async generator that streams normalised events from a claude CLI session.
 // Spawns the CLI with --output-format stream-json and reads stdout line-by-line.
-export async function* runSession({ message, sessionId, spawnFn, cwd, permissionHookPath } = {}) {
+export async function* runSession({ message, sessionId, spawnFn, cwd, permissionHookPath, model } = {}) {
   const claudeBin = resolveClaudeBinary()
   const actualSpawnFn = spawnFn || spawn
   const actualCwd = cwd || homedir()
@@ -110,6 +110,11 @@ export async function* runSession({ message, sessionId, spawnFn, cwd, permission
   // Add --resume if sessionId is provided
   if (sessionId) {
     args.push('--resume', sessionId)
+  }
+
+  // Add --model if model is provided
+  if (model) {
+    args.push('--model', model)
   }
 
   let child

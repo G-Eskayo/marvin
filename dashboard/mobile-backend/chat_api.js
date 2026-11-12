@@ -1,9 +1,27 @@
 import { runSession } from './session_runner.js'
 import { shouldRotate, summarize } from './rotation_policy.js'
+import { execSync } from 'child_process'
 
 export function createChatApiRouter(opts = {}) {
   const runSessionFn = opts.runSession || runSession
   const threadStore = opts.threadStore
+  const execFn = opts.exec || execSync
+
+  // Resolve the model for a task via route.py when there's no current session
+  function resolveModel(taskDescription) {
+    try {
+      const venvPython = `${process.env.HOME}/.agents/venv/bin/python`
+      const routeScript = `${process.env.HOME}/.agents/skills/route/scripts/route.py`
+      const output = execFn(
+        `${venvPython} ${routeScript} --model-for-launch "${taskDescription.replace(/"/g, '\\"')}"`,
+        { encoding: 'utf-8', timeout: 5000 }
+      ).trim()
+      return output || null
+    } catch (err) {
+      // Fail open: if route.py errors or times out, return null (use default model)
+      return null
+    }
+  }
 
   // Handler for chat API routes
   return async (req, res) => {
@@ -64,7 +82,16 @@ export function createChatApiRouter(opts = {}) {
           let resultSessionId = null
           let assistantText = ''
 
-          for await (const event of runSessionFn({ message: outgoingMessage, sessionId: currentSessionId })) {
+          // Resolve model for new sessions
+          const runSessionOpts = { message: outgoingMessage, sessionId: currentSessionId }
+          if (!currentSessionId) {
+            const resolvedModel = resolveModel(message)
+            if (resolvedModel) {
+              runSessionOpts.model = resolvedModel
+            }
+          }
+
+          for await (const event of runSessionFn(runSessionOpts)) {
             // Capture the final sessionId from result events
             if (event.type === 'result' && event.sessionId) {
               resultSessionId = event.sessionId
