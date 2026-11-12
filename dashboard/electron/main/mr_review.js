@@ -149,9 +149,28 @@ function parseDeviceSection(section) {
   return section
 }
 
-export function parseTicketRef(body) {
-  const match = body.match(/\b(?:Closes|Fixes|Resolves)\s+(?:[\w.-]+\/[\w.-]+)?#(\d+)/i)
-  return match ? match[1] : null
+export function parseTicketRef(body, repo = null) {
+  const regex = /\b(?:Closes|Fixes|Resolves)\s+([\w.-]+\/[\w.-]+)?#(\d+)/gi
+  let match
+  while ((match = regex.exec(body)) !== null) {
+    const capturedRepo = match[1]
+    const ticketNum = match[2]
+    if (repo === null) {
+      // No repo filter: return first match
+      return ticketNum
+    }
+    // Repo filter provided: check if this match's repo matches (case-insensitive)
+    if (!capturedRepo) {
+      // Bare #N form: matches any repo filter (no explicit repo in the reference)
+      return ticketNum
+    }
+    // Check if captured repo matches supplied repo (case-insensitive)
+    if (capturedRepo.toLowerCase() === repo.toLowerCase()) {
+      return ticketNum
+    }
+    // Otherwise continue looping to find a matching repo
+  }
+  return null
 }
 
 function parseParentRef(body) {
@@ -361,7 +380,7 @@ export async function listPipelinePrs(listOpenPrs, { canMerge = canMergeFromDash
     try { lines = queueLines(prs, { queue, issuesFor: issuesFor || (() => []), sentBackKeys, rebased }) } catch { lines = {} }
   }
   return prs.map((pr) => {
-    const ticketRef = parseTicketRef(pr.body || '')
+    const ticketRef = parseTicketRef(pr.body || '', pr.repo || MARVIN_REPO)
     const hasSchema = hasEvidenceSchema(pr.body)
     const evidence = hasSchema ? parseEvidence(pr.body) : null
     return {
@@ -408,7 +427,7 @@ export async function listPipelinePrs(listOpenPrs, { canMerge = canMergeFromDash
       ticketRef,
       ticketClosed: ticketRef !== null && closedKeys.has(`${pr.repo || MARVIN_REPO}#${ticketRef}`),
       rework: ticketRef !== null && sentBackKeys.has(`${pr.repo || MARVIN_REPO}#${ticketRef}`) ? rework[`${pr.repo || MARVIN_REPO}#${ticketRef}`] || null : null,
-      ticketNumber: evidence?.ticketRef ? Number(evidence.ticketRef) : null,
+      ticketNumber: ticketRef !== null ? Number(ticketRef) : null,
       evidence,
       // Full body, untruncated -- MrDetail.jsx needs the whole thing since
       // it's exactly the "drill in and actually read it" view; PrCard.jsx
