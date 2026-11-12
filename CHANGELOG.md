@@ -1,5 +1,7 @@
 # Changelog
 
+- Docs: "Where things are" shows a raw IPC error on a fresh install ([#1283](https://github.com/G-Eskayo/marvin/pull/1283))
+
 - A sleeping or closed Mac shows as red "Unreachable" on Activity ([#1281](https://github.com/G-Eskayo/marvin/pull/1281))
 
 - MR Review dot turns green ("Nothing awaiting review") when GitHub can't be reached ([#1280](https://github.com/G-Eskayo/marvin/pull/1280))
