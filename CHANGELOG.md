@@ -1,5 +1,7 @@
 # Changelog
 
+- PRs without the evidence template lose their ticket: Deny and Drop don't touch it, details show "Not available" ([#1285](https://github.com/G-Eskayo/marvin/pull/1285))
+
 - A gate refusal can vanish, leaving "Ready to merge" with Approve enabled ([#1288](https://github.com/G-Eskayo/marvin/pull/1288))
 
 - "Send back for options" always fails with "Webhook call failed: 400" ([#1282](https://github.com/G-Eskayo/marvin/pull/1282))
