@@ -22,6 +22,7 @@ HOME = Path.home()
 LAUNCHD_LABEL = "com.marvin.dashboard-webhook"
 ATTEMPT_FILE = HOME / ".claude" / "logs" / "webhook-restart-attempt"
 LOG_FILE = HOME / ".claude" / "logs" / "webhook-restart.log"
+INFLIGHT_FILE = HOME / ".claude" / "logs" / "merge-inflight.json"
 
 # Only these go into the webhook server's concerns. dashboard/src and
 # dashboard/electron/preload are for the Electron app only.
@@ -31,7 +32,21 @@ SETTLE_SECONDS = 60              # let a fresh change settle before restarting
 BACKOFF_SECONDS = 6 * 3600       # minimum gap between attempts
 
 
-def decide(*, server_start_ts, webhook_commit_ts, last_attempt_ts, now) -> tuple[str, str]:
+def _merge_inflight() -> bool:
+	"""Check if a merge is currently in flight. Fails closed on any read/parse problem."""
+	try:
+		data = INFLIGHT_FILE.read_text()
+		parsed = __import__('json').loads(data)
+		if not isinstance(parsed, dict):
+			return True
+		return len(parsed) > 0
+	except FileNotFoundError:
+		return False
+	except Exception:
+		return True
+
+
+def decide(*, server_start_ts, webhook_commit_ts, last_attempt_ts, now, merge_inflight=False) -> tuple[str, str]:
     """('restart' | 'skip', reason)."""
     if webhook_commit_ts is None:
         return "skip", "no webhook commit to compare against"
@@ -43,6 +58,8 @@ def decide(*, server_start_ts, webhook_commit_ts, last_attempt_ts, now) -> tuple
         return "skip", "server is current"
     if now - webhook_commit_ts < SETTLE_SECONDS:
         return "skip", "latest webhook change is too fresh -- letting it settle"
+    if merge_inflight:
+        return "skip", "a merge is in flight; restarting now could cut it off"
     behind = now - server_start_ts
     return "restart", f"server started {behind / 3600:.0f}h ago, {(webhook_commit_ts - server_start_ts) / 3600:.0f}h behind the latest code change"
 
@@ -79,7 +96,7 @@ def _facts(now: int) -> dict:
         pass
 
     return dict(server_start_ts=server_start_ts, webhook_commit_ts=int(newest) if newest.isdigit() else None,
-                last_attempt_ts=_mtime(ATTEMPT_FILE), now=now)
+                last_attempt_ts=_mtime(ATTEMPT_FILE), now=now, merge_inflight=_merge_inflight())
 
 
 def main() -> None:

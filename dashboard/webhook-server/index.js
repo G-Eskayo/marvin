@@ -36,6 +36,7 @@ import { createPortfolio } from '../electron/main/portfolio.js'
 import { handlePortfolioRequest } from '../electron/main/portfolio_remote.js'
 import { resolveServiceDefaults } from '../electron/main/device_identity.js'
 import { createRebuildCheckTrigger } from './rebuild_check.js'
+import { createCodeSyncCheckTrigger } from './code_sync_check.js'
 import { supportRepos, createSupportSync } from './support_sync.js'
 import { handleSafetyRequest, SAFETY_MAX_BODY } from './safety_labels.js'
 
@@ -347,6 +348,7 @@ function announceThisMac(why) {
 }
 
 const rebuildCheck = createRebuildCheckTrigger()
+const codeSyncCheck = createCodeSyncCheckTrigger()
 
 // marvin#568: which Mac runs the merges (shown on the card), and the in-flight record a restart reads.
 const machineId = resolveDeviceId()
@@ -554,6 +556,7 @@ server.listen(PORT, () => {
       console.log(`[gh-watch] change detected on ${repo} at ${new Date().toISOString()}`)
       githubFeed?.refresh(repo)
       if (rebuildCheck(repo)) console.log(`[rebuild-check] started for ${repo}`) // #443: any merge path updates the app
+      codeSyncCheck(repo).catch(() => {}) // marvin#1195: async, so don't block the watch loop
       // marvin#231: a PR updated, a ticket labelled, main's CI opening or closing its main-red ticket: the queue looks
       // again (answers first, so a just-built PR is seen built).
       refreshFacts().finally(() => mergeQueue.kick(repo).catch(() => {}))

@@ -1191,8 +1191,14 @@ export function triggerDiskCleanup(spawnFn = spawn) {
   spawnFn(VENV_PYTHON, [DISK_TRIGGERS_SCRIPT, 'after-merge'], { detached: true, stdio: 'ignore' }).unref()
 }
 
-// What a merge starts once the other open PRs are checked: the pipeline scan and the disk cleanup. Each is started on
-// its own, so one failing to spawn never stops the other.
+// marvin#1195: restart the webhook-server when its code changes. The code-sync pull happens from the webhook
+// watch loop; this is called after every merge to check for a restart (make the decision, possibly wait for
+// a merge to finish).
+// What a merge starts once the other open PRs are checked: the pipeline scan and the disk cleanup.
+// Each is started on its own, so one failing to spawn never stops the others.
+// Webhook restart is handled via code-sync pull (code_sync_check.js), not here: the after-merge
+// trigger would race it and work with stale code (no pull), so the code-sync path is the single
+// source of truth.
 export function triggerAfterMerge(spawnFn = spawn) {
   for (const start of [triggerTicketPipeline, triggerDiskCleanup]) {
     try { start(spawnFn) } catch (e) { console.error(`[post-merge] ${start.name}: ${String(e?.message || e).slice(0, 200)}`) }

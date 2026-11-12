@@ -378,6 +378,41 @@ describe('triggerAfterMerge (the default redispatch)', () => {
     expect(scripts.some((s) => /ticket_pipeline\.py$/.test(s))).toBe(true)
     expect(scripts.some((s) => /disk_triggers\.py$/.test(s))).toBe(true)
   })
+
+  it('does not start the webhook-restart check; webhook restart is handled by code-sync pull', () => {
+    // marvin#1195 defect fix: the after-merge trigger would race code-sync and work
+    // with stale code (no pull). The code-sync path (webhook ping → pull → restart)
+    // is the single source of truth, not a separate trigger.
+    const unref = vi.fn()
+    const spawnFn = vi.fn().mockReturnValue({ unref })
+    triggerAfterMerge(spawnFn)
+    const scripts = spawnFn.mock.calls.map(([, args]) => args[0])
+    expect(scripts.some((s) => /ticket_pipeline\.py$/.test(s))).toBe(true)
+    expect(scripts.some((s) => /disk_triggers\.py$/.test(s))).toBe(true)
+    expect(scripts.some((s) => /webhook_restart\.py$/.test(s))).toBe(false)
+  })
+
+  it('when one of the two triggers (pipeline / disk) throws on spawn, the other still starts', () => {
+    const unref = vi.fn()
+    const spawnFn = vi.fn()
+      .mockImplementationOnce(() => { throw new Error('spawn EAGAIN') })
+      .mockImplementationOnce(() => ({ unref }))
+    triggerAfterMerge(spawnFn)
+    const scripts = spawnFn.mock.calls.map(([, args]) => args[0])
+    expect(scripts.some((s) => /ticket_pipeline\.py$/.test(s))).toBe(true)
+    expect(scripts.some((s) => /disk_triggers\.py$/.test(s))).toBe(true)
+    expect(scripts.some((s) => /webhook_restart\.py$/.test(s))).toBe(false)
+  })
+
+  it('calling triggerAfterMerge twice in a row (two merges finishing back-to-back) spawns it once per invocation', () => {
+    const unref = vi.fn()
+    const spawnFn = vi.fn().mockReturnValue({ unref })
+    triggerAfterMerge(spawnFn)
+    const callsAfterFirst = spawnFn.mock.calls.length
+    expect(callsAfterFirst).toBe(2) // ticket_pipeline, disk_cleanup
+    triggerAfterMerge(spawnFn)
+    expect(spawnFn.mock.calls.length).toBe(4) // two more spawns
+  })
 })
 
 // Real git fixtures (a bare "origin" + a local clone standing in for

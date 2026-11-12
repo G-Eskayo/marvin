@@ -1,0 +1,10 @@
+1. `lib/webhook_restart.py`: add `INFLIGHT_FILE` constant and `_merge_inflight()` (fail-open on missing file, fail-closed on any other read/parse problem or non-dict shape).
+2. `lib/webhook_restart.py`: add `merge_inflight: bool = False` to `decide()`, gating only the final "behind → restart" branch (not the "not running → restart" branch); update `_facts()` to include `merge_inflight=_merge_inflight()`.
+3. `lib/tests/test_webhook_restart.py`: add tests 1–3, 5–11 above (run red, then green against steps 1–2).
+4. New file `dashboard/webhook-server/code_sync_check.js`: `createCodeSyncCheckTrigger()` — gate on `MARVIN_REPO`, debounce via `minGapMs` (default 60_000, matching `SETTLE_SECONDS`), `await exec(code_sync.py pull ~/.agents)`, then on success `spawn(webhook_restart.py)` detached + `unref()`; swallow and log any failure at either step.
+5. New file `dashboard/test/code_sync_check.test.js`: tests 12–17 above (run red, then green against step 4).
+6. `dashboard/webhook-server/index.js`: instantiate `createCodeSyncCheckTrigger()` next to the existing `rebuildCheck`, call it inside the `ping(repo)` callback (`index.js:548-559`) alongside `rebuildCheck(repo)`.
+7. `dashboard/webhook-server/merge.js`: add `WEBHOOK_RESTART_SCRIPT` constant, add `triggerWebhookRestartCheck(spawnFn)` (same shape as `triggerDiskCleanup`), add it to `triggerAfterMerge`'s loop array.
+8. `dashboard/test/merge.test.js`: extend the `triggerAfterMerge` describe block with tests 18–20 above (run red, then green against step 7).
+9. Run the full Python suite (`pytest lib/tests/`) and the full dashboard suite (vitest) — not just the touched files — before considering this done (per the "full suites before a hand-merge" rule), since both `webhook_restart.py` and `merge.js` are shared, widely-imported modules.
+10. Manually verify on the Mini (or note as a follow-up if not reachable from this worktree): touch a `dashboard/webhook-server/` file, merge it, and confirm via `~/.claude/logs/webhook-restart.log` and `launchctl list` that the restart happens within roughly a minute and that an unrelated merge running at the same time isn't cut off.
