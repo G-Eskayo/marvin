@@ -31,9 +31,16 @@ describe('describePrState: one headline, only the buttons that make sense', () =
   })
 
   it('and once that state clears, the stale refusal does not come back', () => {
-    for (const code of ['SENT_BACK', 'CI_PENDING', 'CI_FAILED', 'WRONG_BASE']) {
+    for (const code of ['SENT_BACK', 'CI_PENDING', 'CI_FAILED', 'WRONG_BASE', 'NO_UI_EVIDENCE', 'IMAGES_UNPINNED', 'DECISIONS_PENDING', 'DECISIONS_UNSTRUCTURED']) {
       expect(state({}, { status: 'error', errorMessage: `${code} at request: x` }).kind).toBe('ready')
     }
+  })
+
+  it('IMAGES_STALE is shown as its own blocked state because it cannot be re-verified live', () => {
+    const s = state({}, { status: 'error', errorMessage: 'IMAGES_STALE at request: screenshots pinned to abc123 but SettingsView.swift changed in def456' })
+    expect(s).toMatchObject({ kind: 'images-stale', tone: 'blocked', approve: 'enabled', deny: 'enabled' })
+    expect(s.headline).toMatch(/Images are older than the latest change/i)
+    expect(s.detail).toMatch(/SettingsView.swift changed/)
   })
 
   it('a real merge failure is shown, and the PR can be tried again', () => {
