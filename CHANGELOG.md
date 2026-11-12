@@ -1,5 +1,7 @@
 # Changelog
 
+- A sleeping or closed Mac shows as red "Unreachable" on Activity ([#1281](https://github.com/G-Eskayo/marvin/pull/1281))
+
 - MR Review dot turns green ("Nothing awaiting review") when GitHub can't be reached ([#1280](https://github.com/G-Eskayo/marvin/pull/1280))
 
 - Enabling an add-on can wipe instance.json ([#1279](https://github.com/G-Eskayo/marvin/pull/1279))
