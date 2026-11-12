@@ -506,3 +506,65 @@ describe('listPipelinePrs: post-merge rebase result (#225)', () => {
     expect(without.rebase).toBe(null)
   })
 })
+
+describe('listPipelinePrs: merge service tracker (marvin#762, #797)', () => {
+  const mockTracker = () => {
+    let reported = null
+    return {
+      report: (reached) => { reported = reached },
+      getReported: () => reported,
+      status: () => ({ down: false })
+    }
+  }
+
+  it('case 3: reports reached when rebaseStatus has data', async () => {
+    const url = 'https://github.com/G-Eskayo/marvin/pull/208'
+    const list = async () => [{ number: 208, title: 't', url, body: '' }]
+    const tracker = mockTracker()
+    await listPipelinePrs(list, { rebaseStatus: async () => ({ [url]: { state: 'clean' } }), mergeServiceTracker: tracker })
+    expect(tracker.getReported()).toBe(true)
+  })
+
+  it('case 4: reports reached when autoMergeShadow has data', async () => {
+    const url = 'https://github.com/G-Eskayo/marvin/pull/208'
+    const list = async () => [{ number: 208, title: 't', url, body: '' }]
+    const tracker = mockTracker()
+    await listPipelinePrs(list, { autoMergeShadow: async () => ({ prs: { [url]: { verdict: 'auto' } } }), mergeServiceTracker: tracker })
+    expect(tracker.getReported()).toBe(true)
+  })
+
+  it('case 6: reports unreached when all merge-server reads fail', async () => {
+    const list = async () => [{ number: 208, title: 't', url: 'https://github.com/G-Eskayo/marvin/pull/208', body: '' }]
+    const tracker = mockTracker()
+    await listPipelinePrs(list, {
+      rebaseStatus: async () => { throw new Error('down') },
+      autoMergeShadow: async () => { throw new Error('down') },
+      mergeQueue: async () => { throw new Error('down') },
+      mergeServiceTracker: tracker
+    })
+    expect(tracker.getReported()).toBe(false)
+  })
+
+  it('case 12: attaches mergeServiceDown to each PR', async () => {
+    const { createMergeServiceTracker } = await import('../electron/main/merge_service_status.js')
+    const url = 'https://github.com/G-Eskayo/marvin/pull/208'
+    const list = async () => [{ number: 208, title: 't', url, body: '## Metrics Comparison\n## Test Results\n## Dev Environment Evidence\nN/A', mergeable: 'MERGEABLE', statusCheckRollup: [], listedAt: Date.now() }]
+    // Mock tracker that's already in down state
+    const tracker = {
+      report: () => {},
+      status: () => ({ down: true })
+    }
+    const [pr] = await listPipelinePrs(list, {
+      rebaseStatus: async () => ({ [url]: { state: 'clean' } }),
+      mergeServiceTracker: tracker
+    })
+    expect(pr.mergeServiceDown).toBe(true)
+  })
+
+  it('case 13: does not crash if tracker is omitted', async () => {
+    const url = 'https://github.com/G-Eskayo/marvin/pull/208'
+    const list = async () => [{ number: 208, title: 't', url, body: '' }]
+    const [pr] = await listPipelinePrs(list)
+    expect(pr.mergeServiceDown).toBe(false)
+  })
+})

@@ -10,6 +10,7 @@ import { promisify } from 'util'
 import { listSubsystems, readHistory, buildIndex } from './metrics.js'
 import { getReworkStatus, clearReworkCache } from './rework.js'
 import { createGithubState, repoOfSource, gateCooldownUntil } from './github_state.js'
+import { createMergeServiceTracker } from './merge_service_status.js'
 import { startCheckWatch, createCheckProbe, createTreeProbe, startChangeWatch, createGithubProbe } from '../../webhook-server/gh_watch.js'
 import { createStackRetarget } from './stack_retarget.js'
 import { prsForOrderCheck, listPipelinePrs, denyMr, fetchTicketContext, sentBackKeys, clearSentBackLabel } from './mr_review.js'
@@ -1007,7 +1008,12 @@ function registerMrReviewHandlers() {
   // Auto-merge's shadow state (#341) lives with the mini's merge server, like the rebase results.
   const getAutoMergeShadow = async () => {
     const res = await fetch(MR_WEBHOOK_URL.replace(/\/approve$/, '/auto-merge-shadow'), { signal: AbortSignal.timeout(3000) })
-    return res.ok ? res.json() : {}
+    if (!res.ok) return {}
+    try {
+      return await res.json()
+    } catch {
+      return {}
+    }
   }
   // MR Review's Merged view (#419): saved history at once ({fresh:false}), or an incremental read of GitHub plus the
   // merge server's own record of merges and refused Approves ({fresh:true}).
@@ -1024,7 +1030,22 @@ function registerMrReviewHandlers() {
   })
   ipcMain.handle('mr:history', (_event, opts) => mrHistory.get({ fresh: !!opts?.fresh }))
   // #422: whether the last Open list read every project, and if not which failed and why.
-  ipcMain.handle('mr:listStatus', () => prFetch)
+  ipcMain.handle('mr:listStatus', () => {
+    const machines = mergeMachines({
+      primaryUrl: MR_WEBHOOK_URL,
+      explicit: !!process.env.MARVIN_MR_WEBHOOK_URL,
+      localUrl: process.env.MARVIN_MR_LOCAL_WEBHOOK_URL || undefined,
+      localExplicit: !!process.env.MARVIN_MR_LOCAL_WEBHOOK_URL,
+      primaryId: primaryDeviceId(),
+      localId: resolveDeviceId()
+    })
+    const down = mergeServiceTracker.status().down
+    const machine = machines.find((m) => !m.here) || machines[0]
+    return {
+      ...prFetch,
+      mergeService: pullOnly ? null : { down, label: machine?.label || 'Merge service' }
+    }
+  })
   // One merged (or refused) PR as the usual detail view, read-only: never mergeable from here.
   ipcMain.handle('mr:historyDetail', async (_event, url) => {
     const repo = repoFromPrUrl(url)
@@ -1044,7 +1065,12 @@ function registerMrReviewHandlers() {
   })
   const getRebaseStatus = async () => {
     const res = await fetch(MR_WEBHOOK_URL.replace(/\/approve$/, '/rebase-status'), { signal: AbortSignal.timeout(3000) })
-    return res.ok ? res.json() : {}
+    if (!res.ok) return {}
+    try {
+      return await res.json()
+    } catch {
+      return {}
+    }
   }
   // marvin#231 follow-up: a card the queue says is merging, with no strip here (the app opened mid-merge, or this Mac
   // was asleep for its events), reads where that merge is from the merge server once: GET /merge-progress. Run when
@@ -1066,7 +1092,12 @@ function registerMrReviewHandlers() {
   // marvin#231: the merge queue lives with the merge server (the Mini); each card's line is worked out from it here.
   const getMergeQueue = async () => {
     const res = await fetch(MR_WEBHOOK_URL.replace(/\/approve$/, '/merge-queue'), { signal: AbortSignal.timeout(3000) })
-    return res.ok ? res.json() : null
+    if (!res.ok) return null
+    try {
+      return await res.json()
+    } catch {
+      return null
+    }
   }
   // A repo's open tickets from the boards already in memory (main-red, incident, sent back): no extra GitHub read.
   const boardIssuesFor = (repo) => (remembered('board').find((b) => b.repo === repo)?.value?.issues || []).filter((i) => i && i.state === 'OPEN')
@@ -1082,6 +1113,8 @@ function registerMrReviewHandlers() {
       mainWindow?.webContents.send('mr:refresh')
     }
   })
+  // marvin#762, #797: tracks whether the merge server (Mini's webhook) is answering, with hysteresis.
+  const mergeServiceTracker = createMergeServiceTracker()
   // MARVIN_MR_FIXTURE=<file.json> (gh pr list JSON) shows a fixed PR list instead of GitHub's: used to screenshot card
   // states no open PR happens to be in (e.g. "Too vague: needs options") for the owner's image rule.
   const fixturePrs = process.env.MARVIN_MR_FIXTURE ? async () => JSON.parse(readFileSync(process.env.MARVIN_MR_FIXTURE, 'utf8')) : null
@@ -1107,12 +1140,13 @@ function registerMrReviewHandlers() {
       autoMergeShadow: getAutoMergeShadow,
       uiPathsFor: (repo) => readUiPaths(repo),
       mergeQueue: getMergeQueue,
-      issuesFor: boardIssuesFor
+      issuesFor: boardIssuesFor,
+      mergeServiceTracker
     })
     return cards.find((p) => p.url === url) || null
   }
   const mrList = coalesce(
-    () => listPipelinePrs(fixturePrs || listOpenPrs, { canMerge: (repo) => canMergeHere(pullOnly, canMergeFromDashboard(repo, readMergeableRepos())), sentBackTickets, reworkStatus: reworkFromMemory, rebaseStatus: getRebaseStatus, closedTickets, autoMergeShadow: getAutoMergeShadow, uiPathsFor: (repo) => readUiPaths(repo), mergeQueue: getMergeQueue, issuesFor: boardIssuesFor })
+    () => listPipelinePrs(fixturePrs || listOpenPrs, { canMerge: (repo) => canMergeHere(pullOnly, canMergeFromDashboard(repo, readMergeableRepos())), sentBackTickets, reworkStatus: reworkFromMemory, rebaseStatus: getRebaseStatus, closedTickets, autoMergeShadow: getAutoMergeShadow, uiPathsFor: (repo) => readUiPaths(repo), mergeQueue: getMergeQueue, issuesFor: boardIssuesFor, mergeServiceTracker })
       .then((prs) => withReadOnlyReason(prs, pullOnly)),
     () => `${githubState.localSeq()}:${githubState._genOf(null)}`
   )

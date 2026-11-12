@@ -25,7 +25,8 @@ function miniBanner(source, errors) {
   return { tone: source.state === 'missing' ? 'red' : 'amber', text: source.text }
 }
 
-export function prFetchBanner({ errors = [], projects = 0, lastGoodAt = null, source = null } = {}, now = Date.now()) {
+export function prFetchBanner({ errors = [], projects = 0, lastGoodAt = null, source = null, mergeService = null } = {}, now = Date.now()) {
+  if (mergeService?.down) return { tone: 'amber', text: `${mergeService.label} isn't answering, so approvals will wait.` }
   if (source?.from === 'mini') return miniBanner(source, errors)
   if (!errors.length) return null
   const causes = [...new Set(errors.map((e) => plainCause(e.message)))].join('; ')

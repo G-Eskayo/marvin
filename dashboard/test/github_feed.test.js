@@ -163,6 +163,13 @@ describe('feedOnlyGh and the MR banner on the box', () => {
     expect(missing.tone).toBe('red')
     expect(missing.text).not.toMatch(/sign-in|reach GitHub/)
   })
+  it('mergeService.down takes priority over source and errors (case 3)', () => {
+    const now = 1_800_000_000_000
+    const result = prFetchBanner({ errors: [{ repo: REPO, message: 'HTTP 401' }], projects: 1, lastGoodAt: now, source: { from: 'mini', state: 'fresh', text: 'Read from the Mini, 2 min ago.' }, mergeService: { down: true, label: 'Mac mini' } }, now)
+    expect(result.tone).toBe('amber')
+    expect(result.text).toMatch(/Mac mini/)
+    expect(result.text).toMatch(/isn't answering/)
+  })
   it('a Mac (no source) keeps the old banner exactly', () => {
     expect(prFetchBanner({ errors: [], projects: 2 })).toBeNull()
     expect(prFetchBanner({ errors: [{ repo: 'o/a', message: 'HTTP 401' }, { repo: 'o/b', message: 'HTTP 401' }], projects: 2, lastGoodAt: null }).text).toMatch(/sign-in expired/)

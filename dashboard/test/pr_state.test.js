@@ -262,6 +262,15 @@ describe('describePrState: auto-merge shadow verdict (#341)', () => {
   })
 })
 
+describe('describePrState: merge service down (marvin#762, #797)', () => {
+  it('shows a note when the merge service is down, keeping approve enabled', () => {
+    const s = describePrState({ ...ready, mergeServiceDown: true })
+    expect(s.kind).toBe('ready')
+    expect(s.approve).toBe('enabled')
+    expect(s.note).toMatch(/Merge service is down/)
+  })
+})
+
 // The owner's answer on #767 (drafts): Approve is hidden on a draft until it's marked ready for review.
 describe('describePrState: drafts (marvin#848)', () => {
   it('an otherwise ready draft says it is a draft and offers no Approve; Deny stays', () => {

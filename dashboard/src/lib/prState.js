@@ -190,7 +190,9 @@ function describeState(pr, { status = 'idle', errorMessage = null, progress = fa
   const amNote = !am ? null : am.verdict === 'auto'
     ? `Auto-merge (shadow): would merge${am.score != null ? ` (tests caught ${am.score}% of planted bugs)` : ''}`
     : `Auto-merge (shadow): would wait for you: ${(am.reasons || [])[0] || 'see the rules'}`
-  const notes = [ci.state === 'passing' ? 'GitHub checks passed' : null, rb?.state === 'clean' ? `still merges cleanly onto ${main} after #${rb.after} merged` : null, amNote].filter(Boolean)
+  // marvin#762, #797: merge service down means approvals are queued but not submitted.
+  const mergeNote = pr.mergeServiceDown ? 'Merge service is down; approvals are queued' : null
+  const notes = [ci.state === 'passing' ? 'GitHub checks passed' : null, rb?.state === 'clean' ? `still merges cleanly onto ${main} after #${rb.after} merged` : null, amNote, mergeNote].filter(Boolean)
   return base('ready', 'ready', 'Ready to merge', null, 'enabled', 'enabled', { note: notes.length ? notes.join(' · ') : null })
 }
 

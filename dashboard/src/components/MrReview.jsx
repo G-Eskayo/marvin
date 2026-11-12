@@ -805,7 +805,8 @@ function OpenPrs({ nav, onOpenDocs, onOpenBoard, onOpenTicket, onCount }) {
   if (prs.length === 0 && motion.shown.length === 0) {
     // #422: an empty list because GitHub couldn't be reached is not "nothing to review".
     // marvin#954: nor is an empty list on the box while the Mini isn't answering.
-    return fetchStatus?.errors?.length || (fetchStatus?.source && fetchStatus.source.state !== 'fresh') ? <div className="p-6"><FetchBanner status={fetchStatus} /></div> : <EmptyState />
+    // marvin#797: nor when the merge service is down (approvals are queued, not swallowed).
+    return fetchStatus?.errors?.length || (fetchStatus?.source && fetchStatus.source.state !== 'fresh') || fetchStatus?.mergeService?.down ? <div className="p-6"><FetchBanner status={fetchStatus} /></div> : <EmptyState />
   }
 
   // Without the catalog (it failed to load) the cards aren't grouped: every PR under Other would say the wrong thing.
