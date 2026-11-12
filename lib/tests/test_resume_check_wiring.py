@@ -164,17 +164,77 @@ def test_the_surfaced_prompt_carries_the_check_and_strikes_changed_urgent_steps(
     assert logged and logged[0]["where"] == "remote-resume"
 
 
+def _handoff(directory: Path, name: str, as_of: str, prompt: str | None) -> Path:
+    body = f"---\nas_of: {as_of}\n---\n# H\n"
+    body += f"## Resume prompt\n{prompt}\n" if prompt is not None else "no prompt in here\n"
+    p = directory / name
+    p.write_text(body)
+    return p
+
+
 def test_the_surfaced_handoff_is_chosen_by_as_of(remote, monkeypatch, tmp_path):
     mod, _ = remote
     d = tmp_path / ".claude" / "handoffs"
     d.mkdir(parents=True)
-    (d / "handoff-b.md").write_text("---\nas_of: 2026-11-01T00:00:00Z\n---\n")
-    (d / "handoff-a.md").write_text("---\nas_of: 2026-11-08T00:00:00Z\n---\n")
-    os.utime(d / "handoff-a.md", (1, 1))
+    _handoff(d, "handoff-b.md", "2026-11-01T00:00:00Z", "finish the migration")
+    a = _handoff(d, "handoff-a.md", "2026-11-08T00:00:00Z", "ship the migration")
+    os.utime(a, (1, 1))
     picked = []
     monkeypatch.setattr(mod, "_surface_resume_prompt", lambda p: picked.append(p.name))
     mod.main()
     assert picked == ["handoff-a.md"]
+
+
+def test_1268_a_newer_notes_file_no_longer_outranks_the_rebuilt_handoff(remote, monkeypatch, tmp_path):
+    mod, _ = remote
+    d = tmp_path / ".claude" / "handoffs"
+    d.mkdir(parents=True)
+    _handoff(d, "handoff-2026-11-01-10-00.md", "2026-11-01T10:00:00Z", "finish the migration")
+    notes = _handoff(d, "notes-pipeline-in-flight.md", "2026-11-08T09:00:00Z", None)
+    os.utime(notes, (time.time(), time.time()))  # a code_sync pull just stamped it as the newest file
+    picked = []
+    monkeypatch.setattr(mod, "_surface_resume_prompt", lambda p: picked.append(p.name))
+    mod.main()
+    assert picked == ["handoff-2026-11-01-10-00.md"]
+
+
+def test_1268_an_undated_non_handoff_file_is_not_a_candidate(remote, monkeypatch, tmp_path):
+    mod, _ = remote
+    d = tmp_path / ".claude" / "handoffs"
+    d.mkdir(parents=True)
+    _handoff(d, "handoff-2026-11-01-10-00.md", "2026-11-01T10:00:00Z", "finish the migration")
+    ad_hoc = d / "2026-10-21-pipeline-fixes-in-flight.md"
+    ad_hoc.write_text("## Resume prompt\nstale notes with a prompt-shaped heading\n")
+    os.utime(ad_hoc, (time.time(), time.time()))
+    picked = []
+    monkeypatch.setattr(mod, "_surface_resume_prompt", lambda p: picked.append(p.name))
+    mod.main()
+    assert picked == ["handoff-2026-11-01-10-00.md"]
+
+
+def test_1268_a_promptless_newest_handoff_falls_through_to_the_next_one(remote, monkeypatch, tmp_path):
+    mod, _ = remote
+    d = tmp_path / ".claude" / "handoffs"
+    d.mkdir(parents=True)
+    _handoff(d, "handoff-2026-11-08-09-00.md", "2026-11-08T09:00:00Z", "")
+    _handoff(d, "handoff-2026-11-05-18-00.md", "2026-11-05T18:00:00Z", "pick up the review")
+    picked = []
+    monkeypatch.setattr(mod, "_surface_resume_prompt", lambda p: picked.append(p.name))
+    mod.main()
+    assert picked == ["handoff-2026-11-05-18-00.md"]
+
+
+def test_1268_no_prompt_anywhere_says_so_instead_of_returning_silently(remote, monkeypatch, tmp_path, capsys):
+    mod, _ = remote
+    d = tmp_path / ".claude" / "handoffs"
+    d.mkdir(parents=True)
+    _handoff(d, "handoff-2026-11-08-09-00.md", "2026-11-08T09:00:00Z", None)
+    picked = []
+    monkeypatch.setattr(mod, "_surface_resume_prompt", lambda p: picked.append(p.name))
+    mod.main()  # must not raise: this runs inside SessionStart
+    out = capsys.readouterr().out
+    assert picked == []
+    assert "rebuilt a handoff on mini but found no resume prompt in handoffs/" in out
 
 
 # ── where handoffs are written ───────────────────────────────────────────────

@@ -86,6 +86,24 @@ def _check_remote(device_id: str, host: str) -> dict | None:
     return info
 
 
+def _surfaceable(ranked: list) -> Path | None:
+    """The first ranked handoff that actually carries a resume prompt.
+
+    Ranking is by content date, and a ranked entry can still be unpromptable: a rebuild whose transcript had
+    nothing to resume, or an ad-hoc notes file that got in before the glob was pinned to handoff-*.md. Taking
+    ranked[0] blindly printed nothing at all for those while reporting success, which is the silent failure this
+    hook exists to prevent (marvin#1268).
+    """
+    for path, _when in ranked:
+        try:
+            text = path.read_text(errors="ignore")
+        except OSError:
+            continue
+        if resume_check.resume_prompt(text):
+            return path
+    return None
+
+
 def _surface_resume_prompt(handoff_path: Path) -> None:
     try:
         text = handoff_path.read_text(errors="ignore")
@@ -158,9 +176,14 @@ def main() -> None:
                         str(Path.home() / CLAUDE_DIR_REL)], capture_output=True)
     except OSError:
         pass  # fail quiet: surface whatever handoff is already here
-    ranked = resume_check.ranked_handoffs(Path.home() / ".claude" / "handoffs", pattern="*.md")
-    if ranked:
-        _surface_resume_prompt(ranked[0][0])
+    ranked = resume_check.ranked_handoffs(Path.home() / ".claude" / "handoffs")
+    chosen = _surfaceable(ranked)
+    if chosen is not None:
+        _surface_resume_prompt(chosen)
+    elif ranked:
+        print(f"rebuilt a handoff on {device_id} but found no resume prompt in handoffs/")
+    else:
+        print(f"rebuilt a handoff on {device_id} but handoffs/ has no handoff-*.md file")
 
     state[device_id] = freshest["mtime"]
     _save_state(state)
