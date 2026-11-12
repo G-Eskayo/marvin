@@ -1,5 +1,7 @@
 # Changelog
 
+- Boot: derive its device lines and memory path from this install, and give a fresh install a first-run verdict ([#1278](https://github.com/G-Eskayo/marvin/pull/1278))
+
 - research/SKILL.md links epistemic-framework.md relatively, so /research (read via the commands symlink) can't find it ([#1294](https://github.com/G-Eskayo/marvin/pull/1294))
 
 - PRs without the evidence template lose their ticket: Deny and Drop don't touch it, details show "Not available" ([#1285](https://github.com/G-Eskayo/marvin/pull/1285))
