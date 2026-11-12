@@ -398,3 +398,218 @@ def test_the_cli_prints_the_path_and_returns_the_exit_code(world, monkeypatch, c
     assert cs.main(["ensure", str(world["data"]), "--part", "results"]) == 0
     assert capsys.readouterr().out.strip() == str(world["data"] / "results")
     assert cs.main(["list"]) == 0 and "eval-bench" in capsys.readouterr().out
+
+
+# ---- re-park (marvin#1271): what ensure brought back can go away again ------------------------------------------
+
+def _local_files(world) -> list[str]:
+    return sorted(str(p.relative_to(world["data"])) for p in world["data"].rglob("*")
+                  if p.is_file() or p.is_symlink())
+
+
+def _parked_only(world) -> None:
+    assert sorted(p.name for p in world["data"].iterdir()) == [cs.MARKER_JSON, cs.MARKER_TXT]
+    assert not list(world["home"].glob(".*cold*"))
+
+
+def test_repark_after_a_partial_ensure_drops_the_fetched_part_and_keeps_every_unfetched_file(world):
+    before = _tree(world["data"])
+    first = world["store"].park(world["data"])
+    world["store"].ensure(str(world["data"]), part="models")
+    _rsync_wrapper(world, 'exec "$REAL" "$@"')
+    again = world["store"].park(world["data"])
+    _parked_only(world)
+    assert again["manifest_sha256"] == first["manifest_sha256"]         # nothing changed: same manifest
+    assert world["store"].marker(world["data"])["parts"] == []
+    assert world["store"].ensure(str(world["data"])) == world["data"]
+    assert _tree(world["data"]) == before                              # results/ and venv/ were never lost
+
+
+def test_a_file_changed_after_ensure_is_kept_by_repark_and_returned_by_the_next_ensure(world):
+    world["store"].park(world["data"])
+    world["store"].ensure(str(world["data"]), part="results")
+    (world["data"] / "results" / "run 203.jsonl").write_text('{"wer": 0.05}\n')
+    new_dir = world["data"] / "results" / "new run" / "deep"
+    new_dir.mkdir(parents=True)                                        # a new sub-folder the cold copy lacks
+    (new_dir / "scores.json").write_text("[1, 2, 3]")
+    os.symlink("scores.json", new_dir / "latest")                      # and a new link
+    entry = world["store"].park(world["data"])
+    _parked_only(world)
+    marker = world["store"].marker(world["data"])
+    assert marker["manifest_sha256"] == entry["manifest_sha256"]       # marker follows the new manifest
+    assert world["store"].catalog("eval-bench")["manifest_sha256"] == entry["manifest_sha256"]
+    assert json.loads((world["cold"] / "eval-bench" / "entry.json").read_text())["manifest_sha256"] == \
+        entry["manifest_sha256"]
+    world["store"].ensure(str(world["data"]))
+    assert (world["data"] / "results" / "run 203.jsonl").read_text() == '{"wer": 0.05}\n'
+    assert (new_dir / "scores.json").read_text() == "[1, 2, 3]"
+    assert os.readlink(new_dir / "latest") == "scores.json"
+    assert (world["data"] / "models" / "big.bin").stat().st_size == 300_000
+
+
+def test_a_new_manifest_survives_a_lost_catalog(world):
+    world["store"].park(world["data"])
+    world["store"].ensure(str(world["data"]), part="results")
+    (world["data"] / "results" / "run 203.jsonl").write_text("changed\n")
+    world["store"].park(world["data"])
+    shutil.rmtree(world["tmp"] / "state")                              # only the marker's sha is left to trust
+    world["store"].ensure(str(world["data"]))
+    assert (world["data"] / "results" / "run 203.jsonl").read_text() == "changed\n"
+
+
+def test_a_file_deleted_inside_a_fetched_part_is_gone_from_the_cold_copy(world):
+    world["store"].park(world["data"])
+    world["store"].ensure(str(world["data"]), part="models")
+    (world["data"] / "models" / "big.bin").unlink()
+    world["store"].park(world["data"])
+    assert not (world["cold"] / "eval-bench" / "data" / "models" / "big.bin").exists()
+    world["store"].ensure(str(world["data"]))
+    assert not (world["data"] / "models" / "big.bin").exists()
+    assert (world["data"] / "results" / "run 203.jsonl").exists()
+
+
+def test_files_written_next_to_the_marker_are_parked_too(world):
+    world["store"].park(world["data"])
+    (world["data"] / "notes.txt").write_text("written while parked")
+    world["store"].park(world["data"])
+    _parked_only(world)
+    world["store"].ensure(str(world["data"]))
+    assert (world["data"] / "notes.txt").read_text() == "written while parked"
+
+
+def test_repark_of_a_folder_in_use_is_refused_and_moves_nothing(world):
+    world["store"].park(world["data"])
+    world["store"].ensure(str(world["data"]), part="models")
+    held = _local_files(world)
+    world["store"].in_use = lambda p: ["python3 4242"]
+    with pytest.raises(cs.ColdError) as e:
+        world["store"].park(world["data"])
+    assert e.value.code == cs.BUSY
+    assert _local_files(world) == held
+
+
+def test_repark_refuses_when_the_cold_manifest_does_not_match_the_marker(world):
+    world["store"].park(world["data"])
+    world["store"].ensure(str(world["data"]), part="models")
+    held = _tree(world["data"])
+    mf = world["cold"] / "eval-bench" / "manifest.json"
+    m = json.loads(mf.read_text())
+    m["files"]["results/run 203.jsonl"][1] = "0" * 64
+    mf.write_text(json.dumps(m))
+    with pytest.raises(cs.ColdError) as e:
+        world["store"].park(world["data"])
+    assert e.value.code == cs.VERIFY_FAILED
+    assert _tree(world["data"]) == held                                # local data never dropped
+
+
+def test_repark_never_drops_a_local_file_the_cold_copy_has_lost(world):
+    world["store"].park(world["data"])
+    world["store"].ensure(str(world["data"]), part="models")
+    shutil.rmtree(world["cold"] / "eval-bench" / "data" / "results")  # an un-fetched part lost at rest
+    held = _tree(world["data"])
+    with pytest.raises(cs.ColdError) as e:
+        world["store"].park(world["data"])
+    assert e.value.code == cs.VERIFY_FAILED and "results" in str(e.value)
+    assert _tree(world["data"]) == held
+
+
+def test_a_repark_interrupted_after_the_upload_is_finished_by_the_next_park_and_ensure_still_works(world):
+    world["store"].park(world["data"])
+    world["store"].ensure(str(world["data"]), part="results")
+    (world["data"] / "results" / "run 203.jsonl").write_text("v2\n")
+    real_write = world["store"]._remote_write
+    calls = []
+
+    def die_after_manifest(rpath, data):
+        real_write(rpath, data)
+        calls.append(rpath)
+        if rpath.endswith("manifest.json"):
+            raise cs.ColdError(cs.UNREACHABLE, "link dropped")
+    world["store"]._remote_write = die_after_manifest
+    with pytest.raises(cs.ColdError):
+        world["store"].park(world["data"])
+    assert (world["data"] / "results" / "run 203.jsonl").read_text() == "v2\n"     # nothing local lost
+    # ensure in between: an un-changed part still comes back
+    world["store"]._remote_write = real_write
+    world["store"].ensure(str(world["data"]), part="venv")
+    # and the user changes the file again before the next park: the half-written state must not block it
+    (world["data"] / "results" / "run 203.jsonl").write_text("v3\n")
+    world["store"].park(world["data"])
+    _parked_only(world)
+    world["store"].ensure(str(world["data"]))
+    assert (world["data"] / "results" / "run 203.jsonl").read_text() == "v3\n"
+
+
+def test_a_repark_interrupted_before_the_swap_still_lets_ensure_verify(world):
+    world["store"].park(world["data"])
+    world["store"].ensure(str(world["data"]), part="results")
+    (world["data"] / "results" / "run 203.jsonl").write_text("v2\n")
+    calls = []
+    world["store"].in_use = lambda p: calls.append(p) or (["python3 4242"] if len(calls) > 1 else [])
+    with pytest.raises(cs.ColdError) as e:                             # opened just before the swap
+        world["store"].park(world["data"])
+    assert e.value.code == cs.BUSY
+    world["store"].in_use = lambda p: []
+    world["store"].ensure(str(world["data"]))                           # marker and cold copy agree: verifies
+    assert (world["data"] / "results" / "run 203.jsonl").read_text() == "v2\n"
+
+
+def test_listing_shows_local_bytes_so_a_half_fetched_entry_is_visible(world):
+    world["store"].park(world["data"])
+    assert world["store"].listing()["parked"][0]["local_bytes"] == 0
+    world["store"].ensure(str(world["data"]), part="models")
+    assert world["store"].listing()["parked"][0]["local_bytes"] == 500_000
+
+
+def test_fetched_context_parks_again_when_the_job_ends_even_if_it_fails(world):
+    before = _tree(world["data"])
+    world["store"].park(world["data"])
+    with pytest.raises(RuntimeError):
+        with world["store"].fetched(str(world["data"]), part="models") as got:
+            assert (got / "big.bin").exists()
+            raise RuntimeError("eval crashed")
+    _parked_only(world)
+    world["store"].ensure(str(world["data"]))
+    assert _tree(world["data"]) == before
+
+
+def test_cli_then_park_runs_the_command_with_its_flags_and_parks_the_whole_folder(world, monkeypatch, capfd):
+    monkeypatch.setattr(cs, "default_store", lambda: (world["store"], {}))
+    world["store"].park(world["data"])
+    rc = cs.main(["ensure", str(world["data"]), "--part", "models", "--then-park", "--", "ls", "-la",
+                  str(world["data"] / "models")])
+    assert rc == 0 and "big.bin" in capfd.readouterr().out
+    _parked_only(world)
+    assert not (world["cold"] / "models").exists()                     # the parent was re-parked, not a new entry
+    assert sorted(p.name for p in world["cold"].iterdir()) == ["eval-bench"]
+
+
+def test_cli_then_park_keeps_the_commands_exit_code_and_survives_a_missing_command(world, monkeypatch, capsys):
+    monkeypatch.setattr(cs, "default_store", lambda: (world["store"], {}))
+    world["store"].park(world["data"])
+    assert cs.main(["ensure", str(world["data"]), "--part", "models", "--then-park", "--", "sh", "-c",
+                    "exit 3"]) == 3
+    _parked_only(world)
+    assert cs.main(["ensure", str(world["data"]), "--part", "models", "--then-park", "--",
+                    "no-such-command-xyz"]) == 127
+    _parked_only(world)
+
+
+def test_cli_then_park_without_a_command_is_refused_before_anything_is_fetched(world, monkeypatch, capsys):
+    monkeypatch.setattr(cs, "default_store", lambda: (world["store"], {}))
+    world["store"].park(world["data"])
+    assert cs.main(["ensure", str(world["data"]), "--then-park"]) == cs.NOT_PARKED
+    _parked_only(world)
+    assert cs.main(["ensure", str(world["data"]), "--", "ls"]) == cs.NOT_PARKED   # a command needs --then-park
+    _parked_only(world)
+
+
+def test_cli_a_failed_repark_after_a_failing_command_reports_both_and_keeps_the_commands_code(world, monkeypatch,
+                                                                                            capsys):
+    monkeypatch.setattr(cs, "default_store", lambda: (world["store"], {}))
+    world["store"].park(world["data"])
+    world["store"].in_use = lambda p: ["python3 4242"]
+    assert cs.main(["ensure", str(world["data"]), "--part", "models", "--then-park", "--", "sh", "-c",
+                    "exit 4"]) == 4
+    assert "in use" in capsys.readouterr().err
+    assert cs.main(["ensure", str(world["data"]), "--part", "models", "--then-park", "--", "true"]) == cs.BUSY
