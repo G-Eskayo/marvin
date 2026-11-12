@@ -1,7 +1,7 @@
 // The boot sequence's animation (#431): a direct port of the approved v7 prototype
 // (docs/design/celestial-navigation/boot.html on #428). Everything uses the Web Animations API, so the whole
 // sequence can be seeked frame by frame (that's how its recordings are made).
-import { bannerTone, lineTone, lineTarget, bannerTarget } from './boot_view.js'
+import { bannerTone, lineTone, lineTarget, bannerTarget, subtitleText } from './boot_view.js'
 
 // The mark: same geometry as the app icon (icon.html, 1024 grid). Moving a star here moves it in the boot.
 const ICON = { pts: [[262, 772], [262, 262], [512, 560], [762, 262], [762, 772]], core: 2, star: 44, coreR: 68, orbit: 118, line: 26 }
@@ -89,23 +89,34 @@ export function runBoot(root, data, { onDone = () => {}, onNavigate = () => {} }
   reach(1, a1); reach(3, b1); reach(0, a2); reach(4, b2)
 
   // 5 · System check: every real health check scrolls past; the bar is real progress through them
-  const feed = q('feed'), F = data.feed.length ? data.feed : [{ label: 'health status unavailable', level: 'yellow' }]
-  const LH = 19, VIS = 7, C0 = 600, DT = Math.max(28, Math.min(60, 2600 / F.length)) * SLOW
-  F.forEach((c, i) => {
-    const d = document.createElement('div'); d.className = 'boot-fl ' + lineTone(c.level)
-    const dot = document.createElement('i'); dot.className = lineTone(c.level)
-    d.append(dot, String(c.label).toUpperCase()); feed.appendChild(d)
-    A(d, [{ opacity: 0 }, { opacity: 1 }], { delay: C0 + i * DT, duration: 1, easing: 'linear', m: 1 }); glow(d, C0 + i * DT)
-  })
-  A(feed, [{ transform: `translateY(${VIS * LH}px)` }, { transform: `translateY(${-(F.length - VIS) * LH}px)` }], { delay: C0, duration: F.length * DT, easing: `steps(${F.length})`, m: 1 })
-  const CHK_END = C0 + F.length * DT
-  A(q('fill'), [{ width: '0%' }, { width: '100%' }], { delay: C0, duration: F.length * DT, easing: `steps(${F.length})`, m: 1 })
-  const nTick = A(q('chkN'), [{ opacity: 1 }, { opacity: 1 }], { delay: C0, duration: F.length * DT, easing: 'linear', m: 1 })
-  const drawCount = () => {
-    const t = (nTick.currentTime ?? 0) - C0 * K
-    const n = Math.max(0, Math.min(F.length, Math.floor(t / (DT * K)) + (t >= 0 ? 1 : 0)))
-    q('chkN').textContent = String(n).padStart(3, '0') + '/' + String(F.length).padStart(3, '0')
-    q('barP').textContent = String(Math.round(n / F.length * 100)).padStart(3, '0') + '%'
+  const C0 = 600
+  let CHK_END = C0
+  let drawCount
+  const isFirstRun = data.verdict?.tone === 'first-run'
+  if (!isFirstRun) {
+    const feed = q('feed'), F = data.feed.length ? data.feed : [{ label: 'health status unavailable', level: 'yellow' }]
+    const LH = 19, VIS = 7, DT = Math.max(28, Math.min(60, 2600 / F.length)) * SLOW
+    F.forEach((c, i) => {
+      const d = document.createElement('div'); d.className = 'boot-fl ' + lineTone(c.level)
+      const dot = document.createElement('i'); dot.className = lineTone(c.level)
+      d.append(dot, String(c.label).toUpperCase()); feed.appendChild(d)
+      A(d, [{ opacity: 0 }, { opacity: 1 }], { delay: C0 + i * DT, duration: 1, easing: 'linear', m: 1 }); glow(d, C0 + i * DT)
+    })
+    A(feed, [{ transform: `translateY(${VIS * LH}px)` }, { transform: `translateY(${-(F.length - VIS) * LH}px)` }], { delay: C0, duration: F.length * DT, easing: `steps(${F.length})`, m: 1 })
+    CHK_END = C0 + F.length * DT
+    A(q('fill'), [{ width: '0%' }, { width: '100%' }], { delay: C0, duration: F.length * DT, easing: `steps(${F.length})`, m: 1 })
+    const nTick = A(q('chkN'), [{ opacity: 1 }, { opacity: 1 }], { delay: C0, duration: F.length * DT, easing: 'linear', m: 1 })
+    drawCount = () => {
+      const t = (nTick.currentTime ?? 0) - C0 * K
+      const n = Math.max(0, Math.min(F.length, Math.floor(t / (DT * K)) + (t >= 0 ? 1 : 0)))
+      q('chkN').textContent = String(n).padStart(3, '0') + '/' + String(F.length).padStart(3, '0')
+      q('barP').textContent = String(Math.round(n / F.length * 100)).padStart(3, '0') + '%'
+    }
+  } else {
+    drawCount = () => {
+      q('chkN').textContent = '000/000'
+      q('barP').textContent = '000%'
+    }
   }
 
   // 6 · Verified: beam pass, the feed settles into the summary, the bar becomes the verdict
@@ -126,6 +137,9 @@ export function runBoot(root, data, { onDone = () => {}, onNavigate = () => {} }
   const ban = q('banner')
   ban.classList.add(bannerTone(data.verdict))
   q('bannerT').textContent = data.verdict.text
+  const sub = q('sub')
+  sub.textContent = subtitleText(data.verdict)
+  sub.classList.add(bannerTone(data.verdict))
   const bTarget = bannerTarget(data.verdict)
   if (bTarget) { ban.classList.add('boot-link'); targets.set(ban, bTarget) }
   inout(q('bar'), C0 - 150, 200, CHK_END + 100, 200)

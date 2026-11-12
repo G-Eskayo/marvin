@@ -12,13 +12,15 @@ const NOW = new Date('2026-10-14T17:00:00Z')
 const minutesAgo = (m) => new Date(NOW.getTime() - m * 60_000).toISOString()
 const check = (id, severity, label = id, detail = '') => ({ id, label, severity, detail })
 
-function tree({ health, memoryIndex = '- [A](a.md) — x\n- [B](b.md) — y\n', memoryFiles = ['a.md', 'b.md'], skills = ['tdd', 'diagnose'], handoffs = [] } = {}) {
+function tree({ health, memoryIndex = '- [A](a.md) — x\n- [B](b.md) — y\n', memoryFiles = ['a.md', 'b.md'], skills = ['tdd', 'diagnose'], handoffs = [], registry = {}, selfId = null } = {}) {
   const root = mkdtempSync(path.join(tmpdir(), 'boot-data-'))
   const p = {
     healthPath: path.join(root, 'logs', 'health-status.json'),
     memoryDir: path.join(root, 'memory'),
     skillsDir: path.join(root, 'skills'),
-    handoffsDir: path.join(root, 'handoffs')
+    handoffsDir: path.join(root, 'handoffs'),
+    registry,
+    selfId
   }
   for (const d of [path.dirname(p.healthPath), p.memoryDir, p.skillsDir, p.handoffsDir]) mkdirSync(d, { recursive: true })
   if (health !== undefined) writeFileSync(p.healthPath, typeof health === 'string' ? health : JSON.stringify(health))
@@ -153,17 +155,17 @@ describe('the summary lines read real sources', () => {
     t.done()
   })
 
-  it('LINK shows the Mac Mini problem in plain words: disk percent, failed job count', () => {
-    const disk = tree({ health: GREEN([]) })
+  it('LINK shows device problem in plain words: disk percent, failed job count', () => {
+    const disk = tree({ health: GREEN([]), registry: { 'mac-mini-1': { kind: 'desktop', tailscale_hostname: 'mini' } }, selfId: 'macbook-1' })
     // replace the disk check with a red one
     const h = GREEN(); h.checks = h.checks.map((c) => c.id === 'disk:space@mac-mini-1' ? { ...c, severity: 'red', detail: '22 GiB free of 228 (10%); 30 pipeline worktrees use 8.2 GiB' } : c)
     writeFileSync(disk.healthPath, JSON.stringify(h))
-    expect(line(buildBootData(disk), 'LINK')).toEqual({ chip: 'LINK', level: 'red', text: 'MAC-MINI · DISK 10% FREE', target: { tab: 'health', check: 'disk:space@mac-mini-1' } })
+    expect(line(buildBootData(disk), 'LINK')).toEqual({ chip: 'LINK', level: 'red', text: 'MAC-MINI-1 · DISK 10% FREE', target: { tab: 'health', check: 'disk:space@mac-mini-1' } })
     disk.done()
-    const jobs = tree({})
+    const jobs = tree({ health: GREEN(), registry: { 'mac-mini-1': { kind: 'desktop', tailscale_hostname: 'mini' } }, selfId: 'macbook-1' })
     const j = GREEN(); j.checks = j.checks.map((c) => c.id === 'jobs:exit@mac-mini-1' ? { ...c, severity: 'red', detail: 'last run failed: a (exit 1), b (exit 1), c (exit 78)' } : c)
     writeFileSync(jobs.healthPath, JSON.stringify(j))
-    expect(line(buildBootData(jobs), 'LINK').text).toBe('MAC-MINI · 3 JOBS FAILED')
+    expect(line(buildBootData(jobs), 'LINK').text).toBe('MAC-MINI-1 · 3 JOBS FAILED')
     jobs.done()
   })
 
@@ -229,6 +231,144 @@ describe('each summary line knows where its real thing lives (#433)', () => {
     expect(line(d, 'SYNC').target).toEqual({ tab: 'health' })
     expect(line(d, 'LINK').target).toEqual({ tab: 'health' })
     expect(line(d, 'TEST').target).toEqual({ tab: 'health' })
+    t.done()
+  })
+})
+
+describe('device lines for multi-machine setups', () => {
+  it('shows each peer device with its status from the registry', () => {
+    const t = tree({ health: GREEN(), registry: { 'mac-mini-1': { kind: 'desktop' }, 'macbook-1': { kind: 'laptop', display_name: 'MacBook Pro' } }, selfId: 'macbook-1' })
+    const d = buildBootData(t)
+    const link = line(d, 'LINK')
+    expect(link.text).toMatch(/MAC-MINI-1 · NOMINAL/)
+    t.done()
+  })
+
+  it('uses the device display_name from the registry when available', () => {
+    const t = tree({ health: GREEN(), registry: { 'mac-mini-1': { kind: 'desktop', display_name: 'Primary Host' } }, selfId: 'macbook-1' })
+    const d = buildBootData(t)
+    const link = line(d, 'LINK')
+    expect(link.text).toMatch(/PRIMARY HOST · NOMINAL/)
+    t.done()
+  })
+
+  it('skips the self device and only shows peers', () => {
+    const t = tree({ registry: { 'mac-mini-1': { kind: 'desktop' }, 'macbook-1': { kind: 'laptop' } }, selfId: 'mac-mini-1' })
+    const h = GREEN(); h.checks = h.checks.concat([
+      check('machine:macbook-1', 'green', 'Machine: macbook-1'),
+      check('disk:space@macbook-1', 'green', 'Disk space -- macbook-1', '200 GiB free of 250 (80%)'),
+      check('jobs:exit@macbook-1', 'green', 'Scheduled jobs -- macbook-1', 'all jobs exited cleanly')
+    ])
+    writeFileSync(t.healthPath, JSON.stringify(h))
+    const d = buildBootData(t)
+    const link = line(d, 'LINK')
+    expect(link.text).toMatch(/MACBOOK-1/)
+    t.done()
+  })
+
+  it('falls back to hardcoded mac-mini-1 behavior when registry is empty or missing', () => {
+    const t = tree({ health: GREEN() })
+    const h = GREEN(); h.checks = h.checks.map((c) => c.id === 'disk:space@mac-mini-1' ? { ...c, severity: 'red', detail: '2 GiB free of 228 (1%)' } : c)
+    writeFileSync(t.healthPath, JSON.stringify(h))
+    const d = buildBootData(t)
+    const link = line(d, 'LINK')
+    expect(link.text).toMatch(/MAC-MINI · DISK 1% FREE/)
+    t.done()
+  })
+
+  it('shows UNKNOWN when no registry and no mac-mini-1 checks exist', () => {
+    const t = tree({ health: { generated_at: minutesAgo(1), overall: 'green', checks: [check('main:green', 'green', 'Main', '5 passed')] } })
+    const d = buildBootData(t)
+    const link = line(d, 'LINK')
+    expect(link.level).toBe('yellow')
+    expect(link.text).toMatch(/UNKNOWN/)
+    t.done()
+  })
+
+  it('shows all peer devices in multi-device setups, not just the first', () => {
+    const h = GREEN(); h.checks = h.checks.concat([
+      check('machine:mac-studio-1', 'red', 'Machine: mac-studio-1'),
+      check('disk:space@mac-studio-1', 'red', 'Disk space -- mac-studio-1', '2 GiB free of 228 (1%)'),
+      check('jobs:exit@mac-studio-1', 'green', 'Scheduled jobs -- mac-studio-1', 'all jobs exited cleanly')
+    ])
+    const t = tree({
+      health: h,
+      registry: {
+        'mac-mini-1': { kind: 'desktop' },
+        'mac-studio-1': { kind: 'desktop' },
+        'macbook-1': { kind: 'laptop' }
+      },
+      selfId: 'macbook-1'
+    })
+    writeFileSync(t.healthPath, JSON.stringify(h))
+    const d = buildBootData(t)
+    const links = d.lines.filter((l) => l.chip === 'LINK')
+    expect(links.length).toBe(2)
+    expect(links[0].text).toMatch(/MAC-MINI-1/)
+    expect(links[1].text).toMatch(/MAC-STUDIO-1/)
+    t.done()
+  })
+
+  it('does not fall back to hardcoded mac-mini-1 when registry has peers but they have no checks yet', () => {
+    const t = tree({
+      health: { generated_at: minutesAgo(1), overall: 'green', checks: [check('main:green', 'green', 'Main', '5 passed')] },
+      registry: { 'mac-mini-1': { kind: 'desktop' }, 'mac-studio-1': { kind: 'desktop' } },
+      selfId: 'macbook-1'
+    })
+    const d = buildBootData(t)
+    const links = d.lines.filter((l) => l.chip === 'LINK')
+    // Should show UNKNOWN, not the hardcoded fallback
+    expect(links.length).toBe(1)
+    expect(links[0].level).toBe('yellow')
+    expect(links[0].text).toMatch(/DEVICES · UNKNOWN/)
+    t.done()
+  })
+})
+
+describe('first-run detection: fresh install with no health and no peers', () => {
+  it('detects first-run when health is null and there are no peer devices', () => {
+    const t = tree({ health: undefined, registry: {}, selfId: 'macbook-1' })
+    const d = buildBootData(t)
+    expect(d.verdict).toEqual({ nominal: false, tone: 'first-run', text: 'MARVIN STARTING' })
+    t.done()
+  })
+
+  it('is NOT first-run when health exists, even with no peers', () => {
+    const t = tree({ health: GREEN(), registry: {}, selfId: 'macbook-1' })
+    const d = buildBootData(t)
+    expect(d.verdict.tone).not.toBe('first-run')
+    t.done()
+  })
+
+  it('is NOT first-run when peers exist, even with no health', () => {
+    const t = tree({ health: undefined, registry: { 'mac-mini-1': { kind: 'desktop' } }, selfId: 'macbook-1' })
+    const d = buildBootData(t)
+    expect(d.verdict.tone).not.toBe('first-run')
+    t.done()
+  })
+
+  it('is NOT first-run when selfId is not set (unknown which device this is)', () => {
+    const t = tree({ health: undefined, registry: {}, selfId: null })
+    const d = buildBootData(t)
+    expect(d.verdict.tone).not.toBe('first-run')
+    t.done()
+  })
+
+  it('shows TESTS · PENDING with lock level on first-run, not yellow UNKNOWN', () => {
+    const t = tree({ health: undefined, registry: {}, selfId: 'macbook-1' })
+    const d = buildBootData(t)
+    const test = line(d, 'TEST')
+    expect(test.level).toBe('lock')
+    expect(test.text).toBe('TESTS · PENDING')
+    expect(test.target).toBeNull()
+    t.done()
+  })
+
+  it('shows all lines with lock level on first-run, no yellow or red', () => {
+    const t = tree({ health: undefined, registry: {}, selfId: 'macbook-1' })
+    const d = buildBootData(t)
+    const hasYellowOrRed = d.lines.some((l) => l.level === 'yellow' || l.level === 'red')
+    expect(hasYellowOrRed).toBe(false)
     t.done()
   })
 })

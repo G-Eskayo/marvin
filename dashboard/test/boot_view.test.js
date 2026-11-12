@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { shouldPlay, bannerTone, lineTone, lineTarget, bannerTarget, healthFocus } from '../src/lib/boot_view.js'
+import { shouldPlay, bannerTone, lineTone, lineTarget, bannerTarget, healthFocus, subtitleText } from '../src/lib/boot_view.js'
 
 describe('shouldPlay', () => {
   it('plays only on the launch\'s first load, without Reduce Motion, where animation works', () => {
@@ -19,6 +19,9 @@ describe('bannerTone', () => {
     expect(bannerTone({ nominal: false, tone: 'issues' })).toBe('issues')
     expect(bannerTone({ tone: 'something-new' })).toBe('unknown')
     expect(bannerTone(undefined)).toBe('unknown')
+  })
+  it('looks first-run for a fresh install', () => {
+    expect(bannerTone({ tone: 'first-run' })).toBe('first-run')
   })
 })
 
@@ -41,10 +44,11 @@ describe('what is clickable in the boot (#433)', () => {
     expect(lineTarget({ target: { tab: 'nowhere' } })).toBeNull()
     expect(lineTarget({ target: { tab: 'health', check: 42 } })).toEqual({ tab: 'health' })
   })
-  it('the banner is clickable only when it is not nominal', () => {
+  it('the banner is clickable only when it is not nominal, and not first-run', () => {
     expect(bannerTarget({ nominal: true, tone: 'nominal' })).toBeNull()
     expect(bannerTarget({ nominal: false, tone: 'issues' })).toEqual({ tab: 'health' })
     expect(bannerTarget({ nominal: false, tone: 'unknown' })).toEqual({ tab: 'health' })
+    expect(bannerTarget({ tone: 'first-run' })).toBeNull()
   })
 })
 
@@ -56,5 +60,18 @@ describe('healthFocus: which check the Health tab should land on', () => {
     expect(healthFocus({ tab: 'health', check: { evil: 1 } })).toBeNull()
     expect(healthFocus({ tab: 'health', check: '' })).toBeNull()
     expect(healthFocus(null)).toBeNull()
+  })
+})
+
+describe('subtitleText: text below the MARVIN title', () => {
+  it('shows INITIALIZING SYSTEMS on first-run', () => {
+    expect(subtitleText({ tone: 'first-run' })).toBe('INITIALIZING SYSTEMS')
+  })
+  it('shows SYSTEMS ONLINE for all other cases', () => {
+    expect(subtitleText({ tone: 'nominal' })).toBe('SYSTEMS ONLINE')
+    expect(subtitleText({ tone: 'issues' })).toBe('SYSTEMS ONLINE')
+    expect(subtitleText({ tone: 'unknown' })).toBe('SYSTEMS ONLINE')
+    expect(subtitleText({})).toBe('SYSTEMS ONLINE')
+    expect(subtitleText(undefined)).toBe('SYSTEMS ONLINE')
   })
 })
