@@ -45,8 +45,8 @@ For each real divergence found:
   findings only, files under ~/.agents, never files in auto_fix.py's own _core_files()
   exclusion list) — run auto_fix.py, don't fix it yourself.
 - Otherwise, do NOT fix it. Queue a suggestion in the inbox (`inbox.py import suggestions --file <entry.md>`,
-  see architecture-review's SKILL.md) using architecture-review's exact entry format (## [date] [title], Status: pending, Impact,
-  Effort, Why, What, How) so it's queued for review, not silently changed.
+  see `~/.agents/skills/architecture-review/SKILL.md`'s "Entry format:" block) with fields: **Priority**, **Status**,
+  **Impact**, **Effort**, **Why**, **What**, **How**, **Added** — so it's queued for review, not silently changed.
 
 Report back: what you found, what you fixed (if anything, via auto_fix.py), what you queued.
 ```
