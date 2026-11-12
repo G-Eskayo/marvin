@@ -101,3 +101,8 @@ def test_auto_fix_reports_through_its_pr_and_the_owner_reads_it_in_mr_review():
     """2026-10-26: auto-fix opens one gated PR a day instead of editing the shared checkout, so its output is that PR."""
     job = jc.JOBS["auto-fix"]
     assert "PR" in job["reporter"] and "MR Review" in job["consumer"] and "review" not in job
+
+
+def test_tidy_agent_is_placed_on_the_mini_only():
+    """tidy-agent should run only on the Mini (primary automation host), not on both machines."""
+    assert jc.JOBS["tidy-agent"]["machine"] == "mini"

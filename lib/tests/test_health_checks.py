@@ -663,6 +663,16 @@ def test_job_placement_flags_missing_stray_and_unplaced_jobs():
     assert sev == "yellow" and "missing: code-sync-push" in detail
 
 
+def test_job_placement_flags_tidy_agent_stray_on_the_laptop():
+    """tidy-agent runs only on the Mini, so if loaded on the laptop, it's stray and should be flagged."""
+    # After the fix, tidy-agent machine should be "mini", not "both"
+    assert hc.JOB_PLACEMENT["tidy-agent"] == "mini"
+    # When tidy-agent is in the laptop's loaded jobs, it should be flagged as stray
+    laptop_jobs = [j for j, w in hc.JOB_PLACEMENT.items() if w in ("both", "laptop")]
+    sev, detail = hc.evaluate_job_placement(laptop_jobs + ["tidy-agent"], "laptop")
+    assert sev == "yellow" and "tidy-agent" in detail
+
+
 # ── GitHub request budget (the pipeline, merge gate and dashboard all draw on one hourly allowance) ──
 
 def _budget(remaining, limit=5000, reset="2026-10-06T05:00:00Z"):
