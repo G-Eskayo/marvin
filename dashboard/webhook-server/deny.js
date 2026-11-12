@@ -78,3 +78,30 @@ export async function dropEntirely({ prUrl, ticketNumber }, exec = execFileAsync
   }
   await releaseClaim(ticketNumber, exec, repo)
 }
+
+export async function handleDenyRequest({ action, prUrl, ticketNumber, reasons, comment }, exec = execFileAsync) {
+  if (action !== 'send_feedback' && action !== 'drop') {
+    return {
+      status: 400,
+      body: { done: false, error: `Unknown deny action: ${action}` }
+    }
+  }
+
+  try {
+    if (action === 'send_feedback') {
+      await sendFeedback({ prUrl, ticketNumber, reasons, comment }, exec)
+    } else {
+      await dropEntirely({ prUrl, ticketNumber }, exec)
+    }
+    return {
+      status: 200,
+      body: { done: true }
+    }
+  } catch (err) {
+    return {
+      status: 500,
+      body: { done: false, error: String(err.message || err) },
+      error: `Deny failed for ${prUrl}: ${err?.stack || err}`
+    }
+  }
+}

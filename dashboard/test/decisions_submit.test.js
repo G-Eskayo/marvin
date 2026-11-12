@@ -126,7 +126,12 @@ describe('sendBackForOptions', () => {
     const deny = vi.fn().mockResolvedValue({ ok: true })
     const r = await sendBackForOptions({ prUrl: 'https://github.com/o/r/pull/9', ticketNumber: 12, reasons: ['"## Choose" asks'] }, { exec: vi.fn(), deny })
     expect(r.sentBack).toBe(true)
-    expect(deny).toHaveBeenCalledWith(expect.objectContaining({ ticketNumber: 12, action: 'feedback', comment: expect.stringContaining('<!-- marvin:decisions -->') }))
+    expect(deny).toHaveBeenCalledWith(expect.objectContaining({ ticketNumber: 12, action: 'send_feedback', comment: expect.stringContaining('<!-- marvin:decisions -->') }))
+  })
+
+  it('when the deny webhook is down, the error propagates', async () => {
+    const deny = vi.fn().mockRejectedValue(new Error('webhook unavailable'))
+    await expect(sendBackForOptions({ prUrl: 'https://github.com/o/r/pull/9', ticketNumber: 12, reasons: [] }, { exec: vi.fn(), deny })).rejects.toThrow('webhook unavailable')
   })
 
   it('a hand-made PR gets the request as a comment', async () => {

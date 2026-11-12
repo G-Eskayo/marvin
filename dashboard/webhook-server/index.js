@@ -9,7 +9,7 @@ import { pendingCheckHeads } from '../electron/main/mr_repos.js'
 import { snapshotExec } from './pr_snapshot.js'
 import { createMergeTracker, createInflightStore, takeInterruptedMerges, recordMergeDuration, estimateMergeMs, machineLoad, approveResponder, wantsStream, createMergeLatch, alreadyMergingBody } from './merge_progress.js'
 import { resolveDeviceId, peerHosts, isPrimaryHost } from '../electron/main/device_identity.js'
-import { sendFeedback, dropEntirely } from './deny.js'
+import { sendFeedback, dropEntirely, handleDenyRequest } from './deny.js'
 import { forwardRefreshPing } from './refresh_relay.js'
 import { announceMergeHost, relayMergeHostUp } from './merge_host_announce.js'
 import { createStageRelay, createLiveMerges, allowedPeerAddress, cleanStageMessage, stageFanOut } from './merge_stage_relay.js'
@@ -316,26 +316,11 @@ const server = createServer(async (req, res) => {
 
   // req.url === '/deny'
   const { action, pr_url: prUrl, ticket_number: ticketNumber, reasons, comment } = payload
-  if (action !== 'send_feedback' && action !== 'drop') {
-    res.writeHead(400, { 'Content-Type': 'application/json' }).end(
-      JSON.stringify({ done: false, error: `Unknown deny action: ${action}` })
-    )
-    return
+  const { status, body, error } = await handleDenyRequest({ action, prUrl, ticketNumber, reasons, comment }, promisify(execFile))
+  if (error) {
+    appendError({ source: 'webhook:deny', message: error, raw: error })
   }
-
-  try {
-    if (action === 'send_feedback') {
-      await sendFeedback({ prUrl, ticketNumber, reasons, comment })
-    } else {
-      await dropEntirely({ prUrl, ticketNumber })
-    }
-    res.writeHead(200, { 'Content-Type': 'application/json' }).end(JSON.stringify({ done: true }))
-  } catch (err) {
-    appendError({ source: 'webhook:deny', message: `Deny failed for ${prUrl}`, raw: err?.stack || err })
-    res.writeHead(500, { 'Content-Type': 'application/json' }).end(
-      JSON.stringify({ done: false, error: String(err.message || err) })
-    )
-  }
+  res.writeHead(status, { 'Content-Type': 'application/json' }).end(JSON.stringify(body))
 })
 
 // marvin#762/#940: tell this Mac's dashboard and the other Macs' that this one can merge (or just merged a waiting
