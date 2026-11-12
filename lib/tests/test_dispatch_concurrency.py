@@ -237,3 +237,15 @@ def test_refresh_dispatch_state_summary_idle_when_no_records(tmp_path, monkeypat
     import stamped
     assert {k: v for k, v in state.items() if k not in stamped.STAMP_KEYS} == {"busy": False}
     assert state["tolerance_s"] == dc.DISPATCH_TOLERANCE_S and state["alive_at"]  # stamped (marvin#1223)
+
+
+def test_the_shipped_dispatch_config_is_valid_and_turns_box_builds_on():
+    """config/dispatch.json asked for 2 box slots while BOX_MAX_SLOTS is 1, so validate() dropped the value and the
+    default 0 turned box builds off for weeks without anyone seeing it (found live 2026-11-12). Every field of the
+    shipped file must survive validation."""
+    import json
+    from pathlib import Path
+    raw = json.loads((Path(__file__).resolve().parents[2] / "config" / "dispatch.json").read_text())
+    clean, problems = dc.validate(raw)
+    assert problems == []
+    assert dc.box_slots(clean) >= 1
