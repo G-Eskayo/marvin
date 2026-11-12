@@ -1,0 +1,36 @@
+## North-star fit
+
+- **Reuses:** `safety_labels.js`'s `handleSafetyRequest({method,url,body}, run) → {status, json}` pattern (dashboard/webhook-server/safety_labels.js:11), the only existing precedent in this server for pulling a route's dispatch logic out of `index.js`'s monolithic request handler into a small, directly-testable function. `deny.js` already holds `sendFeedback`/`dropEntirely` with exec-injection (`exec = execFileAsync`) for testing against a fake `gh` — the new function uses that same injection point rather than inventing a new one.
+- **Simplest sufficient approach:** the whole bug is one string literal (`'feedback'` vs `'send_feedback'`) at `decisions_submit.js:118`, confirmed by ADR 0025, which names the two terminal actions `send_feedback` and `drop`. No design question exists — `decisions_submit.js` simply didn't follow the ADR's vocabulary. The only reason this needs more than a one-line diff is the ticket's own acceptance criterion: a real (non-mocked-at-the-dispatch-level) test through `/deny`. That requires the dispatch logic to be callable outside the full HTTP server (which has heavy module-level side effects — real `gh` polling, merge-queue kickoff, file watchers — unsafe to import in a test as-is), so it gets extracted, mirroring the one existing precedent for that exact problem.
+- **Tokens:** spends a small, fixed amount once (one extracted function + a handful of unit tests) to close a bug that has already cost 5 failed automated verification passes recorded in the issue's own comments (each a ~1200s timeout) — net saves tokens going forward versus leaving a webhook endpoint with an un-exercised dispatch path.
+- **User capability:** fixes a broken "Too vague: needs options" send-back button Gil clicks directly in the dashboard; purely a defect fix, no behavior to coach instead of automate — restores an existing capability rather than replacing judgment.
+- **Machine:** no machine-specific concern; this is a pure code change in the `dashboard/` webhook-server and Electron main process, run and tested wherever the repo is checked out.
+- **Correction to the ticket's stated fit:** the ticket's "Fix" line is correct and precise (`action: 'send_feedback'`) and needs no correction. Its "Integration test through `/deny`" instruction is the part requiring design: the real `/deny` handler is presently inline in `index.js`'s `createServer` callback with no extraction, so "the real handler" currently cannot be exercised without the side effects described above. The plan below extracts it minimally, using the one pattern that already does this in this file.
+
+No Decisions needed — the fix is unambiguous and fully specified by the ticket text and ADR 0025; nothing here requires an owner choice.
+
+## Tests (written first)
+
+From "How we'll try to break it" (+ misuse patterns the section didn't name):
+
+1. **PR with no ticket** — `handleDenyRequest({ action: 'send_feedback', prUrl, ticketNumber: null, ... })` succeeds, skips ticket-scoped `gh` calls (mirrors `deny.test.js`'s existing "skips ticket-scoped calls when there is no linked ticket" pattern, now exercised through the dispatcher, not just `sendFeedback` directly).
+2. **Webhook down / non-2xx response** — `sendBackForOptions(...)` with a `deny` that rejects (simulating `denyMr`'s `Webhook call failed: ${status}` throw) propagates the rejection rather than reporting `sentBack: true`; this is the one new case at the `decisions_submit.js` layer since that's the file being touched.
+3. **Stale/wrong action vocabulary (regression lock for this exact bug)** — `handleDenyRequest({ action: 'feedback', ... })` (the old, buggy value) returns `{status: 400}` and never calls `sendFeedback`/`dropEntirely`. Also an empty-string and `undefined` action.
+4. **The two real actions, through the real dispatcher** — `action: 'send_feedback'` → `sendFeedback` actually runs (asserted via the injected fake `gh` exec seeing the real `pr comment` / `issue comment` / release-claim / `needs-reengagement` calls) and returns `{status: 200}`; `action: 'drop'` → `dropEntirely` runs and returns `{status: 200}`.
+5. **Malformed input** — `prUrl` not a GitHub URL → `handleDenyRequest` catches `sendFeedback`'s/`dropEntirely`'s thrown "Not a GitHub PR URL" and returns `{status: 500}` rather than letting it escape unhandled.
+6. **Dependency failing** — injected `gh` exec rejects (e.g. mid-`sendFeedback`) → `handleDenyRequest` returns `{status: 500}` with the error surfaced for `index.js`'s `appendError`, not swallowed.
+7. **Concurrency** — two concurrent `handleDenyRequest` calls for different PRs (one `send_feedback`, one `drop`) run without cross-talk (stateless function; guards against an accidental shared-mutable-state regression later).
+8. **Existing coverage to fix, not leave green on a bug** — `decisions_submit.test.js:129`'s assertion `action: 'feedback'` currently encodes the bug and must change to `action: 'send_feedback'`, or verify would pass with the defect still present.
+9. **Acceptance criterion "ticket is retagged"** — already covered by `sendFeedback`'s existing `needs-reengagement` label-add test in `deny.test.js`; the new dispatcher test (#4) just confirms that behavior is still reached when driven through `/deny`'s action check rather than calling `sendFeedback` directly.
+
+No screenshots: nothing visible changes (button, modal, and card markup are untouched — only the action string and server-side dispatch), so acceptance criterion 3 ("if anything visible changes") doesn't apply.
+
+## Task List
+
+1. Fix `dashboard/electron/main/decisions_submit.js:118`: change `action: 'feedback'` to `action: 'send_feedback'`.
+2. Extract the `/deny` dispatch logic out of `dashboard/webhook-server/index.js`'s inline request handler (lines ~317–338) into a new exported `handleDenyRequest({ action, prUrl, ticketNumber, reasons, comment }, exec = execFileAsync)` in `dashboard/webhook-server/deny.js`, returning `{ status, body, error? }`, mirroring `safety_labels.js`'s `handleSafetyRequest` shape.
+3. Update `index.js`'s `/deny` branch to call `handleDenyRequest(...)`, write `res` from its `{status, body}`, and call `appendError` when `error` is present — preserving current logging/response behavior exactly.
+4. Add the new tests (above) to `dashboard/test/deny.test.js` (dispatcher-level tests, items 1, 3–7) using the file's existing `execReturning`/inline fake-`gh` patterns.
+5. Add the "webhook down" rejection-propagation test (item 2) to `dashboard/test/decisions_submit.test.js`'s `sendBackForOptions` describe block.
+6. Fix the stale assertion in `dashboard/test/decisions_submit.test.js:129` from `action: 'feedback'` to `action: 'send_feedback'`.
+7. Run the full dashboard test suite (not just the touched files) before calling this done, per the "main green" rule — this is a shared webhook entrypoint other flows (`mr:deny` from the Deny modal) pass through too; confirm nothing else assumed the old `'feedback'` string anywhere else in `dashboard/` (checked above — only `mrActions.denied`'s local UI-state `action: 'feedback'` uses that literal, and it's an unrelated, separate vocabulary that must stay as-is).

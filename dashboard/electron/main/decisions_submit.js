@@ -115,7 +115,7 @@ export const OPTIONS_REQUEST = (reasons = []) =>
 export async function sendBackForOptions({ prUrl, ticketNumber, reasons }, { exec, deny }) {
   const comment = OPTIONS_REQUEST(reasons || [])
   if (ticketNumber) {
-    await deny({ prUrl, ticketNumber, action: 'feedback', reasons: ['Design/requirements mismatch'], comment })
+    await deny({ prUrl, ticketNumber, action: 'send_feedback', reasons: ['Design/requirements mismatch'], comment })
     return { sentBack: true, commented: true }
   }
   await exec('gh', ['pr', 'comment', prUrl, '--body', comment])
