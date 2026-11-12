@@ -7,9 +7,9 @@
 // exception is a PR that is only WAITING (checks running, decisions to answer), where a disabled Approve tells
 // you it is coming. Order is the merge queue's (marvin#231): a stacked PR can be approved, and waits in the queue.
 
-// Refusals the screen already explains with a state of its own. If one of these is left over from an earlier
-// click it is stale as soon as the state changes, so it is never shown as an error.
-const MIRRORED_REFUSALS = /^(SENT_BACK|CI_PENDING|CI_FAILED|WRONG_BASE|NO_UI_EVIDENCE|IMAGES_UNPINNED|IMAGES_STALE|DECISIONS_PENDING|DECISIONS_UNSTRUCTURED)\b/
+// Codes the function re-derives live above this point. If one of these is left over from an earlier click,
+// it is stale as soon as the state changes, so it is never shown as an error.
+const MIRRORED_REFUSALS = /^(SENT_BACK|CI_PENDING|CI_FAILED|WRONG_BASE|NO_UI_EVIDENCE|IMAGES_UNPINNED|DECISIONS_PENDING|DECISIONS_UNSTRUCTURED)\b/
 
 // The owner's answer on #767 (marvin#848): a draft offers no Approve until it's marked ready for review. A merge
 // already under way (merging, saved, merged) is shown as it is.
@@ -174,6 +174,13 @@ function describeState(pr, { status = 'idle', errorMessage = null, progress = fa
   if (status === 'error' && /^GITHUB_OUTAGE\b/.test(errorMessage || '')) {
     return base('github-outage', 'wait', 'GitHub is having an outage',
       'The last merge attempt hit a GitHub server error (githubstatus.com). Nothing is wrong with this PR and it was not sent back. Approve again once GitHub recovers.', 'enabled', 'enabled')
+  }
+
+  // IMAGES_STALE cannot be re-verified live: it needs the gate's `gh api compare` to check whether
+  // UI files changed after the pinned commit. The user can re-pin images in the PR body without pushing,
+  // so Approve stays enabled to allow a retry (like GITHUB_OUTAGE above).
+  if (status === 'error' && /^IMAGES_STALE\b/.test(errorMessage || '')) {
+    return base('images-stale', 'blocked', 'Images are older than the latest change', errorMessage, 'enabled', 'enabled')
   }
 
   if (status === 'error' && errorMessage && !MIRRORED_REFUSALS.test(errorMessage)) {
