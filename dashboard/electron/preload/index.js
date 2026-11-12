@@ -149,6 +149,7 @@ contextBridge.exposeInMainWorld('api', {
   docs: {
     repos: () => ipcRenderer.invoke('docs:repos'),
     refresh: () => ipcRenderer.invoke('docs:refresh'),
+    build: () => ipcRenderer.invoke('docs:build'),
     tree: (repo) => ipcRenderer.invoke('docs:tree', repo),
     content: (repo, path) => ipcRenderer.invoke('docs:content', repo, path),
     image: (repo, docPath, src) => ipcRenderer.invoke('docs:image', repo, docPath, src),

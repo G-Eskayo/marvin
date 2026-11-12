@@ -62,7 +62,7 @@ export function createDocsService({ getCatalog, exec, readMaster, fallbackRepos 
 
   async function repos() {
     const cat = catalog()
-    const master = { id: MASTER_ID, name: 'Where things are', kind: 'master', status: 'active', local: null }
+    const master = { id: MASTER_ID, name: 'Where things are', kind: 'master', status: 'active', local: null, missing: readMaster() == null }
     if (!cat) {
       return { generated_at: null, repos: [master, ...unsortedEntry(), ...fallbackRepos().map((r) => ({ id: r.name, name: r.name, kind: 'repo', status: 'active', local: null }))] }
     }

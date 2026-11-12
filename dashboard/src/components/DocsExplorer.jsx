@@ -9,6 +9,7 @@ import { getCachedFile, putCachedFile, clearCachedFiles, prefetchTextFiles } fro
 import { KINDS, KIND_LABEL, groupTree, visibleKinds, toggleChip, mainView, searchGroups, countLine, overviewPicks, formatDay, matchedBy, deliverableSummary, rankedResults } from '../lib/docs_view.js'
 import { formatSize as kindSize } from '../lib/file_kinds.js'
 import { DeliverablesGrid, DeliverableHeader, FolderGrid, TicketChip, Thumbs } from './DocsDeliverables.jsx'
+import { cleanIpcError } from '../lib/ipcError.js'
 
 function formatTimestamp(iso) {
   if (!iso) return 'never'
@@ -21,6 +22,22 @@ function formatTimestamp(iso) {
 
 const MASTER_ID = '__master__'
 const UNSORTED_ID = '__unsorted__'
+
+function MasterEmptyState({ building, error, onBuild }) {
+  return (
+    <div className="flex h-full flex-col items-center justify-center p-6 text-center">
+      <p className="mb-4 text-sm text-neutral-400">MARVIN builds this map overnight.</p>
+      <button
+        onClick={onBuild}
+        disabled={building}
+        className="rounded bg-neutral-700 px-3 py-1.5 text-sm text-white disabled:opacity-50 hover:bg-neutral-600"
+      >
+        {building ? 'Building…' : 'Build it now'}
+      </button>
+      {error && <p className="mt-3 text-xs text-red-400">{error}</p>}
+    </div>
+  )
+}
 
 const RepoList = memo(function RepoList({ repos, generatedAt, refreshing, onRefresh, selected, onSelect }) {
   return (
@@ -573,6 +590,7 @@ function SummaryCards({ groups, chips, headings, onShowAll, onOpenDoc, onOpenDel
 export default function DocsExplorer({ nav, onOpenBoard, onOpenTicket, onOpenPr }) {
   const [cache, setCache] = useState({ generated_at: null, repos: [] })
   const [refreshing, setRefreshing] = useState(false)
+  const [building, setBuilding] = useState(false)
   const [selectedRepo, setSelectedRepo] = useState(null)
   const [tree, setTree] = useState([])
   const [deliverables, setDeliverables] = useState([])
@@ -625,7 +643,7 @@ export default function DocsExplorer({ nav, onOpenBoard, onOpenTicket, onOpenPr 
       window.api.docs
         .search(query)
         .then((r) => live && setSearchState(r))
-        .catch((err) => live && setError(String(err)))
+        .catch((err) => live && setError(cleanIpcError(err)))
     }, 200)
     return () => {
       live = false
@@ -643,7 +661,7 @@ export default function DocsExplorer({ nav, onOpenBoard, onOpenTicket, onOpenPr 
       window.api.docs
         .files(query)
         .then((r) => live && setFilesState(r))
-        .catch((err) => live && setFilesState({ name: [], content: [], error: String(err) }))
+        .catch((err) => live && setFilesState({ name: [], content: [], error: cleanIpcError(err) }))
     }, 500)
     return () => {
       live = false
@@ -773,9 +791,28 @@ export default function DocsExplorer({ nav, onOpenBoard, onOpenTicket, onOpenPr 
     try {
       setCache(docsCacheFrom(await window.api.docs.refresh()))
     } catch (err) {
-      setError(String(err))
+      setError(cleanIpcError(err))
     } finally {
       setRefreshing(false)
+    }
+  }
+
+  async function handleBuildMaster() {
+    setBuilding(true)
+    setError(null)
+    try {
+      const r = await window.api.docs.build()
+      if (!r.ok) {
+        setError(r.output)
+        return
+      }
+      await window.api.docs.refresh()
+      setCache((cur) => docsCacheFrom({ ...cur, repos: cur.repos.map((repo) => repo.id === MASTER_ID ? { ...repo, missing: false } : repo) }))
+      openFile(MASTER_ID, 'WHERE-THINGS-ARE.md')
+    } catch (err) {
+      setError(cleanIpcError(err))
+    } finally {
+      setBuilding(false)
     }
   }
 
@@ -812,7 +849,7 @@ export default function DocsExplorer({ nav, onOpenBoard, onOpenTicket, onOpenPr 
           }
         })
       })
-      .catch((err) => setError(String(err)))
+      .catch((err) => setError(cleanIpcError(err)))
   }
 
   function handleSelectRepo(repoName) {
@@ -821,8 +858,12 @@ export default function DocsExplorer({ nav, onOpenBoard, onOpenTicket, onOpenPr 
     setContent(null)
     setFile(null)
     setShowResults(false)
+    setError(null)
     loadTree(repoName)
-    if (repoName !== UNSORTED_ID) openFile(repoName, repoName === MASTER_ID ? 'WHERE-THINGS-ARE.md' : 'PROJECT.md')
+    const selectedProject = cache.repos.find((r) => r.id === repoName)
+    if (repoName !== UNSORTED_ID && !(repoName === MASTER_ID && selectedProject?.missing)) {
+      openFile(repoName, repoName === MASTER_ID ? 'WHERE-THINGS-ARE.md' : 'PROJECT.md')
+    }
   }
 
   function openFile(repoName, filePath, headingIndex = null) {
@@ -845,7 +886,7 @@ export default function DocsExplorer({ nav, onOpenBoard, onOpenTicket, onOpenPr 
         rememberDoc(key, text)
         setContent(text)
       })
-      .catch((err) => setError(String(err)))
+      .catch((err) => setError(cleanIpcError(err)))
       .finally(() => setLoading(false))
   }
 
@@ -870,7 +911,7 @@ export default function DocsExplorer({ nav, onOpenBoard, onOpenTicket, onOpenPr 
         putCachedFile(rel, f)
         if (req === fileReq.current) setFile(f)
       })
-      .catch((err) => req === fileReq.current && setError(String(err)))
+      .catch((err) => req === fileReq.current && setError(cleanIpcError(err)))
       .finally(() => req === fileReq.current && setLoading(false))
   }
 
@@ -934,6 +975,7 @@ export default function DocsExplorer({ nav, onOpenBoard, onOpenTicket, onOpenPr 
 
   function renderMain() {
     if (showResults) return <SearchResults state={searchState} query={query} chips={chips} onOpen={handleOpenResult} nameOf={nameOf} files={filesState} onOpenProject={handleSelectRepo} />
+    if (selectedRepo === MASTER_ID && selectedProject?.missing) return <MasterEmptyState building={building} error={error} onBuild={handleBuildMaster} />
     if (error) return <div className="p-6 text-red-400">Failed to load: {error}</div>
     if (view === 'folder') {
       const owner = ownerOf(sel.path)

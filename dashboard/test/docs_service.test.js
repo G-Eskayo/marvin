@@ -46,6 +46,18 @@ describe('repos', () => {
     const out = await svc(null, { fallbackRepos: () => [{ name: 'marvin' }] }).repos()
     expect(out.repos.map((r) => r.id)).toEqual([MASTER_ID, 'marvin'])
   })
+
+  it('marks the master entry missing when readMaster returns null', async () => {
+    const out = await svc(catalog(rec()), { readMaster: () => null }).repos()
+    const master = out.repos.find((r) => r.id === MASTER_ID)
+    expect(master.missing).toBe(true)
+  })
+
+  it('marks the master entry not missing when a doc exists', async () => {
+    const out = await svc(catalog(rec()), { readMaster: () => '# Where things are\n' }).repos()
+    const master = out.repos.find((r) => r.id === MASTER_ID)
+    expect(master.missing).toBe(false)
+  })
 })
 
 describe('tree', () => {
@@ -93,6 +105,11 @@ describe('content', () => {
 
   it('rejects an unknown project', async () => {
     await expect(svc(catalog(rec())).content('nope', 'CONTEXT.md')).rejects.toThrow(/unknown project/i)
+  })
+
+  it('throws when the master doc has not been generated yet', async () => {
+    const s = svc(catalog(rec()), { readMaster: () => null })
+    await expect(s.content(MASTER_ID, 'WHERE-THINGS-ARE.md')).rejects.toThrow(/master doc has not been generated/i)
   })
 })
 
