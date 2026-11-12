@@ -1,0 +1,10 @@
+1. In `dashboard/src/lib/prState.js`: narrow `MIRRORED_REFUSALS` to `SENT_BACK|CI_PENDING|CI_FAILED|WRONG_BASE|DECISIONS_PENDING|DECISIONS_UNSTRUCTURED` (confirmed self-verifying — derived straight from the same `pr` data / shared `decisions.js` the gate uses, no duplicate list).
+2. Add two dedicated branches in `describeState`, placed right after the existing `GITHUB_OUTAGE` check and before the generic `MIRRORED_REFUSALS`/`'error'` fallback:
+   - `NO_UI_EVIDENCE`/`IMAGES_UNPINNED` → `kind: 'needs-images', tone: 'blocked', headline: 'Needs images', detail: errorMessage, approve: 'disabled', deny: 'enabled'`.
+   - `IMAGES_STALE` → `kind: 'images-stale', tone: 'blocked', headline: 'Images are older than the latest change', detail: errorMessage, approve: 'disabled', deny: 'enabled'`.
+3. Update the file's top comment (lines 10-11) to state the narrower, accurate scope of what's safe to auto-clear vs. the three codes that are always shown.
+4. Write the tests above in `dashboard/test/pr_state.test.js` (TDD: write and watch them fail against current code first).
+5. Implement steps 1-2, make the new/extended tests pass, run the full `dashboard` test suite (not just this file) to confirm no regression elsewhere (e.g. `mr_review.test.js`, `merge_ops.test.js`).
+6. Update `CONTEXT.md:1681` to match the corrected, documented set of auto-cleared codes and mention the new `needs-images`/`images-stale` blocked fallback.
+7. Run the dashboard locally, drive a PR card into each of the three new states (can be done by stubbing/mocking the approve webhook response rather than needing a real gate refusal), and capture screenshots at 900px and 1440px; pin them to the PR per `docs/agents/showing-things.md`.
+8. Open the PR, citing #807 and noting #743 as the still-open root-cause ticket for the dashboard/gate UI-path-list duplication this fix works around rather than resolves.

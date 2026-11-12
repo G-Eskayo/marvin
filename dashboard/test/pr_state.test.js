@@ -31,7 +31,7 @@ describe('describePrState: one headline, only the buttons that make sense', () =
   })
 
   it('and once that state clears, the stale refusal does not come back', () => {
-    for (const code of ['SENT_BACK', 'CI_PENDING', 'CI_FAILED', 'WRONG_BASE']) {
+    for (const code of ['SENT_BACK', 'CI_PENDING', 'CI_FAILED', 'WRONG_BASE', 'DECISIONS_PENDING', 'DECISIONS_UNSTRUCTURED']) {
       expect(state({}, { status: 'error', errorMessage: `${code} at request: x` }).kind).toBe('ready')
     }
   })
@@ -110,6 +110,59 @@ describe('describePrState: one headline, only the buttons that make sense', () =
     const s = state({}, { status: 'reengaged', errorMessage: 'REBASE_CONFLICT: ...' })
     expect(s.kind).toBe('sent-back-now')
     expect(s.approve).toBe('hidden')
+  })
+
+  it('NO_UI_EVIDENCE (dashboard missing from gate path list) shows as blocked with no Approve', () => {
+    const s = state({}, { status: 'error', errorMessage: 'NO_UI_EVIDENCE at ui_evidence: no dashboard in project paths' })
+    expect(s.kind).toBe('needs-images')
+    expect(s.tone).toBe('blocked')
+    expect(s.approve).toBe('disabled')
+    expect(s.deny).toBe('enabled')
+    expect(s.detail).toMatch(/NO_UI_EVIDENCE/)
+  })
+
+  it('IMAGES_UNPINNED (image links not tied to a commit) shows as blocked with no Approve', () => {
+    const s = state({}, { status: 'error', errorMessage: 'IMAGES_UNPINNED at ...' })
+    expect(s.kind).toBe('needs-images')
+    expect(s.tone).toBe('blocked')
+    expect(s.approve).toBe('disabled')
+    expect(s.deny).toBe('enabled')
+  })
+
+  it('IMAGES_STALE (images older than latest commit) shows as blocked with no Approve', () => {
+    const s = state({}, { status: 'error', errorMessage: 'IMAGES_STALE at ...' })
+    expect(s.kind).toBe('images-stale')
+    expect(s.tone).toBe('blocked')
+    expect(s.headline).toContain('older than the latest change')
+    expect(s.approve).toBe('disabled')
+    expect(s.deny).toBe('enabled')
+  })
+
+  it('image-related blocks are not overridden by native needsImages (precedence: native wins)', () => {
+    const s = state({ needsImages: { files: [] } }, { status: 'error', errorMessage: 'NO_UI_EVIDENCE at ...' })
+    expect(s.kind).toBe('needs-images')
+    expect(s.approve).toBe('hidden')
+    expect(s.detail).not.toMatch(/NO_UI_EVIDENCE/)
+  })
+
+  it('image error with malformed code (not leading) falls through to generic error', () => {
+    const s = state({}, { status: 'error', errorMessage: 'MERGE_REFUSED at merging: see IMAGES_STALE docs' })
+    expect(s.kind).toBe('error')
+    expect(s.approve).toBe('enabled')
+  })
+
+  it('draft with IMAGES_STALE keeps the error kind but hides Approve (draft rule hides buttons)', () => {
+    const s = describePrState({ ...ready, isDraft: true }, { status: 'error', errorMessage: 'IMAGES_STALE at ...' })
+    expect(s.kind).toBe('images-stale')
+    expect(s.approve).toBe('hidden')
+  })
+
+  it('idempotence: calling describePrState twice with the same input yields identical output', () => {
+    const input = { ...ready }
+    const opts = { status: 'error', errorMessage: 'IMAGES_STALE at ...' }
+    const first = describePrState(input, opts)
+    const second = describePrState(input, opts)
+    expect(JSON.stringify(first)).toBe(JSON.stringify(second))
   })
 })
 
@@ -281,5 +334,47 @@ describe('describePrState: drafts (marvin#848)', () => {
   })
   it('a PR that is not a draft is unchanged', () => {
     expect(state({ isDraft: false })).toMatchObject({ kind: 'ready', approve: 'enabled' })
+  })
+})
+
+describe('describePrState: webhook refusals for missing/stale images', () => {
+  it('NO_UI_EVIDENCE error shows needs-images blocked state with Approve disabled', () => {
+    const s = state({}, { status: 'error', errorMessage: 'NO_UI_EVIDENCE at merging: no UI evidence provided' })
+    expect(s).toMatchObject({ kind: 'needs-images', tone: 'blocked', approve: 'disabled', deny: 'enabled' })
+    expect(s.headline).toBe('Needs images')
+    expect(s.detail).toMatch(/no UI evidence/)
+  })
+
+  it('IMAGES_UNPINNED error shows needs-images blocked state with Approve disabled', () => {
+    const s = state({}, { status: 'error', errorMessage: 'IMAGES_UNPINNED at merging: images not pinned to commits' })
+    expect(s).toMatchObject({ kind: 'needs-images', tone: 'blocked', approve: 'disabled', deny: 'enabled' })
+    expect(s.headline).toBe('Needs images')
+    expect(s.detail).toMatch(/images not pinned to commits/)
+  })
+
+  it('IMAGES_STALE error shows images-stale blocked state with Approve disabled', () => {
+    const s = state({}, { status: 'error', errorMessage: 'IMAGES_STALE at merging: images are older than latest code' })
+    expect(s).toMatchObject({ kind: 'images-stale', tone: 'blocked', approve: 'disabled', deny: 'enabled' })
+    expect(s.headline).toBe('Images are older than the latest change')
+    expect(s.detail).toMatch(/images are older than latest code/)
+  })
+
+  it('native needs-images wins over error-based needs-images when both apply', () => {
+    // When PR code changes require images AND gate returns NO_UI_EVIDENCE, the native state wins
+    const s = state({ needsImages: { files: ['App.tsx'], unpinned: [] } }, { status: 'error', errorMessage: 'NO_UI_EVIDENCE at merging: no UI evidence provided' })
+    expect(s.kind).toBe('needs-images')
+    // Native state has approve: 'hidden' (images required, none shown)
+    expect(s.approve).toBe('hidden')
+  })
+
+  it('error-based needs-images does not fire when native needsImages is set', () => {
+    // Error-based check is gated on !pr.needsImages; if native check applies, error-based does not
+    const withNeedsImages = state({ needsImages: { files: ['App.tsx'], unpinned: [] } }, { status: 'error', errorMessage: 'NO_UI_EVIDENCE at merging: no UI evidence provided' })
+    const withoutNeedsImages = state({}, { status: 'error', errorMessage: 'NO_UI_EVIDENCE at merging: no UI evidence provided' })
+
+    // With needsImages: native check fires, approve is hidden
+    expect(withNeedsImages.approve).toBe('hidden')
+    // Without needsImages: error-based check fires, approve is disabled (blocked)
+    expect(withoutNeedsImages.approve).toBe('disabled')
   })
 })

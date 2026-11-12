@@ -7,9 +7,12 @@
 // exception is a PR that is only WAITING (checks running, decisions to answer), where a disabled Approve tells
 // you it is coming. Order is the merge queue's (marvin#231): a stacked PR can be approved, and waits in the queue.
 
-// Refusals the screen already explains with a state of its own. If one of these is left over from an earlier
-// click it is stale as soon as the state changes, so it is never shown as an error.
-const MIRRORED_REFUSALS = /^(SENT_BACK|CI_PENDING|CI_FAILED|WRONG_BASE|NO_UI_EVIDENCE|IMAGES_UNPINNED|IMAGES_STALE|DECISIONS_PENDING|DECISIONS_UNSTRUCTURED)\b/
+// Auto-cleared refusals: if one of these is left over from an earlier click it is stale as soon as the state changes,
+// so it is never shown as an error. They are auto-cleared by the state changes that fixed them (e.g., checks pass,
+// conflict resolves). Image-related refusals (NO_UI_EVIDENCE, IMAGES_UNPINNED, IMAGES_STALE) are handled separately
+// as blocked states with disabled Approve (fails closed, prevents accidental approval before images are fixed), since
+// the fixes (edit PR body, pin images) do not change the head SHA and do not trigger auto-clearing.
+const MIRRORED_REFUSALS = /^(SENT_BACK|CI_PENDING|CI_FAILED|WRONG_BASE|DECISIONS_PENDING|DECISIONS_UNSTRUCTURED)\b/
 
 // The owner's answer on #767 (marvin#848): a draft offers no Approve until it's marked ready for review. A merge
 // already under way (merging, saved, merged) is shown as it is.
@@ -174,6 +177,18 @@ function describeState(pr, { status = 'idle', errorMessage = null, progress = fa
   if (status === 'error' && /^GITHUB_OUTAGE\b/.test(errorMessage || '')) {
     return base('github-outage', 'wait', 'GitHub is having an outage',
       'The last merge attempt hit a GitHub server error (githubstatus.com). Nothing is wrong with this PR and it was not sent back. Approve again once GitHub recovers.', 'enabled', 'enabled')
+  }
+
+  // Image-related errors: gate on !pr.needsImages to avoid overriding the native needsImages branch (lines 116-127).
+  // Approve is disabled (blocked state fails closed), so the user cannot click through while images are wrong.
+  // The fix (edit PR body / pin images) does not change the head SHA, so SHA-keyed clearing (merge_ops.js) does not fire.
+  // User must retry manually by clicking Approve again after fixing images.
+  if (status === 'error' && !pr.needsImages && /^(NO_UI_EVIDENCE|IMAGES_UNPINNED)\b/.test(errorMessage || '')) {
+    return base('needs-images', 'blocked', 'Needs images', errorMessage, 'disabled', 'enabled')
+  }
+
+  if (status === 'error' && !pr.needsImages && /^IMAGES_STALE\b/.test(errorMessage || '')) {
+    return base('images-stale', 'blocked', 'Images are older than the latest change', errorMessage, 'disabled', 'enabled')
   }
 
   if (status === 'error' && errorMessage && !MIRRORED_REFUSALS.test(errorMessage)) {
