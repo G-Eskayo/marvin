@@ -13,7 +13,7 @@ export function formatElapsed(startedAt, now) {
   return minutes === 0 ? `${seconds}s` : `${minutes}m ${seconds}s`
 }
 
-function agoShort(iso, now) {
+export function agoShort(iso, now) {
   const s = Math.max(0, Math.round((now - Date.parse(iso)) / 1000))
   if (s < 60) return `${s}s ago`
   if (s < 3600) return `${Math.round(s / 60)} min ago`
