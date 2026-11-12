@@ -1,5 +1,7 @@
 # Changelog
 
+- "Send back for options" always fails with "Webhook call failed: 400" ([#1282](https://github.com/G-Eskayo/marvin/pull/1282))
+
 - Merge gate: clarity-captions merges fail since #155 because the gate checkout lacks the Parakeet model ([#1277](https://github.com/G-Eskayo/marvin/pull/1277))
 
 - Freshness: Parked choices: one grammar, one overdue check, refused at write time ([#1256](https://github.com/G-Eskayo/marvin/pull/1256))
