@@ -1,5 +1,7 @@
 # Changelog
 
+- Audit skill's suggestion-entry template omits the required Priority field and misstates the header format, so… ([#1303](https://github.com/G-Eskayo/marvin/pull/1303))
+
 - Workshop: parked tickets (needs-info after failed builds) and held tickets show as Stuck instead of Yours / On hold ([#1297](https://github.com/G-Eskayo/marvin/pull/1297))
 
 - Docs: "Where things are" shows a raw IPC error on a fresh install ([#1283](https://github.com/G-Eskayo/marvin/pull/1283))
