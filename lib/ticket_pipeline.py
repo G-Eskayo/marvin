@@ -130,9 +130,9 @@ def _open_issues(repo: str = REPO) -> list[dict] | None:
 
 
 def _unclaimed_ready_tickets(repo: str = REPO, issues: list[dict] | None = None) -> list[dict]:
-    """What this machine may dispatch next, in order: ready-for-agent, unclaimed, not held, not with a person, and with
-    no open blocker, highest priority first and oldest first among equals. One call fetches every open
-    ticket because whether a blocker is still open depends on the others; a caller that already has that
+    """What this machine may dispatch next, in order: ready-for-agent, unclaimed, not held, not with a person, not
+    a parent PRD, and with no open blocker, highest priority first and oldest first among equals. One call fetches
+    every open ticket because whether a blocker is still open depends on the others; a caller that already has that
     list passes it in (#324)."""
     if issues is None:
         issues = _open_issues(repo)
@@ -143,7 +143,7 @@ def _unclaimed_ready_tickets(repo: str = REPO, issues: list[dict] | None = None)
     def eligible(i):
         names = set(ticket_policy.label_names(i))
         return ("ready-for-agent" in names and not names & HOLD_LABELS and not ticket_policy.needs_person(names)
-                and not any(n.startswith("claimed:") for n in names)
+                and not any(n.startswith("claimed:") for n in names) and not ticket_policy.is_parent_prd(i)
                 and not ticket_policy.open_blockers(i, open_numbers))
 
     ready = [i for i in issues if eligible(i)]

@@ -127,6 +127,55 @@ def test_triage_leaves_parent_prds_and_claimed_tickets_alone():
     assert tp.triage_verdict(issue(labels=["claimed:mac-mini"], body="thin")) is None
 
 
+def test_is_parent_prd_recognizes_prd_by_title():
+    assert tp.is_parent_prd(issue(title="PRD: The feature")) is True
+    assert tp.is_parent_prd(issue(title="prd something")) is True
+    assert tp.is_parent_prd(issue(title="  PRD when whitespace leads")) is True
+    assert tp.is_parent_prd(issue(title="This is not a PRD yet")) is False
+
+
+def test_is_parent_prd_recognizes_prd_by_problem_statement():
+    prd = "## Problem Statement\n\nThe problem.\n"
+    assert tp.is_parent_prd(issue(body=prd, title="Add something")) is True
+    assert tp.is_parent_prd(issue(body="no problem here", title="Fix it")) is False
+
+
+def test_is_parent_prd_recognizes_prd_by_user_stories():
+    prd = "## User Stories\n\n- As a user, I want\n"
+    assert tp.is_parent_prd(issue(body=prd, title="The feature")) is True
+    assert tp.is_parent_prd(issue(body="no stories here", title="Just fix")) is False
+
+
+def test_is_parent_prd_case_insensitive():
+    assert tp.is_parent_prd(issue(body="## PROBLEM STATEMENT\n\nX")) is True
+    assert tp.is_parent_prd(issue(body="## user stories\n\nX")) is True
+    assert tp.is_parent_prd(issue(title="Prd: something")) is True
+
+
+def test_is_parent_prd_returns_false_for_similar_but_not_matching():
+    assert tp.is_parent_prd(issue(title="This is not about PRDs")) is False
+    assert tp.is_parent_prd(issue(body="## Problems\n\nNot the exact heading")) is False
+
+
+def test_is_parent_prd_rejects_child_ticket_sections():
+    # Child tickets generated from a PRD carry a "## User stories addressed" section.
+    # This should NOT match as a parent PRD (would exclude child tickets from dispatch).
+    assert tp.is_parent_prd(issue(body="## User stories addressed\n\nFrom #123\n")) is False
+    assert tp.is_parent_prd(issue(body="## Problem Statement for context\n\nMore text")) is False
+
+
+def test_is_parent_prd_rejects_non_level_two_headings():
+    # Only level-2 headings (##) count; level-3 (###) or deeper do not.
+    assert tp.is_parent_prd(issue(body="### User Stories\n\nDetails here\n")) is False
+    assert tp.is_parent_prd(issue(body="### Problem Statement\n\nContext\n")) is False
+
+
+def test_is_parent_prd_exact_match_only():
+    # The heading must be exact: "## Problem Statement" or "## User Stories", nothing appended.
+    assert tp.is_parent_prd(issue(body="## Problem Statement: The Main Issue\n\nText")) is False
+    assert tp.is_parent_prd(issue(body="## User Stories (from the PRD)\n\nAs a user")) is False
+
+
 # ── tickets marked for a person must say exactly what to do ─────────────────
 
 GOOD_TASK = """## What to build

@@ -271,6 +271,13 @@ def has_break_it(body: str) -> bool:
     return False
 
 
+def is_parent_prd(issue: dict) -> bool:
+    """Is this ticket a parent PRD (not agent-sized work, has no acceptance criteria by design)?"""
+    body = issue.get("body") or ""
+    title = issue.get("title") or ""
+    return bool(re.match(r"\s*PRD\b", title, re.I) or re.search(r"^##\s*(Problem Statement|User Stories)\s*$", body, re.I | re.M))
+
+
 def triage_verdict(issue: dict, recheck: bool = False) -> dict | None:
     """What to do with an untriaged ticket, deterministically (no model, no tokens): None if it is
     already triaged or pinned. `state` is one of ready-for-agent / ready-for-human / needs-info.
@@ -282,7 +289,7 @@ def triage_verdict(issue: dict, recheck: bool = False) -> dict | None:
     body = issue.get("body") or ""
     title = issue.get("title") or ""
     # A parent PRD is not agent-sized work and has no acceptance criteria by design: never nag it.
-    if re.match(r"\s*PRD\b", title, re.I) or re.search(r"##\s*(Problem Statement|User Stories)", body, re.I):
+    if is_parent_prd(issue):
         return None
     category = None if names & {"bug", "enhancement"} else ("bug" if _BUG.search(title) else "enhancement")
     # A ticket that says what to build under another common heading counts (#240, #218, #230, #217 sat parked for

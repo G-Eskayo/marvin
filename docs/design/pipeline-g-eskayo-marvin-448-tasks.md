@@ -1,0 +1,7 @@
+1. `lib/ticket_policy.py`: extract the PRD check (lines 284-286) into `is_parent_prd(issue: dict) -> bool`; call it from `triage_verdict()` in place of the inline regex (no behaviour change).
+2. `lib/tests/test_ticket_policy.py`: add the `is_parent_prd()` unit tests (items 1-5 above); confirm the existing PRD triage test still passes untouched.
+3. `lib/ticket_pipeline.py`: in `_unclaimed_ready_tickets()`'s `eligible()` (lines 143-147), add `and not ticket_policy.is_parent_prd(i)`; update the function's docstring (line 133) to list "not a parent PRD" among the selection criteria.
+4. `lib/tests/test_ticket_pipeline.py`: add `body=""` to the `_issue()` helper; add the three dispatch-exclusion tests (items 10-12 above).
+5. `lib/purpose_metrics.py`: add `_prd_dispatches(stages_dir=None, days=PROBE_WINDOW_DAYS, now=None) -> float`, modeled on `_replanned_tickets()`, walking `ticket_stages.STAGES_DIR`, counting `"claimed"/"started"` events in-window whose `title` satisfies `ticket_policy.is_parent_prd({"title": title})`; register it in `PROBES` as `"prd-dispatched"` with threshold `0.0` and a description citing `#448`.
+6. `lib/tests/test_purpose_metrics.py`: add the probe tests (items 14-19 above), reusing the `_stages()`-style fixture already in the file.
+7. Run the full existing `test_ticket_policy.py`, `test_ticket_pipeline.py`, and `test_purpose_metrics.py` suites to confirm no regression, then the targeted new tests.
