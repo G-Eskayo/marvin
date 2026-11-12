@@ -67,10 +67,12 @@ export function ticketStep(t, ctx = {}) {
   const live = ctx.live?.get(key) || null
   const reason = t.reason || ''
   const step = (owner, verb, section, extra = {}) => ({ owner, verb, section, phase: null, ...extra })
+  // `held` is the ticket agent's keep-it label, read as on hold by rework_status.py and incident_ladder.py too.
+  const held = labels.has('hold') || labels.has('held')
 
   // Owner decisions nobody acted on (lib/owner_decisions.py files these once they are already overdue).
-  if (labels.has('owner-decisions') && !labels.has('hold')) return step('marvin', 'Act on your answers', 'stuck', { stuckSince: ms(t.createdAt) })
-  if (labels.has('hold')) return step('nobody', 'On hold', 'waiting')
+  if (labels.has('owner-decisions') && !held) return step('marvin', 'Act on your answers', 'stuck', { stuckSince: ms(t.createdAt) })
+  if (held) return step('nobody', 'On hold', 'waiting')
   if (live || t.column === 'progress') {
     const moved = lastAt(events) ?? ms(t.updatedAt)
     if (moved != null && now - moved > MARVIN_STUCK_MS) return step('marvin', 'No movement', 'stuck', { stuckSince: moved })
@@ -80,6 +82,8 @@ export function ticketStep(t, ctx = {}) {
   const pos = ctx.queued?.get(key)
   if (pos != null) return step('marvin', pos === 1 ? 'Next' : 'Ready', 'next')
   if (t.column === 'blocked') {
+    // Parked after failed builds and handed over (needs-info + the parking comment): the owner's move, not Stuck.
+    if (/^Pipeline failed/.test(reason) && labels.has('needs-info')) return step('owner', 'Give info', 'yours')
     if (/^Pipeline failed/.test(reason)) return step('marvin', 'Build failed', 'stuck', { stuckSince: lastAt(events) ?? ms(t.updatedAt) })
     if (/no activity for/.test(reason)) return step('marvin', 'No movement', 'stuck', { stuckSince: lastAt(events) ?? ms(t.updatedAt) })
     if (/^Sent back/.test(reason)) return step('marvin', 'Rework', 'next')
