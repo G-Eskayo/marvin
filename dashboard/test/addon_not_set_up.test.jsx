@@ -55,4 +55,30 @@ describe('AddonNotSetUp', () => {
     expect(out).not.toContain('<img')
     expect(out).toContain('&lt;img')
   })
+
+  it('renders an error alert when error is provided', () => {
+    const out = html({ addon: 'portfolio', error: 'Config file is corrupted' })
+    expect(out).toContain('role="alert"')
+    expect(out).toContain('Config file is corrupted')
+  })
+
+  it('does not render an error alert when error is missing', () => {
+    const out = html({ addon: 'portfolio' })
+    expect(out).not.toContain('role="alert"')
+  })
+
+  it('escapes error message to prevent XSS', () => {
+    const out = html({ addon: 'portfolio', error: '<img src=x onerror="alert(1)">' })
+    expect(out).not.toContain('<img src=x')
+    expect(out).toContain('&lt;img')
+  })
+
+  it('error appears before the addon header', () => {
+    const out = html({ addon: 'portfolio', error: 'Error message' })
+    const errorIdx = out.indexOf('role="alert"')
+    const headerIdx = out.indexOf('<h2>')
+    expect(errorIdx).toBeGreaterThan(-1)
+    expect(headerIdx).toBeGreaterThan(-1)
+    expect(errorIdx).toBeLessThan(headerIdx)
+  })
 })
