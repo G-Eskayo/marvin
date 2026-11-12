@@ -1,5 +1,7 @@
 # Changelog
 
+- Enabling an add-on can wipe instance.json ([#1279](https://github.com/G-Eskayo/marvin/pull/1279))
+
 - Boot: derive its device lines and memory path from this install, and give a fresh install a first-run verdict ([#1278](https://github.com/G-Eskayo/marvin/pull/1278))
 
 - research/SKILL.md links epistemic-framework.md relatively, so /research (read via the commands symlink) can't find it ([#1294](https://github.com/G-Eskayo/marvin/pull/1294))
