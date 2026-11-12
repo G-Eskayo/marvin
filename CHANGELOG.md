@@ -1,5 +1,7 @@
 # Changelog
 
+- Merge gate: clarity-captions merges fail since #155 because the gate checkout lacks the Parakeet model ([#1277](https://github.com/G-Eskayo/marvin/pull/1277))
+
 - Freshness: Parked choices: one grammar, one overdue check, refused at write time ([#1256](https://github.com/G-Eskayo/marvin/pull/1256))
 
 - Decision: model-adaptive harness — what changes per model ([#1273](https://github.com/G-Eskayo/marvin/pull/1273))
