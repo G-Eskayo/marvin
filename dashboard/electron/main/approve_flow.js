@@ -1,4 +1,5 @@
 import { approveOnAnyMachine, backupForMemory } from './merge_failover.js'
+import { followAfterDrop } from './merge_reconnect.js'
 
 // One Approve, from the click (or a retry of a saved click) to its outcome (marvin#762). The IPC handler and the
 // retry both run this, so a retried approval is exactly a click: the same in-flight op (mergeOps.start refuses a PR
@@ -47,9 +48,8 @@ export function createApproveFlow({ mergeOps, ledger, machines, send, push = () 
     // A machine answered: merged or sent back (or its webhook went away mid-merge).
     const answered = ({ result, machine, note = null }) => {
       if (result?.interrupted) {
-        ledger.conclude(url, 'interrupted', { machine: machine.id, reason: result.reason })
-        push(url, mergeOps.interrupt(url))
-        return { ...result, cancelled: false }
+        onSwitch(`Lost contact with ${machine.label}; checking whether the merge is still running…`)
+        return { deferred: true, result, machine, note }
       }
       // marvin#231: the machine took it into its merge queue; it merges there by itself when its turn comes. Not a merge
       // and not a refusal: the op ends (the card shows the queue's line from the list), the ledger says where it waits.
@@ -60,6 +60,16 @@ export function createApproveFlow({ mergeOps, ledger, machines, send, push = () 
         try { after(url, result) } catch { /* list bookkeeping never turns a queued merge into an error */ }
         return { ...result, cancelled: false }
       }
+      const elsewhere = machine !== targets[0]
+      const out = elsewhere ? { ...result, machine: machine.id, mergedOn: machine.here ? `this ${machine.label.replace(/^this /, '')}` : `the ${machine.label}`, ...(note ? { machineNote: note } : {}) } : result
+      ledger.conclude(url, result?.merged ? 'merged' : 'reengaged', { machine: machine.id, reason: note ?? result?.reason })
+      push(url, mergeOps.finish(url, out))
+      try { after(url, result) } catch { /* list bookkeeping never turns a merge into an error */ }
+      return { ...out, cancelled: false }
+    }
+
+    // Common tail for both normal result and recovered-after-reconnect result.
+    const finishMerge = (result, machine, note) => {
       const elsewhere = machine !== targets[0]
       const out = elsewhere ? { ...result, machine: machine.id, mergedOn: machine.here ? `this ${machine.label.replace(/^this /, '')}` : `the ${machine.label}`, ...(note ? { machineNote: note } : {}) } : result
       ledger.conclude(url, result?.merged ? 'merged' : 'reengaged', { machine: machine.id, reason: note ?? result?.reason })
@@ -104,6 +114,28 @@ export function createApproveFlow({ mergeOps, ledger, machines, send, push = () 
       }
       if (!outcome) return refused(err)
     }
-    return answered(outcome)
+    const result = answered(outcome)
+    if (result?.deferred) {
+      const { machine, note } = result
+      const reconnected = await followAfterDrop({
+        url,
+        machine,
+        mergeOps,
+        push,
+        pollMs: 1000,
+        maxRetries: 3,
+        sleep: (ms) => new Promise((r) => setTimeout(r, ms)),
+        fetchJson: (fetchUrl) => fetch(fetchUrl).then((r) => (r.ok ? r.json() : null)).catch(() => null)
+      })
+      if (reconnected.followed && reconnected.result) {
+        push(url, mergeOps.adopt(url, reconnected.progress))
+        onSwitch(`Reconnected to merge on ${machine.label}`)
+        return finishMerge(reconnected.result, machine, note)
+      }
+      ledger.conclude(url, 'interrupted', { machine: machine.id, reason: result.result.reason })
+      push(url, mergeOps.interrupt(url))
+      return { ...result.result, cancelled: false }
+    }
+    return result
   }
 }

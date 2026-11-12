@@ -301,21 +301,33 @@ export function createMergeTracker({ url, repo = null, machineId = null, emit = 
 export const NDJSON = 'application/x-ndjson'
 export const wantsStream = (accept) => String(accept || '').toLowerCase().includes(NDJSON)
 
-export function approveResponder(res, { streaming }) {
+export function approveResponder(res, { streaming, pingMs = 10000 } = {}) {
   if (streaming) {
     res.writeHead(200, { 'Content-Type': NDJSON, 'Cache-Control': 'no-store' })
     res.on?.('error', () => {}) // the reader went away: the merge carries on
   }
   const line = (v) => JSON.stringify(v) + '\n'
+  let pingTimer = null
   return {
     event(ev) {
       if (streaming && !res.writableEnded && !res.destroyed) res.write(line({ type: 'progress', event: ev }))
     },
     result(status, body) {
+      if (pingTimer) clearInterval(pingTimer)
       if (streaming) {
         if (!res.writableEnded) res.end(line({ type: 'result', status, body }))
       } else {
         res.writeHead(status, { 'Content-Type': 'application/json' }).end(JSON.stringify(body))
+      }
+    },
+    startKeepAlive() {
+      if (streaming && pingMs > 0 && !pingTimer) {
+        pingTimer = setInterval(() => {
+          if (streaming && !res.writableEnded && !res.destroyed) {
+            res.write(line({ type: 'ping' }))
+          }
+        }, pingMs)
+        pingTimer.unref?.()
       }
     }
   }
@@ -340,4 +352,9 @@ export function createMergeLatch() {
 export function alreadyMergingBody(machineId) {
   const where = machineId ? `the ${machineLabel(machineId)}` : 'this Mac'
   return { merged: false, code: 'ALREADY_MERGING', stage: 'queued', action: 'wait', message: `This PR is already being merged on ${where}. Its result shows when that merge finishes` }
+}
+
+// Non-destructive read of the in-flight map (for the GET /inflight route).
+export function peekInflight(file = inflightPath()) {
+  return createInflightStore(file).read()
 }

@@ -22,6 +22,15 @@ afterEach(async () => { await Promise.all(servers.splice(0).map((s) => new Promi
 
 function serve(handler) {
   const s = createServer((req, res) => {
+    // Handle /inflight and /merge-progress endpoints for reconnect recovery
+    if (req.method === 'GET' && req.url.split('?')[0] === '/inflight') {
+      res.writeHead(200, { 'Content-Type': 'application/json' }).end(JSON.stringify({ inflight: {} }))
+      return
+    }
+    if (req.method === 'GET' && req.url.split('?')[0] === '/merge-progress') {
+      res.writeHead(200, { 'Content-Type': 'application/json' }).end(JSON.stringify({}))
+      return
+    }
     let raw = ''
     req.on('data', (c) => (raw += c))
     req.on('end', () => handler(req, res, raw))

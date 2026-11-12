@@ -1051,16 +1051,22 @@ function registerMrReviewHandlers() {
   // the list is built (load, and each refresh trigger), never on a timer; one read per PR at a time.
   const catchingUp = new Set()
   function catchUpMerges(list) {
-    for (const pr of Array.isArray(list) ? list : []) {
-      if (pr?.mergeQueue?.state !== 'running' || catchingUp.has(pr.url)) continue
-      if (mergeOps.get(pr.url)?.state === 'merging') continue
-      catchingUp.add(pr.url)
-      fetch(`${MR_WEBHOOK_URL.replace(/\/approve$/, '/merge-progress')}?url=${encodeURIComponent(pr.url)}`, { signal: AbortSignal.timeout(3000) })
-        .then((res) => (res.ok ? res.json() : null))
-        .then((body) => { if (body?.merge?.progress) pushMergeOp(pr.url, mergeOps.adopt(pr.url, body.merge.progress)) })
-        .catch(() => { /* the next event or refresh catches it */ })
-        .finally(() => catchingUp.delete(pr.url))
-    }
+    const checkUrl = MR_WEBHOOK_URL.replace(/\/approve$/, '/inflight')
+    fetch(checkUrl, { signal: AbortSignal.timeout(3000) })
+      .then((res) => (res.ok ? res.json() : null))
+      .then((body) => {
+        const inflight = body?.inflight || {}
+        for (const url of Object.keys(inflight)) {
+          if (catchingUp.has(url) || mergeOps.get(url)?.state === 'merging') continue
+          catchingUp.add(url)
+          fetch(`${MR_WEBHOOK_URL.replace(/\/approve$/, '/merge-progress')}?url=${encodeURIComponent(url)}`, { signal: AbortSignal.timeout(3000) })
+            .then((res) => (res.ok ? res.json() : null))
+            .then((body) => { if (body?.merge?.progress) pushMergeOp(url, mergeOps.adopt(url, body.merge.progress)) })
+            .catch(() => { /* the next event or refresh catches it */ })
+            .finally(() => catchingUp.delete(url))
+        }
+      })
+      .catch(() => { /* the next refresh catches it */ })
   }
 
   // marvin#231: the merge queue lives with the merge server (the Mini); each card's line is worked out from it here.

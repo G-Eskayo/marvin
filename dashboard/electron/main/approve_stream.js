@@ -23,7 +23,9 @@ function unreachable(err, code = err?.code) {
   return Object.assign(err instanceof Error ? err : new Error(String(err)), { unreachable: true, code })
 }
 
-export function approveMrStream(prUrl, webhookUrl, { onEvent = () => {}, request = null, connectTimeoutMs = CONNECT_TIMEOUT_MS } = {}) {
+export const STREAM_DEAD_MS = 30000
+
+export function approveMrStream(prUrl, webhookUrl, { onEvent = () => {}, request = null, connectTimeoutMs = CONNECT_TIMEOUT_MS, deadMs = STREAM_DEAD_MS } = {}) {
   return new Promise((resolve, reject) => {
     let target
     try { target = new URL(webhookUrl) } catch { reject(new Error(`Not a webhook URL: ${webhookUrl}`)); return }
@@ -48,11 +50,25 @@ export function approveMrStream(prUrl, webhookUrl, { onEvent = () => {}, request
         return
       }
       let buf = ''
+      let deadTimer = null
+      let hasPings = false
+      const resetDeadTimer = () => {
+        if (deadTimer) clearTimeout(deadTimer)
+        if (Number.isFinite(deadMs) && deadMs > 0 && hasPings) {
+          deadTimer = setTimeout(() => {
+            try { req.socket?.destroy() } catch { /* already gone */ }
+          }, deadMs)
+          deadTimer.unref?.()
+        }
+      }
       const line = (text) => {
         if (!text.trim()) return
         let msg
         try { msg = JSON.parse(text) } catch { return } // a garbled line is skipped, never fatal
-        if (msg?.type === 'progress' && msg.event && typeof msg.event === 'object') {
+        if (msg?.type === 'ping') {
+          hasPings = true
+          resetDeadTimer()
+        } else if (msg?.type === 'progress' && msg.event && typeof msg.event === 'object') {
           try { onEvent(msg.event) } catch { /* a listener's mistake never stops the merge's answer */ }
         } else if (msg?.type === 'result') {
           const status = Number(msg.status)
@@ -66,12 +82,14 @@ export function approveMrStream(prUrl, webhookUrl, { onEvent = () => {}, request
       }
       res.setEncoding('utf8')
       res.on('data', (chunk) => {
+        if (hasPings) resetDeadTimer()
         buf += chunk
         let i
         while ((i = buf.indexOf('\n')) >= 0) { line(buf.slice(0, i)); buf = buf.slice(i + 1) }
         if (buf.length > MAX_LINE) buf = '' // one absurd line cannot grow without bound
       })
       const ended = () => {
+        if (deadTimer) clearTimeout(deadTimer)
         if (buf) { line(buf); buf = '' }
         interrupted()
       }

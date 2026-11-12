@@ -7,7 +7,7 @@ import { createMergeQueue, createQueueStore } from './merge_queue.js'
 import { createUnbuiltCache, createFixTicketsCache, createQueueLoader, createBaseLookup, createFollowUpRequester, readMainHealth, readRepairFailures } from './merge_facts.js'
 import { pendingCheckHeads } from '../electron/main/mr_repos.js'
 import { snapshotExec } from './pr_snapshot.js'
-import { createMergeTracker, createInflightStore, takeInterruptedMerges, recordMergeDuration, estimateMergeMs, machineLoad, approveResponder, wantsStream, createMergeLatch, alreadyMergingBody } from './merge_progress.js'
+import { createMergeTracker, createInflightStore, takeInterruptedMerges, recordMergeDuration, estimateMergeMs, machineLoad, approveResponder, wantsStream, createMergeLatch, alreadyMergingBody, peekInflight } from './merge_progress.js'
 import { resolveDeviceId, peerHosts, isPrimaryHost } from '../electron/main/device_identity.js'
 import { sendFeedback, dropEntirely, handleDenyRequest } from './deny.js'
 import { forwardRefreshPing } from './refresh_relay.js'
@@ -232,6 +232,14 @@ const server = createServer(async (req, res) => {
     return
   }
 
+  // What PRs are currently inflight (for reconnect detection): one url, or every one.
+  if (req.method === 'GET' && req.url.split('?')[0] === '/inflight') {
+    const want = new URL(req.url, 'http://localhost').searchParams.get('url')
+    const all = peekInflight()
+    res.writeHead(200, { 'Content-Type': 'application/json' }).end(JSON.stringify({ inflight: want ? { [want]: all[want] || null } : all }))
+    return
+  }
+
   if (req.method === 'POST' && req.url === '/merge-host-up') {
     let body = null
     try { body = await readJsonBody(req) } catch { /* the trigger is the request itself */ }
@@ -275,7 +283,7 @@ const server = createServer(async (req, res) => {
 
   if (isApprove) {
     const prUrl = typeof payload?.pr_url === 'string' && payload.pr_url.startsWith('https://github.com/') ? payload.pr_url : null
-    const reply = approveResponder(res, { streaming: !!prUrl && wantsStream(req.headers.accept) })
+    const reply = approveResponder(res, { streaming: !!prUrl && wantsStream(req.headers.accept), pingMs: 10000 })
     // Not a PR url: refused at once, as before (mergePr's own check says why).
     if (!prUrl) {
       const { status, body } = await runMerge(payload?.pr_url, { by: payload?.by, reply })
@@ -304,6 +312,7 @@ const server = createServer(async (req, res) => {
       ran: () => { answered = true }
     }
     try {
+      reply.startKeepAlive()
       await mergeQueue.approve(repoOfPr(prUrl), prUrl, { by: payload.by === 'auto' ? 'auto' : payload.by === 'memory-queue' ? 'memory-queue' : 'you', attach })
     } finally {
       if (!answered) attach.queued(mergeQueue.view(repoOfPr(prUrl))?.entries?.[prUrl] || null)

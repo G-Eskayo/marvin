@@ -121,6 +121,53 @@ describe('approveMrStream', () => {
   it('a junk webhook URL is refused before anything is sent', async () => {
     await expect(approveMrStream(PR, 'not a url')).rejects.toThrow(/Not a webhook URL/)
   })
+
+  it('keepalive pings are sent on an interval and do not disrupt the result', async () => {
+    const url = await serve(async (req, res) => {
+      const reply = approveResponder(res, { streaming: true, pingMs: 20 })
+      reply.startKeepAlive()
+      await new Promise((r) => setTimeout(r, 60))
+      reply.event(ev(1, 'queued', 'running'))
+      reply.result(200, { merged: true })
+    })
+    const seen = []
+    const r = await approveMrStream(PR, url, {
+      onEvent: (e) => seen.push(e),
+      deadMs: 100
+    })
+    expect(r).toEqual({ merged: true })
+    expect(seen).toHaveLength(1)
+  })
+
+  it('pings reset the dead timer, keeping the stream alive', async () => {
+    const url = await serve(async (req, res) => {
+      const reply = approveResponder(res, { streaming: true, pingMs: 30 })
+      reply.startKeepAlive()
+      await new Promise((r) => setTimeout(r, 150))
+      reply.result(200, { merged: true })
+    })
+    const r = await approveMrStream(PR, url, { deadMs: 50 })
+    expect(r).toEqual({ merged: true })
+  })
+
+  it('old webhook without pings does not get disconnected by dead timer', async () => {
+    const url = await serve(async (req, res) => {
+      const reply = approveResponder(res, { streaming: true })
+      // Old webhook: send progress events but no pings
+      for (let i = 0; i < 5; i++) {
+        reply.event(ev(i + 1, 'queued', i === 0 ? 'running' : 'done'))
+        await new Promise((r) => setTimeout(r, 50))
+      }
+      reply.result(200, { merged: true })
+    })
+    const seen = []
+    const r = await approveMrStream(PR, url, {
+      onEvent: (e) => seen.push(`${e.stage}:${e.seq}`),
+      deadMs: 80  // Shorter than 50ms intervals, but should not trigger because no pings
+    })
+    expect(r).toEqual({ merged: true })
+    expect(seen.length).toBe(5)
+  })
 })
 
 describe('approveResponder (the webhook side)', () => {
@@ -149,5 +196,24 @@ describe('approveResponder (the webhook side)', () => {
     await approveMrStream(PR, url).catch(() => {})
     await tick(); await tick()
     expect(wrote).toBe('ok')
+  })
+
+  it('keepalive pings clear on result', async () => {
+    let wrote = []
+    const url = await serve(async (req, res) => {
+      const reply = approveResponder(res, { streaming: true, pingMs: 10 })
+      reply.startKeepAlive()
+      await new Promise((r) => setTimeout(r, 50))
+      const originalWrite = res.write.bind(res)
+      res.write = (data) => {
+        wrote.push(data)
+        return originalWrite(data)
+      }
+      reply.result(200, { merged: true })
+      await new Promise((r) => setTimeout(r, 50))
+    })
+    await approveMrStream(PR, url, { deadMs: 100 })
+    const pings = wrote.filter((w) => w.includes('"type":"ping"'))
+    expect(pings.length).toBe(0) // pings should stop once result is written
   })
 })

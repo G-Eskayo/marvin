@@ -36,6 +36,7 @@ export const ALLOWLIST = {
   'electron/main/devices.js': { ttl: [1, 'read-through cache bound (8 s) on an ssh round-trip; no timer, never triggers a read'] },
   'electron/main/github_state.js': { ttl: [1, 'the cache itself: its 30-min safety lifetime (#557 removed the ttlFor hook)'] },
   'electron/main/index.js': { interval: [1, `starts ${CHECK_WATCH}`] },
+  'electron/main/merge_reconnect.js': { 'timeout-loop': [4, 'followAfterDrop: reconnect recovery after stream drop, polling /merge-progress until merge finishes with bounded backoff (maxRetries=3, 1s delays); marvin#805'] },
   'electron/main/queue.js': { ttl: [1, 'read-through cache bound (60 s) on ticket_queue.py; no timer of its own'] },
   'electron/main/relations_service.js': { ttl: [1, 'read-through cache bound (60 s), invalidated by the board/docs triggers'] },
   'electron/main/rework.js': { ttl: [1, 'read-through cache bound (60 s); index.js calls it through github_state with minInterval'] },
@@ -45,6 +46,7 @@ export const ALLOWLIST = {
   'webhook-server/index.js': { interval: [3, `starts the one gh_watch change-detector tick, (marvin#231) ${CHECK_WATCH} for queued PRs only: nothing queued, no requests, and (marvin#954, primary only) ${CHECK_WATCH} over the box feed's pending PRs`] },
   'webhook-server/failure.js': { 'timeout-loop': [1, 'withRetry: bounded exponential backoff on a failed call, not a poll for change'] },
   'webhook-server/merge.js': { 'timeout-loop': [1, 'mergeableNow: GitHub computes mergeable lazily with no event; bounded 6 x 5 s'] },
+  'webhook-server/merge_progress.js': { interval: [1, 'approveResponder keepalive: sends periodic pings to keep streaming response alive (marvin#805); standard pattern'] },
   'mobile-backend/dashboard_gh_api.js': { interval: [1, `starts ${CHECK_WATCH}`] },
   'mobile-backend/pending_actions.js': { 'timeout-loop': [1, 'waits on its own local store for an approval, bounded by the hook timeout; no network'] }
 }

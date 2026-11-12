@@ -14,7 +14,7 @@ import path from 'path'
 import { mergePr, withGateTimeout, execWithGroupTimeout, gateExec, _defaultRunTests, countTestFiles, pytestParallelArgs } from '../webhook-server/merge.js'
 import {
   createMergeTracker, createInflightStore, takeInterruptedMerges, recordMergeDuration, estimateMergeMs,
-  createCountParser, machineLoad, gateExtension, inflightPath, durationsPath, topProcess
+  createCountParser, machineLoad, gateExtension, inflightPath, durationsPath, topProcess, peekInflight
 } from '../webhook-server/merge_progress.js'
 import { applyMergeEvent, emptyProgress } from '../src/lib/merge_progress.js'
 
@@ -316,6 +316,22 @@ describe('a webhook restart mid-merge', () => {
     const lost = takeInterruptedMerges(inflightPath(), { log: noop })
     expect(lost.map((l) => l.url)).toEqual([PR])
     expect(lost[0].event).toMatchObject({ stage: 'queued', seq: 1 })
+  })
+
+  it('peekInflight reads without clearing the record', () => {
+    const store = createInflightStore()
+    store.set(PR, { id: 'a1', seq: 6, stage: 'tests', startedAt: 1, machine: 'mac-mini-1' })
+    const peeked = peekInflight(inflightPath())
+    expect(peeked).toEqual({ [PR]: { id: 'a1', seq: 6, stage: 'tests', startedAt: 1, machine: 'mac-mini-1' } })
+    const peeked2 = peekInflight(inflightPath())
+    expect(peeked2).toEqual(peeked)
+  })
+
+  it('peekInflight returns empty object when the file is missing or corrupt', () => {
+    expect(peekInflight(inflightPath())).toEqual({})
+    mkdirSync(path.dirname(inflightPath()), { recursive: true })
+    writeFileSync(inflightPath(), '{not json')
+    expect(peekInflight(inflightPath())).toEqual({})
   })
 })
 
