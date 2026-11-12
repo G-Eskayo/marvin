@@ -234,13 +234,17 @@ def _is_ui_path(changed_file: str) -> bool:
 
 
 def ticket_touches_ui(worktree_path: Path, base_branch: str = "main") -> bool:
-    """True if this ticket's diff (against base_branch) includes any file
-    under a UI-associated path."""
-    result = subprocess.run(
-        ["git", "diff", "--name-only", f"{base_branch}...HEAD"],
-        cwd=worktree_path, capture_output=True, text=True,
-    )
-    return any(_is_ui_path(f) for f in result.stdout.splitlines())
+    """True if this ticket's change (against base_branch) includes any file
+    under a UI-associated path: committed, uncommitted or new. run_ticket asks
+    before mr_raiser commits the change, so the committed diff alone was empty
+    and every dashboard change was reported as "no UI" (2026-11-12)."""
+    names: list[str] = []
+    for cmd in (["git", "diff", "--name-only", f"{base_branch}...HEAD"],      # committed on the branch
+                ["git", "diff", "--name-only", "HEAD"],                        # staged or not, still uncommitted
+                ["git", "ls-files", "--others", "--exclude-standard"]):        # new files, never added
+        result = subprocess.run(cmd, cwd=worktree_path, capture_output=True, text=True)
+        names += result.stdout.splitlines()
+    return any(_is_ui_path(f) for f in names)
 
 
 def _default_capture_screenshot(worktree_path: Path) -> str:

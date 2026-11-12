@@ -272,3 +272,51 @@ def test_ui_files_matches_the_dashboards_rule_src_lib_helpers_are_not_screens():
     screens = ["dashboard/src/App.jsx", "dashboard/src/index.css", "dashboard/src/components/X.jsx",
                "dashboard/src/components/sub/y.js", "dashboard/src/assets/logo.svg", "dashboard/src/lib/Widget.jsx"]
     assert ui_files(screens) == screens
+
+
+# ── the UI check sees the change while it is still uncommitted (2026-11-12) ─────────────────────────────────────────
+# run_ticket checks for UI before mr_raiser commits the change, so `git diff main...HEAD` was always empty: six PRs
+# that changed dashboard/src said "N/A — no UI", carried no screenshot, and the merge gate then held them for images.
+
+import subprocess as _sp
+from evidence_capture import ticket_touches_ui as _touches
+
+
+def _repo(tmp_path):
+    def git(*a):
+        _sp.run(["git", *a], cwd=tmp_path, check=True, capture_output=True)
+    git("init", "-q", "-b", "main")
+    git("config", "user.email", "t@example.invalid"); git("config", "user.name", "t")
+    (tmp_path / "dashboard" / "src").mkdir(parents=True)
+    (tmp_path / "lib").mkdir()
+    (tmp_path / "dashboard" / "src" / "App.jsx").write_text("a\n")
+    (tmp_path / "lib" / "x.py").write_text("a\n")
+    git("add", "-A"); git("commit", "-qm", "base")
+    git("checkout", "-qb", "ticket")
+    return git
+
+
+def test_an_uncommitted_edit_to_a_dashboard_file_counts_as_ui(tmp_path):
+    _repo(tmp_path)
+    (tmp_path / "dashboard" / "src" / "App.jsx").write_text("b\n")
+    assert _touches(tmp_path) is True
+
+
+def test_a_new_untracked_dashboard_file_counts_as_ui(tmp_path):
+    _repo(tmp_path)
+    (tmp_path / "dashboard" / "src" / "New.jsx").write_text("n\n")
+    assert _touches(tmp_path) is True
+
+
+def test_a_committed_dashboard_change_still_counts_as_ui(tmp_path):
+    git = _repo(tmp_path)
+    (tmp_path / "dashboard" / "src" / "App.jsx").write_text("c\n")
+    git("commit", "-qam", "ui")
+    assert _touches(tmp_path) is True
+
+
+def test_an_uncommitted_change_outside_the_ui_paths_is_not_ui(tmp_path):
+    _repo(tmp_path)
+    (tmp_path / "lib" / "x.py").write_text("b\n")
+    (tmp_path / "lib" / "y.py").write_text("n\n")
+    assert _touches(tmp_path) is False
