@@ -395,3 +395,24 @@ describe('only a PR that closes a ticket carries it', () => {
     expect(items.find((i) => i.type === 'ticket' && i.number === 5)).toBeTruthy()
   })
 })
+
+describe('a parked ticket is the owner\'s move, not Stuck (stuck sweep, 2026-11-12, found on real data)', () => {
+  // The pipeline parks a ticket after repeated failed builds and hands it over: needs-info plus a comment saying
+  // what it needs. The board still says "Pipeline failed", so 25 of the Workshop's ~40 Stuck rows were these.
+  const failed = { column: 'blocked', reason: 'Pipeline failed at done: parked after 3 consecutive failures' }
+  it('needs-info after a failed build: Give info, in Yours', () => {
+    expect(ticketStep(ticket(20, ['needs-info'], failed))).toMatchObject({ owner: 'owner', verb: 'Give info', section: 'yours' })
+    expect(ticketStep(ticket(21, ['needs-info', 'ready-for-agent'], failed)).section).toBe('yours')
+  })
+  it('held (the label the ticket agent and rework status already read as on hold): On hold, in Waiting', () => {
+    expect(ticketStep(ticket(22, ['held'], failed))).toMatchObject({ verb: 'On hold', section: 'waiting' })
+  })
+  it('a failed build with neither label is still Stuck, and owner-decisions still beats needs-info', () => {
+    expect(ticketStep(ticket(23, ['ready-for-agent'], failed)).section).toBe('stuck')
+    expect(ticketStep(ticket(24, [], failed)).verb).toBe('Build failed')
+    expect(ticketStep(ticket(25, ['owner-decisions', 'needs-info'], failed)).section).toBe('stuck')
+  })
+  it('a claim gone quiet stays Stuck even with needs-info: the claim is MARVIN\'s to release', () => {
+    expect(ticketStep(ticket(26, ['needs-info', 'claimed:x'], { column: 'blocked', reason: 'Claimed by x but no activity for 3 days' })).section).toBe('stuck')
+  })
+})
