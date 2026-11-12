@@ -1,4 +1,4 @@
-import { describe, it, expect, afterEach } from 'vitest'
+import { describe, it, expect, afterEach, vi } from 'vitest'
 import { createServer } from 'http'
 import { createStageRelay, createLiveMerges, allowedPeerAddress, cleanStageMessage, stageFanOut } from '../webhook-server/merge_stage_relay.js'
 import { createMergeTracker } from '../webhook-server/merge_progress.js'
@@ -112,11 +112,19 @@ const receive = (ops, m) => receiveMergeMessage(ops, m)
 
 describe('the card on another Mac', () => {
   it('two Macs fed the same relayed merge show the same strip, and both end merged', () => {
-    const macbook = createMergeOps()
-    const studio = createMergeOps()
-    for (const m of recordMerge()) { receive(macbook, m); receive(studio, m) }
-    expect(macbook.get(PR).state).toBe('merged')
-    expect(studio.get(PR)).toEqual(macbook.get(PR))
+    // Each Mac stamps `at` with its own clock when an event lands, so the two never share it. Tick the clock on
+    // every read (CI once crossed a millisecond between the two receives, PR #1264) so this can't pass by timing.
+    let t = 1_794_329_773_000
+    const clock = vi.spyOn(Date, 'now').mockImplementation(() => ++t)
+    try {
+      const macbook = createMergeOps()
+      const studio = createMergeOps()
+      for (const m of recordMerge()) { receive(macbook, m); receive(studio, m) }
+      expect(macbook.get(PR).state).toBe('merged')
+      const card = ({ at, ...shown }) => shown                   // what the card shows, without this Mac's receipt time
+      expect(card(studio.get(PR))).toEqual(card(macbook.get(PR)))
+      expect(studio.get(PR).at).toEqual(expect.any(Number))
+    } finally { clock.mockRestore() }
   })
 
   it('events out of order or duplicated end in the same place as in order', () => {
