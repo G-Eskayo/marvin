@@ -1015,6 +1015,17 @@ def _scan(run, dry_run: bool) -> str | None:
         if outcome == "backoff":
             pools[repo].pop(0)          # waiting out its retry time: the next ticket may still run, in any mode
             continue
+        if outcome in ("no-machine", "memory"):
+            # No Mac can take this project's first ticket, but the box may take a later Linux-safe one: without this the
+            # box was only ever asked about queue heads, and built nothing while the Macs were busy (2026-11-12).
+            later = _box_fallback(repo, pools[repo][1:], settings, step, summary, fail, dry_run)
+            if later is not None:
+                started += 1
+                started_by_repo[repo] = started_by_repo.get(repo, 0) + 1
+                pools[repo].remove(later)
+                if not parallel or dry_run:
+                    break
+                continue
         if outcome == "started":
             started += 1
             started_by_repo[repo] = started_by_repo.get(repo, 0) + 1
@@ -1105,6 +1116,28 @@ def _box_route(repo: str, ticket: dict, settings: dict) -> tuple[bool, str | Non
         return box_build.routes(repo, ticket, settings or {})
     except Exception as exc:  # noqa: BLE001 -- the box lane is extra: it must never stop the Macs' dispatch
         return False, f"box routing failed: {exc}"
+
+
+def _box_fallback(repo, rest, settings, step, summary, fail, dry_run) -> dict | None:
+    """The first ticket in `rest` (queue order) the box builds now, dispatched; None when there is none. Only tickets
+    labelled linux-ok are asked about (a label check is free; routes reads the registry and Tailscale), and a refusal
+    that isn't about the ticket itself (box offline, slot taken, lane resting) ends the search: no later ticket fits
+    either. O(len(rest)) label checks, at most one routes call per linux-ok ticket until the first box-wide refusal."""
+    try:
+        import box_build
+        label = box_build.LINUX_LABEL
+        names = box_build._label_names
+    except Exception:  # noqa: BLE001 -- the box lane is extra: it must never stop the Macs' dispatch
+        return None
+    for ticket in rest:
+        if label not in names(ticket):
+            continue
+        ok, why = _box_route(repo, ticket, settings)
+        if ok:
+            return ticket if _dispatch_to_box(repo, ticket, step, summary, fail, dry_run) == "started" else None
+        if not (why or "").startswith(f"#{ticket['number']} "):
+            return None
+    return None
 
 
 def _dispatch_to_box(repo, ticket, step, summary, fail, dry_run) -> str:

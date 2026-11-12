@@ -1767,3 +1767,51 @@ def test_a_dry_run_claims_nothing_for_the_box(monkeypatch):
 def test_the_box_has_its_own_claim_label_never_the_m4_minis():
     assert tp._label_for_device("mac-mini-2012") == "mac-mini-2012"
     assert tp._label_for_device("mac-mini-1") == "mac-mini"
+
+
+# ── the box takes a later Linux-safe ticket when no Mac can take the head of the queue (2026-11-12) ────────────────
+# Live, 2026-11-12: 21 marvin tickets carried linux-ok, the box was online with a free slot, and a merge on the Mini
+# made every scan skip each project at its first ticket, so the box was never asked and built nothing since 10-30.
+
+def _no_mac_box(monkeypatch, marvin, routes):
+    import box_build
+    got = _parallel(monkeypatch, marvin=marvin, total=4, per_project=4)
+    asked, starts = [], []
+    monkeypatch.setattr(tp, "_select_for_profile", lambda *a, **k: None)
+    monkeypatch.setattr(box_build, "routes", lambda repo, ticket, settings: asked.append(ticket["number"]) or routes(ticket))
+    monkeypatch.setattr(box_build, "start", lambda ref, run_id: starts.append(ref) or True)
+    return got, asked, starts
+
+
+def _linux(t):
+    return (True, None) if any(l["name"] == "linux-ok" for l in t.get("labels", [])) else (False, f"#{t['number']} isn't labelled linux-ok")
+
+
+def test_when_no_mac_can_take_the_first_ticket_the_box_builds_a_later_linux_ok_one(monkeypatch):
+    got, asked, starts = _no_mac_box(monkeypatch, [_ticket(5), _ticket(6, "2026-02-02T00:00:00Z", labels=["linux-ok"])], _linux)
+    tp.main()
+    assert starts == ["G-Eskayo/marvin#6"]
+    assert [c[0] for c in got["claims"]] == [6] and got["claims"][0][1] == "mac-mini-2012"
+    assert got["dispatches"] == []
+
+
+def test_the_search_only_asks_the_box_about_tickets_labelled_linux_ok(monkeypatch):
+    got, asked, starts = _no_mac_box(monkeypatch, [_ticket(5), _ticket(6, "2026-02-02T00:00:00Z"), _ticket(7, "2026-02-03T00:00:00Z")], _linux)
+    tp.main()
+    assert asked == [5] and starts == [] and got["claims"] == []
+
+
+def test_a_box_wide_refusal_stops_the_search_instead_of_asking_about_every_ticket(monkeypatch):
+    tickets = [_ticket(5)] + [_ticket(n, f"2026-02-0{n - 4}T00:00:00Z", labels=["linux-ok"]) for n in (6, 7, 8)]
+    got, asked, starts = _no_mac_box(monkeypatch, tickets, lambda t: (False, "mac-mini-2012 is offline"))
+    tp.main()
+    assert asked == [5, 6] and starts == []
+
+
+def test_the_box_takes_one_ticket_per_scan_when_parallel_dispatch_is_off(monkeypatch):
+    tickets = [_ticket(5), _ticket(6, "2026-02-02T00:00:00Z", labels=["linux-ok"]), _ticket(7, "2026-02-03T00:00:00Z", labels=["linux-ok"])]
+    got, asked, starts = _no_mac_box(monkeypatch, tickets, _linux)
+    monkeypatch.setattr(tp.dispatch_concurrency, "load", lambda path=None: dict(tp.dispatch_concurrency.DEFAULTS))
+    monkeypatch.setattr(tp, "_local_busy", lambda: False)
+    tp.main()
+    assert len(starts) <= 1
