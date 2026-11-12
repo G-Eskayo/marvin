@@ -35,3 +35,10 @@ export function prFetchBanner({ errors = [], projects = 0, lastGoodAt = null, so
   const names = errors.map((e) => String(e.repo).split('/').pop()).join(', ')
   return { tone: 'amber', text: `Couldn't read ${errors.length} project${errors.length === 1 ? '' : 's'} (${names}: ${causes}). Their PRs may be missing or out of date.` }
 }
+
+export function reviewDotStatus({ status, fetch } = {}, now = Date.now()) {
+  const banner = fetch ? prFetchBanner(fetch, now) : null
+  if (!banner || banner.tone === 'info') return { dot: status, note: null }
+  if (banner.tone === 'red') return { dot: 'grey', note: fetch?.source?.from === 'mini' ? banner.text : "Couldn't reach GitHub" }
+  return { dot: status, note: banner.text }
+}

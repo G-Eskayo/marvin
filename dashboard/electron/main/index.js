@@ -1154,7 +1154,7 @@ function registerMrReviewHandlers() {
   ipcMain.handle('mr:reviewStatus', async () => {
     const prs = await listPipelinePrs(() => listOpenPrs({ light: true }))
     const keys = prs.map((pr) => pr.key)
-    return { status: computeReviewStatus(keys, normalizeSeen(readSeenNumbers(seenPath))), openCount: keys.length }
+    return { status: computeReviewStatus(keys, normalizeSeen(readSeenNumbers(seenPath))), openCount: keys.length, fetch: prFetch }
   })
 
   ipcMain.handle('mr:markSeen', (_event, prKeys) => {
