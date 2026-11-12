@@ -17,7 +17,8 @@ describe('the Loops view', () => {
     expect(src).toContain("['loops', 'Loops']")
     expect(src).toContain('<LoopsPanel onOpenTicket={onOpenTicket} />')
     const app = readFileSync(path.resolve(import.meta.dirname, '../src/App.jsx'), 'utf8')
-    expect(app).toMatch(/<HealthDashboard nav=\{nav\} onOpenTicket=\{\(repo, number\) => openItem\(repo, number, 'ticket'\)\} \/>/)
+    // (other props may follow, e.g. the Vitals mock-up's switch, #873)
+    expect(app).toMatch(/<HealthDashboard nav=\{nav\} onOpenTicket=\{\(repo, number\) => openItem\(repo, number, 'ticket'\)\}.*\/>$/m)
   })
   it('lists worst first, with a fix button on every loop that is not closed', () => {
     const view = { loops: [row('ok', 'closed'), row('w', 'not_wired', 'ticket'), row('b', 'broken'), row('s', 'stalled', 'relogin')] }

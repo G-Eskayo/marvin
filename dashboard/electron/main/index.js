@@ -34,6 +34,8 @@ import { createApprovalRetry } from './approval_retry.js'
 import { createApproveFlow } from './approve_flow.js'
 import { mergeMachines, askReady, askForget } from './merge_failover.js'
 import { readPrefs } from './prefs.js'
+import { MAP_SCHEME, createMapHandler } from './map_frame.js'
+import { readPlanMeter } from './plan_meter.js'
 import { guardApprove } from './approve_guard.js'
 import { recordRefusal } from '../../webhook-server/refusal_log.js'
 import { sendBackForOptions } from './decisions_submit.js'
@@ -161,7 +163,7 @@ import { listJobs } from './jobs.js'
 import { readTicketAgents, readTicketAgentsFresh } from './ticket_agents.js'
 import { getUsageReport } from './usage_report.js'
 import { startRefreshServer, parseRefreshPort } from './refresh_server.js'
-import { isEvidenceCapture, installCaptureGuard } from './capture_mode.js'
+import { isEvidenceCapture, installCaptureGuard, captureOverride } from './capture_mode.js'
 import { adoptLoginShellPath, adoptSharedGhToken, useGhGate } from './path.js'
 import { postTicketInput } from './ticket_input.js'
 import { createImageLoader, mediaFileFor } from './pr_images.js'
@@ -188,7 +190,9 @@ if (isEvidenceCapture(process.env)) installCaptureGuard(process)
 instrumentIpc(ipcMain)
 
 const execFileAsync = promisify(execFile)
-const accountsView = createAccounts({ machine: () => resolveDeviceId(), execFile: execFileAsync })
+// A capture run (#873) may read a saved sweep instead; Gil's own app always reads its own file.
+const accountsView = createAccounts({ machine: () => resolveDeviceId(), execFile: execFileAsync,
+  ...(captureOverride(process.env, 'MARVIN_CAPTURE_ACCOUNTS') ? { statusPath: captureOverride(process.env, 'MARVIN_CAPTURE_ACCOUNTS') } : {}) })
 const alertsView = createAlerts({ execFile: execFileAsync })
 const loopsView = createLoops({ execFile: execFileAsync, renew: (account) => accountsView.renew(account, null) })
 
@@ -517,6 +521,8 @@ function registerHealthHandlers() {
   ipcMain.handle('accounts:list', (_event, opts) => accountsView.list({ fresh: !!opts?.fresh }))
   ipcMain.handle('alerts:status', () => alertsView.status())
   ipcMain.handle('alerts:test', () => alertsView.test())
+  // Vitals mock-up (marvin#873): the verdict line's budget, the plan's own last meter reading.
+  ipcMain.handle('vitals:planMeter', () => readPlanMeter())
   ipcMain.handle('loops:status', () => loopsView.status())
   ipcMain.handle('loops:fix', (_event, id) => loopsView.fix(String(id || '')))
   ipcMain.handle('accounts:renew', (_event, id, machine) => accountsView.renew(String(id || ''), machine ? String(machine) : null))
@@ -1356,7 +1362,9 @@ const prMediaDir = () => join(app.getPath('userData'), 'pr-image-cache')
 protocol.registerSchemesAsPrivileged([
   { scheme: 'prmedia', privileges: { standard: true, secure: true, stream: true, supportFetchAPI: true } },
   // PR mock-ups (mockup_window.js): standard so the page's relative files resolve; handled only on the mock-up partition.
-  { scheme: MOCKUP_SCHEME, privileges: { standard: true, secure: true, stream: true, supportFetchAPI: true } }
+  { scheme: MOCKUP_SCHEME, privileges: { standard: true, secure: true, stream: true, supportFetchAPI: true } },
+  // The live map behind the Vitals mock-up (map_frame.js, marvin#873): only the map's own page and live files.
+  { scheme: MAP_SCHEME, privileges: { standard: true, secure: true, supportFetchAPI: true } }
 ])
 
 app.whenReady().then(() => {
@@ -1365,6 +1373,7 @@ app.whenReady().then(() => {
     if (!found) return new Response('not found', { status: 404 })
     return net.fetch(pathToFileURL(found.file).toString(), { headers: request.headers })
   })
+  protocol.handle(MAP_SCHEME, createMapHandler(captureOverride(process.env, 'MARVIN_CAPTURE_MAP_DIR') ? { dir: captureOverride(process.env, 'MARVIN_CAPTURE_MAP_DIR') } : {}))
   installDevSiteCors(session.defaultSession)   // previews need the dev site's web fonts (see dev_site_cors.js)
   registerMetricsHandlers()
   registerMrReviewHandlers()
