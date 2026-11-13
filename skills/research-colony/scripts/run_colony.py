@@ -38,9 +38,9 @@ def main() -> int:
     if out:
         print(f"[colony] done — digest at {out}", file=sys.stderr)
     else:
-        print("[colony] done — no digest written (no items or already exists)", file=sys.stderr)
+        print("[colony] no digest written — see errors above", file=sys.stderr)
 
-    return 0
+    return 0 if out else 1
 
 
 if __name__ == "__main__":

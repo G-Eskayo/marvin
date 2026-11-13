@@ -116,3 +116,234 @@ class TestRunColonyGate:
         assert out_path.read_text() == existing_content
         # But the function returns the path
         assert result == out_path
+
+
+class TestSourceMonitorErrorHandling:
+    """Test source_monitor error handling for empty results."""
+
+    def test_empty_sources_skip_cache_save(self, tmp_path, monkeypatch, capsys):
+        """If all sources return empty, don't call save_raw_cache."""
+        import source_monitor
+
+        cache_dir = tmp_path / "research-feed"
+        monkeypatch.setattr("source_monitor.CACHE_DIR", cache_dir)
+
+        # Mock all fetch functions to return empty
+        monkeypatch.setattr("source_monitor.fetch_arxiv", lambda: [])
+        monkeypatch.setattr("source_monitor.fetch_github", lambda: [])
+        monkeypatch.setattr("source_monitor.fetch_hackernews", lambda: [])
+
+        # Mock store_items to track if called
+        store_called = []
+        def mock_store_items(items):
+            store_called.append(len(items))
+            return 0
+        monkeypatch.setattr("source_monitor.store_items", mock_store_items)
+
+        result = source_monitor.main()
+
+        # Verify error message printed
+        captured = capsys.readouterr()
+        assert "[colony] ERROR: all sources returned 0 items" in captured.err
+
+        # Verify cache file was not created
+        assert not cache_dir.exists()
+
+        # Verify store_items was still called (with empty list)
+        assert store_called == [0]
+        assert result == 0
+
+
+class TestResearchDigestErrorHandling:
+    """Test research_digest error handling and notifications."""
+
+    def test_no_items_notifies_and_returns_none(self, tmp_path, monkeypatch):
+        """When no items in cache, notify and return None."""
+        import research_digest
+
+        cache_dir = tmp_path / "research-feed"
+        digest_dir = tmp_path / "research-digest"
+        monkeypatch.setattr("research_digest.CACHE_DIR", cache_dir)
+        monkeypatch.setattr("research_digest.DIGEST_DIR", digest_dir)
+
+        # Mock load functions
+        monkeypatch.setattr("research_digest.load_today_cache", lambda: [])
+        monkeypatch.setattr("research_digest.load_correlated_from_chroma", lambda: [])
+
+        # Track notify calls
+        notify_calls = []
+        def mock_notify(title, msg, **kwargs):
+            notify_calls.append((title, msg))
+        monkeypatch.setattr("research_digest.notify", mock_notify)
+
+        result = research_digest.generate()
+
+        assert result is None
+        assert len(notify_calls) == 1
+        assert notify_calls[0][0] == "MARVIN research-colony failed"
+        assert "no items fetched" in notify_calls[0][1]
+
+    def test_claude_exception_notifies_and_returns_none(self, tmp_path, monkeypatch):
+        """When claude call raises exception, notify and return None."""
+        import research_digest
+
+        cache_dir = tmp_path / "research-feed"
+        digest_dir = tmp_path / "research-digest"
+        monkeypatch.setattr("research_digest.CACHE_DIR", cache_dir)
+        monkeypatch.setattr("research_digest.DIGEST_DIR", digest_dir)
+
+        # Mock load functions with valid data
+        monkeypatch.setattr("research_digest.load_today_cache",
+                           lambda: [{"title": "item1", "url": "http://example.com", "source": "test"}])
+        monkeypatch.setattr("research_digest.load_correlated_from_chroma", lambda: [])
+
+        # Mock marvin_launcher to raise exception
+        def mock_launch(*args, **kwargs):
+            raise RuntimeError("Connection timeout")
+        monkeypatch.setattr("research_digest.marvin_launcher.launch", mock_launch)
+
+        # Track notify calls
+        notify_calls = []
+        def mock_notify(title, msg, **kwargs):
+            notify_calls.append((title, msg))
+        monkeypatch.setattr("research_digest.notify", mock_notify)
+
+        result = research_digest.generate()
+
+        assert result is None
+        assert len(notify_calls) == 1
+        assert notify_calls[0][0] == "MARVIN research-colony failed"
+        assert "claude call failed" in notify_calls[0][1]
+        assert "Connection timeout" in notify_calls[0][1]
+
+    def test_claude_bad_exit_code_notifies_and_returns_none(self, tmp_path, monkeypatch):
+        """When claude call returns bad exit code, notify and return None."""
+        import research_digest
+
+        cache_dir = tmp_path / "research-feed"
+        digest_dir = tmp_path / "research-digest"
+        monkeypatch.setattr("research_digest.CACHE_DIR", cache_dir)
+        monkeypatch.setattr("research_digest.DIGEST_DIR", digest_dir)
+
+        # Mock load functions with valid data
+        monkeypatch.setattr("research_digest.load_today_cache",
+                           lambda: [{"title": "item1", "url": "http://example.com", "source": "test"}])
+        monkeypatch.setattr("research_digest.load_correlated_from_chroma", lambda: [])
+
+        # Mock marvin_launcher to return bad exit code
+        def mock_launch(*args, **kwargs):
+            class Result:
+                exit_code = 1
+                text = ""
+                stderr = "Model error occurred"
+            return Result()
+        monkeypatch.setattr("research_digest.marvin_launcher.launch", mock_launch)
+
+        # Track notify calls
+        notify_calls = []
+        def mock_notify(title, msg, **kwargs):
+            notify_calls.append((title, msg))
+        monkeypatch.setattr("research_digest.notify", mock_notify)
+
+        result = research_digest.generate()
+
+        assert result is None
+        assert len(notify_calls) == 1
+        assert notify_calls[0][0] == "MARVIN research-colony failed"
+        assert "claude call failed" in notify_calls[0][1]
+
+    def test_claude_empty_text_notifies_and_returns_none(self, tmp_path, monkeypatch):
+        """When claude call returns empty text, notify and return None."""
+        import research_digest
+
+        cache_dir = tmp_path / "research-feed"
+        digest_dir = tmp_path / "research-digest"
+        monkeypatch.setattr("research_digest.CACHE_DIR", cache_dir)
+        monkeypatch.setattr("research_digest.DIGEST_DIR", digest_dir)
+
+        # Mock load functions with valid data
+        monkeypatch.setattr("research_digest.load_today_cache",
+                           lambda: [{"title": "item1", "url": "http://example.com", "source": "test"}])
+        monkeypatch.setattr("research_digest.load_correlated_from_chroma", lambda: [])
+
+        # Mock marvin_launcher to return empty text
+        def mock_launch(*args, **kwargs):
+            class Result:
+                exit_code = 0
+                text = "   "  # whitespace only
+                stderr = ""
+            return Result()
+        monkeypatch.setattr("research_digest.marvin_launcher.launch", mock_launch)
+
+        # Track notify calls
+        notify_calls = []
+        def mock_notify(title, msg, **kwargs):
+            notify_calls.append((title, msg))
+        monkeypatch.setattr("research_digest.notify", mock_notify)
+
+        result = research_digest.generate()
+
+        assert result is None
+        assert len(notify_calls) == 1
+        assert notify_calls[0][0] == "MARVIN research-colony failed"
+
+
+class TestRunColonyReturnCode:
+    """Test run_colony return code behavior."""
+
+    def test_returns_1_when_digest_not_written(self, tmp_path, monkeypatch, capsys):
+        """run_colony should return 1 when digest generation fails."""
+        import run_colony
+        import source_monitor
+        import correlate
+        import research_digest
+
+        # Mock should_run to allow the run
+        def mock_should_run(*args, **kwargs):
+            return brief_fallback.Decision(True, "proceed")
+        monkeypatch.setattr("run_colony.brief_fallback.should_run", mock_should_run)
+
+        # Mock steps: source_monitor and correlate succeed
+        monkeypatch.setattr("source_monitor.main", lambda: 0)
+        monkeypatch.setattr("correlate.correlate", lambda: [])
+
+        # Mock research_digest to fail (return None)
+        monkeypatch.setattr("research_digest.generate", lambda: None)
+
+        result = run_colony.main()
+
+        # Should return 1 on failure
+        assert result == 1
+
+        # Verify error message printed
+        captured = capsys.readouterr()
+        assert "no digest written — see errors above" in captured.err
+
+    def test_returns_0_when_digest_written(self, tmp_path, monkeypatch, capsys):
+        """run_colony should return 0 when digest is successfully written."""
+        import run_colony
+        import source_monitor
+        import correlate
+        import research_digest
+
+        # Mock should_run to allow the run
+        def mock_should_run(*args, **kwargs):
+            return brief_fallback.Decision(True, "proceed")
+        monkeypatch.setattr("run_colony.brief_fallback.should_run", mock_should_run)
+
+        # Mock steps
+        monkeypatch.setattr("source_monitor.main", lambda: 0)
+        monkeypatch.setattr("correlate.correlate", lambda: [])
+
+        # Mock research_digest to succeed
+        fake_path = tmp_path / "digest.md"
+        monkeypatch.setattr("research_digest.generate", lambda: fake_path)
+
+        result = run_colony.main()
+
+        # Should return 0 on success
+        assert result == 0
+
+        # Verify success message printed
+        captured = capsys.readouterr()
+        assert "done — digest at" in captured.err
