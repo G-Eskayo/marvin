@@ -218,6 +218,35 @@ def _prd_dispatches(stages_dir: Path | None = None, days: float = PROBE_WINDOW_D
     return float(count)
 
 
+def _pipeline_verify_timeouts(stages_dir: Path | None = None, days: float = PROBE_WINDOW_DAYS, now: datetime | None = None,
+                              machine: str | None = None) -> float:
+    """#881/#1316: pipeline verify stages that timed out over the window, from the ticket stages log.
+    Counts "verifying"/"failed" events with "timed out" in the detail, on this machine or the specified one.
+    O(stage events in the window)."""
+    import ticket_stages
+    import machine_profile
+    stages_dir = stages_dir or ticket_stages.STAGES_DIR
+    cut = _cut(now, days)
+    machine = machine or machine_profile.registry_id()
+    count = 0
+    if not (stages_dir and stages_dir.is_dir()):
+        return 0.0
+    for f in sorted(stages_dir.glob("*.json")):
+        try:
+            events = json.loads(f.read_text())
+        except ValueError:
+            continue
+        if not isinstance(events, list):
+            continue
+        for e in events:
+            if (isinstance(e, dict) and e.get("stage") == "verifying" and e.get("status") == "failed"
+                    and e.get("machine") == machine
+                    and "timed out" in str(e.get("detail", "")).lower()
+                    and (w := _when(e.get("timestamp"))) and w >= cut):
+                count += 1
+    return float(count)
+
+
 _SYNC_HEADER = re.compile(r"^## (\S+) — alert \(([^)]+)\)", re.M)
 
 
@@ -456,6 +485,8 @@ PROBES: dict[str, tuple[Callable[..., float], float, str]] = {
     # Two a week leaves room for one genuinely hung run; the affected tests take seconds to minutes, not 20+.
     "verify-timeouts": (lambda days=PROBE_WINDOW_DAYS: _marvin_verify_timeouts(days=days), 2.0,
                         "marvin tickets whose pipeline verify timed out over 7 days, per Mac, summed (#1152)"),
+    "pipeline-verify-timeouts": (lambda days=PROBE_WINDOW_DAYS: _pipeline_verify_timeouts(days=days), 0.0,
+                                 "pipeline verify stages that timed out, from the ticket stages log, over 7 days (#881, #1316)"),
     # Two a week leaves room for one genuinely hung model run; at the new 1500 s limit a finished run never comes close.
     "model-run-timeouts": (lambda days=PROBE_WINDOW_DAYS: _model_run_timeouts(days=days), 2.0,
                            "ticket-planner and ticket-executor launches that timed out over 7 days, from each Mac's "

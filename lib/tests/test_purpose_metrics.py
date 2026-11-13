@@ -631,3 +631,154 @@ def test_ci_onnx_download_failures_is_registered():
     assert "ci-onnx-download-failures" in pm.PROBES
     fn, limit, what = pm.PROBES["ci-onnx-download-failures"]
     assert limit == 6.0 and "#1098" in what and "#1156" in what and "#1163" in what
+
+
+# ── #881/#1316: pipeline verify stages that timed out ──────────────────────────────────────────────────────
+
+def _verify_line(t, machine, detail):
+    import json as _j
+    return _j.dumps({"t": t.isoformat(), "stage": "verifying", "status": "failed", "machine": machine, "detail": detail,
+                     "timestamp": t.isoformat()})
+
+
+def test_pipeline_verify_timeouts_counts_timed_out_verify_events_per_machine(tmp_path):
+    """#881/#1316: counts 'verifying'/'failed' events with 'timed out' in the detail per machine."""
+    from datetime import datetime, timedelta, timezone
+    d = tmp_path / "ticket-stages"
+    d.mkdir(exist_ok=True)
+    now = datetime(2026, 11, 16, 12, tzinfo=timezone.utc)
+    times = [(now - timedelta(hours=h)).isoformat() for h in [2, 3, 4, 1, 6]]
+
+    (d / "ticket-1.json").write_text(_json.dumps([
+        {"stage": "verifying", "status": "failed", "machine": "mac-mini", "detail": "timed out after 1200s",
+         "timestamp": times[0]},
+        {"stage": "verifying", "status": "failed", "machine": "mac-mini", "detail": "TIMED OUT on loop",
+         "timestamp": times[1]},
+        {"stage": "verifying", "status": "failed", "machine": "macbook", "detail": "timed out running tests",
+         "timestamp": times[2]},
+    ]))
+    (d / "ticket-2.json").write_text(_json.dumps([
+        {"stage": "verifying", "status": "failed", "machine": "mac-mini", "detail": "timed out after 1200s",
+         "timestamp": times[3]},
+        {"stage": "verifying", "status": "failed", "machine": "mac-mini", "detail": "tests failed, not a timeout",
+         "timestamp": times[4]},
+    ]))
+
+    # mac-mini: 3 (hours 2, 3, 1); macbook: 1 (hour 4)
+    assert pm._pipeline_verify_timeouts(d, days=7, now=now, machine="mac-mini") == 3.0
+    assert pm._pipeline_verify_timeouts(d, days=7, now=now, machine="macbook") == 1.0
+
+
+def test_pipeline_verify_timeouts_uses_registry_id_default_for_machine(tmp_path, monkeypatch):
+    """When machine is not specified, defaults to machine_profile.registry_id()."""
+    from datetime import datetime, timedelta, timezone
+    import machine_profile
+    d = tmp_path / "ticket-stages"
+    d.mkdir(exist_ok=True)
+    now = datetime(2026, 11, 16, 12, tzinfo=timezone.utc)
+    t = now.isoformat()
+
+    (d / "ticket.json").write_text(_json.dumps([
+        {"stage": "verifying", "status": "failed", "machine": "mac-mini", "detail": "timed out",
+         "timestamp": t},
+        {"stage": "verifying", "status": "failed", "machine": "macbook", "detail": "timed out",
+         "timestamp": t},
+    ]))
+
+    monkeypatch.setattr(machine_profile, "registry_id", lambda: "mac-mini")
+    assert pm._pipeline_verify_timeouts(d, days=7, now=now) == 1.0  # defaults to mac-mini
+
+
+def test_pipeline_verify_timeouts_respects_the_7day_window(tmp_path):
+    """Events outside the 7-day window are not counted; only those within it."""
+    from datetime import datetime, timedelta, timezone
+    d = tmp_path / "ticket-stages"
+    d.mkdir(exist_ok=True)
+    now = datetime(2026, 11, 16, 12, tzinfo=timezone.utc)
+
+    (d / "ticket-old.json").write_text(_json.dumps([
+        {"stage": "verifying", "status": "failed", "machine": "mac-mini", "detail": "timed out",
+         "timestamp": (now - timedelta(days=8)).isoformat()},      # outside
+        {"stage": "verifying", "status": "failed", "machine": "mac-mini", "detail": "timed out",
+         "timestamp": (now - timedelta(days=7)).isoformat()},      # just inside
+        {"stage": "verifying", "status": "failed", "machine": "mac-mini", "detail": "timed out",
+         "timestamp": (now - timedelta(hours=1)).isoformat()},     # inside
+    ]))
+
+    assert pm._pipeline_verify_timeouts(d, days=7, now=now, machine="mac-mini") == 2.0
+
+
+def test_pipeline_verify_timeouts_ignores_wrong_stage_or_status(tmp_path):
+    """Events with stage != 'verifying' or status != 'failed' are ignored, even with 'timed out' in detail."""
+    from datetime import datetime, timezone
+    d = tmp_path / "ticket-stages"
+    d.mkdir(exist_ok=True)
+    now = datetime(2026, 11, 16, 12, tzinfo=timezone.utc)
+    t = now.isoformat()
+
+    (d / "ticket.json").write_text(_json.dumps([
+        {"stage": "verifying", "status": "failed", "machine": "mac-mini", "detail": "timed out",
+         "timestamp": t},                                           # counted
+        {"stage": "executing", "status": "failed", "machine": "mac-mini", "detail": "timed out",
+         "timestamp": t},                                           # wrong stage
+        {"stage": "verifying", "status": "passed", "machine": "mac-mini", "detail": "timed out",
+         "timestamp": t},                                           # wrong status
+        {"stage": "verifying", "status": "failed", "machine": "mac-mini", "detail": "failed on assertion",
+         "timestamp": t},                                           # no "timed out"
+    ]))
+
+    assert pm._pipeline_verify_timeouts(d, days=7, now=now, machine="mac-mini") == 1.0
+
+
+def test_pipeline_verify_timeouts_case_insensitive_timeout_check(tmp_path):
+    """The 'timed out' check is case-insensitive."""
+    from datetime import datetime, timezone
+    d = tmp_path / "ticket-stages"
+    d.mkdir(exist_ok=True)
+    now = datetime(2026, 11, 16, 12, tzinfo=timezone.utc)
+    t = now.isoformat()
+
+    (d / "ticket.json").write_text(_json.dumps([
+        {"stage": "verifying", "status": "failed", "machine": "mac-mini", "detail": "Timed Out After 1200s",
+         "timestamp": t},
+        {"stage": "verifying", "status": "failed", "machine": "mac-mini", "detail": "TIMED OUT",
+         "timestamp": t},
+        {"stage": "verifying", "status": "failed", "machine": "mac-mini", "detail": "timed out running",
+         "timestamp": t},
+    ]))
+
+    assert pm._pipeline_verify_timeouts(d, days=7, now=now, machine="mac-mini") == 3.0
+
+
+def test_pipeline_verify_timeouts_with_missing_directory_returns_zero(tmp_path):
+    """When stages_dir doesn't exist, return 0.0 instead of raising."""
+    from datetime import datetime, timezone
+    now = datetime(2026, 11, 16, 12, tzinfo=timezone.utc)
+    d = tmp_path / "nonexistent"
+
+    assert pm._pipeline_verify_timeouts(d, days=7, now=now, machine="mac-mini") == 0.0
+
+
+def test_pipeline_verify_timeouts_skips_malformed_json(tmp_path):
+    """Malformed JSON files are skipped; OSError (unreadable files) would propagate (but we don't test that here)."""
+    from datetime import datetime, timezone
+    d = tmp_path / "ticket-stages"
+    d.mkdir(exist_ok=True)
+    now = datetime(2026, 11, 16, 12, tzinfo=timezone.utc)
+    t = now.isoformat()
+
+    (d / "good.json").write_text(_json.dumps([
+        {"stage": "verifying", "status": "failed", "machine": "mac-mini", "detail": "timed out", "timestamp": t},
+    ]))
+    (d / "bad.json").write_text("{not json")
+    (d / "odd.json").write_text(_json.dumps({"not": "a list"}))
+    (d / "mixed.json").write_text(_json.dumps([None, 3, {"stage": "verifying", "timestamp": "bad"}]))
+
+    assert pm._pipeline_verify_timeouts(d, days=7, now=now, machine="mac-mini") == 1.0
+
+
+def test_pipeline_verify_timeouts_probe_is_registered():
+    """The probe is registered with citations to #881 and #1316."""
+    assert "pipeline-verify-timeouts" in pm.PROBES
+    fn, limit, what = pm.PROBES["pipeline-verify-timeouts"]
+    assert limit == 0.0 and "#881" in what and "#1316" in what
