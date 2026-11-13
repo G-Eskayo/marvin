@@ -1,0 +1,6 @@
+1. Edit `REVIEW_PROMPT_TEMPLATE`'s opening sentence in `skills/architecture-review/scripts/background_architecture_review.py` (line 168): replace `"the only file you should write to is ~/.claude/suggestions.md, and you physically cannot do anything else"` with `"the only file you should write to is the one named below, and you physically cannot do anything else"`.
+2. In `skills/architecture-review/scripts/tests/test_background_architecture_review.py`, update `test_inbox_mode_the_reviewer_writes_a_staging_file_that_is_added_to_the_inbox` to also assert `"only file you should write to is ~/.claude/suggestions.md"` is absent from `prompts[0]`.
+3. Add a new legacy-mode test asserting the rendered prompt (pile absent, `MD_DESTINATION` path) names `suggestions.md` as the write target via the destination block, and that the old hardcoded contradiction phrase is absent.
+4. Add a new test for an inbox-mode staging file path containing a space, asserting it's named correctly in the rendered prompt.
+5. Run `~/.agents/venv/bin/python -m pytest skills/architecture-review/scripts/tests/test_background_architecture_review.py -v` and confirm the full suite (existing + new) passes.
+6. Open the PR and `marvin-show` the diff for review.
