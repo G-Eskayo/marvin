@@ -1,0 +1,7 @@
+1. In `skills/handoff/scripts/check_remote_session.py`, drop the `pattern="*.md"` argument from the `resume_check.ranked_handoffs(...)` call at line 161 so the library default `handoff-*.md` applies.
+2. Replace the `if ranked: _surface_resume_prompt(ranked[0][0])` block with a loop over `ranked` that reads each candidate (skipping any that raise `OSError`) and picks the first whose `resume_check.resume_prompt(text)` is non-empty.
+3. When no candidate qualifies, print one labelled line (e.g. `f"rebuilt a handoff on {device_id} but found no resume prompt in handoffs/"`) instead of returning silently.
+4. Update `test_the_surfaced_handoff_is_chosen_by_as_of` in `lib/tests/test_resume_check_wiring.py` so both fixture handoffs carry a resume prompt.
+5. Add the five new tests listed above (items 2–6 in the tests-first list) to `lib/tests/test_resume_check_wiring.py`, reusing the `remote` fixture.
+6. Run `~/.agents/venv/bin/python -m pytest lib/tests/test_resume_check_wiring.py lib/tests/test_check_remote_session.py lib/tests/test_resume_check.py -v` and confirm all pass, including the unmodified existing tests in those files.
+7. Run `~/.agents/skills/architecture-review/scripts/sort_suggestions.py` once the code change is committed, to re-sort `~/.claude/suggestions.md` per acceptance criteria.
