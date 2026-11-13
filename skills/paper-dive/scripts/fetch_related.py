@@ -16,9 +16,14 @@ import sys
 import time
 from pathlib import Path
 
+# Helpers live next to this file in the standalone repo (G-Eskayo/paper-dive) and in ~/.agents/lib inside MARVIN.
+sys.path[:0] = [str(Path(__file__).resolve().parent), str(Path.home() / ".agents" / "lib")]
+from s2_client import get_with_retry, s2_id, S2_PAPER_BASE
+
 SESSION_DIR = Path.home() / ".claude" / "paper-sessions"
-S2_BASE = "https://api.semanticscholar.org/graph/v1"
 ARXIV_BASE = "http://export.arxiv.org/api/query"
+
+failures: list[tuple[str, str]] = []
 
 
 def get_requests():
@@ -31,39 +36,56 @@ def get_requests():
 
 
 def s2_paper_by_doi(doi: str) -> dict | None:
-    r = get_requests()
-    url = f"{S2_BASE}/paper/DOI:{doi}"
-    fields = "title,authors,year,abstract,citationCount,externalIds,openAccessPdf,references,citations"
-    resp = r.get(url, params={"fields": fields}, timeout=15)
-    if resp.status_code == 200:
+    try:
+        url = f"{S2_PAPER_BASE}/{s2_id(doi)}"
+        fields = "title,authors,year,abstract,citationCount,externalIds,openAccessPdf,references,citations"
+        resp = get_with_retry(url, params={"fields": fields}, timeout=15)
         return resp.json()
-    return None
+    except get_requests().RequestException as e:
+        failures.append(("DOI lookup", str(e)))
+        return None
+    except (ValueError, KeyError, TypeError) as e:
+        failures.append(("DOI lookup", f"JSON decode error: {e}"))
+        return None
 
 
 def s2_search(query: str, limit: int = 20) -> list[dict]:
-    r = get_requests()
-    resp = r.get(
-        f"{S2_BASE}/paper/search",
-        params={"query": query, "limit": limit,
-                "fields": "title,authors,year,abstract,citationCount,openAccessPdf,externalIds"},
-        timeout=15,
-    )
-    if resp.status_code == 200:
+    try:
+        url = f"{S2_PAPER_BASE}/search"
+        params = {
+            "query": query,
+            "limit": limit,
+            "fields": "title,authors,year,abstract,citationCount,openAccessPdf,externalIds",
+        }
+        resp = get_with_retry(url, params=params, timeout=15)
         return resp.json().get("data", [])
-    return []
+    except get_requests().RequestException as e:
+        failures.append(("search", str(e)))
+        return []
+    except (ValueError, KeyError, TypeError) as e:
+        failures.append(("search", f"JSON decode error: {e}"))
+        return []
 
 
 def s2_recommendations(paper_id: str, limit: int = 10) -> list[dict]:
-    r = get_requests()
-    resp = r.post(
-        "https://api.semanticscholar.org/recommendations/v1/papers/",
-        json={"positivePaperIds": [paper_id], "negativePaperIds": []},
-        params={"limit": limit, "fields": "title,authors,year,abstract,citationCount,openAccessPdf,externalIds"},
-        timeout=15,
-    )
-    if resp.status_code == 200:
+    try:
+        r = get_requests()
+        resp = r.post(
+            "https://api.semanticscholar.org/recommendations/v1/papers/",
+            json={"positivePaperIds": [paper_id], "negativePaperIds": []},
+            params={"limit": limit, "fields": "title,authors,year,abstract,citationCount,openAccessPdf,externalIds"},
+            timeout=15,
+        )
+        if resp.status_code != 200:
+            failures.append(("recommendations", f"HTTP {resp.status_code}"))
+            return []
         return resp.json().get("recommendedPapers", [])
-    return []
+    except r.RequestException as e:
+        failures.append(("recommendations", str(e)))
+        return []
+    except (ValueError, KeyError, TypeError) as e:
+        failures.append(("recommendations", f"JSON decode error: {e}"))
+        return []
 
 
 def arxiv_search(query: str, max_results: int = 5) -> list[dict]:
@@ -135,6 +157,7 @@ def fmt_paper(p: dict, idx: int) -> str:
 
 
 def main() -> None:
+    failures.clear()
     ap = argparse.ArgumentParser()
     ap.add_argument("--doi", help="DOI of the paper to find relatives for")
     ap.add_argument("--title", help="Paper title (used for search if no DOI)")
@@ -200,6 +223,15 @@ def main() -> None:
             unique.append(p)
 
     ranked = rank_papers(unique)
+
+    if failures:
+        reasons = "; ".join(f"{source}: {reason}" for source, reason in failures)
+        # Check if ranked results include non-arXiv sources
+        has_s2_results = any(p.get("source") != "arXiv" for p in ranked)
+        if has_s2_results:
+            lines.append(f"> **Issues with Semantic Scholar** ({reasons}): some services unavailable, but results shown are from working services.\n")
+        else:
+            lines.append(f"> **Semantic Scholar unavailable** ({reasons}): results below are arXiv-only.\n")
 
     lines.append("## Supporting / Extending\n")
     for i, p in enumerate(ranked[:5], 1):

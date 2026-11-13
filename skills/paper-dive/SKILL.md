@@ -220,7 +220,7 @@ synthesis.md    -- output of /synthesize (if run)
 
 ## Source Hierarchy for Related Papers
 
-1. **Semantic Scholar API** (`api.semanticscholar.org`) -- free, no key required for basic use. Best for citation graph traversal. Use `scripts/fetch_related.py`.
+1. **Semantic Scholar API** (`api.semanticscholar.org`) -- free but rate-limited (shared anonymous pool); calls go through `s2_client.get_with_retry`, and `S2_API_KEY` is used if set. Best for citation graph traversal. Use `scripts/fetch_related.py`.
 2. **arXiv** (`arxiv.org`) -- preprints. CS, math, physics, ML. Free API. Full-text PDFs available via `/paper-graph` for high-relevance nodes.
 
 Always surface which source each paper came from. Note open-access status.
