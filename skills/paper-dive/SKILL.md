@@ -1,6 +1,6 @@
 ---
 name: paper-dive
-description: Socratic reading partner for scientific papers. Ingests a paper and walks the user from plain-English understanding (L0) up to expert-level synthesis (L5) through conversation. Adaptive to the user's analogy domains. Builds a shared lexicon. Pulls related papers from Semantic Scholar / arXiv / scihub.org. Runs challenge and compare modes.
+description: Socratic reading partner for scientific papers. Ingests a paper and walks the user from plain-English understanding (L0) up to expert-level synthesis (L5) through conversation. Adaptive to the user's analogy domains. Builds a shared lexicon. Pulls related papers from Semantic Scholar / arXiv. Runs challenge and compare modes.
 tags: [intent:learn, intent:research, intent:read, intent:science, type:skill]
 ---
 
@@ -73,7 +73,7 @@ Check: "Is there anything in how they tested it that doesn't sit right with you?
 ### L4 — The Field Context
 Where does this paper sit? What did it challenge? What did it enable? Who disagrees, and why?
 
-This is where the citation graph becomes useful. Run `scripts/fetch_related.py` to pull supporting and contradicting papers.
+This is where the citation graph becomes useful. Run `scripts/fetch_related.py` to pull supporting papers, then `/challenge` for contradicting ones.
 
 Check: "Does knowing where this fits change how you're reading the claim?"
 
@@ -133,7 +133,7 @@ Re-explain the current level using a specific analogy domain. Example: `/explain
 ### `/pull-related`
 Run `scripts/fetch_related.py` with the paper's DOI or title+keywords. Returns:
 - 3–5 papers that support or extend the main claim (with sources)
-- 3–5 papers that contradict or challenge it
+- Contradictions / Challenges: run `/challenge` to surface methodological critiques from the citing literature
 - Ranked by citation count x recency score
 
 Sources queried in order: Semantic Scholar API -> arXiv
