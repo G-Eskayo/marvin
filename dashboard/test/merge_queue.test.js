@@ -550,3 +550,60 @@ describe('a conflict held too long is told once (#1183)', () => {
     expect(w.merged).toEqual([2])
   })
 })
+
+// marvin#1221: when the webhook restarts, interrupted merges are automatically resumed in the queue.
+describe('resume() restores interrupted merges to the front of the queue', () => {
+  it('test 9: resume adds a PR that was not in the queue and sorts to front', async () => {
+    const w = world([{ number: 100 }, { number: 101 }, { number: 102 }])
+    let runCount = 0
+    w.outcome = () => {
+      runCount++
+      // All merges fail with RATE_LIMITED so PRs stay queued
+      return { body: { code: 'RATE_LIMITED', message: 'rate limited' } }
+    }
+    const { queue, store } = make(w)
+    // Approve two PRs first to get them in the queue with earlier approvedAt times
+    await queue.approve(REPO, url(100))
+    await queue.approve(REPO, url(101))
+    const queuedBefore = store.forRepo(REPO).items.map((i) => i.number)
+    expect(queuedBefore).toEqual([100, 101])
+    // Resume 102 which is not in the queue - it should be added and sort to the front
+    store.resume(REPO, url(102))
+    const queuedAfter = store.forRepo(REPO).items.map((i) => i.number)
+    expect(queuedAfter[0]).toBe(102)
+    expect(queuedAfter).toEqual([102, 100, 101])
+  })
+
+  it('test 10: resume clears hold and failed entries for the PR', async () => {
+    const w = world([{ number: 200 }])
+    let runCount = 0
+    w.outcome = () => {
+      runCount++
+      return runCount === 1 ? { body: { code: 'RATE_LIMITED', message: 'rate limited' } } : { result: { merged: true } }
+    }
+    const { queue, store } = make(w)
+    await queue.approve(REPO, url(200))
+    expect(store.forRepo(REPO).items[0]).toHaveProperty('hold')
+    store.resume(REPO, url(200))
+    expect(store.forRepo(REPO).items[0]).not.toHaveProperty('hold')
+  })
+
+  it('test 11: resume moves a queued PR to the front (earliest approvedAt)', async () => {
+    const w = world([{ number: 300 }, { number: 301 }, { number: 302 }, { number: 303 }])
+    let runCount = 0
+    w.outcome = () => {
+      runCount++
+      // First item merges, others stay queued
+      return runCount === 1 ? { result: { merged: true } } : { body: { code: 'RATE_LIMITED', message: 'later' } }
+    }
+    const { queue, store } = make(w)
+    await queue.approve(REPO, url(300))
+    await queue.approve(REPO, url(301))
+    await queue.approve(REPO, url(302))
+    // After these approves: 300 merges, 301 and 302 are queued
+    expect(store.forRepo(REPO).items.map((i) => i.number)).toEqual([301, 302])
+    // Resume 302 to move it to the front
+    store.resume(REPO, url(302))
+    expect(store.forRepo(REPO).items.map((i) => i.number)).toEqual([302, 301])
+  })
+})
