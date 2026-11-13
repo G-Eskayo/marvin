@@ -1,5 +1,7 @@
 # Changelog
 
+- academic_search.py silently reports failed sources as empty results, and unbounded S2 retries can stall past the Bash timeout ([#1307](https://github.com/G-Eskayo/marvin/pull/1307))
+
 - Audit skill's suggestion-entry template omits the required Priority field and misstates the header format, so… ([#1303](https://github.com/G-Eskayo/marvin/pull/1303))
 
 - Workshop: parked tickets (needs-info after failed builds) and held tickets show as Stuck instead of Yours / On hold ([#1297](https://github.com/G-Eskayo/marvin/pull/1297))
