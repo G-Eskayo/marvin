@@ -1,0 +1,19 @@
+## North-star fit
+
+Reuses the outbox naming convention already implemented in `lib/marvin_show.py::copy_to_outbox` (folder = `<project>-<YYYY-MM-DD>-<topic>`, read in `docs/agents/showing-things.md`) and the `marvin-show` CLI (`.agents/bin/marvin-show` → `lib/marvin_show.py:main`) that every other "show Gil something" flow is supposed to use (`.agents/CLAUDE.md` "Showing Gil things" line). No new mechanism is added — the fix makes this one skill's two docs stop contradicting a pattern that already exists and is enforced elsewhere (`deliverable_location_guard.py`, `temp_deliverable_hook.py`). It is the simplest sufficient approach: a pure prose edit to two Markdown files, no code, no tests (ticket marks "How we'll try to break it" docs-only/exempt). Token cost is the edit itself only — trivial. It leaves Gil more capable: a report he can still find tomorrow, from either Mac, in the Docs tab, instead of one the OS silently deletes — directly serving north star 3 as the ticket states, and I checked that stated fit against the code: the current `SKILL.md`/`HTML-REPORT.md` do write to `$TMPDIR`/`<tmpdir>/architecture-review-*.html` exactly as described, so the fit is accurate, not stale.
+
+Checked for other readers of the old path: `grep -rn "architecture-review-" ~/.agents` outside the skill's own two files returns nothing, and `marvin-show` is not referenced anywhere in `skills/improve-codebase-architecture/`, confirming no residual pointer needs updating and no skill currently models the "call marvin-show from skill prose" pattern — this ticket is the first, so I'm writing plain, direct instructions rather than copying nonexistent prior wording.
+
+No Decisions needed — the ticket's "What to build" section is fully concrete (exact path, exact file to open with, exact wording fix); nothing here requires the owner to choose between options.
+
+## Tests
+
+None. Ticket's "How we'll try to break it" is marked "Docs-only: exempt," and there's no Attacks list. This is a two-file prose/path edit with no executable behavior to adversarially test. (If a reviewer disagrees and wants a probe, that's the recurrence-check item already filed in the ticket — "add one counting `architecture-review-*.html` files created under temp dirs" — which is a future ticket, not part of this fix's acceptance criteria.)
+
+## Task List
+
+1. **`skills/improve-codebase-architecture/SKILL.md` step 2** (current line ~51): replace the `$TMPDIR`/`/tmp`/`%TEMP%` sentence with instructions to write the self-contained HTML file to `~/.claude/outbox/<project>-<YYYY-MM-DD>-deepening-report/report.html`, then open it with `marvin-show <path> --project <id>`, telling the user the absolute path. Keep a plain-open fallback (`open`/`xdg-open`/`start`) only for machines without `marvin-show`.
+2. **Same file, line ~55**: change "For each candidate, the same template as before, but rendered as a card:" to "Render each candidate as a card with:".
+3. **`skills/improve-codebase-architecture/HTML-REPORT.md` lines 3-4**: change the path reference from `<tmpdir>/architecture-review-<timestamp>.html` to the same outbox path as step 1, keeping the rest of the scaffold (Tailwind/Mermaid CDN, card structure) unchanged.
+4. **Grep check**: re-run `grep -rn "architecture-review-" ~/.agents` after the edits to confirm only historical/unrelated hits remain and no other reader of the old filename pattern exists (already verified none exist; re-check post-edit as a safety net).
+5. **Acceptance pass**: confirm neither file mentions `$TMPDIR`, `/tmp`, or `architecture-review-` as the report location, both files give the same outbox path, and `SKILL.md` names `marvin-show` as the way to open it.

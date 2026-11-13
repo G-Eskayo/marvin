@@ -1,7 +1,7 @@
 # HTML Report Scaffold
 
 Self-contained file, no build step, no external app dependencies beyond CDN. Write to
-`<tmpdir>/architecture-review-<timestamp>.html`.
+`~/.claude/outbox/<project>-<YYYY-MM-DD>-deepening-report/report.html`.
 
 ## Base scaffold
 
