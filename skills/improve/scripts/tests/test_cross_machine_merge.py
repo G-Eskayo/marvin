@@ -101,6 +101,173 @@ def test_sync_paper_knowledge_skips_gracefully_when_remote_unreachable(tmp_path,
     assert "mac-mini-1" not in sync_state
 
 
+# ── run_merge_authority failure guards ─────────────────────────────────────
+
+def _make_ssh_run_mock(remote_profile_json="", remote_digest_content=""):
+    """Factory for ssh_run mocks that properly distinguish between machine-profile and digest fetches."""
+    def mock_ssh_run(host, cmd, timeout=30):
+        if "machine-profile" in cmd:
+            return remote_profile_json or json.dumps({"label": "test-remote"})
+        elif "daily-digest" in cmd or "research-digest" in cmd:
+            return remote_digest_content or "# Remote digest"
+        return None
+    return mock_ssh_run
+
+
+def test_run_merge_authority_skips_when_local_is_failed(tmp_path, monkeypatch):
+    """run_merge_authority skips merge if local content is a claude failure."""
+    digest_dir = tmp_path / "daily-digest"
+    digest_dir.mkdir(parents=True)
+    local_file = digest_dir / f"{cmm.TODAY}.md"
+    local_file.write_text(f"{cmm.CLAUDE_FAILED_PREFIX} test error)")
+
+    monkeypatch.setattr(cmm, "CLAUDE_DIR", tmp_path)
+
+    # Track calls to build_merged and scp_push
+    build_merged_called = []
+    scp_push_called = []
+
+    def mock_build_merged(*args, **kwargs):
+        build_merged_called.append(True)
+        return "should not be called"
+
+    def mock_scp_push(*args, **kwargs):
+        scp_push_called.append(True)
+        return True
+
+    monkeypatch.setattr(cmm, "build_merged", mock_build_merged)
+    monkeypatch.setattr(cmm, "scp_push", mock_scp_push)
+    monkeypatch.setattr(cmm, "ssh_run", _make_ssh_run_mock())
+
+    own_profile = {"label": "test-desktop", "mobility_class": "stationary"}
+    cmm.run_merge_authority("mac-mini-1", "gils-mac-mini", own_profile)
+
+    # Verify build_merged and scp_push were never called
+    assert not build_merged_called
+    assert not scp_push_called
+
+
+def test_run_merge_authority_skips_when_remote_is_failed(tmp_path, monkeypatch):
+    """run_merge_authority skips merge if remote content is a claude failure."""
+    digest_dir = tmp_path / "daily-digest"
+    digest_dir.mkdir(parents=True)
+    local_file = digest_dir / f"{cmm.TODAY}.md"
+    local_file.write_text("# Local digest")
+
+    monkeypatch.setattr(cmm, "CLAUDE_DIR", tmp_path)
+
+    build_merged_called = []
+    scp_push_called = []
+
+    def mock_build_merged(*args, **kwargs):
+        build_merged_called.append(True)
+        return "should not be called"
+
+    def mock_scp_push(*args, **kwargs):
+        scp_push_called.append(True)
+        return True
+
+    monkeypatch.setattr(cmm, "build_merged", mock_build_merged)
+    monkeypatch.setattr(cmm, "scp_push", mock_scp_push)
+    monkeypatch.setattr(cmm, "ssh_run", _make_ssh_run_mock(remote_digest_content=f"{cmm.CLAUDE_FAILED_PREFIX} remote error)"))
+
+    own_profile = {"label": "test-desktop", "mobility_class": "stationary"}
+    cmm.run_merge_authority("mac-mini-1", "gils-mac-mini", own_profile)
+
+    # Verify build_merged and scp_push were never called
+    assert not build_merged_called
+    assert not scp_push_called
+
+
+def test_run_merge_authority_skips_when_local_quarantined(tmp_path, monkeypatch):
+    """run_merge_authority skips merge if local content is quarantined by safety-monitor."""
+    digest_dir = tmp_path / "daily-digest"
+    digest_dir.mkdir(parents=True)
+    local_file = digest_dir / f"{cmm.TODAY}.md"
+    local_file.write_text("Quarantined by safety-monitor")
+
+    monkeypatch.setattr(cmm, "CLAUDE_DIR", tmp_path)
+
+    build_merged_called = []
+
+    def mock_build_merged(*args, **kwargs):
+        build_merged_called.append(True)
+        return "should not be called"
+
+    monkeypatch.setattr(cmm, "build_merged", mock_build_merged)
+    monkeypatch.setattr(cmm, "scp_push", lambda *a, **k: True)
+    monkeypatch.setattr(cmm, "ssh_run", _make_ssh_run_mock())
+
+    own_profile = {"label": "test-desktop", "mobility_class": "stationary"}
+    cmm.run_merge_authority("mac-mini-1", "gils-mac-mini", own_profile)
+
+    # Verify build_merged was never called
+    assert not build_merged_called
+
+
+def test_run_merge_authority_skips_when_merge_result_failed(tmp_path, monkeypatch):
+    """run_merge_authority skips write and push if build_merged returns failure."""
+    digest_dir = tmp_path / "daily-digest"
+    digest_dir.mkdir(parents=True)
+    local_file = digest_dir / f"{cmm.TODAY}.md"
+    local_file.write_text("# Local digest")
+
+    monkeypatch.setattr(cmm, "CLAUDE_DIR", tmp_path)
+
+    scp_push_called = []
+
+    def mock_build_merged(*args, **kwargs):
+        return f"{cmm.CLAUDE_FAILED_PREFIX} merge failed)"
+
+    def mock_scp_push(*args, **kwargs):
+        scp_push_called.append(True)
+        return True
+
+    monkeypatch.setattr(cmm, "build_merged", mock_build_merged)
+    monkeypatch.setattr(cmm, "scp_push", mock_scp_push)
+    monkeypatch.setattr(cmm, "ssh_run", _make_ssh_run_mock())
+
+    own_profile = {"label": "test-desktop", "mobility_class": "stationary"}
+    cmm.run_merge_authority("mac-mini-1", "gils-mac-mini", own_profile)
+
+    # Verify neither the merged file was written nor scp_push was called
+    merged_file = digest_dir / f"{cmm.TODAY}-merged.md"
+    assert not merged_file.exists()
+    assert not scp_push_called
+
+
+def test_run_merge_authority_succeeds_with_valid_inputs(tmp_path, monkeypatch):
+    """run_merge_authority writes merged file and pushes when all inputs are valid."""
+    digest_dir = tmp_path / "daily-digest"
+    digest_dir.mkdir(parents=True)
+    local_file = digest_dir / f"{cmm.TODAY}.md"
+    local_file.write_text("# Local digest")
+
+    monkeypatch.setattr(cmm, "CLAUDE_DIR", tmp_path)
+
+    scp_push_called = []
+
+    def mock_build_merged(*args, **kwargs):
+        return "# Merged content"
+
+    def mock_scp_push(*args, **kwargs):
+        scp_push_called.append(True)
+        return True
+
+    monkeypatch.setattr(cmm, "build_merged", mock_build_merged)
+    monkeypatch.setattr(cmm, "scp_push", mock_scp_push)
+    monkeypatch.setattr(cmm, "ssh_run", _make_ssh_run_mock())
+
+    own_profile = {"label": "test-desktop", "mobility_class": "stationary"}
+    cmm.run_merge_authority("mac-mini-1", "gils-mac-mini", own_profile)
+
+    # Verify the merged file was written and scp_push was called
+    merged_file = digest_dir / f"{cmm.TODAY}-merged.md"
+    assert merged_file.exists()
+    assert "# Merged content" in merged_file.read_text()
+    assert scp_push_called
+
+
 def test_sync_paper_knowledge_skips_gracefully_on_malformed_json(tmp_path, monkeypatch):
     monkeypatch.setattr(cmm, "CHROMA_PATH", tmp_path)
     monkeypatch.setattr(cmm, "ssh_run", lambda host, cmd, timeout=30: "not valid json{")

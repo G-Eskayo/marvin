@@ -54,7 +54,7 @@ sys.path.insert(0, str(Path.home() / ".agents" / "lib"))
 from machine_profile import load_or_build, registry_id, remote_devices  # noqa: E402
 
 sys.path.insert(0, str(Path(__file__).parent))
-from daily_digest import call_claude  # noqa: E402  (shares claude-bin resolution + timeout handling)
+from daily_digest import call_claude, CLAUDE_FAILED_PREFIX  # noqa: E402  (shares claude-bin resolution + timeout handling)
 
 CLAUDE_DIR     = Path.home() / ".claude"
 CHROMA_PATH    = CLAUDE_DIR / "chroma"
@@ -373,11 +373,23 @@ def run_merge_authority(remote_id: str, host: str, own_profile: dict) -> None:
             print(f"{LOG_PREFIX} {remote_id}'s {kind} for {TODAY} unavailable — skipping merge (may not have run yet)", file=sys.stderr)
             continue
 
+        local_text = local_file.read_text()
+        if local_text.startswith(CLAUDE_FAILED_PREFIX) or "Quarantined by safety-monitor" in local_text:
+            print(f"{LOG_PREFIX} {kind} input from local is a failure/quarantine placeholder — skipping merge, will retry next trigger", file=sys.stderr)
+            continue
+        if remote_content.startswith(CLAUDE_FAILED_PREFIX) or "Quarantined by safety-monitor" in remote_content:
+            print(f"{LOG_PREFIX} {kind} input from {remote_id} is a failure/quarantine placeholder — skipping merge, will retry next trigger", file=sys.stderr)
+            continue
+
         print(f"{LOG_PREFIX} merging {kind} with {remote_id}...", file=sys.stderr)
         merged = build_merged(
-            own_label, own_profile, local_file.read_text(),
+            own_label, own_profile, local_text,
             remote_label, remote_profile, remote_content,
         )
+
+        if merged.startswith(CLAUDE_FAILED_PREFIX):
+            print(f"{LOG_PREFIX} {kind} merge call failed — not writing, will retry on next trigger", file=sys.stderr)
+            continue
 
         header = (
             f"# MARVIN {kind.replace('-', ' ').title()} — Merged — {TODAY}\n\n"
