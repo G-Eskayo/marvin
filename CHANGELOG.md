@@ -1,5 +1,7 @@
 # Changelog
 
+- Research colony silently exits 0 when all sources fail or claude call fails ([#1330](https://github.com/G-Eskayo/marvin/pull/1330))
+
 - Fix non-additive diff skip and destructive quarantine revert in background_review.py ([#1329](https://github.com/G-Eskayo/marvin/pull/1329))
 
 - source_monitor.py fetches arXiv over plain HTTP into an unattended digest prompt ([#1328](https://github.com/G-Eskayo/marvin/pull/1328))
