@@ -1,5 +1,7 @@
 # Changelog
 
+- qa-agent/SKILL.md's sub-agent snippet passes "~" paths to subprocess.run, which fails with FileNotFoundError ([#1326](https://github.com/G-Eskayo/marvin/pull/1326))
+
 - task_dispatch.py: log the silent fallbacks in remote dispatch-state and load reads to hook_errors ([#1325](https://github.com/G-Eskayo/marvin/pull/1325))
 
 - Write improve-codebase-architecture's HTML report to ~/.claude/outbox/ under a distinct name, not $TMPDIR as… ([#1324](https://github.com/G-Eskayo/marvin/pull/1324))
