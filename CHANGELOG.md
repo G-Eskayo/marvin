@@ -1,5 +1,7 @@
 # Changelog
 
+- continuity_checker.py: say per seed why it found no pairs, and fix SKILL.md's seeds-json key ([#1327](https://github.com/G-Eskayo/marvin/pull/1327))
+
 - qa-agent/SKILL.md's sub-agent snippet passes "~" paths to subprocess.run, which fails with FileNotFoundError ([#1326](https://github.com/G-Eskayo/marvin/pull/1326))
 
 - task_dispatch.py: log the silent fallbacks in remote dispatch-state and load reads to hook_errors ([#1325](https://github.com/G-Eskayo/marvin/pull/1325))
