@@ -3,9 +3,12 @@
 """
 from __future__ import annotations
 import sys
+import os
+import time
 from pathlib import Path
 from datetime import datetime, timezone, timedelta
 from unittest.mock import patch
+from contextlib import contextmanager
 
 SCRIPTS = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(SCRIPTS))
@@ -13,6 +16,25 @@ sys.path.insert(0, str(SCRIPTS))
 import daily_digest as dd  # noqa: E402
 
 import pytest  # noqa: E402
+
+
+@contextmanager
+def tz_context(tz_name: str | None):
+    """Save and restore TZ environment variable and call tzset() to apply changes."""
+    old_tz = os.environ.get("TZ")
+    try:
+        if tz_name is None:
+            os.environ.pop("TZ", None)
+        else:
+            os.environ["TZ"] = tz_name
+        time.tzset()
+        yield
+    finally:
+        if old_tz is None:
+            os.environ.pop("TZ", None)
+        else:
+            os.environ["TZ"] = old_tz
+        time.tzset()
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[4] / "lib"))
 import brief_fallback  # noqa: E402  (main() imports it by name; the same module object, so the pin below holds)
@@ -482,3 +504,151 @@ def test_queue_summary_of_an_empty_pile(tmp_path, monkeypatch):
     (tmp_path / "inbox" / "improvement-queue").mkdir(parents=True)
     monkeypatch.setattr(dd, "CLAUDE_DIR", tmp_path)
     assert dd.improvement_queue_summary() == "(improvement queue is empty)"
+
+
+# ── _now() and _today_local() tests ────────────────────────────────────────────
+
+
+def test_now_returns_utc_datetime():
+    """_now() returns a datetime with UTC timezone."""
+    result = dd._now()
+    assert isinstance(result, datetime)
+    assert result.tzinfo == timezone.utc
+
+
+def test_now_is_recent():
+    """_now() returns a timestamp close to the actual current time."""
+    before = datetime.now(timezone.utc)
+    result = dd._now()
+    after = datetime.now(timezone.utc)
+    assert before <= result <= after
+
+
+def test_today_local_returns_string():
+    """_today_local() returns a string in YYYY-MM-DD format."""
+    result = dd._today_local()
+    assert isinstance(result, str)
+    assert len(result) == 10
+    assert result[4] == "-" and result[7] == "-"
+
+
+def test_today_local_utc_before_local_after_date_boundary():
+    """_today_local() returns local date when UTC is past midnight but local is not.
+
+    At 2026-11-13T07:30:00Z, UTC date is 2026-11-13.
+    In Etc/GMT+8 (UTC-8), local time is 2026-11-12T23:30:00, so local date is 2026-11-12.
+    This test ensures _today_local() returns the LOCAL date, not UTC.
+    """
+    with tz_context("Etc/GMT+8"):
+        with patch.object(dd, "_now", return_value=datetime(2026, 11, 13, 7, 30, 0, tzinfo=timezone.utc)):
+            result = dd._today_local()
+            # If _today_local() regresses to UTC, it would return "2026-11-13"
+            # But it should return "2026-11-12" (the local date)
+            assert result == "2026-11-12"
+
+
+def test_today_local_with_positive_offset():
+    """_today_local() respects positive UTC offsets (e.g., UTC+8).
+
+    At 2026-11-13T00:30:00Z, UTC date is 2026-11-13.
+    In UTC+8, local time is 2026-11-13T08:30:00, so local date is 2026-11-13.
+    """
+    with tz_context("Asia/Shanghai"):
+        with patch.object(dd, "_now", return_value=datetime(2026, 11, 13, 0, 30, 0, tzinfo=timezone.utc)):
+            result = dd._today_local()
+            assert result == "2026-11-13"
+
+
+def test_today_local_with_negative_offset():
+    """_today_local() respects negative UTC offsets (e.g., UTC-5).
+
+    At 2026-11-13T23:30:00Z, UTC date is 2026-11-13.
+    In US/Eastern (UTC-5), local time is 2026-11-13T18:30:00, so local date is 2026-11-13.
+    """
+    with tz_context("US/Eastern"):
+        with patch.object(dd, "_now", return_value=datetime(2026, 11, 13, 23, 30, 0, tzinfo=timezone.utc)):
+            result = dd._today_local()
+            assert result == "2026-11-13"
+
+
+def test_today_local_at_local_date_boundary_23_59():
+    """_today_local() handles the case where local time is 23:59:59 (approaching midnight).
+
+    At 2026-11-13T07:59:59Z, in Etc/GMT+8 (UTC-8), local time is 2026-11-12T23:59:59.
+    The next second, UTC will be 2026-11-13T08:00:00Z and local will be 2026-11-13T00:00:00.
+    """
+    with tz_context("Etc/GMT+8"):
+        # Just before the boundary
+        with patch.object(dd, "_now", return_value=datetime(2026, 11, 13, 7, 59, 59, tzinfo=timezone.utc)):
+            assert dd._today_local() == "2026-11-12"
+        # Just after the boundary
+        with patch.object(dd, "_now", return_value=datetime(2026, 11, 13, 8, 0, 0, tzinfo=timezone.utc)):
+            assert dd._today_local() == "2026-11-13"
+
+
+def test_today_local_tz_unset_uses_system_local():
+    """_today_local() uses system local time when TZ is not explicitly set.
+
+    This test removes TZ from the environment and verifies the function
+    still returns a valid YYYY-MM-DD string based on system local time.
+    """
+    with tz_context(None):  # Unset TZ entirely
+        result = dd._today_local()
+        assert isinstance(result, str)
+        assert len(result) == 10
+        assert result[4] == "-" and result[7] == "-"
+
+
+def test_today_constant_equals_today_local():
+    """Regression guard: TODAY module constant must equal _today_local() formula.
+
+    If TODAY is set to a hardcoded or UTC-based value instead of calling
+    _today_local(), this test will catch it by verifying the formula matches.
+    """
+    # TODAY is computed at import time, so we can't re-import to get a fresh value.
+    # Instead, verify that the current _today_local() call matches TODAY.
+    # Since _today_local() calls _now() which gets UTC, then converts to local,
+    # we verify that TODAY uses the same logic by checking it equals _today_local().
+    current_today = dd._today_local()
+    assert dd.TODAY == current_today, (
+        f"TODAY ({dd.TODAY}) doesn't match _today_local() ({current_today}). "
+        f"TODAY must use the local-timezone formula, not UTC."
+    )
+
+
+def test_writer_reader_cross_check_digest_finding(tmp_path, monkeypatch):
+    """Cross-check: daily_digest writes with TODAY, session_start_report's _check_digest finds it.
+
+    Tests that daily_digest and session_start_report._check_digest use the same date logic
+    so the reader can find files written by the writer.
+    """
+    import sys
+    sys.path.insert(0, str(Path(__file__).resolve().parents[3] / "lib"))
+    try:
+        import session_start_report as ssr
+    except ImportError:
+        pytest.skip("session_start_report not available")
+
+    frozen_utc = datetime(2026, 11, 13, 7, 30, 0, tzinfo=timezone.utc)
+    digest_dir = tmp_path / "daily-digest"
+    digest_dir.mkdir()
+
+    with tz_context("Etc/GMT+8"):
+        with patch.object(dd, "_now", return_value=frozen_utc):
+            with patch.object(ssr, "_now", return_value=frozen_utc):
+                # Writer computes the date and filename it would use
+                writer_date = dd._today_local()
+                writer_file = digest_dir / f"{writer_date}.md"
+
+                # Writer writes a digest file with a summary line
+                writer_file.write_text("# Daily Digest\n*Test summary*\n\nBody text.")
+
+                # Reader uses _check_digest to find the file
+                # Monkeypatch the reader's directory to our temp path
+                result = ssr._check_digest("test digest", digest_dir)
+
+                # The reader must find the file and extract the summary
+                assert result is not None, f"_check_digest failed to find {writer_file}"
+                assert "Test summary" in result
+                assert writer_date in result
+                assert writer_date == "2026-11-12"
