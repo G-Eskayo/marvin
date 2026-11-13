@@ -1,5 +1,7 @@
 # Changelog
 
+- source_monitor.py fetches arXiv over plain HTTP into an unattended digest prompt ([#1328](https://github.com/G-Eskayo/marvin/pull/1328))
+
 - continuity_checker.py: say per seed why it found no pairs, and fix SKILL.md's seeds-json key ([#1327](https://github.com/G-Eskayo/marvin/pull/1327))
 
 - qa-agent/SKILL.md's sub-agent snippet passes "~" paths to subprocess.run, which fails with FileNotFoundError ([#1326](https://github.com/G-Eskayo/marvin/pull/1326))
