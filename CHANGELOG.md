@@ -1,5 +1,7 @@
 # Changelog
 
+- fetch_related.py calls Semantic Scholar with no retry: a 429 silently empties `/pull-related`, and a network error… ([#1312](https://github.com/G-Eskayo/marvin/pull/1312))
+
 - Dispatch skips parent PRDs, using the PRD test triage already uses ([#1309](https://github.com/G-Eskayo/marvin/pull/1309))
 
 - academic_search.py silently reports failed sources as empty results, and unbounded S2 retries can stall past the Bash timeout ([#1307](https://github.com/G-Eskayo/marvin/pull/1307))
