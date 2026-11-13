@@ -1,0 +1,5 @@
+1. Edit `lib/tests/test_job_hooks.py:172-185`: replace the `os.readlink(f"/proc/{p.pid}/exe").endswith("sleep")` poll loop with a poll on `jh.process_env(p.pid)` until `"DISPLAY" in env` or the 10s deadline, keeping the same `assert` line unchanged.
+2. Run `test_the_session_environment_is_read_from_proc` repeatedly (≥20×) on Linux to confirm the race is closed, not just not-reproduced once.
+3. Run the full `lib/tests/test_job_hooks.py` and `lib/tests/test_task_dispatch.py` files to confirm no collateral breakage.
+4. Run the full `.github/run-check.sh python` suite on a clean checkout of main with the fix applied (not just this worktree), per the ticket's break-attempt instruction.
+5. Open the PR naming "Closes #1321", noting the merge gate will self-close the ticket once CI goes green, and noting explicitly that no revert was needed (small fix-forward).

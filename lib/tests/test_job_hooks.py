@@ -176,9 +176,12 @@ def test_the_session_environment_is_read_from_proc():
         # #1144: right after Popen the child can still be the forked copy of this process, carrying pytest's own
         # environment, until it execs sleep. Read only once it has (main went red on the first Linux CI run).
         deadline = time.monotonic() + 10
-        while not os.readlink(f"/proc/{p.pid}/exe").endswith("sleep") and time.monotonic() < deadline:
+        env = {}
+        while time.monotonic() < deadline:
+            env = jh.process_env(p.pid)
+            if env.get("DISPLAY") == ":7":
+                break
             time.sleep(0.01)
-        env = jh.process_env(p.pid)
         assert env["DISPLAY"] == ":7" and env["XAUTHORITY"] == "/x" and "SECRET" not in env
     finally:
         p.kill()
