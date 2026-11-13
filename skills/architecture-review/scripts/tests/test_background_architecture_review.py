@@ -10,6 +10,27 @@ sys.path.insert(0, str(SCRIPTS))
 
 import background_architecture_review as bar  # noqa: E402
 
+sys.path.insert(0, str(Path(__file__).resolve().parents[4] / "lib"))
+import inbox  # noqa: E402
+import pytest  # noqa: E402
+
+
+@pytest.fixture(autouse=True)
+def isolated_claude_home(tmp_path, monkeypatch):
+    claude = tmp_path / ".claude"
+    claude.mkdir()
+    monkeypatch.setattr(inbox, "default_root", lambda: claude / "inbox")
+    monkeypatch.setattr(bar, "_resolve_claude_bin", lambda: "/usr/bin/true")
+    for name, value in (("STATE_DIR", claude / "architecture-review" / "state"),
+                        ("CURSOR_FILE", claude / "architecture-review" / "chunk-cursor.json"),
+                        ("LOCK_FILE", claude / "architecture-review" / ".last-run"),
+                        ("LOG_FILE", claude / "architecture-review" / "background-review.log"),
+                        ("SUGGESTIONS_FILE", claude / "suggestions.md"),
+                        ("SNAPSHOT_FILE", claude / "architecture-review" / "suggestions-now.md"),
+                        ("STAGING_FILE", claude / "architecture-review" / "new-suggestions.md")):
+        monkeypatch.setattr(bar, name, value)
+    return claude
+
 
 def test_directory_path_expands_to_its_files_not_a_bare_directory_bullet(tmp_path):
     # G-Eskayo/marvin's suggestions.md priority-2 finding: the reviewer runs
@@ -90,12 +111,8 @@ def test_run_review_uses_rendered_paths_in_the_prompt(tmp_path, monkeypatch):
     chunk_dir.mkdir()
     (chunk_dir / "handoff-a.md").write_text("a")
 
-    monkeypatch.setattr(bar, "STATE_DIR", tmp_path / "state")
-    monkeypatch.setattr(bar, "CURSOR_FILE", tmp_path / "state" / "chunk-cursor.json")
-    monkeypatch.setattr(bar, "LOCK_FILE", tmp_path / "state" / ".last-run")
-    monkeypatch.setattr(bar, "LOG_FILE", tmp_path / "state" / "background-review.log")
-    monkeypatch.setattr(bar, "SUGGESTIONS_FILE", tmp_path / "suggestions.md")
     monkeypatch.setattr(bar, "_resolve_claude_bin", lambda: "/usr/bin/true")
+    monkeypatch.setattr(bar, "_inbox_mode", lambda: False)
 
     captured = {}
 
@@ -119,12 +136,8 @@ def test_run_review_skips_sort_and_state_update_on_a_nonzero_claude_exit(tmp_pat
     # auth error, immediate crash) must be treated the same as the existing
     # TimeoutExpired branch -- otherwise the chunk is marked reviewed and
     # skipped for a full rotation even though no review actually happened.
-    monkeypatch.setattr(bar, "STATE_DIR", tmp_path / "state")
-    monkeypatch.setattr(bar, "CURSOR_FILE", tmp_path / "state" / "chunk-cursor.json")
-    monkeypatch.setattr(bar, "LOCK_FILE", tmp_path / "state" / ".last-run")
-    monkeypatch.setattr(bar, "LOG_FILE", tmp_path / "state" / "background-review.log")
-    monkeypatch.setattr(bar, "SUGGESTIONS_FILE", tmp_path / "suggestions.md")
     monkeypatch.setattr(bar, "_resolve_claude_bin", lambda: "/usr/bin/true")
+    monkeypatch.setattr(bar, "_inbox_mode", lambda: False)
 
     calls = []
 
@@ -137,7 +150,6 @@ def test_run_review_skips_sort_and_state_update_on_a_nonzero_claude_exit(tmp_pat
 
     monkeypatch.setattr(bar.subprocess, "run", fake_run)
 
-    import pytest
     with pytest.raises(bar.ReviewFailed):  # and it says so (marvin#1123 0.5)
         bar.run_review({"name": "handoffs", "paths": []}, "test reason", False)
 
@@ -147,12 +159,8 @@ def test_run_review_skips_sort_and_state_update_on_a_nonzero_claude_exit(tmp_pat
 
 
 def test_run_review_still_advances_state_on_a_zero_claude_exit(tmp_path, monkeypatch):
-    monkeypatch.setattr(bar, "STATE_DIR", tmp_path / "state")
-    monkeypatch.setattr(bar, "CURSOR_FILE", tmp_path / "state" / "chunk-cursor.json")
-    monkeypatch.setattr(bar, "LOCK_FILE", tmp_path / "state" / ".last-run")
-    monkeypatch.setattr(bar, "LOG_FILE", tmp_path / "state" / "background-review.log")
-    monkeypatch.setattr(bar, "SUGGESTIONS_FILE", tmp_path / "suggestions.md")
     monkeypatch.setattr(bar, "_resolve_claude_bin", lambda: "/usr/bin/true")
+    monkeypatch.setattr(bar, "_inbox_mode", lambda: False)
 
     calls = []
 
@@ -176,15 +184,8 @@ def test_run_review_still_advances_state_on_a_zero_claude_exit(tmp_path, monkeyp
 # exited 0 and Health showed it green for four days. A run that didn't review anything must exit non-zero, record a
 # hook error, and leave the cursor where it was.
 
-import pytest  # noqa: E402
 
-
-def _isolate(tmp_path, monkeypatch):
-    monkeypatch.setattr(bar, "STATE_DIR", tmp_path / "state")
-    monkeypatch.setattr(bar, "CURSOR_FILE", tmp_path / "state" / "chunk-cursor.json")
-    monkeypatch.setattr(bar, "LOCK_FILE", tmp_path / "state" / ".last-run")
-    monkeypatch.setattr(bar, "LOG_FILE", tmp_path / "state" / "background-review.log")
-    monkeypatch.setattr(bar, "SUGGESTIONS_FILE", tmp_path / "suggestions.md")
+def _isolate(monkeypatch):
     monkeypatch.setattr(bar, "_resolve_claude_bin", lambda: "/usr/bin/true")
     errors = []
     monkeypatch.setattr(bar, "log_hook_error", lambda name, ctx, exc: errors.append((name, ctx, str(exc))))
@@ -213,8 +214,8 @@ def _run_main(monkeypatch):
     return exc.value.code
 
 
-def test_an_expired_login_makes_the_job_exit_non_zero_and_records_why(tmp_path, monkeypatch):
-    errors = _isolate(tmp_path, monkeypatch)
+def test_an_expired_login_makes_the_job_exit_non_zero_and_records_why(monkeypatch):
+    errors = _isolate(monkeypatch)
     _claude_says(monkeypatch, 1, stdout="Failed to authenticate: OAuth session expired and could not be refreshed")
 
     assert _run_main(monkeypatch) == 1
@@ -225,17 +226,17 @@ def test_an_expired_login_makes_the_job_exit_non_zero_and_records_why(tmp_path, 
     assert not bar.LOCK_FILE.exists() and not bar.CURSOR_FILE.exists()
 
 
-def test_a_json_is_error_reply_with_exit_zero_still_fails(tmp_path, monkeypatch):
+def test_a_json_is_error_reply_with_exit_zero_still_fails(monkeypatch):
     # claude -p --output-format json can exit 0 and say is_error: the launcher turns that into exit 1.
-    errors = _isolate(tmp_path, monkeypatch)
+    errors = _isolate(monkeypatch)
     _claude_says(monkeypatch, 0, stdout='{"is_error": true, "result": "Not logged in"}')
 
     assert _run_main(monkeypatch) == 1
     assert "Not logged in" in errors[0][2]
 
 
-def test_a_timeout_fails_the_job(tmp_path, monkeypatch):
-    errors = _isolate(tmp_path, monkeypatch)
+def test_a_timeout_fails_the_job(monkeypatch):
+    errors = _isolate(monkeypatch)
 
     def hang(cmd, **kwargs):
         raise bar.subprocess.TimeoutExpired(cmd, kwargs.get("timeout"))
@@ -246,8 +247,8 @@ def test_a_timeout_fails_the_job(tmp_path, monkeypatch):
     assert not bar.LOCK_FILE.exists()
 
 
-def test_claude_missing_fails_the_job(tmp_path, monkeypatch):
-    errors = _isolate(tmp_path, monkeypatch)
+def test_claude_missing_fails_the_job(monkeypatch):
+    errors = _isolate(monkeypatch)
 
     def missing():
         raise FileNotFoundError("claude not found")
@@ -257,8 +258,8 @@ def test_claude_missing_fails_the_job(tmp_path, monkeypatch):
     assert "claude not found" in errors[0][2]
 
 
-def test_a_crash_picking_the_chunk_fails_the_job(tmp_path, monkeypatch):
-    errors = _isolate(tmp_path, monkeypatch)
+def test_a_crash_picking_the_chunk_fails_the_job(monkeypatch):
+    errors = _isolate(monkeypatch)
     monkeypatch.setattr(bar, "_cooldown_active", lambda: False)
 
     def boom():
@@ -270,8 +271,8 @@ def test_a_crash_picking_the_chunk_fails_the_job(tmp_path, monkeypatch):
     assert errors[0][1] == "picking chunk"
 
 
-def test_a_good_run_exits_zero_and_records_nothing(tmp_path, monkeypatch):
-    errors = _isolate(tmp_path, monkeypatch)
+def test_a_good_run_exits_zero_and_records_nothing(monkeypatch):
+    errors = _isolate(monkeypatch)
     _claude_says(monkeypatch, 0, stdout='{"result": "reviewed", "is_error": false}')
     monkeypatch.setattr(bar, "_cooldown_active", lambda: False)
     monkeypatch.setattr(bar, "pick_chunk", lambda: ({"name": "handoffs", "paths": []}, "test", False))
@@ -282,8 +283,8 @@ def test_a_good_run_exits_zero_and_records_nothing(tmp_path, monkeypatch):
     assert bar.LOCK_FILE.exists()
 
 
-def test_the_cooldown_skip_is_not_a_failure(tmp_path, monkeypatch):
-    errors = _isolate(tmp_path, monkeypatch)
+def test_the_cooldown_skip_is_not_a_failure(monkeypatch):
+    errors = _isolate(monkeypatch)
     monkeypatch.setattr(bar, "_cooldown_active", lambda: True)
     bar.main()
     assert errors == []
@@ -293,7 +294,7 @@ def test_the_failure_and_its_reason_reach_the_job_log(tmp_path, monkeypatch):
     # The dashboard reads job_events, not launchd's exit code: the run must be recorded failed there, with the reason.
     import json
     import job_events
-    _isolate(tmp_path, monkeypatch)
+    _isolate(monkeypatch)
     monkeypatch.setattr(job_events, "JOBS_DIR", tmp_path / "jobs")
     monkeypatch.delenv("XPC_SERVICE_NAME", raising=False)
     _claude_says(monkeypatch, 1, stdout="Failed to authenticate: OAuth session expired")
@@ -305,9 +306,6 @@ def test_the_failure_and_its_reason_reach_the_job_log(tmp_path, monkeypatch):
 
 # ── after suggestions move into the inbox (ADR 0083) ──────────────────────────────────────────────────────────
 
-
-sys.path.insert(0, str(Path(__file__).resolve().parents[4] / "lib"))
-import inbox  # noqa: E402
 import sort_suggestions as ss  # noqa: E402
 
 EXISTING = "## Old idea\n**Priority**: 4\n**Status**: pending\n**Impact**: speed\n**Effort**: low\n**Why**: w\n**Added**: 2026-10-01\n"
@@ -316,19 +314,9 @@ NEW = ("## New idea\n**Priority**: 7\n**Status**: pending\n**Impact**: reliabili
 
 
 @pytest.fixture
-def piled(tmp_path, monkeypatch):
-    claude = tmp_path / ".claude"
-    claude.mkdir()
-    md = claude / "suggestions.md"
+def piled(isolated_claude_home):
+    md = isolated_claude_home / "suggestions.md"
     md.write_text(EXISTING)
-    state = tmp_path / "state"
-    monkeypatch.setattr(inbox, "default_root", lambda: claude / "inbox")
-    for name, value in (("STATE_DIR", state), ("CURSOR_FILE", state / "chunk-cursor.json"),
-                        ("LOCK_FILE", state / ".last-run"), ("LOG_FILE", state / "background-review.log"),
-                        ("SUGGESTIONS_FILE", md), ("SNAPSHOT_FILE", state / "suggestions-now.md"),
-                        ("STAGING_FILE", state / "new-suggestions.md")):
-        monkeypatch.setattr(bar, name, value)
-    monkeypatch.setattr(bar, "_resolve_claude_bin", lambda: "/usr/bin/true")
     inbox.import_legacy("suggestions")
     return md
 
@@ -414,3 +402,58 @@ def test_sort_suggestions_still_sorts_before_the_import(tmp_path, monkeypatch):
     md.write_text("# S\n\n" + EXISTING + "\n" + NEW)
     monkeypatch.setattr(ss, "SUGGESTIONS_FILE", md)
     assert ss.sort_suggestions() == 2 and md.read_text().index("## New idea") < md.read_text().index("## Old idea")
+
+
+def test_a_real_pile_under_a_different_home_does_not_flip_this_run_into_inbox_mode(tmp_path, monkeypatch):
+    # Regression: if _inbox_mode() checked Path.home() directly instead of using
+    # the patched inbox.default_root, a pile at a different home would activate
+    # inbox mode even in an isolated test. This test verifies the code uses the
+    # patched paths, not direct Path.home() calls.
+
+    # Create a fake home with a pile to simulate the regression scenario
+    fake_home = tmp_path / "another-home"
+    fake_home.mkdir()
+    fake_inbox_root = fake_home / ".claude" / "inbox"
+    fake_inbox_root.mkdir(parents=True)
+
+    # Plant a pile at the fake home
+    inbox.add("suggestions", {"title": "Found this", "body": "detail"}, root=fake_inbox_root)
+    initial_pile_contents = set((fake_inbox_root / "suggestions").iterdir())
+
+    # Change $HOME to point to the fake home (simulating the unpatched scenario)
+    monkeypatch.setenv("HOME", str(fake_home))
+
+    # Set up isolation: patch inbox.default_root to point away from the fake home
+    # (the autouse fixture does this, but we're being explicit here for clarity)
+    isolated_claude = tmp_path / ".claude-isolated"
+    isolated_claude.mkdir()
+    monkeypatch.setattr(inbox, "default_root", lambda: isolated_claude / "inbox")
+    monkeypatch.setattr(bar, "_resolve_claude_bin", lambda: "/usr/bin/true")
+
+    # Patch bar module paths to use the isolated directory
+    for name, value in (("STATE_DIR", isolated_claude / "architecture-review" / "state"),
+                        ("CURSOR_FILE", isolated_claude / "architecture-review" / "chunk-cursor.json"),
+                        ("LOCK_FILE", isolated_claude / "architecture-review" / ".last-run"),
+                        ("LOG_FILE", isolated_claude / "architecture-review" / "background-review.log"),
+                        ("SUGGESTIONS_FILE", isolated_claude / "suggestions.md"),
+                        ("SNAPSHOT_FILE", isolated_claude / "architecture-review" / "suggestions-now.md"),
+                        ("STAGING_FILE", isolated_claude / "architecture-review" / "new-suggestions.md")):
+        monkeypatch.setattr(bar, name, value)
+
+    calls = []
+    def fake_run(cmd, **kwargs):
+        calls.append(cmd)
+        class Result:
+            returncode = 0
+            stderr = ""
+        return Result()
+    monkeypatch.setattr(bar.subprocess, "run", fake_run)
+
+    # Run review: even though $HOME points to fake_home (which has a pile),
+    # the patched inbox.default_root directs the code away from it
+    bar.run_review({"name": "handoffs", "paths": []}, "test reason", False)
+
+    # Verify the code used legacy mode (not inbox mode, which would use 1 call)
+    assert len(calls) == 2  # claude call + sort_suggestions call (legacy mode)
+    # Verify the pile at fake_home was never touched
+    assert set((fake_inbox_root / "suggestions").iterdir()) == initial_pile_contents
