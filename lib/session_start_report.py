@@ -210,14 +210,20 @@ def check_hook_errors() -> str | None:
         return None
     cutoff = _now() - timedelta(hours=24)
     n = 0
+    n_task_dispatch = 0
     for line in f.read_text().splitlines():
         m = re.match(r"^(\S+)", line)
         ts = _parse_iso(m.group(1)) if m else None
         if ts and ts >= cutoff:
             n += 1
+            if "[task_dispatch]" in line:
+                n_task_dispatch += 1
     if n == 0:
         return None
-    return f"{n} hook failure(s) in the last 24h — check ~/.claude/logs/hook-errors.log"
+    note = f"{n} hook failure(s) in the last 24h"
+    if n_task_dispatch:
+        note += f" ({n_task_dispatch} from task_dispatch)"
+    return note + " — check ~/.claude/logs/hook-errors.log"
 
 
 def check_cron_health() -> str | None:
