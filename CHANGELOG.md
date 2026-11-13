@@ -1,5 +1,7 @@
 # Changelog
 
+- improvement_sweep.py's "marvin" project key shadows "marvin-bench", so the bench entry can never match ([#1313](https://github.com/G-Eskayo/marvin/pull/1313))
+
 - fetch_related.py calls Semantic Scholar with no retry: a 429 silently empties `/pull-related`, and a network error… ([#1312](https://github.com/G-Eskayo/marvin/pull/1312))
 
 - Dispatch skips parent PRDs, using the PRD test triage already uses ([#1309](https://github.com/G-Eskayo/marvin/pull/1309))
