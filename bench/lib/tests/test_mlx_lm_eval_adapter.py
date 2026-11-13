@@ -19,10 +19,36 @@ pytest.importorskip("mlx_lm")   # Apple silicon only: lm_eval alone is on mac-mi
 from mlx_lm_eval_adapter import score_continuation
 
 
+MODEL = "mlx-community/Llama-3.2-3B-Instruct-4bit"
+
+
+def model_is_cached(repo_id: str = MODEL) -> bool:
+    """True only when the model is already on this disk. These tests must never download it: on the Mac mini every
+    full test run (merge gate, pipeline checks) fetched 1.7 GB back after it was parked in the cold store, pushing free
+    disk under the dispatch floor twice (2026-11-11 and 2026-11-12)."""
+    try:
+        from huggingface_hub import try_to_load_from_cache
+    except ImportError:
+        return False
+    return isinstance(try_to_load_from_cache(repo_id, "config.json"), str)
+
+
 @pytest.fixture(scope="module")
 def model_and_tokenizer():
+    if not model_is_cached():
+        pytest.skip(f"{MODEL} isn't on this disk (parked or never fetched); these tests never download it")
+    import os
     from mlx_lm import load
-    return load("mlx-community/Llama-3.2-3B-Instruct-4bit")
+    before = os.environ.get("HF_HUB_OFFLINE")
+    os.environ["HF_HUB_OFFLINE"] = "1"   # a partial cache still can't trigger a fetch
+    try:
+        loaded = load(MODEL)
+    finally:
+        if before is None:
+            os.environ.pop("HF_HUB_OFFLINE", None)
+        else:
+            os.environ["HF_HUB_OFFLINE"] = before
+    return loaded
 
 
 def test_plausible_continuation_scores_higher_than_implausible(model_and_tokenizer):
@@ -73,3 +99,9 @@ def test_logit_slicing_matches_independent_step_by_step_computation(model_and_to
         running_tokens.append(full_tokens[i])
 
     assert batched_logprob == pytest.approx(stepwise_logprob, abs=1e-3)
+
+
+def test_a_model_missing_from_the_cache_counts_as_not_cached(monkeypatch):
+    import huggingface_hub
+    monkeypatch.setattr(huggingface_hub, "try_to_load_from_cache", lambda repo, name: None)
+    assert model_is_cached() is False
