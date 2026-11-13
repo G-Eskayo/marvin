@@ -88,13 +88,15 @@ def stamp(data: dict, *, tolerance_s: int, now: datetime | None = None, alive_at
     return out
 
 
-def write(path: Path, data: dict, *, tolerance_s: int, now: datetime | None = None, indent: int | None = 2) -> dict:
+def write(path: Path, data: dict, *, tolerance_s: int, now: datetime | None = None, indent: int | None = 2, mode: int | None = None) -> dict:
     """Stamp and write whole or not at all (temp file + rename): a reader never sees half a file."""
     out = stamp(data, tolerance_s=tolerance_s, now=now)
     path = Path(path)
     path.parent.mkdir(parents=True, exist_ok=True)
     tmp = path.with_name(f".{path.name}.{os.getpid()}.tmp")
     tmp.write_text(json.dumps(out, indent=indent) + "\n")
+    if mode is not None:
+        os.chmod(tmp, mode)
     os.replace(tmp, path)
     return out
 

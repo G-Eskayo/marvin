@@ -33,6 +33,7 @@ from pathlib import Path
 from typing import Callable
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
+import stamped
 
 WARN_DAYS = 14
 WARN_DAYS_ESTIMATED = 30          # a setup-token's expiry is estimated from the file's age: warn earlier
@@ -46,6 +47,7 @@ HOME = Path.home()
 STATUS_PATH = HOME / ".claude" / "logs" / "accounts-status.json"
 ALERT_STATE_PATH = HOME / ".claude" / "logs" / "accounts-alerted.json"
 RENEW = "~/.agents/bin/marvin-renew"
+ACCOUNTS_TOLERANCE_S = 20 * 60
 
 
 class ProviderDown(Exception):
@@ -475,12 +477,7 @@ def sweep(ctx: Ctx | None = None, run=_run) -> dict:
 
 
 def write_status(status: dict, path: Path = STATUS_PATH) -> None:
-    path.parent.mkdir(parents=True, exist_ok=True)
-    tmp = path.with_name(path.name + f".{os.getpid()}.tmp")
-    fd = os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
-    with os.fdopen(fd, "w") as f:
-        json.dump(status, f, indent=2)
-    os.replace(tmp, path)
+    stamped.write(path, status, tolerance_s=ACCOUNTS_TOLERANCE_S, mode=0o600)
 
 
 # ── alerts: once per state change ───────────────────────────────────────────────────────────────────────────────────

@@ -3,7 +3,7 @@
 // (ADR 0063): only loopback and Tailscale addresses, only GET, only four named files, no traversal, no oversized body,
 // nothing but the file's JSON in the reply.
 import { describe, it, expect } from 'vitest'
-import { mkdtempSync, writeFileSync } from 'fs'
+import { mkdtempSync, writeFileSync, rmSync } from 'fs'
 import { tmpdir } from 'os'
 import { join } from 'path'
 import { copyRoute, COPY_NAMES } from '../webhook-server/copy_route.js'
@@ -69,5 +69,40 @@ describe('GET /copy/<name>', () => {
   it('leaves every other URL to the other routes', () => {
     expect(call({ url: '/approve' }).handled).toBe(false)
     expect(call({ url: '/copycat' }).handled).toBe(false)
+  })
+
+  it('accounts-status is in the list of allowed copies', () => {
+    expect(COPY_NAMES).toContain('accounts-status')
+  })
+
+  it('serves accounts-status with the accounts tolerance stamp', () => {
+    writeFileSync(paths['accounts-status'], JSON.stringify({
+      host: 'mac-mini-1',
+      generated_at: '2026-11-12T12:00:00Z',
+      tolerance_s: 1200,
+      accounts: [{ id: 'github-token', state: 'works' }]
+    }))
+    const r = call({ url: '/copy/accounts-status' })
+    expect(r.status).toBe(200)
+    const data = JSON.parse(r.body)
+    expect(data.tolerance_s).toBe(1200)
+    expect(data.accounts).toBeDefined()
+  })
+
+  it('accounts-status follows the same peer-only security model as other copies', () => {
+    const r = call({ url: '/copy/accounts-status', ip: '192.168.1.5' })
+    expect(r.status).toBe(403)
+  })
+
+  it('accounts-status is only served over GET, not POST or other methods', () => {
+    const postResult = call({ method: 'POST', url: '/copy/accounts-status' })
+    expect(postResult.status).toBe(405)
+  })
+
+  it('a missing accounts-status file is 404', () => {
+    // Ensure the file doesn't exist (previous test may have created it)
+    try { rmSync(paths['accounts-status']) } catch {}
+    const r = call({ url: '/copy/accounts-status' })
+    expect(r.status).toBe(404)
   })
 })

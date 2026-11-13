@@ -188,7 +188,7 @@ if (isEvidenceCapture(process.env)) installCaptureGuard(process)
 instrumentIpc(ipcMain)
 
 const execFileAsync = promisify(execFile)
-const accountsView = createAccounts({ machine: () => resolveDeviceId(), execFile: execFileAsync })
+const accountsView = createAccounts({ machine: () => resolveDeviceId(), execFile: execFileAsync, peers: peerCopies })
 const alertsView = createAlerts({ execFile: execFileAsync })
 const loopsView = createLoops({ execFile: execFileAsync, renew: (account) => accountsView.renew(account, null) })
 

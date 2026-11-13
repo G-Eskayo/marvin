@@ -11,13 +11,14 @@ import { homedir } from 'os'
 import { join } from 'path'
 import { allowedPeerAddress } from './merge_stage_relay.js'
 
-export const COPY_NAMES = ['health-status', 'ticket-agent-proposals', 'dispatch-state', 'boards-registry']
+export const COPY_NAMES = ['health-status', 'ticket-agent-proposals', 'dispatch-state', 'boards-registry', 'accounts-status']
 const HOME = homedir()
 export const COPY_PATHS = {
   'health-status': join(HOME, '.claude', 'logs', 'health-status.json'),
   'ticket-agent-proposals': join(HOME, '.claude', 'logs', 'ticket-agent-proposals.json'),
   'dispatch-state': join(HOME, '.claude', 'dispatch-state.json'),
-  'boards-registry': join(HOME, '.claude', 'boards', 'registry.json')
+  'boards-registry': join(HOME, '.claude', 'boards', 'registry.json'),
+  'accounts-status': join(HOME, '.claude', 'logs', 'accounts-status.json')
 }
 const MAX_BYTES = 2 * 1024 * 1024
 

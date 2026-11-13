@@ -10,6 +10,7 @@ import path from 'path'
 
 const HOME = homedir()
 export const ACCOUNTS_STATUS_PATH = path.join(HOME, '.claude', 'logs', 'accounts-status.json')
+export const ACCOUNTS_TOLERANCE_S_MS = 20 * 60 * 1000
 const PY = path.join(HOME, '.agents', 'venv', 'bin', 'python')
 const ACCOUNTS_PY = path.join(HOME, '.agents', 'lib', 'accounts.py')
 const HELPER_TAB = path.join(HOME, '.agents', 'bin', 'helper-tab')
@@ -42,6 +43,26 @@ export function readAccountsStatus(file = ACCOUNTS_STATUS_PATH, read = (p) => re
   }
 }
 
+// Through peers (marvin#1223): read the producer's live copy when this Mac's copy goes stale
+export async function readAccountsStatusFresh(peers, file = ACCOUNTS_STATUS_PATH) {
+  const c = await peers.read('accounts-status', file, { defaultToleranceS: ACCOUNTS_TOLERANCE_S_MS / 1000 })
+  if (c.missing) {
+    return { generatedAt: null, by: null, accounts: [], problem: 'missing', copy: null }
+  }
+  if (!c.value || !Array.isArray(c.value.accounts)) {
+    return { generatedAt: null, by: null, accounts: [], problem: 'unreadable', copy: null }
+  }
+  const accounts = c.value.accounts.filter((r) => r && typeof r.id === 'string')
+  const copyMeta = { host: c.host || null, ageS: c.ageS, stale: !!c.stale, legacy: !!c.legacy, toleranceS: c.toleranceS ?? null }
+  return {
+    generatedAt: c.value.generated_at || null,
+    by: c.value.by || null,
+    accounts,
+    problem: null,
+    copy: { ...copyMeta, from: c.from, producerUnreachable: !!c.producerUnreachable, producerOlder: !!c.producerOlder }
+  }
+}
+
 // The saved view with this machine's rows replaced by a fresh local check (rows of other machines are kept).
 export function mergeLocal(saved, fresh, machine) {
   if (!fresh || !Array.isArray(fresh.accounts) || !fresh.accounts.length) return saved
@@ -66,11 +87,23 @@ export function renewPlan(row, thisMachine) {
   }
 }
 
-export function createAccounts({ machine = () => null, execFile, statusPath = ACCOUNTS_STATUS_PATH, read } = {}) {
+export function createAccounts({ machine = () => null, execFile, statusPath = ACCOUNTS_STATUS_PATH, read, peers } = {}) {
   return {
     // fresh=false: the saved view at once. fresh=true: this machine checked now (a few seconds), merged in.
     async list({ fresh = false } = {}) {
-      const saved = { ...readAccountsStatus(statusPath, read), thisMachine: machine() }   // the card marks "this machine"
+      let saved
+      if (peers) {
+        try {
+          saved = await readAccountsStatusFresh(peers, statusPath)
+          saved.thisMachine = machine()
+        } catch (err) {
+          // If peer copy fails to load, fall back to local copy with producerUnreachable flag
+          const local = readAccountsStatus(statusPath, read)
+          saved = { ...local, copy: { producerUnreachable: true }, thisMachine: machine() }
+        }
+      } else {
+        saved = { ...readAccountsStatus(statusPath, read), thisMachine: machine() }   // the card marks "this machine"
+      }
       if (!fresh) return saved
       try {
         const { stdout } = await execFile(PY, [ACCOUNTS_PY, 'check', '--json'], { timeout: 90_000 })

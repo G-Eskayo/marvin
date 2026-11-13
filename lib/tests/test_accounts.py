@@ -301,3 +301,49 @@ def test_status_file_is_written_private_and_atomic(tmp_path):
     p = tmp_path / "logs" / "accounts-status.json"
     ac.write_status({"accounts": []}, p)
     assert oct(p.stat().st_mode & 0o777) == "0o600" and sorted(x.name for x in p.parent.iterdir()) == ["accounts-status.json"]
+
+
+def test_status_file_permissions_are_set_atomically_before_replace(tmp_path, monkeypatch):
+    """Verify that file permissions are set on the temp file before os.replace, not after. This catches the race
+    where a reader could see the file with default permissions before chmod is applied."""
+    p = tmp_path / "logs" / "accounts-status.json"
+
+    # Patch os.replace to verify the temp file already has 0o600 permissions before replace happens
+    original_replace = os.replace
+    seen_perms = {}
+
+    def checked_replace(src, dst):
+        # Record the permissions of the temp file right before replace
+        seen_perms['before_replace'] = oct(Path(src).stat().st_mode & 0o777)
+        return original_replace(src, dst)
+
+    monkeypatch.setattr("os.replace", checked_replace)
+    ac.write_status({"accounts": []}, p)
+
+    # Verify the temp file had correct permissions before the replace
+    assert seen_perms['before_replace'] == "0o600", f"Temp file should have been 0o600 before replace, had {seen_perms['before_replace']}"
+    # And the final file has correct permissions
+    assert oct(p.stat().st_mode & 0o777) == "0o600"
+
+
+def test_status_file_is_stamped_with_accounts_tolerance(tmp_path):
+    p = tmp_path / "logs" / "accounts-status.json"
+    data = {"accounts": [{"id": "github-token", "state": "works"}]}
+    ac.write_status(data, p)
+    written = json.loads(p.read_text())
+    assert written["tolerance_s"] == ac.ACCOUNTS_TOLERANCE_S == 1200
+    assert "host" in written
+    assert "alive_at" in written
+
+
+def test_accounts_tolerance_equals_health_sweep_cadence():
+    assert ac.ACCOUNTS_TOLERANCE_S == 20 * 60 == 1200
+
+
+def test_write_status_preserves_the_accounts_list(tmp_path):
+    p = tmp_path / "accounts.json"
+    status = {"generated_at": "2026-11-12T12:00:00Z", "accounts": [{"id": "github-token", "state": "works", "machine": "mac-mini-1"}]}
+    ac.write_status(status, p)
+    written = json.loads(p.read_text())
+    assert written["accounts"] == status["accounts"]
+    assert written["generated_at"] == status["generated_at"]
