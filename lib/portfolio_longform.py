@@ -19,6 +19,7 @@ from __future__ import annotations
 import json
 import re
 import sys
+from datetime import datetime, timezone
 from pathlib import Path
 
 from bs4 import BeautifulSoup, Comment, NavigableString, Tag
@@ -196,12 +197,40 @@ def author(url: str, content: dict, *, plan: bool = False, outbox: Path = OUTBOX
     return {"ok": True, **summary, "backup": str(backup / BACKUP), "pages_regenerated": len(log)}
 
 
+def _collision_safe_backup_path(backup_dir: Path, stem: str = "before-rollback") -> Path:
+    """Build a collision-safe path for a backup file using UTC timestamp and optional -N suffix."""
+    backup_dir.mkdir(parents=True, exist_ok=True)
+    timestamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
+    path = backup_dir / f"{stem}-{timestamp}.json"
+    n = 2
+    while path.exists():
+        path = backup_dir / f"{stem}-{timestamp}-{n}.json"
+        n += 1
+    return path
+
+
 def rollback(slug: str, outbox: Path = OUTBOX, runner=pm._run) -> dict:
-    saved = json.loads((Path(outbox) / slug / BACKUP).read_text())
+    backup_path = Path(outbox) / slug / BACKUP
+    try:
+        saved = json.loads(backup_path.read_text())
+    except FileNotFoundError:
+        return {"ok": False, "stage": "no-backup", "url": slug}
+    except json.JSONDecodeError:
+        return {"ok": False, "stage": "no-backup", "url": slug}
+
+    r = pm._wp(runner, "post", "get", str(saved["page_id"]), "--field=post_content")
+    if r.returncode != 0:
+        raise pm.MigrationError(f"fetching the current page failed: {(r.stderr or r.stdout)[-200:]}")
+
+    current_dir = backup_path.parent
+    current_path = _collision_safe_backup_path(current_dir, "before-rollback")
+    current_path.write_text(json.dumps({"page_id": saved["page_id"], "url": saved["url"], "content": r.stdout}, indent=2))
+
     r = pm._wp(runner, "post", "update", str(saved["page_id"]), "-", input=saved["content"])
     if r.returncode != 0:
         raise pm.MigrationError(f"restoring the page failed: {(r.stderr or r.stdout)[-200:]}")
-    return {"ok": True, "restored": saved["url"]}
+
+    return {"ok": True, "restored": saved["url"], "saved_current": str(current_path)}
 
 
 def main() -> None:
