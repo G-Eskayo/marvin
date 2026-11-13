@@ -255,6 +255,40 @@ def test_replan_probe_counts_tickets_planned_three_times_inside_24_hours(tmp_pat
     assert pm._replanned_tickets(tmp_path / "none", now=now) == 0.0
 
 
+def _prd_stages(path, n, title, timestamp):
+    path.mkdir(exist_ok=True)
+    (path / f"g-eskayo__marvin-{n}.json").write_text(_json.dumps(
+        [{"stage": "claimed", "status": "started", "detail": "claimed:mac-mini", "timestamp": timestamp, "title": title}]))
+
+
+def test_prd_dispatch_probe_counts_prd_with_prd_title(tmp_path):
+    d = tmp_path / "ticket-stages"
+    now = datetime(2026, 10, 26, 18, tzinfo=timezone.utc)
+    _prd_stages(d, 1, "PRD: MARVIN Activity Board", "2026-10-25T10:00:00+00:00")
+    _prd_stages(d, 2, "prd something", "2026-10-25T11:00:00+00:00")
+    _prd_stages(d, 3, "A regular ticket", "2026-10-25T12:00:00+00:00")
+    assert pm._prd_dispatches(d, now=now) == 2.0
+
+
+def test_prd_dispatch_probe_ignores_events_outside_window(tmp_path):
+    d = tmp_path / "ticket-stages"
+    now = datetime(2026, 10, 26, 18, tzinfo=timezone.utc)
+    _prd_stages(d, 1, "PRD: The feature", "2026-10-25T10:00:00+00:00")  # in window
+    _prd_stages(d, 2, "PRD: Old work", "2026-10-18T10:00:00+00:00")      # outside 7 days
+    assert pm._prd_dispatches(d, now=now) == 1.0
+
+
+def test_prd_dispatch_probe_handles_missing_directory(tmp_path):
+    d = tmp_path / "nonexistent"
+    now = datetime(2026, 10, 26, 18, tzinfo=timezone.utc)
+    assert pm._prd_dispatches(d, now=now) == 0.0
+
+
+def test_prd_dispatch_probe_is_registered():
+    fn, limit, what = pm.PROBES["prd-dispatched"]
+    assert limit == 0.0 and "#448" in what
+
+
 def test_github_calls_and_failed_headless_runs_per_day(tmp_path):
     now = datetime(2026, 10, 26, 18, tzinfo=timezone.utc)
     t = now.timestamp()

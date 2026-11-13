@@ -54,8 +54,8 @@ def _parallel_dispatch_off_unless_a_test_says_otherwise(monkeypatch):
     monkeypatch.setattr(tp.dispatch_concurrency, "load", lambda path=None: json.loads(json.dumps(tp.dispatch_concurrency.DEFAULTS)))
 
 
-def _issue(number, created, labels=(), title="a ticket"):
-    return {"number": number, "title": title, "createdAt": created,
+def _issue(number, created, labels=(), title="a ticket", body=""):
+    return {"number": number, "title": title, "createdAt": created, "body": body,
             "labels": [{"name": l} for l in labels]}
 
 
@@ -296,6 +296,47 @@ def test_only_ready_unclaimed_unpinned_tickets_are_candidates(monkeypatch):
     ]
     _fake_gh(monkeypatch, issues)
     assert [i["number"] for i in tp._unclaimed_ready_tickets()] == [3]
+
+
+def test_parent_prd_with_prd_title_is_not_dispatched(monkeypatch):
+    issues = [
+        _issue(1, "2026-01-01T00:00:00Z", labels=["ready-for-agent"], title="PRD: MARVIN Activity Board"),
+        _issue(2, "2026-01-02T00:00:00Z", labels=["ready-for-agent"], title="A regular ticket"),
+    ]
+    _fake_gh(monkeypatch, issues)
+    assert [i["number"] for i in tp._unclaimed_ready_tickets()] == [2]
+
+
+def test_parent_prd_with_problem_statement_is_not_dispatched(monkeypatch):
+    issues = [
+        _issue(1, "2026-01-01T00:00:00Z", labels=["ready-for-agent"],
+               body="## Problem Statement\n\nThe problem here.\n\n## Solution\n\nThe solution."),
+        _issue(2, "2026-01-02T00:00:00Z", labels=["ready-for-agent"]),
+    ]
+    _fake_gh(monkeypatch, issues)
+    assert [i["number"] for i in tp._unclaimed_ready_tickets()] == [2]
+
+
+def test_parent_prd_with_user_stories_is_not_dispatched(monkeypatch):
+    issues = [
+        _issue(1, "2026-01-01T00:00:00Z", labels=["ready-for-agent"],
+               body="## User Stories\n\n- As a user, I want\n"),
+        _issue(2, "2026-01-02T00:00:00Z", labels=["ready-for-agent"]),
+    ]
+    _fake_gh(monkeypatch, issues)
+    assert [i["number"] for i in tp._unclaimed_ready_tickets()] == [2]
+
+
+def test_child_ticket_with_user_stories_addressed_is_dispatched(monkeypatch):
+    # Child tickets generated from a PRD have "## User stories addressed" section.
+    # These should NOT be treated as parent PRDs and should be dispatched.
+    issues = [
+        _issue(1, "2026-01-01T00:00:00Z", labels=["ready-for-agent"],
+               body="## User stories addressed\n\nFrom #100\n\n## What to build\nX\n\n## Acceptance criteria\n- [ ] done\n"),
+        _issue(2, "2026-01-02T00:00:00Z", labels=["ready-for-agent"]),
+    ]
+    _fake_gh(monkeypatch, issues)
+    assert sorted([i["number"] for i in tp._unclaimed_ready_tickets()]) == [1, 2]
 
 
 # ── dispatching other projects' tickets (execution profiles) ────────────────

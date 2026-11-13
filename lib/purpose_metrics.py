@@ -194,6 +194,30 @@ def _replanned_tickets(stages_dir: Path | None = None, days: float = PROBE_WINDO
     return float(count)
 
 
+def _prd_dispatches(stages_dir: Path | None = None, days: float = PROBE_WINDOW_DAYS, now: datetime | None = None) -> float:
+    """#448: parent PRDs that got claimed (attempted dispatch) over the window, from the ticket stages log.
+    Counts "claimed"/"started" events whose title satisfies is_parent_prd. O(stage events in the window)."""
+    import ticket_stages
+    import ticket_policy
+    stages_dir = stages_dir or ticket_stages.STAGES_DIR
+    cut = _cut(now, days)
+    count = 0
+    for f in (sorted(stages_dir.glob("*.json")) if stages_dir.is_dir() else []):
+        try:
+            events = json.loads(f.read_text())
+        except (OSError, ValueError):
+            continue
+        if not isinstance(events, list):
+            continue
+        for e in events:
+            if (isinstance(e, dict) and e.get("stage") == "claimed" and e.get("status") == "started"
+                    and (w := _when(e.get("timestamp"))) and w >= cut):
+                title = e.get("title")
+                if title and ticket_policy.is_parent_prd({"title": title}):
+                    count += 1
+    return float(count)
+
+
 _SYNC_HEADER = re.compile(r"^## (\S+) — alert \(([^)]+)\)", re.M)
 
 
@@ -418,6 +442,8 @@ def _ci_onnx_download_failures(fetch=None, repo: str = "G-Eskayo/marvin", runs: 
 PROBES: dict[str, tuple[Callable[..., float], float, str]] = {
     "gh-watch-change-storm": (lambda days=PROBE_WINDOW_DAYS: _gh_watch_busiest_hour(days=days), 120.0,
                               "the busiest hour's gh-watch 'change detected' lines over 7 days, all Macs (#604)"),
+    "prd-dispatched": (lambda days=PROBE_WINDOW_DAYS: _prd_dispatches(days=days), 0.0,
+                       "parent PRDs claimed (attempted dispatch) over 7 days, all Macs (#448)"),
     "ticket-planned-3x-in-24h": (lambda days=PROBE_WINDOW_DAYS: _replanned_tickets(days=days), 0.0,
                                  "tickets planned 3+ times inside 24 h over 7 days, all Macs (#606)"),
     "code-sync-stuck": (lambda days=PROBE_WINDOW_DAYS: _sync_stuck_episodes(days=days), 0.0,
