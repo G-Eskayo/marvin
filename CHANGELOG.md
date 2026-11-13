@@ -1,5 +1,7 @@
 # Changelog
 
+- Dispatch skips parent PRDs, using the PRD test triage already uses ([#1309](https://github.com/G-Eskayo/marvin/pull/1309))
+
 - academic_search.py silently reports failed sources as empty results, and unbounded S2 retries can stall past the Bash timeout ([#1307](https://github.com/G-Eskayo/marvin/pull/1307))
 
 - Audit skill's suggestion-entry template omits the required Priority field and misstates the header format, so… ([#1303](https://github.com/G-Eskayo/marvin/pull/1303))
