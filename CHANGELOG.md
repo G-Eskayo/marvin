@@ -1,5 +1,7 @@
 # Changelog
 
+- Main is red at 784971f: fix forward ([#1322](https://github.com/G-Eskayo/marvin/pull/1322))
+
 - Have portfolio_longform.py --rollback save the page it overwrites, and drop portfolio-page/SKILL.md's hand-typed… ([#1311](https://github.com/G-Eskayo/marvin/pull/1311))
 
 - sort_suggestions.py warns when a missing header merges two suggestions into one entry ([#1310](https://github.com/G-Eskayo/marvin/pull/1310))
