@@ -1,5 +1,7 @@
 # Changelog
 
+- Digest merge saves a failed claude call as the day's merged digest on both Macs and never retries ([#1320](https://github.com/G-Eskayo/marvin/pull/1320))
+
 - Main is red at 784971f: fix forward ([#1322](https://github.com/G-Eskayo/marvin/pull/1322))
 
 - Have portfolio_longform.py --rollback save the page it overwrites, and drop portfolio-page/SKILL.md's hand-typed… ([#1311](https://github.com/G-Eskayo/marvin/pull/1311))
