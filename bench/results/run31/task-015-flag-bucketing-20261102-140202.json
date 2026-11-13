@@ -1,0 +1,255 @@
+{
+  "task": "task-015-flag-bucketing",
+  "runner": "claude",
+  "model": "default",
+  "tag": "",
+  "prompt_prefix": "",
+  "repeat": 3,
+  "judge": true,
+  "runs": [
+    {
+      "is_error": false,
+      "model_used": "claude-opus-5-5",
+      "result_text": "I added `new_experimental_flag` to the backend and changed the backend to bucket users the same way the frontend does. The two services now agree on which users get the flag.\n\n**Changes, all in `backend_flags.py`:**\n- Added `\"new_experimental_flag\": 25` to `FLAGS`, the same 25% rollout the frontend uses.\n- Replaced `hash(user_id) % 100` with the frontend's method: take a SHA-256 hash of `\"{flag_name}:{user_id}\"`, turn the first 8 hex characters into a number, and use that number mod 100 as the bucket. The old code had two problems:\n  - It ignored the flag name, so every flag put a user in the same bucket.\n  - It gave different answers from the frontend.\n\n**Check:** I compared the two services for user IDs 0\u201399,999 across every flag, plus an unknown flag name. They disagreed on 0 users. About 25% of users get `new_experimental_flag` and about 50% get `beta_search`, as expected. No other files needed changing.\n\n**Before you deploy:** this also changes who gets `beta_search` on the backend. The old code put user N in bucket N % 100, so some users will gain or lose that feature on the backend once this ships. That's a fix, because the backend never matched the frontend for `beta_search`, but anyone monitoring that rollout should know about it. `dark_mode` is at 100%, so it isn't affected.\n\nThe same bucketing code now exists in both files. Moving it into one shared module would stop them from drifting apart again.",
+      "num_turns": 3,
+      "duration_ms": 16686,
+      "cost_usd": 0.1580814,
+      "input_tokens": 6,
+      "output_tokens": 1620,
+      "cache_creation_input_tokens": 14293,
+      "cache_read_input_tokens": 56567,
+      "total_tokens": 72486,
+      "tool_calls": 2,
+      "tools_used": [
+        "Bash",
+        "Bash"
+      ],
+      "wall_s": 17.5,
+      "infra_error": false,
+      "correctness": {
+        "score": 1.0,
+        "matched": [
+          "sha256",
+          "flag_name"
+        ],
+        "missed": []
+      },
+      "profile": "clean",
+      "model": "default",
+      "workdir_snapshot": "--- backend_flags.py ---\n\"\"\"Backend feature flag evaluator \u2014 determines rollout eligibility for users.\"\"\"\nimport hashlib\n\n# Feature flags: name -> rollout percentage (0-100)\nFLAGS = {\n    \"dark_mode\": 100,  # Everyone gets it\n    \"beta_search\": 50,  # 50% of users\n    \"new_experimental_flag\": 25,  # 25% of users\n}\n\n\ndef is_enabled(flag_name: str, user_id: int) -> bool:\n    \"\"\"\n    Determine if a user should have the feature enabled.\n\n    Must be consistent with frontend bucketing so users see the same rollout.\n    Uses the same consistent hashing as frontend_flags.is_enabled:\n    sha256(\"flag_name:user_id\"), first 8 hex chars as an int, mod 100.\n    This is stable across processes and services (unlike Python's hash()).\n    \"\"\"\n    if flag_name not in FLAGS:\n        return False\n\n    rollout_percentage = FLAGS[flag_name]\n\n    # Create a deterministic hash of the flag + user combination\n    digest = hashlib.sha256(f\"{flag_name}:{user_id}\".encode()).hexdigest()\n\n    # Convert first 8 hex chars to a number in range [0, 100)\n    bucket = int(digest[:8], 16) % 100\n\n    return bucket < rollout_percentage\n\n--- frontend_flags.py ---\n\"\"\"Frontend feature flag evaluator \u2014 determines rollout eligibility for users.\"\"\"\nimport hashlib\n\n# Feature flags: name -> rollout percentage (0-100)\nFLAGS = {\n    \"dark_mode\": 100,  # Everyone gets it\n    \"beta_search\": 50,  # 50% of users\n    \"new_experimental_flag\": 25,  # 25% of users\n}\n\n\ndef is_enabled(flag_name: str, user_id: int) -> bool:\n    \"\"\"\n    Determine if a user should have the feature enabled.\n\n    Uses consistent hashing: hash(flag_name:user_id) to bucket the user,\n    ensuring the same user always gets the same experience.\n    The bucket is consistent across restarts and across services.\n    \"\"\"\n    if flag_name not in FLAGS:\n        return False\n\n    rollout_percentage = FLAGS[flag_name]\n\n    # Create a deterministic hash of the flag + user combination\n    digest = hashlib.sha256(f\"{flag_name}:{user_id}\".encode()).hexdigest()\n\n    # Convert first 8 hex chars to a number in range [0, 100)\n    bucket = int(digest[:8], 16) % 100\n\n    return bucket < rollout_percentage\n",
+      "check": {
+        "pass": true,
+        "output": "...                                                                      [100%]\n3 passed in 0.02s\n"
+      },
+      "judge_correctness": {
+        "score": 1.0,
+        "judge": "llm",
+        "rationale": "The backend now uses the frontend's sha256 hash of `flag_name:user_id` for bucketing and adds `new_experimental_flag` at 25%, so the two services agree on which users are bucketed in."
+      }
+    },
+    {
+      "is_error": false,
+      "model_used": "claude-opus-5-5",
+      "result_text": "I added `new_experimental_flag` to the backend at a 25% rollout, and the backend now buckets users exactly the way the frontend does. A new test confirms the two services make the same decision for every user.\n\n**The bug in the old backend code:** it used `hash(user_id) % 100`, which didn't match the frontend in two ways:\n- **Different numbers:** Python's built-in `hash()` produces completely different values from the frontend's SHA-256, so the two services put users in different buckets.\n- **Flag name missing from the hash:** the frontend hashes `\"flag_name:user_id\"`. The backend hashed only the user ID, so every flag would have bucketed the same users together instead of each flag getting its own independent rollout.\n\n**Changes:**\n- **`backend_flags.py`**: added `\"new_experimental_flag\": 25` to `FLAGS` and replaced the bucketing with the frontend's method: SHA-256 of `\"{flag_name}:{user_id}\"`, take the first 8 hex characters as a number, then `% 100`, then `bucket < rollout_percentage`.\n- **`test_flag_consistency.py`** (new): checks that:\n  - the two `FLAGS` tables are identical;\n  - the backend and frontend give the same answer for users 0\u20139,999 on every flag, including an unknown flag;\n  - about 25% of users get the new flag.\n\nThe test passes: 2,548 of 10,000 users are enabled, about 25%. I also ran the backend with two different `PYTHONHASHSEED` values and got the same result both times, so its answers don't change between processes.\n\nThe bucketing code is now duplicated in both files. If the services can share a module, moving it into one would stop the copies drifting apart. If not, the test will catch it when they do.",
+      "num_turns": 3,
+      "duration_ms": 25369,
+      "cost_usd": 0.1681012,
+      "input_tokens": 6,
+      "output_tokens": 2021,
+      "cache_creation_input_tokens": 14543,
+      "cache_read_input_tokens": 56566,
+      "total_tokens": 73136,
+      "tool_calls": 2,
+      "tools_used": [
+        "Bash",
+        "Bash"
+      ],
+      "wall_s": 26.1,
+      "infra_error": false,
+      "correctness": {
+        "score": 1.0,
+        "matched": [
+          "sha256",
+          "flag_name"
+        ],
+        "missed": []
+      },
+      "profile": "clean",
+      "model": "default",
+      "workdir_snapshot": "--- backend_flags.py ---\n\"\"\"Backend feature flag evaluator \u2014 determines rollout eligibility for users.\"\"\"\nimport hashlib\n\n# Feature flags: name -> rollout percentage (0-100)\n# Must stay in sync with FLAGS in frontend_flags.py.\nFLAGS = {\n    \"dark_mode\": 100,  # Everyone gets it\n    \"beta_search\": 50,  # 50% of users\n    \"new_experimental_flag\": 25,  # 25% of users\n}\n\n\ndef is_enabled(flag_name: str, user_id: int) -> bool:\n    \"\"\"\n    Determine if a user should have the feature enabled.\n\n    Must be consistent with frontend bucketing so users see the same rollout.\n    Uses the same consistent hashing as frontend_flags.py:\n    sha256(\"flag_name:user_id\"), first 8 hex chars, mod 100.\n    Unlike Python's built-in hash(), this is stable across processes,\n    restarts, and services.\n    \"\"\"\n    if flag_name not in FLAGS:\n        return False\n\n    rollout_percentage = FLAGS[flag_name]\n\n    # Create a deterministic hash of the flag + user combination\n    digest = hashlib.sha256(f\"{flag_name}:{user_id}\".encode()).hexdigest()\n\n    # Convert first 8 hex chars to a number in range [0, 100)\n    bucket = int(digest[:8], 16) % 100\n\n    return bucket < rollout_percentage\n\n--- frontend_flags.py ---\n\"\"\"Frontend feature flag evaluator \u2014 determines rollout eligibility for users.\"\"\"\nimport hashlib\n\n# Feature flags: name -> rollout percentage (0-100)\nFLAGS = {\n    \"dark_mode\": 100,  # Everyone gets it\n    \"beta_search\": 50,  # 50% of users\n    \"new_experimental_flag\": 25,  # 25% of users\n}\n\n\ndef is_enabled(flag_name: str, user_id: int) -> bool:\n    \"\"\"\n    Determine if a user should have the feature enabled.\n\n    Uses consistent hashing: hash(flag_name:user_id) to bucket the user,\n    ensuring the same user always gets the same experience.\n    The bucket is consistent across restarts and across services.\n    \"\"\"\n    if flag_name not in FLAGS:\n        return False\n\n    rollout_percentage = FLAGS[flag_name]\n\n    # Create a deterministic hash of the flag + user combination\n    digest = hashlib.sha256(f\"{flag_name}:{user_id}\".encode()).hexdigest()\n\n    # Convert first 8 hex chars to a number in range [0, 100)\n    bucket = int(digest[:8], 16) % 100\n\n    return bucket < rollout_percentage\n\n--- test_flag_consistency.py ---\n\"\"\"Verifies frontend and backend agree on flag bucketing for every user.\"\"\"\nimport backend_flags\nimport frontend_flags\n\n\ndef test_flag_definitions_match():\n    assert backend_flags.FLAGS == frontend_flags.FLAGS\n\n\ndef test_bucketing_agrees():\n    for flag in list(frontend_flags.FLAGS) + [\"unknown_flag\"]:\n        for user_id in range(10_000):\n            assert backend_flags.is_enabled(flag, user_id) == frontend_flags.is_enabled(flag, user_id), (flag, user_id)\n\n\ndef test_new_experimental_flag_rollout_is_about_25_percent():\n    enabled = sum(backend_flags.is_enabled(\"new_experimental_flag\", u) for u in range(10_000))\n    assert 2_200 < enabled < 2_800\n\n\nif __name__ == \"__main__\":\n    test_flag_definitions_match()\n    test_bucketing_agrees()\n    test_new_experimental_flag_rollout_is_about_25_percent()\n    print(\"all consistency checks passed\")\n",
+      "check": {
+        "pass": true,
+        "output": "...                                                                      [100%]\n3 passed in 0.01s\n"
+      },
+      "judge_correctness": {
+        "score": 1.0,
+        "judge": "llm",
+        "rationale": "The backend now adds `new_experimental_flag` at the same 25% as the frontend and buckets users with SHA-256 of `\"{flag_name}:{user_id}\"`, matching the frontend exactly, and a consistency test confirms the two services agree."
+      }
+    },
+    {
+      "is_error": false,
+      "model_used": "claude-opus-5-5",
+      "result_text": "I added `new_experimental_flag` to `backend_flags.py` and replaced its bucketing so the backend now picks the same users as the frontend.\n\n**Changes to `backend_flags.py`:**\n- **New flag:** `\"new_experimental_flag\": 25` is in `FLAGS`, the same 25% rollout the frontend uses.\n- **Bucketing fix:** the backend used `hash(user_id) % 100`. That didn't match the frontend, which hashes the flag name together with the user ID. It also put a user in the same bucket for every flag, so the same users would get every partial rollout. The backend now uses the frontend's method: a SHA-256 hash of `\"{flag_name}:{user_id}\"`, the first 8 hex characters as a number, mod 100.\n\n**Check:** I ran both services' `is_enabled` for every flag (plus one undefined flag) across user IDs \u22121000 to 99,999, and they gave the same answer every time. The new flag came out on for 25.06% of those users, as expected.\n\nThis also changes `beta_search` on the backend. Which users had it there was based on the old hash, so about half of them will now be switched, but it now matches what the frontend already shows them. `dark_mode` is unaffected because it's at 100%.\n\nNo other files needed changes. The hashing code now exists in both files, so if these services can share a module, moving it into one place would stop them drifting apart later.",
+      "num_turns": 3,
+      "duration_ms": 16433,
+      "cost_usd": 0.1567902,
+      "input_tokens": 6,
+      "output_tokens": 1569,
+      "cache_creation_input_tokens": 14259,
+      "cache_read_input_tokens": 56571,
+      "total_tokens": 72405,
+      "tool_calls": 2,
+      "tools_used": [
+        "Bash",
+        "Bash"
+      ],
+      "wall_s": 17.2,
+      "infra_error": false,
+      "correctness": {
+        "score": 1.0,
+        "matched": [
+          "sha256",
+          "flag_name"
+        ],
+        "missed": []
+      },
+      "profile": "clean",
+      "model": "default",
+      "workdir_snapshot": "--- backend_flags.py ---\n\"\"\"Backend feature flag evaluator \u2014 determines rollout eligibility for users.\"\"\"\nimport hashlib\n\n# Feature flags: name -> rollout percentage (0-100)\nFLAGS = {\n    \"dark_mode\": 100,  # Everyone gets it\n    \"beta_search\": 50,  # 50% of users\n    \"new_experimental_flag\": 25,  # 25% of users\n}\n\n\ndef is_enabled(flag_name: str, user_id: int) -> bool:\n    \"\"\"\n    Determine if a user should have the feature enabled.\n\n    Must be consistent with frontend bucketing so users see the same rollout.\n    Uses the same scheme as frontend_flags.is_enabled: SHA-256 of\n    \"flag_name:user_id\", first 8 hex chars as an int, mod 100.\n    \"\"\"\n    if flag_name not in FLAGS:\n        return False\n\n    rollout_percentage = FLAGS[flag_name]\n\n    # Deterministic hash of the flag + user combination. Do NOT use the\n    # builtin hash(): it isn't the frontend's algorithm, and for str it is\n    # salted per process (PYTHONHASHSEED), so it isn't stable across restarts.\n    digest = hashlib.sha256(f\"{flag_name}:{user_id}\".encode()).hexdigest()\n\n    # Convert first 8 hex chars to a number in range [0, 100)\n    bucket = int(digest[:8], 16) % 100\n\n    return bucket < rollout_percentage\n\n--- frontend_flags.py ---\n\"\"\"Frontend feature flag evaluator \u2014 determines rollout eligibility for users.\"\"\"\nimport hashlib\n\n# Feature flags: name -> rollout percentage (0-100)\nFLAGS = {\n    \"dark_mode\": 100,  # Everyone gets it\n    \"beta_search\": 50,  # 50% of users\n    \"new_experimental_flag\": 25,  # 25% of users\n}\n\n\ndef is_enabled(flag_name: str, user_id: int) -> bool:\n    \"\"\"\n    Determine if a user should have the feature enabled.\n\n    Uses consistent hashing: hash(flag_name:user_id) to bucket the user,\n    ensuring the same user always gets the same experience.\n    The bucket is consistent across restarts and across services.\n    \"\"\"\n    if flag_name not in FLAGS:\n        return False\n\n    rollout_percentage = FLAGS[flag_name]\n\n    # Create a deterministic hash of the flag + user combination\n    digest = hashlib.sha256(f\"{flag_name}:{user_id}\".encode()).hexdigest()\n\n    # Convert first 8 hex chars to a number in range [0, 100)\n    bucket = int(digest[:8], 16) % 100\n\n    return bucket < rollout_percentage\n",
+      "check": {
+        "pass": true,
+        "output": "...                                                                      [100%]\n3 passed in 0.01s\n"
+      },
+      "judge_correctness": {
+        "score": 1.0,
+        "judge": "llm",
+        "rationale": "The backend now buckets users with the same SHA-256 hash of `flag_name:user_id` as the frontend and includes `new_experimental_flag` at 25%, so both services pick the same users."
+      }
+    },
+    {
+      "is_error": false,
+      "model_used": "claude-opus-5-5",
+      "result_text": "I added `new_experimental_flag` to `backend_flags.py` at 25%, and the backend now puts every user in the same bucket as the frontend.\n\n**What was wrong:** the backend used Python's built-in `hash(user_id) % 100`. That ignores the flag name, so a user landed in the same bucket for every flag, and it doesn't match the frontend's method. The frontend uses `sha256(f\"{flag_name}:{user_id}\")`, takes the first 8 hex characters as an integer, then `% 100`.\n\n**Changes:**\n- **`backend_flags.py`**: the backend now uses exactly the same SHA-256 method as the frontend. It's stable across processes, restarts and services. I also added the new flag at 25%.\n- **`test_flag_parity.py`** (new): this test fails if the two services ever drift apart. It checks that:\n  - both flag tables are identical;\n  - both services give the same answer for every flag (plus an unknown one) across about 20,000 user IDs, including negative and very large ones;\n  - about 25% of users get the new flag.\n\nAll 3 tests pass.\n\n**One behaviour change to be aware of:** `beta_search` was also bucketed the old, wrong way on the backend. Its backend users will move to match the frontend. That fixes a mismatch that was already live, but some users will see `beta_search` switch on or off on the backend when this ships.\n\n**Possible follow-up:** the method and the flag table are still copied in both services. If they can share a module or config, putting the bucketing in one place would stop them drifting. Until then, the parity test is what catches it.",
+      "num_turns": 3,
+      "duration_ms": 26118,
+      "cost_usd": 0.2886604,
+      "input_tokens": 6,
+      "output_tokens": 2064,
+      "cache_creation_input_tokens": 28599,
+      "cache_read_input_tokens": 92822,
+      "total_tokens": 123491,
+      "tool_calls": 2,
+      "tools_used": [
+        "Bash",
+        "Bash"
+      ],
+      "wall_s": 35.4,
+      "infra_error": false,
+      "correctness": {
+        "score": 1.0,
+        "matched": [
+          "sha256",
+          "flag_name"
+        ],
+        "missed": []
+      },
+      "profile": "marvin",
+      "model": "default",
+      "workdir_snapshot": "--- backend_flags.py ---\n\"\"\"Backend feature flag evaluator \u2014 determines rollout eligibility for users.\"\"\"\nimport hashlib\n\n# Feature flags: name -> rollout percentage (0-100)\n# Keep percentages in sync with frontend_flags.FLAGS.\nFLAGS = {\n    \"dark_mode\": 100,  # Everyone gets it\n    \"beta_search\": 50,  # 50% of users\n    \"new_experimental_flag\": 25,  # 25% of users\n}\n\n\ndef is_enabled(flag_name: str, user_id: int) -> bool:\n    \"\"\"\n    Determine if a user should have the feature enabled.\n\n    Must be consistent with frontend bucketing so users see the same rollout:\n    bucket = int(sha256(f\"{flag_name}:{user_id}\")[:8 hex chars], 16) % 100.\n    Uses a stable hash (not Python's built-in hash()), so the bucket is the\n    same across processes, restarts and services.\n    \"\"\"\n    if flag_name not in FLAGS:\n        return False\n\n    rollout_percentage = FLAGS[flag_name]\n\n    digest = hashlib.sha256(f\"{flag_name}:{user_id}\".encode()).hexdigest()\n    bucket = int(digest[:8], 16) % 100\n\n    return bucket < rollout_percentage\n\n--- frontend_flags.py ---\n\"\"\"Frontend feature flag evaluator \u2014 determines rollout eligibility for users.\"\"\"\nimport hashlib\n\n# Feature flags: name -> rollout percentage (0-100)\nFLAGS = {\n    \"dark_mode\": 100,  # Everyone gets it\n    \"beta_search\": 50,  # 50% of users\n    \"new_experimental_flag\": 25,  # 25% of users\n}\n\n\ndef is_enabled(flag_name: str, user_id: int) -> bool:\n    \"\"\"\n    Determine if a user should have the feature enabled.\n\n    Uses consistent hashing: hash(flag_name:user_id) to bucket the user,\n    ensuring the same user always gets the same experience.\n    The bucket is consistent across restarts and across services.\n    \"\"\"\n    if flag_name not in FLAGS:\n        return False\n\n    rollout_percentage = FLAGS[flag_name]\n\n    # Create a deterministic hash of the flag + user combination\n    digest = hashlib.sha256(f\"{flag_name}:{user_id}\".encode()).hexdigest()\n\n    # Convert first 8 hex chars to a number in range [0, 100)\n    bucket = int(digest[:8], 16) % 100\n\n    return bucket < rollout_percentage\n\n--- test_flag_parity.py ---\n\"\"\"Frontend and backend must bucket every user identically.\"\"\"\nimport backend_flags\nimport frontend_flags\n\n\ndef test_flag_tables_match():\n    assert backend_flags.FLAGS == frontend_flags.FLAGS\n\n\ndef test_bucketing_agrees_for_every_flag():\n    for flag in list(frontend_flags.FLAGS) + [\"unknown_flag\"]:\n        for user_id in list(range(-50, 20000)) + [2**63, 10**18 + 7]:\n            assert backend_flags.is_enabled(flag, user_id) == frontend_flags.is_enabled(flag, user_id), (flag, user_id)\n\n\ndef test_new_experimental_flag_rollout_is_about_25_percent():\n    n = 20000\n    on = sum(backend_flags.is_enabled(\"new_experimental_flag\", u) for u in range(n))\n    assert 0.23 < on / n < 0.27\n",
+      "check": {
+        "pass": true,
+        "output": "...                                                                      [100%]\n3 passed in 0.01s\n"
+      },
+      "judge_correctness": {
+        "score": 1.0,
+        "judge": "llm",
+        "rationale": "The backend now uses the frontend's exact `sha256(f\"{flag_name}:{user_id}\")` bucketing instead of Python's `hash()`, and adds `new_experimental_flag` at the same 25% as the frontend, so both services bucket users identically."
+      }
+    },
+    {
+      "is_error": false,
+      "model_used": "claude-opus-5-5",
+      "result_text": "The backend now buckets users the same way the frontend does, and `new_experimental_flag` is live at 25%. The new tests pass.\n\n**What was wrong in `backend_flags.py`:**\n- It used `bucket = hash(user_id) % 100`. That doesn't include the flag name, so every flag put the same users in the same buckets. It also doesn't match the frontend's method at all.\n- `new_experimental_flag` wasn't in `FLAGS`.\n\n**What I changed:**\n- **`backend_flags.py`:** added `\"new_experimental_flag\": 25` and switched to the frontend's method: take `sha256(\"<flag>:<user_id>\")`, read the first 8 hex characters as a number, take it mod 100, and the user is in if that's below the rollout percentage.\n- **`test_flag_parity.py` (new):** checks that both services have the same `FLAGS` and give the same answer for every flag (plus one unknown flag) across about 20,000 user IDs, including negative and very large ones. It also pins the expected hash for a few users, so a change on just one side gets caught, and checks the rollout lands near 25%.\n\n**Test results:** all 4 tests failed before the fix and pass after it. They also pass with several different `PYTHONHASHSEED` values, which confirms the result doesn't depend on Python's per-process hash randomisation.\n\n**Before you deploy:** this also changes backend results for `beta_search` (`dark_mode` is 100%, so nobody's result changes). Backend users who were bucketed the old way will be re-bucketed, so some will flip on or off. That's the right fix, since the backend never agreed with the frontend, but expect a one-time change in backend `beta_search` behaviour.\n\nThe two services still keep separate copies of the flag list and the hashing code. The parity test catches any drift, but if both services can import a shared module, moving the logic there would remove the duplication entirely.",
+      "num_turns": 5,
+      "duration_ms": 28800,
+      "cost_usd": 0.22315580000000002,
+      "input_tokens": 8,
+      "output_tokens": 2894,
+      "cache_creation_input_tokens": 16973,
+      "cache_read_input_tokens": 147299,
+      "total_tokens": 167174,
+      "tool_calls": 4,
+      "tools_used": [
+        "Bash",
+        "Bash",
+        "Write",
+        "Bash"
+      ],
+      "wall_s": 37.4,
+      "infra_error": false,
+      "correctness": {
+        "score": 1.0,
+        "matched": [
+          "sha256",
+          "flag_name"
+        ],
+        "missed": []
+      },
+      "profile": "marvin",
+      "model": "default",
+      "workdir_snapshot": "--- backend_flags.py ---\n\"\"\"Backend feature flag evaluator \u2014 determines rollout eligibility for users.\"\"\"\nimport hashlib\n\n# Feature flags: name -> rollout percentage (0-100)\n# Must match FLAGS in frontend_flags.py (enforced by test_flag_parity.py).\nFLAGS = {\n    \"dark_mode\": 100,  # Everyone gets it\n    \"beta_search\": 50,  # 50% of users\n    \"new_experimental_flag\": 25,  # 25% of users\n}\n\n\ndef is_enabled(flag_name: str, user_id: int) -> bool:\n    \"\"\"\n    Determine if a user should have the feature enabled.\n\n    Must be consistent with frontend bucketing so users see the same rollout:\n    sha256(\"<flag_name>:<user_id>\"), first 8 hex chars as an int, mod 100.\n    Python's built-in hash() is not used: it isn't salted by flag and\n    isn't guaranteed to be stable across processes or services.\n    \"\"\"\n    if flag_name not in FLAGS:\n        return False\n\n    rollout_percentage = FLAGS[flag_name]\n\n    # Create a deterministic hash of the flag + user combination\n    digest = hashlib.sha256(f\"{flag_name}:{user_id}\".encode()).hexdigest()\n\n    # Convert first 8 hex chars to a number in range [0, 100)\n    bucket = int(digest[:8], 16) % 100\n\n    return bucket < rollout_percentage\n\n--- frontend_flags.py ---\n\"\"\"Frontend feature flag evaluator \u2014 determines rollout eligibility for users.\"\"\"\nimport hashlib\n\n# Feature flags: name -> rollout percentage (0-100)\nFLAGS = {\n    \"dark_mode\": 100,  # Everyone gets it\n    \"beta_search\": 50,  # 50% of users\n    \"new_experimental_flag\": 25,  # 25% of users\n}\n\n\ndef is_enabled(flag_name: str, user_id: int) -> bool:\n    \"\"\"\n    Determine if a user should have the feature enabled.\n\n    Uses consistent hashing: hash(flag_name:user_id) to bucket the user,\n    ensuring the same user always gets the same experience.\n    The bucket is consistent across restarts and across services.\n    \"\"\"\n    if flag_name not in FLAGS:\n        return False\n\n    rollout_percentage = FLAGS[flag_name]\n\n    # Create a deterministic hash of the flag + user combination\n    digest = hashlib.sha256(f\"{flag_name}:{user_id}\".encode()).hexdigest()\n\n    # Convert first 8 hex chars to a number in range [0, 100)\n    bucket = int(digest[:8], 16) % 100\n\n    return bucket < rollout_percentage\n\n--- test_flag_parity.py ---\n\"\"\"Frontend and backend must bucket every user identically for every flag.\"\"\"\nimport hashlib\n\nimport backend_flags\nimport frontend_flags\n\nUSER_IDS = list(range(-50, 20_000)) + [2**31 - 1, 2**63 - 1, 10**18 + 7]\n\n\ndef test_same_flags_and_percentages():\n    assert backend_flags.FLAGS == frontend_flags.FLAGS\n    assert backend_flags.FLAGS[\"new_experimental_flag\"] == 25\n\n\ndef test_backend_agrees_with_frontend_for_every_flag_and_user():\n    for flag in list(frontend_flags.FLAGS) + [\"unknown_flag\"]:\n        mismatches = [u for u in USER_IDS\n                      if backend_flags.is_enabled(flag, u) != frontend_flags.is_enabled(flag, u)]\n        assert not mismatches, f\"{flag}: {len(mismatches)} users disagree, e.g. {mismatches[:5]}\"\n\n\ndef test_bucketing_is_independent_of_process_hash_seed():\n    # Pin the expected algorithm so a change on one side alone is caught.\n    for u in (1, 42, 12345):\n        digest = hashlib.sha256(f\"new_experimental_flag:{u}\".encode()).hexdigest()\n        expected = int(digest[:8], 16) % 100 < 25\n        assert backend_flags.is_enabled(\"new_experimental_flag\", u) is expected\n\n\ndef test_rollout_is_roughly_25_percent():\n    on = sum(backend_flags.is_enabled(\"new_experimental_flag\", u) for u in range(20_000))\n    assert 0.23 < on / 20_000 < 0.27\n",
+      "check": {
+        "pass": true,
+        "output": "...                                                                      [100%]\n3 passed in 0.01s\n"
+      },
+      "judge_correctness": {
+        "score": 1.0,
+        "judge": "llm",
+        "rationale": "The backend now uses the frontend's sha256(\"<flag_name>:<user_id>\") bucketing, and `new_experimental_flag` is added at 25% to match the frontend, so the two services agree on which users are bucketed in."
+      }
+    },
+    {
+      "is_error": false,
+      "model_used": "claude-opus-5-5",
+      "result_text": "I added `new_experimental_flag` at 25% to the backend, and the backend now buckets users exactly the way the frontend does. A new parity test checks that the two services agree; it failed before the change and all 5 checks pass now.\n\n**What was wrong:** the backend bucketed with `hash(user_id) % 100`. In Python, `hash()` of an int is just the int, and the flag name wasn't part of it. So user 7 landed in bucket 7 for every flag, which doesn't match the frontend.\n\n**Changes:**\n- **`backend_flags.py`**: added the flag at 25 and switched to the frontend's method. That's a SHA-256 hash of `\"{flag_name}:{user_id}\"`, with the first 8 hex characters turned into a number mod 100. I also added a comment warning against `hash()`: it isn't the frontend's method, and for strings Python changes its output on every process start.\n- **`test_flag_parity.py`** (new): checks that\n  - both services list the same flags with the same percentages;\n  - every flag gives the same answer on both sides for user IDs 0\u201319,999;\n  - an unknown flag is off;\n  - about 25% of users land in `new_experimental_flag`.\n\n**Check before deploying:** this also changes which backend users get `beta_search`. That flag was already out of step with the frontend for most users, so this fixes it, but some users will gain or lose it on the backend when this ships. If anyone relied on the old backend split, tell them first.\n\nThe algorithm is still copied in two files, and only the parity test keeps them in step. I didn't make a shared module because I don't know whether the two services can import common code when deployed. If they can, a shared module would remove the copy.",
+      "num_turns": 5,
+      "duration_ms": 31076,
+      "cost_usd": 0.21045420000000004,
+      "input_tokens": 8,
+      "output_tokens": 2431,
+      "cache_creation_input_tokens": 16552,
+      "cache_read_input_tokens": 146931,
+      "total_tokens": 165922,
+      "tool_calls": 4,
+      "tools_used": [
+        "Bash",
+        "Bash",
+        "Write",
+        "Bash"
+      ],
+      "wall_s": 47.5,
+      "infra_error": false,
+      "correctness": {
+        "score": 1.0,
+        "matched": [
+          "sha256",
+          "flag_name"
+        ],
+        "missed": []
+      },
+      "profile": "marvin",
+      "model": "default",
+      "workdir_snapshot": "--- backend_flags.py ---\n\"\"\"Backend feature flag evaluator \u2014 determines rollout eligibility for users.\"\"\"\nimport hashlib\n\n# Feature flags: name -> rollout percentage (0-100)\n# Must stay in sync with frontend_flags.FLAGS (enforced by test_flag_parity.py).\nFLAGS = {\n    \"dark_mode\": 100,  # Everyone gets it\n    \"beta_search\": 50,  # 50% of users\n    \"new_experimental_flag\": 25,  # 25% of users\n}\n\n\ndef is_enabled(flag_name: str, user_id: int) -> bool:\n    \"\"\"\n    Determine if a user should have the feature enabled.\n\n    Must be consistent with frontend bucketing so users see the same rollout:\n    bucket = int(sha256(f\"{flag_name}:{user_id}\")[:8 hex], 16) % 100.\n    Do not use Python's built-in hash(): it is not the frontend's algorithm,\n    and for strings it is salted per process (PYTHONHASHSEED).\n    \"\"\"\n    if flag_name not in FLAGS:\n        return False\n\n    rollout_percentage = FLAGS[flag_name]\n\n    # Create a deterministic hash of the flag + user combination\n    digest = hashlib.sha256(f\"{flag_name}:{user_id}\".encode()).hexdigest()\n\n    # Convert first 8 hex chars to a number in range [0, 100)\n    bucket = int(digest[:8], 16) % 100\n\n    return bucket < rollout_percentage\n\n--- frontend_flags.py ---\n\"\"\"Frontend feature flag evaluator \u2014 determines rollout eligibility for users.\"\"\"\nimport hashlib\n\n# Feature flags: name -> rollout percentage (0-100)\nFLAGS = {\n    \"dark_mode\": 100,  # Everyone gets it\n    \"beta_search\": 50,  # 50% of users\n    \"new_experimental_flag\": 25,  # 25% of users\n}\n\n\ndef is_enabled(flag_name: str, user_id: int) -> bool:\n    \"\"\"\n    Determine if a user should have the feature enabled.\n\n    Uses consistent hashing: hash(flag_name:user_id) to bucket the user,\n    ensuring the same user always gets the same experience.\n    The bucket is consistent across restarts and across services.\n    \"\"\"\n    if flag_name not in FLAGS:\n        return False\n\n    rollout_percentage = FLAGS[flag_name]\n\n    # Create a deterministic hash of the flag + user combination\n    digest = hashlib.sha256(f\"{flag_name}:{user_id}\".encode()).hexdigest()\n\n    # Convert first 8 hex chars to a number in range [0, 100)\n    bucket = int(digest[:8], 16) % 100\n\n    return bucket < rollout_percentage\n\n--- test_flag_parity.py ---\n\"\"\"Parity tests: frontend and backend must bucket every user identically.\"\"\"\nimport backend_flags\nimport frontend_flags\n\n\ndef test_same_flags_and_percentages():\n    assert backend_flags.FLAGS == frontend_flags.FLAGS\n\n\ndef test_new_experimental_flag_registered_at_25():\n    assert backend_flags.FLAGS[\"new_experimental_flag\"] == 25\n\n\ndef test_every_flag_agrees_for_many_users():\n    for flag in frontend_flags.FLAGS:\n        for user_id in range(20_000):\n            assert backend_flags.is_enabled(flag, user_id) == frontend_flags.is_enabled(flag, user_id), (flag, user_id)\n\n\ndef test_unknown_flag_is_off():\n    assert backend_flags.is_enabled(\"nope\", 1) is False\n\n\ndef test_rollout_roughly_matches_percentage():\n    n = 20_000\n    on = sum(backend_flags.is_enabled(\"new_experimental_flag\", u) for u in range(n))\n    assert 0.23 < on / n < 0.27\n",
+      "check": {
+        "pass": true,
+        "output": "...                                                                      [100%]\n3 passed in 0.01s\n"
+      },
+      "judge_correctness": {
+        "score": 1.0,
+        "judge": "llm",
+        "rationale": "The backend now uses the frontend's SHA-256 hash of `\"{flag_name}:{user_id}\"` (first 8 hex chars mod 100), adds `new_experimental_flag` at 25%, and a parity test confirms the two services bucket users identically."
+      }
+    }
+  ]
+}

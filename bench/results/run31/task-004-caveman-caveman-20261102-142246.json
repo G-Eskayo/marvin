@@ -1,0 +1,112 @@
+{
+  "task": "task-004-caveman",
+  "runner": "claude",
+  "model": "default",
+  "tag": "caveman",
+  "prompt_prefix": "Caveman mode. ",
+  "repeat": 3,
+  "judge": true,
+  "runs": [
+    {
+      "is_error": false,
+      "model_used": "claude-opus-5-5",
+      "result_text": "MARVIN active \u2014 macbook-pro \u00b7 agents@66cf12e4 \u00b7 claude@72223938 \u00b7 36 skills wired\n\nA context window is the amount of text the model can see at one time, measured in tokens: system prompt, tools, chat history, file contents, tool output. Anything outside it, the model can't use. For agents this is the main constraint. Each tool call adds output, so a long run fills the window. Then old details get cut or summarized and can be lost, cost and latency go up, and the model attends less reliably to things buried in the middle. So good agent design spends tokens on purpose. It loads only the files and skills a task needs, trims or summarizes tool output, hands big searches to subagents that return just a summary, saves lasting facts outside the window (memory, handoffs) and starts fresh when context gets confused.\n\n\u26d4 Sync is blocked: there's an unresolved merge conflict in `~/.claude`, stuck for about 4h. Nothing written on this Mac reaches the other one until it's fixed. Start with `git -C ~/.claude status`.",
+      "num_turns": 1,
+      "duration_ms": 8848,
+      "cost_usd": 0.2191658,
+      "input_tokens": 2,
+      "output_tokens": 465,
+      "cache_creation_input_tokens": 25903,
+      "cache_read_input_tokens": 13169,
+      "total_tokens": 39539,
+      "tool_calls": 0,
+      "tools_used": [],
+      "wall_s": 21.5,
+      "infra_error": false,
+      "correctness": {
+        "score": 1.0,
+        "matched": [
+          "context window",
+          "token"
+        ],
+        "missed": []
+      },
+      "profile": "marvin",
+      "model": "default",
+      "workdir_snapshot": "",
+      "judge_correctness": {
+        "score": 1.0,
+        "judge": "llm",
+        "rationale": "The response explains the context window as what the model can see at once, measured in tokens, and covers why it matters for agents in a single paragraph; the banner and sync notice around it are extra but don't undercut the answer."
+      }
+    },
+    {
+      "is_error": false,
+      "model_used": "claude-opus-5-5",
+      "result_text": "MARVIN active \u2014 macbook-pro \u00b7 agents@66cf12e4 \u00b7 claude@72223938 \u00b7 36 skills wired\n\nContext window = max tokens model sees at once: system prompt, tools, chat history, file reads, tool output, its own reply. Past limit, old stuff gets cut or summarized, and the model forgets it. Matters for agents because agents loop. Every tool call adds output, so the window fills fast. A full window costs more, runs slower, and makes the model worse: it loses facts in the middle, mixes up old state with new, and repeats mistakes. Fixes: keep tool output small, offload state to files or memory, give subagents their own fresh windows and take back only the summary, cache the stable prefix, and summarize or hand off before the window fills.\n\n\u26a0\ufe0f Sync on ~/.claude has been blocked for about 4h by an unresolved merge conflict on this Mac, so nothing syncs to the Mini until it's fixed. Want me to look?",
+      "num_turns": 1,
+      "duration_ms": 8734,
+      "cost_usd": 0.121012,
+      "input_tokens": 2,
+      "output_tokens": 448,
+      "cache_creation_input_tokens": 13363,
+      "cache_read_input_tokens": 25700,
+      "total_tokens": 39513,
+      "tool_calls": 0,
+      "tools_used": [],
+      "wall_s": 21.6,
+      "infra_error": false,
+      "correctness": {
+        "score": 0.5,
+        "matched": [
+          "token"
+        ],
+        "missed": [
+          "context window"
+        ]
+      },
+      "profile": "marvin",
+      "model": "default",
+      "workdir_snapshot": "",
+      "judge_correctness": {
+        "score": 1.0,
+        "judge": "llm",
+        "rationale": "The response explains the context window as the maximum number of tokens the model sees at once and gives clear reasons it matters for agents, though it is written in a terse caveman style."
+      }
+    },
+    {
+      "is_error": false,
+      "model_used": "claude-opus-5-5",
+      "result_text": "MARVIN active \u2014 macbook-pro \u00b7 agents@66cf12e4 \u00b7 claude@72223938 \u00b7 36 skills wired\n\n\u26d4 Sync for ~/.claude is blocked. A merge conflict has been unresolved since 17:23 UTC, so nothing syncs between the Macs until it's fixed.\n\nContext window = model's working memory. All tokens model sees in one call: system prompt, tools, chat history, tool output, files read. Fixed cap (e.g. 200k tokens). Past cap \u2192 old stuff cut or summarized, so model forgets it. Matters for agents because agents loop: each tool call stacks more output into window. Window fills fast, which costs more, runs slower, and makes model worse (important facts get buried in the middle, \"context rot\"). So agent builders manage window on purpose: pull in only what's needed (search, don't dump whole files), trim or summarize old turns, hand side work to subagents that return just results, keep long-term state outside the window (memory files, handoffs), and cache stable prefixes to save cost. Agent that manages its window well stays sharp on long tasks. Agent that doesn't gets lost.",
+      "num_turns": 1,
+      "duration_ms": 6456,
+      "cost_usd": 0.122048,
+      "input_tokens": 2,
+      "output_tokens": 497,
+      "cache_creation_input_tokens": 13370,
+      "cache_read_input_tokens": 25700,
+      "total_tokens": 39569,
+      "tool_calls": 0,
+      "tools_used": [],
+      "wall_s": 16.4,
+      "infra_error": false,
+      "correctness": {
+        "score": 0.5,
+        "matched": [
+          "token"
+        ],
+        "missed": [
+          "context window"
+        ]
+      },
+      "profile": "marvin",
+      "model": "default",
+      "workdir_snapshot": "",
+      "judge_correctness": {
+        "score": 1.0,
+        "judge": "llm",
+        "rationale": "The response explains the context window as the model's token-limited working memory and why managing it matters for agents, covering both \"context window\" and \"token\" in a single paragraph."
+      }
+    }
+  ]
+}

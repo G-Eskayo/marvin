@@ -1,0 +1,224 @@
+{
+  "task": "task-014-kb-lookup",
+  "runner": "claude",
+  "model": "default",
+  "tag": "",
+  "prompt_prefix": "",
+  "repeat": 3,
+  "judge": true,
+  "runs": [
+    {
+      "is_error": false,
+      "model_used": "claude-opus-5-5",
+      "result_text": "I couldn't answer these questions because there's no qa-knowledge knowledge base available in this session.\n\n- **No KB tool:** a tool search for \"qa-knowledge\" found nothing. The connected services are Claude Docs, Gmail, Google Calendar and Google Drive, and none of them is a qa-knowledge KB.\n- **No CLI check:** I tried to look for a `qa-knowledge` command-line tool or registered MCP server, but that command needs your approval and didn't run.\n\nYou asked me not to search or read files, so I didn't look for MARVIN's bench results on disk. I also won't guess at what the runs established, because made-up results would be worse than none.\n\nTo go ahead, I need one of these:\n1. **Connect the qa-knowledge MCP server** to this session (for example with `claude mcp add ...`, or by enabling it in your config) and run me again.\n2. **Approve the CLI check** if qa-knowledge is a local command, and tell me how to call it.\n3. **Allow file access** to MARVIN's bench output or memory files, if you'd accept that instead of the KB.",
+      "num_turns": 3,
+      "duration_ms": 9413,
+      "cost_usd": 0.1261502,
+      "input_tokens": 6,
+      "output_tokens": 760,
+      "cache_creation_input_tokens": 12530,
+      "cache_read_input_tokens": 53431,
+      "total_tokens": 66727,
+      "tool_calls": 2,
+      "tools_used": [
+        "ToolSearch",
+        "Bash"
+      ],
+      "wall_s": 10.3,
+      "infra_error": false,
+      "correctness": {
+        "score": 0.0,
+        "matched": [],
+        "missed": [
+          "Context quality matters more than model size"
+        ]
+      },
+      "profile": "clean",
+      "model": "default",
+      "workdir_snapshot": "",
+      "judge_correctness": {
+        "score": 0.0,
+        "judge": "llm",
+        "rationale": "The assistant gave no answers to any of the three questions and never conveyed that context quality matters more than model size."
+      }
+    },
+    {
+      "is_error": false,
+      "model_used": "claude-opus-5-5",
+      "result_text": "I couldn't answer any of the three questions because there's no qa-knowledge knowledge base in this session.\n\n- **No KB tool:** searching the available tools for \"qa-knowledge\" found nothing. The connected servers are Claude Docs, Gmail, Google Calendar and Google Drive, and none of them is a qa-knowledge KB.\n- **No KB resources:** the list of MCP resources came back empty, so the KB isn't exposed that way either.\n\nYou said not to search or read files, so I didn't look in the working directory or the memory folder. I also didn't answer from general knowledge, because the questions are about what MARVIN's own bench runs recorded. A guess could easily contradict what's stored.\n\nTo get the answers, either:\n1. **Connect the qa-knowledge MCP server** in this session's MCP settings (for example `.mcp.json` or `claude mcp add`), then ask again and I'll query it directly.\n2. **Let me use another source**, such as reading the bench result or memory files, if you're willing to drop the no-files rule.",
+      "num_turns": 5,
+      "duration_ms": 16798,
+      "cost_usd": 0.20254399999999997,
+      "input_tokens": 10,
+      "output_tokens": 749,
+      "cache_creation_input_tokens": 21307,
+      "cache_read_input_tokens": 85340,
+      "total_tokens": 107406,
+      "tool_calls": 4,
+      "tools_used": [
+        "ToolSearch",
+        "ToolSearch",
+        "ToolSearch",
+        "ListMcpResourcesTool"
+      ],
+      "wall_s": 17.6,
+      "infra_error": false,
+      "correctness": {
+        "score": 0.0,
+        "matched": [],
+        "missed": [
+          "Context quality matters more than model size"
+        ]
+      },
+      "profile": "clean",
+      "model": "default",
+      "workdir_snapshot": "",
+      "judge_correctness": {
+        "score": 0.0,
+        "judge": "llm",
+        "rationale": "The response answers none of the three questions and never conveys that context quality matters more than model size, because it reports no qa-knowledge KB was available."
+      }
+    },
+    {
+      "is_error": false,
+      "model_used": "claude-opus-5-5",
+      "result_text": "I couldn't answer any of the three questions because there is no qa-knowledge knowledge base connected to this session.\n\n- **Tool search:** searching for \"qa-knowledge\" found nothing. The only connected services are Claude Docs, Gmail, Google Calendar and Google Drive, and none of them is a knowledge base.\n- **MCP resources:** no connected server offers any resources.\n\nYou told me not to search or read files, so I didn't look in the working directory or the memory folder. I haven't filled in answers from guesswork, because I don't know what MARVIN's bench runs found.\n\nTo get answers, either:\n1. **Connect the qa-knowledge MCP server** (check your MCP config or run `/mcp`), then ask again, or\n2. **Let me search local files** instead, if the bench results are on disk.",
+      "num_turns": 4,
+      "duration_ms": 7073,
+      "cost_usd": 0.1278072,
+      "input_tokens": 10,
+      "output_tokens": 562,
+      "cache_creation_input_tokens": 12649,
+      "cache_read_input_tokens": 76676,
+      "total_tokens": 89897,
+      "tool_calls": 3,
+      "tools_used": [
+        "ToolSearch",
+        "ToolSearch",
+        "ListMcpResourcesTool"
+      ],
+      "wall_s": 8.0,
+      "infra_error": false,
+      "correctness": {
+        "score": 0.0,
+        "matched": [],
+        "missed": [
+          "Context quality matters more than model size"
+        ]
+      },
+      "profile": "clean",
+      "model": "default",
+      "workdir_snapshot": "",
+      "judge_correctness": {
+        "score": 0.0,
+        "judge": "llm",
+        "rationale": "The response gave no answers to any of the three questions and never stated that context quality matters more than model size."
+      }
+    },
+    {
+      "is_error": false,
+      "model_used": "claude-opus-5-5",
+      "result_text": "These answers come from the marvin-bench entries in the qa-knowledge KB. All are marked high confidence.\n\n**1. Full injection vs RAG injection with local models**\n- **Full injection fails** on jargon-recall tasks. Loading all 15 memory files (about 4,000 tokens) adds too much noise, and the model's training defaults win out over MARVIN's own terms. For example, on the venv question, 14 unrelated files (Python stdlib docs, file-org notes and so on) drowned out the one note that mattered.\n- **RAG injection fixes it.** Injecting only the top 3 semantic matches (about 300 tokens) removes the competing context. The right note came back as the top match, at 0.86 similarity.\n- The stored rule is to use `n_results=3`. Going above 3 brings the noise back.\n\n**2. Smallest model that matched Haiku**\n- **qwen2.5:14b with RAG injection** matched Haiku on meaning, at $0.00. qwen2.5:7b with RAG still failed.\n- One caveat: the 14b answers pass the judge but fail the exact-match scorer. The model adds an extra word (\"tag-keyword matching\" instead of \"tag matching\").\n- The resulting cost ladder:\n  - local 14B + RAG: $0.00, matches on meaning only\n  - Haiku + marvin: about $0.02, exact match\n  - Sonnet + marvin: about $0.05, full quality\n\n**3. Context quality vs model size**\nThe stored outcome reads: *\"Context quality matters more than model size for jargon retrieval.\"* Cutting the noise from the context fixed failures that a bigger model with full injection did not fix.",
+      "num_turns": 4,
+      "duration_ms": 13381,
+      "cost_usd": 0.2621268,
+      "input_tokens": 8,
+      "output_tokens": 934,
+      "cache_creation_input_tokens": 28177,
+      "cache_read_input_tokens": 89994,
+      "total_tokens": 119113,
+      "tool_calls": 2,
+      "tools_used": [
+        "Skill",
+        "Bash"
+      ],
+      "wall_s": 19.7,
+      "infra_error": false,
+      "correctness": {
+        "score": 1.0,
+        "matched": [
+          "Context quality matters more than model size"
+        ],
+        "missed": []
+      },
+      "profile": "marvin",
+      "model": "default",
+      "workdir_snapshot": "",
+      "judge_correctness": {
+        "score": 1.0,
+        "judge": "llm",
+        "rationale": "The response answers all three questions, and answer 3 quotes the ground-truth phrase \"Context quality matters more than model size\" word for word."
+      }
+    },
+    {
+      "is_error": false,
+      "model_used": "claude-opus-5-5",
+      "result_text": "I ran a single qa-knowledge query and read no files. All three answers come from high-confidence `marvin-bench` entries.\n\n**1. Full context injection vs RAG injection with local LLMs**\n- **Full injection fails on jargon-recall tasks.** It loaded 15 memory files, about 4,000 tokens. The unrelated files (Python stdlib docs, file-organization notes, etc.) triggered the model's training priors, and those overrode the project-specific terms.\n- **RAG injection fixes it.** It sends the top 3 semantic hits, about 300 tokens, so there's no competing context. For the MARVIN venv question, the top hit was `marvin-venv-interpreter.md` at similarity 0.86.\n- **Keep it at 3.** The stored rule is `n_results=3`; pulling more than 3 passages brings the noise back.\n\n**2. Smallest model that matched Haiku**\n- **qwen2.5:14b with RAG injection** matched Haiku's meaning on jargon recall, at $0.00. A 7B model with RAG still failed. 14B with full injection doesn't pass either, so RAG is required.\n- **The pass is by the judge, not exact match.** The substring scorer still failed it because the model added one word (\"tag-keyword matching\" instead of \"tag matching\").\n\n**3. Context quality vs model size**\n- The stored outcome says: \"Context quality matters more than model size for jargon retrieval.\"\n- **Resulting cost order:**\n\n| Setup | Cost per run | Result |\n|---|---|---|\n| Local 14B + RAG | $0.00 | Same meaning as Haiku |\n| Haiku + MARVIN | ~$0.02 | Exact match |\n| Sonnet + MARVIN | ~$0.05 | Full |\n\nA related entry backs this up: MARVIN's context gives a bigger boost on weaker models. Without it, Haiku failed a recall task that Sonnet passed.",
+      "num_turns": 4,
+      "duration_ms": 13236,
+      "cost_usd": 0.16393059999999998,
+      "input_tokens": 8,
+      "output_tokens": 993,
+      "cache_creation_input_tokens": 15439,
+      "cache_read_input_tokens": 102633,
+      "total_tokens": 119073,
+      "tool_calls": 2,
+      "tools_used": [
+        "Skill",
+        "Bash"
+      ],
+      "wall_s": 19.2,
+      "infra_error": false,
+      "correctness": {
+        "score": 1.0,
+        "matched": [
+          "Context quality matters more than model size"
+        ],
+        "missed": []
+      },
+      "profile": "marvin",
+      "model": "default",
+      "workdir_snapshot": "",
+      "judge_correctness": {
+        "score": 1.0,
+        "judge": "llm",
+        "rationale": "The response answers all three questions and quotes the ground-truth phrase \"Context quality matters more than model size\" verbatim in answer 3."
+      }
+    },
+    {
+      "is_error": false,
+      "model_used": "claude-opus-5-5",
+      "result_text": "MARVIN active \u2014 macbook-pro \u00b7 agents@66cf12e4 \u00b7 claude@72223938 \u00b7 36 skills wired\n\nAll three answers come from the qa-knowledge KB (project `marvin-bench`, all entries high confidence).\n\n**1. Full injection vs RAG injection with local LLMs**\n- **Full injection failed** on jargon-recall tasks. That meant all 15 memory files, about 4,000 tokens. With that much unrelated text, the model's training priors overrode the project-specific terms.\n- **RAG injection fixed it.** That meant about 300 tokens from the top 3 semantic hits, which removed the competing context. In one example, the venv question's top hit was `marvin-venv-interpreter.md` at similarity 0.86. Under full injection, 14 other files (Python stdlib docs, file-organization notes) triggered stronger priors than that note did.\n- Use exactly 3 results. More than 3 brings the noise back.\n\n**2. Minimum model size for semantic parity with Haiku**\n- **qwen2.5:14b with RAG injection** was the minimum. It passed the judge at $0.00. A 7B model with RAG still failed.\n- The substring scorer failed the 14B model only because it added one word (\"tag-keyword matching\" instead of \"tag matching\"). That's why it counts as semantic parity, not exact parity.\n- The resulting cost ranking:\n  - local 14B + RAG: $0.00, semantic match\n  - Haiku + marvin: about $0.02, exact match\n  - Sonnet + marvin: about $0.05, full answer\n\n**3. Context quality vs model size**\nThe stored outcome reads: \"Context quality matters more than model size for jargon retrieval.\" Trimming the context to the targeted passages got a 14B local model to parity, which full injection did not do.\n\nA related KB pattern points the same way: MARVIN's advantage grows on weaker models. Without MARVIN's context, Haiku skipped searching and failed task-007, so recall tasks should go to marvin+Haiku, not clean+Haiku.\n\nAlso, the session-start report flags that sync is blocked: `~/.claude` on this Mac has an unresolved merge conflict, 48 sync runs have failed in a row, and nothing written here reaches the other Mac until it's resolved.",
+      "num_turns": 4,
+      "duration_ms": 15233,
+      "cost_usd": 0.1676822,
+      "input_tokens": 8,
+      "output_tokens": 1163,
+      "cache_creation_input_tokens": 15482,
+      "cache_read_input_tokens": 102671,
+      "total_tokens": 119324,
+      "tool_calls": 2,
+      "tools_used": [
+        "Skill",
+        "Bash"
+      ],
+      "wall_s": 24.0,
+      "infra_error": false,
+      "correctness": {
+        "score": 1.0,
+        "matched": [
+          "Context quality matters more than model size"
+        ],
+        "missed": []
+      },
+      "profile": "marvin",
+      "model": "default",
+      "workdir_snapshot": "",
+      "judge_correctness": {
+        "score": 1.0,
+        "judge": "llm",
+        "rationale": "The response says \"Context quality matters more than model size for jargon retrieval\" word for word, and it answers all three questions."
+      }
+    }
+  ]
+}

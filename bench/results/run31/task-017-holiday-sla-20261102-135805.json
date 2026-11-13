@@ -1,0 +1,261 @@
+{
+  "task": "task-017-holiday-sla",
+  "runner": "claude",
+  "model": "default",
+  "tag": "",
+  "prompt_prefix": "",
+  "repeat": 3,
+  "judge": true,
+  "runs": [
+    {
+      "is_error": false,
+      "model_used": "claude-opus-5-5",
+      "result_text": "I fixed `sla.py` so due dates now skip company holidays as well as weekends. A ticket created on Tuesday, Feb 20, 2024 with a 2-business-day SLA is now due Friday, Feb 23 instead of Thursday, Feb 22 (town hall day).\n\n**Changes:**\n- The holiday list is read from `holidays.json`, found next to `sla.py` so it works from any folder. The file is read once and then reused.\n- A day only counts toward the SLA if it's a weekday and not a company holiday.\n- `add_business_days` and `calculate_sla_due_date` take a new optional `holidays` argument. If you leave it out, the list from `holidays.json` is used. You can pass your own list, which is handy for tests. Existing calls work without changes.\n\n**Checks I ran** (by hand; the folder has no test suite):\n\n| Input | Result |\n|---|---|\n| Feb 20, 10:30, 16-hour SLA | 2024-02-23 10:30 \u2705 |\n| Feb 20 + 2 business days, empty holiday list | Feb 22 (matches the old behaviour) |\n| Fri Dec 29, 2023 + 1 business day | Jan 2, skipping the weekend and New Year's Day |\n| Nov 27, 2024 + 1 business day, given as a date without a time | Nov 29, skipping Thanksgiving |\n\nOne existing behaviour I left alone: SLA hours are converted to whole business days, with 8 hours per day, and any remainder is dropped. A 12-hour SLA counts as 1 business day.\n\n`holidays.json` currently lists only 2024 dates. Someone needs to add each new year's holidays, or due dates will fall on holidays again.",
+      "num_turns": 3,
+      "duration_ms": 18141,
+      "cost_usd": 0.1714452,
+      "input_tokens": 6,
+      "output_tokens": 2101,
+      "cache_creation_input_tokens": 14763,
+      "cache_read_input_tokens": 56486,
+      "total_tokens": 73356,
+      "tool_calls": 2,
+      "tools_used": [
+        "Bash",
+        "Bash"
+      ],
+      "wall_s": 18.9,
+      "infra_error": false,
+      "correctness": {
+        "score": 1.0,
+        "matched": [
+          "holidays.json",
+          "2024-02-23"
+        ],
+        "missed": []
+      },
+      "profile": "clean",
+      "model": "default",
+      "workdir_snapshot": "--- sla.py ---\n\"\"\"SLA due date calculator.\"\"\"\nimport json\nfrom datetime import date, datetime, timedelta\nfrom functools import lru_cache\nfrom pathlib import Path\nfrom typing import Iterable, Optional, Set\n\nHOLIDAYS_FILE = Path(__file__).with_name(\"holidays.json\")\n\n\n@lru_cache(maxsize=None)\ndef _load_holidays_from_file(path: str) -> frozenset:\n    with open(path, encoding=\"utf-8\") as f:\n        data = json.load(f)\n    return frozenset(\n        date.fromisoformat(entry[\"date\"]) for entry in data.get(\"company_holidays\", [])\n    )\n\n\ndef load_company_holidays(path: Optional[Path] = None) -> Set[date]:\n    \"\"\"Load company holiday dates from holidays.json.\"\"\"\n    return set(_load_holidays_from_file(str(path or HOLIDAYS_FILE)))\n\n\ndef is_business_day(day: date, holidays: Iterable[date]) -> bool:\n    \"\"\"A business day is Monday-Friday and not a company holiday.\"\"\"\n    return day.weekday() < 5 and day not in holidays\n\n\ndef add_business_days(\n    start_date: datetime, num_days: int, holidays: Optional[Iterable[date]] = None\n) -> datetime:\n    \"\"\"\n    Add business days to a given date, skipping weekends and company holidays.\n\n    Args:\n        start_date: Starting date\n        num_days: Number of business days to add\n        holidays: Dates to skip; defaults to the holidays in holidays.json\n\n    Returns:\n        The resulting date after adding the specified business days\n    \"\"\"\n    holiday_set = set(holidays) if holidays is not None else load_company_holidays()\n\n    current_date = start_date\n    days_added = 0\n\n    while days_added < num_days:\n        current_date += timedelta(days=1)\n        day = current_date.date() if isinstance(current_date, datetime) else current_date\n        if is_business_day(day, holiday_set):\n            days_added += 1\n\n    return current_date\n\n\ndef calculate_sla_due_date(\n    ticket_created_at: datetime,\n    sla_hours: int,\n    holidays: Optional[Iterable[date]] = None,\n) -> datetime:\n    \"\"\"\n    Calculate when an SLA is due, skipping weekends and company holidays.\n\n    Args:\n        ticket_created_at: When the ticket was created\n        sla_hours: SLA duration in hours\n        holidays: Dates to skip; defaults to the holidays in holidays.json\n\n    Returns:\n        The due date\n    \"\"\"\n    # Convert hours to business days (8 hours = 1 business day)\n    business_days = sla_hours // 8\n\n    return add_business_days(ticket_created_at, business_days, holidays)\n",
+      "check": {
+        "pass": true,
+        "output": "...                                                                      [100%]\n3 passed in 0.01s\n"
+      },
+      "judge_correctness": {
+        "score": 1.0,
+        "judge": "llm",
+        "rationale": "`sla.py` now loads company holidays from `holidays.json` and skips them along with weekends, so a ticket created Feb 20 with a 2-business-day SLA is due 2024-02-23, as the task required."
+      }
+    },
+    {
+      "is_error": false,
+      "model_used": "claude-opus-5-5",
+      "result_text": "I updated `sla.py` so due dates skip company holidays as well as weekends. A ticket created Tuesday, Feb 20, 2024 with a 2-business-day SLA is now due **Friday, Feb 23**, not Thursday, Feb 22.\n\n**What changed:**\n- `sla.py` now reads the holiday list from `holidays.json` in the same folder. It reads the file once and reuses the list after that.\n- A day counts as a business day only if it's Monday to Friday and not on that list.\n- `add_business_days` takes an optional `holidays` argument, so you can pass in a different list (for example, in tests). If you leave it out, it uses `holidays.json`. Existing calls work as before.\n- It accepts either a date or a date with a time. The ticket's creation time is kept, so 9:30 on Feb 20 gives 9:30 on Feb 23.\n\n**What I checked:** I ran these cases by hand (there's no test suite in the folder) and all came out right:\n- Feb 20 + 2 business days \u2192 Feb 23. This also works with a time attached and when calling the 16-hour SLA function.\n- With an empty holiday list \u2192 Feb 22, which is the old behaviour.\n- Dec 24 + 1 \u2192 Dec 26 (skips Christmas).\n- Nov 27 + 1 \u2192 Nov 29 (skips Thanksgiving).\n\n`holidays.json` only lists 2024 dates. Due dates for 2025 onward will only skip weekends until someone adds that year's holidays.",
+      "num_turns": 3,
+      "duration_ms": 17570,
+      "cost_usd": 0.1695162,
+      "input_tokens": 6,
+      "output_tokens": 2007,
+      "cache_creation_input_tokens": 14756,
+      "cache_read_input_tokens": 56521,
+      "total_tokens": 73290,
+      "tool_calls": 2,
+      "tools_used": [
+        "Bash",
+        "Bash"
+      ],
+      "wall_s": 18.4,
+      "infra_error": false,
+      "correctness": {
+        "score": 0.5,
+        "matched": [
+          "holidays.json"
+        ],
+        "missed": [
+          "2024-02-23"
+        ]
+      },
+      "profile": "clean",
+      "model": "default",
+      "workdir_snapshot": "--- sla.py ---\n\"\"\"SLA due date calculator.\"\"\"\nimport json\nfrom datetime import date, datetime, timedelta\nfrom functools import lru_cache\nfrom pathlib import Path\nfrom typing import Iterable, Optional, Set\n\nHOLIDAYS_FILE = Path(__file__).with_name(\"holidays.json\")\n\n\n@lru_cache(maxsize=None)\ndef _load_holidays_from_file(path: str) -> frozenset:\n    with open(path, encoding=\"utf-8\") as f:\n        data = json.load(f)\n    return frozenset(\n        date.fromisoformat(entry[\"date\"]) for entry in data.get(\"company_holidays\", [])\n    )\n\n\ndef load_company_holidays(path: Optional[Path] = None) -> Set[date]:\n    \"\"\"Load company holiday dates from holidays.json.\"\"\"\n    return set(_load_holidays_from_file(str(path or HOLIDAYS_FILE)))\n\n\ndef is_business_day(day: date, holidays: Iterable[date]) -> bool:\n    \"\"\"A business day is a weekday (Mon-Fri) that is not a company holiday.\"\"\"\n    return day.weekday() < 5 and day not in holidays\n\n\ndef add_business_days(\n    start_date: datetime,\n    num_days: int,\n    holidays: Optional[Iterable[date]] = None,\n) -> datetime:\n    \"\"\"\n    Add business days to a given date, skipping weekends and company holidays.\n\n    Args:\n        start_date: Starting date\n        num_days: Number of business days to add\n        holidays: Dates to skip; defaults to the holidays in holidays.json\n\n    Returns:\n        The resulting date after adding the specified business days\n    \"\"\"\n    holiday_set = set(holidays) if holidays is not None else load_company_holidays()\n\n    current_date = start_date\n    days_added = 0\n\n    while days_added < num_days:\n        current_date += timedelta(days=1)\n        day = current_date.date() if isinstance(current_date, datetime) else current_date\n        if is_business_day(day, holiday_set):\n            days_added += 1\n\n    return current_date\n\n\ndef calculate_sla_due_date(ticket_created_at: datetime, sla_hours: int) -> datetime:\n    \"\"\"\n    Calculate when an SLA is due.\n\n    Args:\n        ticket_created_at: When the ticket was created\n        sla_hours: SLA duration in hours\n\n    Returns:\n        The due date\n    \"\"\"\n    # Convert hours to business days (8 hours = 1 business day)\n    business_days = sla_hours // 8\n\n    return add_business_days(ticket_created_at, business_days)\n",
+      "check": {
+        "pass": true,
+        "output": "...                                                                      [100%]\n3 passed in 0.01s\n"
+      },
+      "judge_correctness": {
+        "score": 1.0,
+        "judge": "llm",
+        "rationale": "`sla.py` now loads company holidays from `holidays.json` and skips both weekends and holidays, so a ticket created Feb 20 with a 2-business-day SLA is due 2024-02-23, and the response states both ground-truth facts."
+      }
+    },
+    {
+      "is_error": false,
+      "model_used": "claude-opus-5-5",
+      "result_text": "I fixed `sla.py` so due dates now skip company holidays as well as weekends. A ticket created on Tuesday, Feb 20, 2024 with a 2-business-day SLA now comes due on Friday, Feb 23, not on the town hall holiday (Feb 22).\n\n**What changed in `sla.py`:**\n- It now reads the holiday dates from `holidays.json`, looking for the file in the same folder as `sla.py`, so it doesn't matter which directory the code is run from. It reads the file once and reuses the result.\n- A day counts as a business day only if it is Monday\u2013Friday and not on the holiday list.\n- `add_business_days` and `calculate_sla_due_date` take an optional `holidays` argument. If you leave it out, they use the list from `holidays.json`, so existing callers don't need to change.\n- The ticket's creation time of day is kept, so a ticket created at 10:30 on Feb 20 is due at 10:30 on Feb 23.\n\n**Checks I ran:**\n- Feb 20 with a 16-hour SLA (2 business days) \u2192 2024-02-23.\n- Passing an empty holiday list \u2192 2024-02-22, the old result, which confirms the holiday list is what makes the difference.\n- Nov 27 plus 2 days \u2192 Dec 2: it skips Thanksgiving (Nov 28) and the weekend.\n- Friday plus 1 day \u2192 the following Monday.\n\nThere's no test file in the project, so I checked these cases by running the code directly; I didn't add a test suite.\n\nOne thing that was already in the code: it converts hours to days by rounding down (`sla_hours // 8`), so a 12-hour SLA counts as 1 business day. I left that as it was.",
+      "num_turns": 3,
+      "duration_ms": 18665,
+      "cost_usd": 0.17334019999999997,
+      "input_tokens": 6,
+      "output_tokens": 2178,
+      "cache_creation_input_tokens": 14807,
+      "cache_read_input_tokens": 56501,
+      "total_tokens": 73492,
+      "tool_calls": 2,
+      "tools_used": [
+        "Bash",
+        "Bash"
+      ],
+      "wall_s": 19.4,
+      "infra_error": false,
+      "correctness": {
+        "score": 1.0,
+        "matched": [
+          "holidays.json",
+          "2024-02-23"
+        ],
+        "missed": []
+      },
+      "profile": "clean",
+      "model": "default",
+      "workdir_snapshot": "--- sla.py ---\n\"\"\"SLA due date calculator.\"\"\"\nimport json\nfrom datetime import date, datetime, timedelta\nfrom functools import lru_cache\nfrom pathlib import Path\nfrom typing import Iterable, Optional, Set\n\nHOLIDAYS_FILE = Path(__file__).resolve().parent / \"holidays.json\"\n\n\n@lru_cache(maxsize=None)\ndef _load_holidays_from_file(path: str) -> frozenset:\n    with open(path, encoding=\"utf-8\") as f:\n        data = json.load(f)\n    return frozenset(\n        date.fromisoformat(entry[\"date\"]) for entry in data.get(\"company_holidays\", [])\n    )\n\n\ndef load_company_holidays(path: Optional[Path] = None) -> Set[date]:\n    \"\"\"Load company holiday dates from holidays.json.\"\"\"\n    return set(_load_holidays_from_file(str(path or HOLIDAYS_FILE)))\n\n\ndef is_business_day(day: date, holidays: Iterable[date]) -> bool:\n    \"\"\"A business day is Monday-Friday and not a company holiday.\"\"\"\n    return day.weekday() < 5 and day not in holidays\n\n\ndef add_business_days(\n    start_date: datetime,\n    num_days: int,\n    holidays: Optional[Iterable[date]] = None,\n) -> datetime:\n    \"\"\"\n    Add business days to a given date, skipping weekends and company holidays.\n\n    Args:\n        start_date: Starting date\n        num_days: Number of business days to add\n        holidays: Dates to skip; defaults to the company holidays in holidays.json\n\n    Returns:\n        The resulting date after adding the specified business days\n    \"\"\"\n    holiday_set = set(holidays) if holidays is not None else load_company_holidays()\n\n    current_date = start_date\n    days_added = 0\n\n    while days_added < num_days:\n        current_date += timedelta(days=1)\n        day = current_date.date() if isinstance(current_date, datetime) else current_date\n        if is_business_day(day, holiday_set):\n            days_added += 1\n\n    return current_date\n\n\ndef calculate_sla_due_date(\n    ticket_created_at: datetime,\n    sla_hours: int,\n    holidays: Optional[Iterable[date]] = None,\n) -> datetime:\n    \"\"\"\n    Calculate when an SLA is due.\n\n    Args:\n        ticket_created_at: When the ticket was created\n        sla_hours: SLA duration in hours\n        holidays: Dates to skip; defaults to the company holidays in holidays.json\n\n    Returns:\n        The due date\n    \"\"\"\n    # Convert hours to business days (8 hours = 1 business day)\n    business_days = sla_hours // 8\n\n    return add_business_days(ticket_created_at, business_days, holidays)\n",
+      "check": {
+        "pass": true,
+        "output": "...                                                                      [100%]\n3 passed in 0.01s\n"
+      },
+      "judge_correctness": {
+        "score": 1.0,
+        "judge": "llm",
+        "rationale": "`sla.py` now loads holidays from `holidays.json` and skips both weekends and company holidays, so a ticket created on Feb 20 with a 2-business-day SLA comes due on 2024-02-23 as required."
+      }
+    },
+    {
+      "is_error": false,
+      "model_used": "claude-opus-5-5",
+      "result_text": "SLA due dates now skip company holidays as well as weekends. The reported ticket, created Tue 2024-02-20 with a 2-business-day SLA, now comes out due **Fri 2024-02-23** instead of Thursday's town hall day. I wrote the tests first and watched them fail, and all 10 pass after the fix.\n\n**Changes to `sla.py`:**\n- **Holiday list:** the dates are read from `holidays.json`, which is found next to `sla.py` so it works whatever folder the code is run from. The file is read once and then remembered. That means editing `holidays.json` while the program is running has no effect until it restarts.\n- **The fix itself:** a day only counts toward the SLA if it's a weekday and not on the holiday list.\n- **Optional `holidays=` argument:** `add_business_days` and `calculate_sla_due_date` can be handed a holiday list directly, which is mainly useful in tests. If you leave it out, they use `holidays.json`, so existing code that calls them doesn't need to change.\n\n**New `test_sla.py`** covers:\n- the Feb 20 \u2192 Feb 23 case\n- weekends still being skipped\n- a holiday in the middle of a week (Christmas)\n- a holiday right after a weekend (New Year's Day 2024)\n- adding zero days\n- passing your own holiday list\n- plain dates as well as dates with a time\n- reading the holiday file\n\nRun them with `python3 -m unittest test_sla`.\n\nOne existing behaviour I left alone: the code converts hours to days with `sla_hours // 8`, which rounds down. A 12-hour SLA therefore becomes 1 business day, and anything under 8 hours is due the moment the ticket is created. If your SLAs aren't always whole multiples of 8 hours, that's worth a look.",
+      "num_turns": 7,
+      "duration_ms": 44584,
+      "cost_usd": 0.3680486,
+      "input_tokens": 10,
+      "output_tokens": 4014,
+      "cache_creation_input_tokens": 31493,
+      "cache_read_input_tokens": 178923,
+      "total_tokens": 214440,
+      "tool_calls": 6,
+      "tools_used": [
+        "Bash",
+        "Write",
+        "Bash",
+        "Write",
+        "Bash",
+        "Edit"
+      ],
+      "wall_s": 54.5,
+      "infra_error": false,
+      "correctness": {
+        "score": 1.0,
+        "matched": [
+          "holidays.json",
+          "2024-02-23"
+        ],
+        "missed": []
+      },
+      "profile": "marvin",
+      "model": "default",
+      "workdir_snapshot": "--- sla.py ---\n\"\"\"SLA due date calculator.\"\"\"\nimport json\nfrom datetime import date, datetime, timedelta\nfrom functools import lru_cache\nfrom pathlib import Path\nfrom typing import AbstractSet, Optional, TypeVar, Union\n\nHOLIDAYS_FILE = Path(__file__).with_name(\"holidays.json\")\n\nD = TypeVar(\"D\", date, datetime)\n\n\n@lru_cache(maxsize=None)\ndef _load_holidays_cached(path: str) -> frozenset:\n    with open(path, encoding=\"utf-8\") as f:\n        data = json.load(f)\n    return frozenset(\n        date.fromisoformat(entry[\"date\"]) for entry in data.get(\"company_holidays\", [])\n    )\n\n\ndef load_holidays(path: Union[str, Path, None] = None) -> frozenset:\n    \"\"\"\n    Load company holiday dates from a JSON file (defaults to holidays.json\n    next to this module). Results are cached per path.\n    \"\"\"\n    return _load_holidays_cached(str(Path(path) if path else HOLIDAYS_FILE))\n\n\ndef is_business_day(day: Union[date, datetime], holidays: AbstractSet[date]) -> bool:\n    \"\"\"True if `day` is Monday-Friday and not a company holiday.\"\"\"\n    d = day.date() if isinstance(day, datetime) else day\n    return d.weekday() < 5 and d not in holidays\n\n\ndef add_business_days(\n    start_date: D, num_days: int, holidays: Optional[AbstractSet[date]] = None\n) -> D:\n    \"\"\"\n    Add business days to a given date, skipping weekends and company holidays.\n\n    Args:\n        start_date: Starting date (date or datetime; time of day is preserved)\n        num_days: Number of business days to add\n        holidays: Dates to treat as non-business days. Defaults to the\n            company holidays in holidays.json.\n\n    Returns:\n        The resulting date after adding the specified business days\n    \"\"\"\n    if holidays is None:\n        holidays = load_holidays()\n\n    current_date = start_date\n    days_added = 0\n\n    while days_added < num_days:\n        current_date += timedelta(days=1)\n        if is_business_day(current_date, holidays):\n            days_added += 1\n\n    return current_date\n\n\ndef calculate_sla_due_date(\n    ticket_created_at: datetime,\n    sla_hours: int,\n    holidays: Optional[AbstractSet[date]] = None,\n) -> datetime:\n    \"\"\"\n    Calculate when an SLA is due.\n\n    Args:\n        ticket_created_at: When the ticket was created\n        sla_hours: SLA duration in hours\n        holidays: Optional override of company holidays (defaults to holidays.json)\n\n    Returns:\n        The due date\n    \"\"\"\n    # Convert hours to business days (8 hours = 1 business day)\n    business_days = sla_hours // 8\n\n    return add_business_days(ticket_created_at, business_days, holidays)\n\n--- test_sla.py ---\n\"\"\"Tests for SLA due-date calculation.\"\"\"\nimport json\nimport unittest\nfrom datetime import date, datetime\n\nimport sla\n\n\nclass AddBusinessDaysTest(unittest.TestCase):\n    def test_town_hall_day_is_skipped(self):\n        # Reported case: Tue Feb 20 + 2 business days, Thu Feb 22 is a holiday.\n        due = sla.add_business_days(datetime(2024, 2, 20), 2)\n        self.assertEqual(due.date(), date(2024, 2, 23))\n\n    def test_sla_due_date_for_reported_ticket(self):\n        due = sla.calculate_sla_due_date(datetime(2024, 2, 20, 9, 30), 16)\n        self.assertEqual(due, datetime(2024, 2, 23, 9, 30))  # time of day kept\n\n    def test_weekends_still_skipped(self):\n        # Fri Mar 1 + 1 business day -> Mon Mar 4\n        due = sla.add_business_days(datetime(2024, 3, 1), 1)\n        self.assertEqual(due.date(), date(2024, 3, 4))\n\n    def test_holiday_next_to_weekend(self):\n        # Tue Dec 24 2024 + 1 -> skips Wed Dec 25 holiday -> Thu Dec 26\n        due = sla.add_business_days(datetime(2024, 12, 24), 1)\n        self.assertEqual(due.date(), date(2024, 12, 26))\n\n    def test_holiday_after_weekend(self):\n        # Fri Dec 29 2023 + 1 -> Mon Jan 1 is a holiday -> Tue Jan 2\n        due = sla.add_business_days(datetime(2023, 12, 29), 1)\n        self.assertEqual(due.date(), date(2024, 1, 2))\n\n    def test_zero_days_returns_start(self):\n        start = datetime(2024, 2, 20)\n        self.assertEqual(sla.add_business_days(start, 0), start)\n\n    def test_explicit_holidays_override_file(self):\n        due = sla.add_business_days(datetime(2024, 2, 20), 2, holidays=set())\n        self.assertEqual(due.date(), date(2024, 2, 22))\n\n    def test_plain_date_input(self):\n        self.assertEqual(sla.add_business_days(date(2024, 2, 20), 2), date(2024, 2, 23))\n\n\nclass LoadHolidaysTest(unittest.TestCase):\n    def test_loads_dates_from_file(self):\n        holidays = sla.load_holidays()\n        self.assertIn(date(2024, 2, 22), holidays)\n        self.assertIn(date(2024, 12, 25), holidays)\n\n    def test_custom_path(self):\n        import tempfile, os\n        with tempfile.TemporaryDirectory() as d:\n            p = os.path.join(d, \"h.json\")\n            with open(p, \"w\") as f:\n                json.dump({\"company_holidays\": [{\"date\": \"2024-03-05\", \"name\": \"x\"}]}, f)\n            self.assertEqual(sla.load_holidays(p), frozenset({date(2024, 3, 5)}))\n\n\nif __name__ == \"__main__\":\n    unittest.main()\n",
+      "check": {
+        "pass": true,
+        "output": "...                                                                      [100%]\n3 passed in 0.01s\n"
+      },
+      "judge_correctness": {
+        "score": 1.0,
+        "judge": "llm",
+        "rationale": "The fix makes `sla.py` skip both weekends and the company holidays loaded from `holidays.json`, so a ticket created 2024-02-20 with a 2-business-day SLA is now due 2024-02-23, and tests cover this case."
+      }
+    },
+    {
+      "is_error": false,
+      "model_used": "claude-opus-5-5",
+      "result_text": "I fixed `sla.py` so due dates now skip company holidays as well as weekends. Your example works: a ticket created Tue 2024-02-20 with a 16-hour (2-business-day) SLA is now due Fri 2024-02-23. All 9 tests pass.\n\n**What changed in `sla.py`:**\n- **Holiday list:** the dates now come from `holidays.json` in the same folder as `sla.py`. The file is read once and the result is kept.\n- **Day check:** a day counts toward the SLA only if it's Monday to Friday and not on the holiday list.\n- **Optional holiday list:** `add_business_days` and `calculate_sla_due_date` accept an optional `holidays=` argument to use a different list. Existing calls work without changes.\n- **Missing file:** if `holidays.json` is missing or broken, the code raises an error. Quietly treating it as \"no holidays\" would bring back the same bug without anyone noticing.\n\n**Tests (`test_sla.py`)** cover:\n- the Feb 20 \u2192 Feb 23 town-hall case\n- a holiday followed by a weekend rolling to Monday\n- Thanksgiving and Christmas\n- an empty holiday list, which gives the old weekends-only behaviour\n- zero days\n- a custom holiday list\n- loading the file, and a missing file\n\n**One thing I didn't change:** hours still convert to days with `sla_hours // 8`, so a 12-hour SLA counts as 1 business day and the extra 4 hours are dropped.",
+      "num_turns": 5,
+      "duration_ms": 45342,
+      "cost_usd": 0.2309532,
+      "input_tokens": 8,
+      "output_tokens": 3173,
+      "cache_creation_input_tokens": 17224,
+      "cache_read_input_tokens": 148346,
+      "total_tokens": 168751,
+      "tool_calls": 4,
+      "tools_used": [
+        "Bash",
+        "Write",
+        "Write",
+        "Bash"
+      ],
+      "wall_s": 54.7,
+      "infra_error": false,
+      "correctness": {
+        "score": 1.0,
+        "matched": [
+          "holidays.json",
+          "2024-02-23"
+        ],
+        "missed": []
+      },
+      "profile": "marvin",
+      "model": "default",
+      "workdir_snapshot": "--- sla.py ---\n\"\"\"SLA due date calculator.\"\"\"\nimport json\nfrom datetime import date, datetime, timedelta\nfrom functools import lru_cache\nfrom pathlib import Path\nfrom typing import Iterable, Optional, Set\n\nHOLIDAYS_FILE = Path(__file__).with_name(\"holidays.json\")\n\n\n@lru_cache(maxsize=None)\ndef _load_holidays_cached(path: str) -> frozenset:\n    with open(path, encoding=\"utf-8\") as f:\n        data = json.load(f)\n    return frozenset(\n        date.fromisoformat(entry[\"date\"]) for entry in data.get(\"company_holidays\", [])\n    )\n\n\ndef load_holidays(path: Optional[Path] = None) -> Set[date]:\n    \"\"\"\n    Load company holidays from holidays.json.\n\n    A missing or malformed file raises rather than silently falling back to\n    \"no holidays\", which would reintroduce due dates on company holidays.\n    \"\"\"\n    return set(_load_holidays_cached(str(path or HOLIDAYS_FILE)))\n\n\ndef is_business_day(day: date, holidays: Iterable[date]) -> bool:\n    \"\"\"True if `day` is a weekday (Mon-Fri) and not a company holiday.\"\"\"\n    return day.weekday() < 5 and day not in holidays\n\n\ndef add_business_days(\n    start_date: datetime,\n    num_days: int,\n    holidays: Optional[Iterable[date]] = None,\n) -> datetime:\n    \"\"\"\n    Add business days to a given date, skipping weekends and company holidays.\n\n    Args:\n        start_date: Starting date\n        num_days: Number of business days to add\n        holidays: Dates to skip; defaults to the list in holidays.json\n\n    Returns:\n        The resulting date after adding the specified business days\n    \"\"\"\n    holiday_set = set(load_holidays() if holidays is None else holidays)\n    current_date = start_date\n    days_added = 0\n\n    while days_added < num_days:\n        current_date += timedelta(days=1)\n        if is_business_day(current_date.date(), holiday_set):\n            days_added += 1\n\n    return current_date\n\n\ndef calculate_sla_due_date(\n    ticket_created_at: datetime,\n    sla_hours: int,\n    holidays: Optional[Iterable[date]] = None,\n) -> datetime:\n    \"\"\"\n    Calculate when an SLA is due.\n\n    Args:\n        ticket_created_at: When the ticket was created\n        sla_hours: SLA duration in hours\n        holidays: Dates to skip; defaults to the list in holidays.json\n\n    Returns:\n        The due date\n    \"\"\"\n    # Convert hours to business days (8 hours = 1 business day)\n    business_days = sla_hours // 8\n\n    return add_business_days(ticket_created_at, business_days, holidays)\n\n--- test_sla.py ---\nimport json\nfrom datetime import date, datetime\n\nimport pytest\n\nfrom sla import add_business_days, calculate_sla_due_date, load_holidays\n\n\ndef test_town_hall_ticket_skips_holiday():\n    # Tue Feb 20 + 2 business days, Thu Feb 22 is town hall day -> Fri Feb 23\n    due = calculate_sla_due_date(datetime(2024, 2, 20, 10, 30), 16)\n    assert due == datetime(2024, 2, 23, 10, 30)\n\n\ndef test_holiday_then_weekend_rolls_to_monday():\n    # Wed Feb 21 + 2: Thu holiday, Fri counts, Sat/Sun skip, Mon counts\n    assert add_business_days(datetime(2024, 2, 21), 2) == datetime(2024, 2, 26)\n\n\ndef test_thanksgiving_and_christmas():\n    # Wed Nov 27 + 1: Thu Nov 28 Thanksgiving -> Fri Nov 29\n    assert add_business_days(datetime(2024, 11, 27), 1) == datetime(2024, 11, 29)\n    # Tue Dec 24 + 1: Wed Dec 25 Christmas -> Thu Dec 26\n    assert add_business_days(datetime(2024, 12, 24), 1) == datetime(2024, 12, 26)\n\n\ndef test_no_holidays_behaves_like_weekends_only():\n    assert add_business_days(datetime(2024, 2, 20), 2, holidays=[]) == datetime(2024, 2, 22)\n    # Fri + 1 -> Mon\n    assert add_business_days(datetime(2024, 2, 23), 1, holidays=[]) == datetime(2024, 2, 26)\n\n\ndef test_zero_days_returns_start():\n    assert add_business_days(datetime(2024, 2, 22), 0) == datetime(2024, 2, 22)\n\n\ndef test_explicit_holiday_list_overrides_file():\n    custom = [date(2024, 2, 21)]\n    assert add_business_days(datetime(2024, 2, 20), 2, holidays=custom) == datetime(2024, 2, 23)\n\n\ndef test_loads_all_holidays_from_file():\n    holidays = load_holidays()\n    assert date(2024, 2, 22) in holidays\n    assert len(holidays) == 5\n\n\ndef test_missing_holiday_file_raises(tmp_path):\n    with pytest.raises(FileNotFoundError):\n        load_holidays(tmp_path / \"nope.json\")\n\n\ndef test_custom_holiday_file(tmp_path):\n    p = tmp_path / \"h.json\"\n    p.write_text(json.dumps({\"company_holidays\": [{\"date\": \"2024-03-01\", \"name\": \"x\"}]}))\n    assert load_holidays(p) == {date(2024, 3, 1)}\n",
+      "check": {
+        "pass": true,
+        "output": "...                                                                      [100%]\n3 passed in 0.01s\n"
+      },
+      "judge_correctness": {
+        "score": 1.0,
+        "judge": "llm",
+        "rationale": "`sla.py` now loads company holidays from `holidays.json` and skips them along with weekends, and the Feb 20 ticket with a 2-business-day SLA is correctly due 2024-02-23, which a test checks."
+      }
+    },
+    {
+      "is_error": false,
+      "model_used": "claude-opus-5-5",
+      "result_text": "I fixed `sla.py` so due dates now skip company holidays as well as weekends. A ticket created Tue Feb 20, 2024 with a 2-business-day SLA is now due **Fri Feb 23**, not Thu Feb 22 (town hall day). All 7 new tests pass, and the Feb 20 case gives the same answer when run from a different folder.\n\n**What changed in `sla.py`:**\n- The holiday list is read from `holidays.json`. It's found next to `sla.py`, so the result doesn't depend on which folder the code runs from. The file is read once and then reused.\n- A new `is_business_day()` check treats a day as a business day only if it's Monday\u2013Friday and not a holiday. `add_business_days` uses it in place of the old weekday-only check.\n- `add_business_days` and `calculate_sla_due_date` take an optional `holidays` argument. Existing callers don't need to change, and tests can pass their own list.\n- If `holidays.json` is missing, the code raises an error instead of quietly ignoring holidays. Otherwise a missing file would bring back this same bug without anyone noticing.\n\n**Tests (`test_sla.py`):** they cover the reported case, a holiday next to a weekend (Thanksgiving: Nov 27 + 2 days \u2192 Mon Dec 2), plain weekend skipping, zero days, passing your own holiday list, reading the JSON file, and the missing-file error.\n\nOne limit: `holidays.json` only lists 2024 holidays. Tickets whose SLA runs into 2025 or later won't skip any holidays until someone adds those dates to the file.\n\nSeparately, the session-start check reports that `~/.claude` sync on this MacBook has been failing for about 3.5 hours because of a merge conflict with `origin/main`. Your 6 local changes are committed, so nothing is lost, but nothing syncs between the two Macs until the conflict is resolved.",
+      "num_turns": 5,
+      "duration_ms": 31295,
+      "cost_usd": 0.23887619999999998,
+      "input_tokens": 8,
+      "output_tokens": 3449,
+      "cache_creation_input_tokens": 17551,
+      "cache_read_input_tokens": 147281,
+      "total_tokens": 168289,
+      "tool_calls": 4,
+      "tools_used": [
+        "Bash",
+        "Bash",
+        "Write",
+        "Bash"
+      ],
+      "wall_s": 39.8,
+      "infra_error": false,
+      "correctness": {
+        "score": 0.5,
+        "matched": [
+          "holidays.json"
+        ],
+        "missed": [
+          "2024-02-23"
+        ]
+      },
+      "profile": "marvin",
+      "model": "default",
+      "workdir_snapshot": "--- sla.py ---\n\"\"\"SLA due date calculator.\"\"\"\nimport json\nfrom datetime import date, datetime, timedelta\nfrom functools import lru_cache\nfrom pathlib import Path\nfrom typing import AbstractSet, Optional, Union\n\nHOLIDAYS_FILE = Path(__file__).with_name(\"holidays.json\")\n\n\n@lru_cache(maxsize=None)\ndef _load_holidays_cached(path: Path) -> frozenset:\n    with open(path, encoding=\"utf-8\") as f:\n        data = json.load(f)\n    return frozenset(\n        date.fromisoformat(entry[\"date\"]) for entry in data[\"company_holidays\"]\n    )\n\n\ndef load_company_holidays(path: Union[str, Path] = HOLIDAYS_FILE) -> frozenset:\n    \"\"\"\n    Load company holiday dates from a JSON file.\n\n    Raises FileNotFoundError if the file is missing, so a misconfigured\n    deployment fails loudly instead of silently ignoring holidays.\n    \"\"\"\n    return _load_holidays_cached(Path(path).resolve())\n\n\ndef is_business_day(day: Union[date, datetime], holidays: AbstractSet[date]) -> bool:\n    \"\"\"True if the day is Monday-Friday and not a company holiday.\"\"\"\n    d = day.date() if isinstance(day, datetime) else day\n    return d.weekday() < 5 and d not in holidays\n\n\ndef add_business_days(\n    start_date: datetime,\n    num_days: int,\n    holidays: Optional[AbstractSet[date]] = None,\n) -> datetime:\n    \"\"\"\n    Add business days to a given date, skipping weekends and company holidays.\n\n    Args:\n        start_date: Starting date\n        num_days: Number of business days to add\n        holidays: Dates to skip; defaults to the holidays in holidays.json\n\n    Returns:\n        The resulting date after adding the specified business days\n    \"\"\"\n    if holidays is None:\n        holidays = load_company_holidays()\n\n    current_date = start_date\n    days_added = 0\n\n    while days_added < num_days:\n        current_date += timedelta(days=1)\n        if is_business_day(current_date, holidays):\n            days_added += 1\n\n    return current_date\n\n\ndef calculate_sla_due_date(\n    ticket_created_at: datetime,\n    sla_hours: int,\n    holidays: Optional[AbstractSet[date]] = None,\n) -> datetime:\n    \"\"\"\n    Calculate when an SLA is due.\n\n    Args:\n        ticket_created_at: When the ticket was created\n        sla_hours: SLA duration in hours\n        holidays: Dates to skip; defaults to the holidays in holidays.json\n\n    Returns:\n        The due date\n    \"\"\"\n    # Convert hours to business days (8 hours = 1 business day)\n    business_days = sla_hours // 8\n\n    return add_business_days(ticket_created_at, business_days, holidays)\n\n--- test_sla.py ---\n\"\"\"Tests for SLA due-date calculation (holidays + weekends).\"\"\"\nimport json\nfrom datetime import date, datetime\n\nimport pytest\n\nfrom sla import add_business_days, calculate_sla_due_date, load_company_holidays\n\n\ndef test_reported_case_skips_town_hall_day():\n    # Tue Feb 20 + 2 business days; Thu Feb 22 is a holiday -> Fri Feb 23\n    due = calculate_sla_due_date(datetime(2024, 2, 20, 9, 30), 16)\n    assert due == datetime(2024, 2, 23, 9, 30)\n\n\ndef test_holiday_followed_by_weekend_rolls_to_monday():\n    # Wed Jul 3 + 1 business day; Thu Jul 4 holiday -> Fri Jul 5\n    assert add_business_days(datetime(2024, 7, 3), 1) == datetime(2024, 7, 5)\n    # Wed Nov 27 + 2; Thu Nov 28 holiday, Fri 29 counts, weekend skipped -> Mon Dec 2\n    assert add_business_days(datetime(2024, 11, 27), 2) == datetime(2024, 12, 2)\n\n\ndef test_weekends_still_skipped():\n    # Fri Feb 16 + 1 -> Mon Feb 19\n    assert add_business_days(datetime(2024, 2, 16), 1) == datetime(2024, 2, 19)\n\n\ndef test_zero_days_returns_start():\n    start = datetime(2024, 2, 22, 12)\n    assert add_business_days(start, 0) == start\n\n\ndef test_explicit_holidays_override_file():\n    assert add_business_days(datetime(2024, 2, 20), 2, holidays=set()) == datetime(2024, 2, 22)\n    assert add_business_days(datetime(2024, 2, 20), 1, holidays={date(2024, 2, 21)}) == datetime(2024, 2, 22)\n\n\ndef test_loads_holidays_from_json(tmp_path):\n    p = tmp_path / \"h.json\"\n    p.write_text(json.dumps({\"company_holidays\": [{\"date\": \"2025-01-01\", \"name\": \"x\"}]}))\n    assert load_company_holidays(p) == frozenset({date(2025, 1, 1)})\n\n\ndef test_missing_holiday_file_fails_loudly(tmp_path):\n    with pytest.raises(FileNotFoundError):\n        load_company_holidays(tmp_path / \"nope.json\")\n",
+      "check": {
+        "pass": true,
+        "output": "...                                                                      [100%]\n3 passed in 0.01s\n"
+      },
+      "judge_correctness": {
+        "score": 1.0,
+        "judge": "llm",
+        "rationale": "The fix loads company holidays from `holidays.json` and skips them along with weekends, so a Feb 20 ticket with a 2-business-day SLA is now due Fri Feb 23 (2024-02-23); tests cover this case."
+      }
+    }
+  ]
+}

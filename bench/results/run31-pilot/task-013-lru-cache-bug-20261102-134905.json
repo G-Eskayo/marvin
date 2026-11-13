@@ -1,0 +1,90 @@
+{
+  "task": "task-013-lru-cache-bug",
+  "runner": "claude",
+  "model": "default",
+  "tag": "",
+  "prompt_prefix": "",
+  "repeat": 1,
+  "judge": true,
+  "runs": [
+    {
+      "is_error": false,
+      "model_used": "claude-opus-5-5",
+      "result_text": "I found and fixed the bug. The code review was wrong: the `get` method was the problem.\n\n**Cause:** An `OrderedDict` remembers the order keys were *inserted*, not the order they were *read*. `self._cache[key]` gives back the value but leaves the key where it is. So after `put a, put b, get a`, the order was still `[a, b]`, and `put c` removed the item at the front, which was `a`.\n\n**Fix** (`lru_cache.py`):\n- `get` now calls `self._cache.move_to_end(key)` before returning, so the key it reads becomes the most recently used.\n- In `put`, I replaced the \"delete then re-insert\" step for existing keys with `move_to_end`. It does the same thing more simply.\n- I fixed the misleading docstring and comment, which claimed `OrderedDict` tracks access order automatically.\n\n**Checked:**\n- Your sequence: `put a, put b, get a, put c` now leaves `a` and `c` in the cache and evicts `b`.\n- Updating an existing key: `put a, put b, put a=9, put c` evicts `b` and keeps `a` with the value 9.\n\nThere are no unit tests in the directory, so I ran both checks as one-off scripts. You may want to add them as regression tests.",
+      "num_turns": 3,
+      "duration_ms": 13057,
+      "cost_usd": 0.1463624,
+      "input_tokens": 6,
+      "output_tokens": 1248,
+      "cache_creation_input_tokens": 13765,
+      "cache_read_input_tokens": 56292,
+      "total_tokens": 71311,
+      "tool_calls": 2,
+      "tools_used": [
+        "Bash",
+        "Bash"
+      ],
+      "wall_s": 14.3,
+      "infra_error": false,
+      "correctness": {
+        "score": 1.0,
+        "matched": [
+          "move_to_end"
+        ],
+        "missed": []
+      },
+      "profile": "clean",
+      "model": "default",
+      "workdir_snapshot": "--- lru_cache.py ---\n\"\"\"LRU (Least Recently Used) cache with a fixed capacity.\n\nItems are evicted in least-recently-used order when the cache is full.\n\"\"\"\nfrom collections import OrderedDict\n\n\nclass LRUCache:\n    \"\"\"Fixed-capacity LRU cache.\n\n    Recency is tracked by position in the underlying OrderedDict: the end is\n    most recently used, the front is least recently used. OrderedDict only\n    tracks insertion order, so both get() and put() must explicitly move the\n    accessed key to the end.\n    \"\"\"\n\n    def __init__(self, capacity: int) -> None:\n        if capacity < 1:\n            raise ValueError(\"capacity must be at least 1\")\n        self.capacity = capacity\n        self._cache: OrderedDict = OrderedDict()\n\n    def get(self, key: str):\n        \"\"\"Return the cached value for key, or None if not present.\"\"\"\n        if key not in self._cache:\n            return None\n        # OrderedDict tracks insertion order only; reads do not reorder it.\n        # Explicitly mark this key as most recently used.\n        self._cache.move_to_end(key)\n        return self._cache[key]\n\n    def put(self, key: str, value) -> None:\n        \"\"\"Insert or update key. Evicts the LRU item if over capacity.\"\"\"\n        if key in self._cache:\n            # Refresh position: move to end (most recently used).\n            self._cache.move_to_end(key)\n        elif len(self._cache) >= self.capacity:\n            # Evict least recently used (front of OrderedDict).\n            self._cache.popitem(last=False)\n        self._cache[key] = value\n\n    def __len__(self) -> int:\n        return len(self._cache)\n\n    def __contains__(self, key: str) -> bool:\n        return key in self._cache\n",
+      "check": {
+        "pass": true,
+        "output": "...                                                                      [100%]\n3 passed in 0.01s\n"
+      },
+      "judge_correctness": {
+        "score": 1.0,
+        "judge": "llm",
+        "rationale": "The assistant correctly identified that `get` never updated recency, added `self._cache.move_to_end(key)` to it, and the resulting code evicts \"b\" and keeps \"a\" and \"c\" for the given sequence."
+      }
+    },
+    {
+      "is_error": false,
+      "model_used": "claude-opus-5-5",
+      "result_text": "The bug was in `get`, which the review had approved, and it's now fixed. With your sequence, `put(\"c\", 3)` now evicts `\"b\"` and keeps `\"a\"` and `\"c\"`. All 5 tests pass.\n\n**Cause:** the colleague's premise was wrong. `OrderedDict` keeps the order keys were *inserted* in, and reading a key with `self._cache[key]` doesn't move it. So `get(\"a\")` never marked `\"a\"` as recently used. It stayed at the front, and `popitem(last=False)` evicted it. Ordinary `dict` and `OrderedDict` both behave this way. If you want access order, you have to update it yourself on every access.\n\n**Changes in `lru_cache.py`:**\n- **`get`:** now calls `self._cache.move_to_end(key)` before returning the value. This is the actual fix.\n- **`put`:** when updating an existing key, it now uses `move_to_end(key)` instead of `del` and re-inserting. The result is the same, but it's one O(1) step with no extra work.\n- **Class docstring:** it repeated the same wrong claim, which is probably where the review got it. I rewrote it to say reads don't reorder the dict, so the claim doesn't come back.\n\n**Tests (`test_lru_cache.py`, new):** I wrote these before the fix. Two of them failed against the original code, which confirmed the bug:\n- your exact sequence\n- several repeated `get`s, checking the most recent one wins\n\nThree more passed both before and after, and guard behaviour that already worked:\n- a cache miss doesn't change the order\n- updating a key when the cache is full refreshes it and doesn't evict anything\n- a capacity-1 cache\n\nThe folder isn't a git repository, so nothing was committed.",
+      "num_turns": 4,
+      "duration_ms": 31394,
+      "cost_usd": 0.3219632,
+      "input_tokens": 8,
+      "output_tokens": 2391,
+      "cache_creation_input_tokens": 30931,
+      "cache_read_input_tokens": 133316,
+      "total_tokens": 166646,
+      "tool_calls": 3,
+      "tools_used": [
+        "Bash",
+        "Bash",
+        "Bash"
+      ],
+      "wall_s": 41.7,
+      "infra_error": false,
+      "correctness": {
+        "score": 1.0,
+        "matched": [
+          "move_to_end"
+        ],
+        "missed": []
+      },
+      "profile": "marvin",
+      "model": "default",
+      "workdir_snapshot": "--- lru_cache.py ---\n\"\"\"LRU (Least Recently Used) cache with a fixed capacity.\n\nItems are evicted in least-recently-used order when the cache is full.\n\"\"\"\nfrom collections import OrderedDict\n\n\nclass LRUCache:\n    \"\"\"Fixed-capacity LRU cache.\n\n    The underlying OrderedDict is kept in recency order: both ``get`` and\n    ``put`` move the touched key to the end (most recently used), so the\n    front item is always the least recently used and is evicted first.\n    OrderedDict does not reorder on read by itself \u2014 ``move_to_end`` is\n    required on every access.\n    \"\"\"\n\n    def __init__(self, capacity: int) -> None:\n        if capacity < 1:\n            raise ValueError(\"capacity must be at least 1\")\n        self.capacity = capacity\n        self._cache: OrderedDict = OrderedDict()\n\n    def get(self, key: str):\n        \"\"\"Return the cached value for key, or None if not present.\"\"\"\n        if key not in self._cache:\n            return None\n        # OrderedDict tracks insertion order only; reads do not reorder it.\n        # Explicitly mark this key as most recently used.\n        self._cache.move_to_end(key)\n        return self._cache[key]\n\n    def put(self, key: str, value) -> None:\n        \"\"\"Insert or update key. Evicts the LRU item if over capacity.\"\"\"\n        if key in self._cache:\n            # Refresh position: move to end (most recently used), then update.\n            self._cache.move_to_end(key)\n        elif len(self._cache) >= self.capacity:\n            # Evict least recently used (front of OrderedDict).\n            self._cache.popitem(last=False)\n        self._cache[key] = value\n\n    def __len__(self) -> int:\n        return len(self._cache)\n\n    def __contains__(self, key: str) -> bool:\n        return key in self._cache\n\n--- test_lru_cache.py ---\nfrom lru_cache import LRUCache\n\n\ndef test_get_marks_key_most_recently_used():\n    c = LRUCache(2)\n    c.put(\"a\", 1)\n    c.put(\"b\", 2)\n    assert c.get(\"a\") == 1\n    c.put(\"c\", 3)\n    assert \"b\" not in c\n    assert c.get(\"a\") == 1\n    assert c.get(\"c\") == 3\n\n\ndef test_miss_does_not_disturb_order():\n    c = LRUCache(2)\n    c.put(\"a\", 1)\n    c.put(\"b\", 2)\n    assert c.get(\"zzz\") is None\n    c.put(\"c\", 3)\n    assert \"a\" not in c and \"b\" in c and \"c\" in c\n\n\ndef test_put_update_refreshes_and_does_not_evict():\n    c = LRUCache(2)\n    c.put(\"a\", 1)\n    c.put(\"b\", 2)\n    c.put(\"a\", 10)  # update at capacity: no eviction, a becomes MRU\n    assert len(c) == 2\n    c.put(\"c\", 3)\n    assert \"b\" not in c\n    assert c.get(\"a\") == 10\n\n\ndef test_repeated_gets_track_latest_access():\n    c = LRUCache(3)\n    for k, v in ((\"a\", 1), (\"b\", 2), (\"c\", 3)):\n        c.put(k, v)\n    c.get(\"a\"); c.get(\"b\"); c.get(\"a\")\n    c.put(\"d\", 4)  # LRU is c\n    assert \"c\" not in c and {\"a\", \"b\", \"d\"} <= set(c._cache)\n\n\ndef test_capacity_one():\n    c = LRUCache(1)\n    c.put(\"a\", 1)\n    c.get(\"a\")\n    c.put(\"b\", 2)\n    assert \"a\" not in c and c.get(\"b\") == 2\n",
+      "check": {
+        "pass": true,
+        "output": "...                                                                      [100%]\n3 passed in 0.01s\n"
+      },
+      "judge_correctness": {
+        "score": 1.0,
+        "judge": "llm",
+        "rationale": "The fix adds `move_to_end(key)` in `get`, which correctly makes the given sequence evict \"b\" and keep \"a\" and \"c\", and it matches the ground-truth phrase."
+      }
+    }
+  ]
+}

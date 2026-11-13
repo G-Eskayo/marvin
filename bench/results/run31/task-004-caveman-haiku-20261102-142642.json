@@ -1,0 +1,114 @@
+{
+  "task": "task-004-caveman",
+  "runner": "claude",
+  "model": "claude-haiku-4-5-20251001",
+  "tag": "",
+  "prompt_prefix": "",
+  "repeat": 3,
+  "judge": true,
+  "runs": [
+    {
+      "is_error": false,
+      "model_used": "claude-haiku-4-5-20251001",
+      "result_text": "An LLM context window is the fixed amount of text (measured in tokens) that a model can \"see\" at once\u2014its working memory. For Claude, this ranges from 4K tokens (Haiku) to 200K+ (Claude Opus/Sonnet), and it includes both your input and the model's output in a single turn. When building agents, the context window matters because it limits how much conversation history, code, documentation, or tool results you can keep in active memory; once you exceed it, older information gets dropped or compressed away. This forces trade-offs: you might need to summarize long conversations into handoffs, fork work to keep intermediate results out of context, or carefully manage what facts you keep loaded. For multi-step reasoning or complex codebases, running out of context can mean losing critical context mid-task or forcing unnecessary re-reads of the same files.",
+      "num_turns": 1,
+      "duration_ms": 6202,
+      "cost_usd": 0.0414095,
+      "input_tokens": 9,
+      "output_tokens": 431,
+      "cache_creation_input_tokens": 18893,
+      "cache_read_input_tokens": 14595,
+      "total_tokens": 33928,
+      "tool_calls": 0,
+      "tools_used": [],
+      "wall_s": 20.4,
+      "infra_error": false,
+      "correctness": {
+        "score": 1.0,
+        "matched": [
+          "context window",
+          "token"
+        ],
+        "missed": []
+      },
+      "profile": "marvin",
+      "model": "claude-haiku-4-5-20251001",
+      "workdir_snapshot": "",
+      "judge_correctness": {
+        "score": 1.0,
+        "judge": "llm",
+        "rationale": "The single paragraph defines the context window as the token-limited amount of text a model can see at once and explains why that limit matters for agents, which covers both ground-truth phrases."
+      }
+    },
+    {
+      "is_error": false,
+      "model_used": "claude-haiku-4-5-20251001",
+      "result_text": "An LLM's **context window** is the maximum amount of text (measured in tokens, roughly 4 characters per token) the model can process in a single request\u2014everything you give it plus everything it generates. For Claude, this ranges from 100K tokens (Haiku) to 200K (Opus). When building agents, context windows matter because they determine how much **history, instructions, and tool results** you can keep in memory simultaneously. A small window forces you to summarize or discard past work (expensive context switches, lost state); a large window lets agents maintain rich awareness of prior decisions, failures, and patterns without losing focus. For multi-step agent tasks, running out of context mid-task means you either lose context and restart, or you're forced to use external persistence (files, databases) to hand off state\u2014which adds latency and coordination complexity. Good agent architecture respects your actual context limit by being deliberate about what stays hot (recent decisions, active context) versus what gets persisted (archives, memory systems).",
+      "num_turns": 2,
+      "duration_ms": 7405,
+      "cost_usd": 0.038122,
+      "input_tokens": 17,
+      "output_tokens": 509,
+      "cache_creation_input_tokens": 15175,
+      "cache_read_input_tokens": 52100,
+      "total_tokens": 67801,
+      "tool_calls": 1,
+      "tools_used": [
+        "Skill"
+      ],
+      "wall_s": 15.8,
+      "infra_error": false,
+      "correctness": {
+        "score": 1.0,
+        "matched": [
+          "context window",
+          "token"
+        ],
+        "missed": []
+      },
+      "profile": "marvin",
+      "model": "claude-haiku-4-5-20251001",
+      "workdir_snapshot": "",
+      "judge_correctness": {
+        "score": 1.0,
+        "judge": "llm",
+        "rationale": "The response explains what a context window is in terms of tokens and why it matters for agents, so it conveys both ground-truth phrases in a single paragraph."
+      }
+    },
+    {
+      "is_error": false,
+      "model_used": "claude-haiku-4-5-20251001",
+      "result_text": "An LLM's context window is the maximum number of tokens (roughly words) it can process in a single request\u2014essentially the amount of text it can \"see\" at once. For Claude 5.5 models, this ranges from 128K to 200K tokens depending on the model tier.\n\nWhen building agents, context window matters because:\n- **Agent memory & history**: Agents with longer conversations eat more tokens; a small window forces frequent \"handoffs\" or memory pruning\n- **Tool definitions & state**: Every available tool, skill, system prompt, and user request consumes tokens\u2014larger windows let you wire in more tools or pass richer context\n- **Cost & latency**: Larger context = slower processing and higher token costs, so you trade capability for speed/expense\n- **Cache efficiency**: Claude's prompt caching charges 90% less for cached tokens (after first request), making it possible to keep substantial context cheap if it's reused\n\nFor agent work, this means: keep the core system prompt tight, load only relevant context via memory/skills when triggered, use caching for stable context (like skill definitions), and design handoffs to reset context on major shifts\u2014that's how MARVIN stays responsive despite managing dozens of skills and cross-session memory.",
+      "num_turns": 2,
+      "duration_ms": 12274,
+      "cost_usd": 0.040046500000000006,
+      "input_tokens": 17,
+      "output_tokens": 824,
+      "cache_creation_input_tokens": 15350,
+      "cache_read_input_tokens": 52095,
+      "total_tokens": 68286,
+      "tool_calls": 1,
+      "tools_used": [
+        "Skill"
+      ],
+      "wall_s": 19.6,
+      "infra_error": false,
+      "correctness": {
+        "score": 1.0,
+        "matched": [
+          "context window",
+          "token"
+        ],
+        "missed": []
+      },
+      "profile": "marvin",
+      "model": "claude-haiku-4-5-20251001",
+      "workdir_snapshot": "",
+      "judge_correctness": {
+        "score": 1.0,
+        "judge": "llm",
+        "rationale": "The response explains the context window as the number of tokens a model can process at once and why that matters for agents, which covers both ground-truth phrases, though it runs longer than the short paragraph requested."
+      }
+    }
+  ]
+}

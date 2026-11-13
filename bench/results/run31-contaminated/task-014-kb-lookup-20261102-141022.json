@@ -1,0 +1,226 @@
+{
+  "task": "task-014-kb-lookup",
+  "runner": "claude",
+  "model": "default",
+  "tag": "",
+  "prompt_prefix": "",
+  "repeat": 3,
+  "judge": true,
+  "runs": [
+    {
+      "is_error": false,
+      "model_used": "claude-opus-5-5",
+      "result_text": "I ran these against the qa-knowledge KB with `qa_query.py`. All the matching entries come from the `marvin-bench` project and are marked high confidence.\n\n**1. Full injection vs RAG injection**\n- **Full injection fails** on jargon-recall tasks with local models. That means all 15 memory files, about 4,000 tokens. The extra text lets the model's training priors override the project's own terms. In one example the single relevant note was buried among 14 unrelated files.\n- **RAG injection fixes it.** That means only the top 3 semantic hits, about 300 tokens, so nothing competes with the right note. In that example the right file was the #1 hit at similarity 0.86.\n- The KB says to use exactly 3 results (`n_results=3`), because more than 3 brings the noise back.\n\n**2. Minimum model size for parity with Haiku**\n- **qwen2.5:14b with RAG injection** matches Haiku on meaning for jargon recall, at $0.00. A 7B model fails even with RAG.\n- One caveat: the AI judge passes it, but the exact-wording check fails because the model adds a word (\"tag-keyword matching\" instead of \"tag matching\").\n- The stored cost ranking is: local 14B+RAG ($0.00, matches on meaning) \u2192 Haiku+marvin (~$0.02, exact wording) \u2192 Sonnet+marvin (~$0.05, full).\n\n**3. Context quality vs model size**\nThe stored outcome says: \"14B + RAG achieves semantic parity at $0.00. Context quality matters more than model size for jargon retrieval.\" Size still sets a lower limit, though, since 7B fails even with good context.",
+      "num_turns": 4,
+      "duration_ms": 21924,
+      "cost_usd": 0.2,
+      "input_tokens": 8,
+      "output_tokens": 1281,
+      "cache_creation_input_tokens": 19527,
+      "cache_read_input_tokens": 90660,
+      "total_tokens": 111476,
+      "tool_calls": 3,
+      "tools_used": [
+        "Bash",
+        "Bash",
+        "Bash"
+      ],
+      "wall_s": 23.0,
+      "infra_error": false,
+      "correctness": {
+        "score": 1.0,
+        "matched": [
+          "Context quality matters more than model size"
+        ],
+        "missed": []
+      },
+      "profile": "clean",
+      "model": "default",
+      "judge_correctness": {
+        "score": 1.0,
+        "judge": "llm",
+        "rationale": "The response answers all three questions, and answer 3 quotes the ground-truth phrase \"Context quality matters more than model size\" verbatim."
+      }
+    },
+    {
+      "is_error": false,
+      "model_used": "claude-opus-5-5",
+      "result_text": "Here's what the qa-knowledge KB says. All three answers come from high-confidence `marvin-bench` entries.\n\n**1. Full context vs RAG injection with local LLMs**\n- Full injection put all 15 memory files (about 4,000 tokens) into the prompt, and it failed on jargon-recall tasks. With that much unrelated text, the model's training priors overrode the project-specific terms. In the venv example, the 14 extra files (Python stdlib docs, file-organisation notes and so on) pulled the answer toward generic knowledge.\n- RAG injection used only the top 3 semantic hits (about 300 tokens), and that fixed it. The right note (`marvin-venv-interpreter.md`) came back as the top hit at 0.86 similarity. More than 3 results brought the noise back, so the stored rule is `n_results=3`.\n\n**2. Smallest model that matched Haiku**\n- **qwen2.5:14b, and only with RAG injection.** It reached semantic parity with Haiku on jargon recall, at no cost.\n- 7B with RAG still failed. 14B with RAG passed the judge.\n- The exact-match scorer still failed the 14B model because it added one word (\"tag-keyword matching\" instead of \"tag matching\"), so this is parity in meaning, not word for word.\n- Recorded cost ladder: local 14B+RAG ($0.00, matches in meaning) \u2192 Haiku+MARVIN (about $0.02, exact) \u2192 Sonnet+MARVIN (about $0.05, full).\n\n**3. Context quality vs model size**\nThe stored outcome says: *\"Context quality matters more than model size for jargon retrieval.\"* A related entry backs this up: on Haiku, MARVIN's context matters more than it does on Sonnet. Without it, Haiku skips the search and fails tasks that need memory.\n\nTo reach the KB I listed `skills/qa-agent/` once to find its query script, then ran `qa_query.py`. I didn't read or search any other files.",
+      "num_turns": 7,
+      "duration_ms": 25084,
+      "cost_usd": 0.1267706,
+      "input_tokens": 14,
+      "output_tokens": 1944,
+      "cache_creation_input_tokens": 6273,
+      "cache_read_input_tokens": 188253,
+      "total_tokens": 196484,
+      "tool_calls": 6,
+      "tools_used": [
+        "ToolSearch",
+        "Bash",
+        "Bash",
+        "Bash",
+        "Bash",
+        "Bash"
+      ],
+      "wall_s": 26.3,
+      "infra_error": false,
+      "correctness": {
+        "score": 1.0,
+        "matched": [
+          "Context quality matters more than model size"
+        ],
+        "missed": []
+      },
+      "profile": "clean",
+      "model": "default",
+      "judge_correctness": {
+        "score": 1.0,
+        "judge": "llm",
+        "rationale": "The response answers all three questions and gives the ground-truth phrase verbatim: \"Context quality matters more than model size.\""
+      }
+    },
+    {
+      "is_error": false,
+      "model_used": "claude-opus-5-5",
+      "result_text": "All three answers come from qa-knowledge. There's no MCP tool for it, so I ran its query script, `skills/qa-agent/scripts/qa_query.py`. The only file-system step was listing that skill's directory to find the script; I didn't read any memory or bench files. All the entries cited are from project `marvin-bench`, marked high confidence.\n\n**1. Full injection vs RAG injection with local LLMs**\n- **Full injection fails** on jargon-recall tasks. This was all 15 memory files, about 4,000 tokens. With that much noise, the model's training priors win over the project's own terms. In the venv test, the 14 unrelated files (Python stdlib docs, file-organisation notes and so on) pushed the model towards generic answers.\n- **RAG injection fixes it.** This was the top 3 semantic hits, about 300 tokens. For the venv question, the top hit was `marvin-venv-interpreter.md` at similarity 0.86. Cutting out the competing context is what made the difference.\n- **Use exactly 3 results** (`n_results=3`). More than 3 brings the noise back.\n\n**2. Smallest model that matched Haiku**\n- **qwen2.5:14b, with RAG injection**, reached semantic parity with Haiku at $0.00.\n- 7B with RAG still failed. 14B with RAG passed the judge.\n- The exact-substring scorer still failed it because the model added one word: \"tag-keyword matching\" instead of \"tag matching\". So it's semantic parity, not an exact match.\n- The cost order it established:\n\n| Setup | Cost | Match |\n|---|---|---|\n| Local 14B + RAG | $0.00 | semantic |\n| Haiku + MARVIN | about $0.02 | exact |\n| Sonnet + MARVIN | about $0.05 | full |\n\n**3. Context quality vs model size**\nThe stored outcome reads word for word: *\"14B + RAG achieves semantic parity at $0.00. Context quality matters more than model size for jargon retrieval.\"* A small model given the right few passages did better than one given everything.",
+      "num_turns": 7,
+      "duration_ms": 34183,
+      "cost_usd": 0.1344034,
+      "input_tokens": 12,
+      "output_tokens": 1892,
+      "cache_creation_input_tokens": 8072,
+      "cache_read_input_tokens": 159697,
+      "total_tokens": 169673,
+      "tool_calls": 6,
+      "tools_used": [
+        "ToolSearch",
+        "Bash",
+        "Bash",
+        "Bash",
+        "Bash",
+        "Bash"
+      ],
+      "wall_s": 36.5,
+      "infra_error": false,
+      "correctness": {
+        "score": 1.0,
+        "matched": [
+          "Context quality matters more than model size"
+        ],
+        "missed": []
+      },
+      "profile": "clean",
+      "model": "default",
+      "judge_correctness": {
+        "score": 1.0,
+        "judge": "llm",
+        "rationale": "The response answers all three questions and, for question 3, quotes the stored outcome verbatim, including \"Context quality matters more than model size\", which matches the ground-truth phrase."
+      }
+    },
+    {
+      "is_error": false,
+      "model_used": "claude-opus-5-5",
+      "result_text": "I asked the qa-knowledge knowledge base (`qa_query.py`) and didn't search any files. All three answers come from marvin-bench entries rated high confidence.\n\n**1. Full injection vs RAG with local models**\n- **Full injection fails on jargon recall.** It feeds in all 15 memory files, about 4,000 tokens. With that much noise, what the model learned in training overrides the project's own terms. In the venv question, for example, 14 unrelated files (Python stdlib docs, file-organisation notes) outweighed the one note that had the answer.\n- **RAG injection fixes it.** It sends about 300 tokens: the top 3 matches by meaning. The right note, `marvin-venv-interpreter.md`, was the top match at 0.86 similarity. Removing the competing context is what made the difference.\n- **Keep it at 3.** The stored rule is `n_results=3`. More than 3 passages brings the noise back.\n\n**2. Smallest model that matched Haiku**\n- **qwen2.5:14b with RAG injection** matched Haiku on jargon recall, at $0.00.\n- **7B with RAG still fails.** 14B is where it starts passing.\n- **It's a semantic match, not a word-for-word one.** The judge model passes it. The exact-text check fails because the model adds one word (\"tag-keyword matching\" instead of \"tag matching\").\n\n**3. Context quality vs model size**\nThe stored outcome says: \"Context quality matters more than model size for jargon retrieval.\" Another entry records the resulting cost ladder:\n\n| Setup | Cost per task | Accuracy |\n|---|---|---|\n| Local 14B + RAG | $0.00 | Same meaning |\n| Haiku + MARVIN profile | about $0.02 | Exact match |\n| Sonnet + MARVIN profile | about $0.05 | Full answer |\n\nA related entry points the same way. MARVIN's profile helps weaker models more: one recall task failed on Haiku without the MARVIN profile, because Haiku answered without searching memory at all.",
+      "num_turns": 5,
+      "duration_ms": 37712,
+      "cost_usd": 0.301642,
+      "input_tokens": 10,
+      "output_tokens": 1262,
+      "cache_creation_input_tokens": 31279,
+      "cache_read_input_tokens": 130650,
+      "total_tokens": 163201,
+      "tool_calls": 3,
+      "tools_used": [
+        "Skill",
+        "Bash",
+        "Bash"
+      ],
+      "wall_s": 58.2,
+      "infra_error": false,
+      "correctness": {
+        "score": 1.0,
+        "matched": [
+          "Context quality matters more than model size"
+        ],
+        "missed": []
+      },
+      "profile": "marvin",
+      "model": "default",
+      "judge_correctness": {
+        "score": 1.0,
+        "judge": "llm",
+        "rationale": "The response quotes the stored outcome verbatim (\"Context quality matters more than model size for jargon retrieval\") and answers all three questions, covering full injection vs RAG, qwen2.5:14b with RAG as the minimum for parity with Haiku, and the context-quality finding."
+      }
+    },
+    {
+      "is_error": false,
+      "model_used": "claude-opus-5-5",
+      "result_text": "All three answers come from the qa-knowledge entries for the `marvin-bench` project, each marked high confidence.\n\n**1. Full injection vs RAG injection with local LLMs**\n- **Full injection** loaded all 15 memory files (about 4,000 tokens) and failed on jargon-recall tasks. With that much unrelated context, the model's training priors won out over the project-specific terms. For the venv question, the 14 extra files (Python stdlib docs, file-organization notes and so on) crowded out the one relevant note.\n- **RAG injection** passed only the top 3 semantic hits (about 300 tokens) and fixed the problem by removing the competing context. The right note, `marvin-venv-interpreter.md`, ranked first at 0.86 similarity.\n- The stored rule is to use `n_results=3`, because returning more than 3 brings the noise back.\n\n**2. Smallest model that matched Haiku**\n- **qwen2.5:14b with RAG injection** was the smallest model to reach semantic parity with Haiku on jargon recall, at $0.00.\n- The 7B model still failed even with RAG.\n- The 14B model passed the judge but failed the exact-match scorer by one extra word: it said \"tag-keyword matching\" where the expected answer was \"tag matching\".\n- The stored cost ranking is: local 14B with RAG ($0.00, semantic match) \u2192 Haiku with MARVIN (about $0.02, exact match) \u2192 Sonnet with MARVIN (about $0.05, full).\n\n**3. Context quality vs model size**\nThe stored outcome says: \"Context quality matters more than model size for jargon retrieval.\" A related entry points the same way: MARVIN helps weaker models more. On Haiku, task-007 failed without MARVIN's context (no tool calls, no search) but passed with it.\n\nSeparately, the session-start report shows that sync for `~/.claude` on this MacBook has been blocked by an unresolved merge conflict for about 3\u00be hours. Until it's fixed, nothing written here reaches the Mini, and nothing from the Mini reaches this Mac.",
+      "num_turns": 5,
+      "duration_ms": 17870,
+      "cost_usd": 0.1814144,
+      "input_tokens": 10,
+      "output_tokens": 1293,
+      "cache_creation_input_tokens": 15789,
+      "cache_read_input_tokens": 146012,
+      "total_tokens": 163104,
+      "tool_calls": 3,
+      "tools_used": [
+        "Skill",
+        "Bash",
+        "Bash"
+      ],
+      "wall_s": 28.0,
+      "infra_error": false,
+      "correctness": {
+        "score": 1.0,
+        "matched": [
+          "Context quality matters more than model size"
+        ],
+        "missed": []
+      },
+      "profile": "marvin",
+      "model": "default",
+      "judge_correctness": {
+        "score": 1.0,
+        "judge": "llm",
+        "rationale": "The response answers all three questions, and answer 3 quotes the ground-truth phrase verbatim: \"Context quality matters more than model size.\""
+      }
+    },
+    {
+      "is_error": false,
+      "model_used": "claude-opus-5-5",
+      "result_text": "MARVIN active \u2014 macbook-pro \u00b7 agents@66cf12e4 \u00b7 claude@72223938 \u00b7 36 skills wired\n\nThese answers come from one qa-knowledge query. I didn't read any files. The three relevant entries are all from `marvin-bench` and all marked high confidence.\n\n**1. Full injection vs RAG injection with local models**\n- **Full injection fails on jargon-recall tasks.** That means all 15 memory files, about 4,000 tokens. With that much loosely related context, the model's general training overrides the project's own terms.\n- **RAG injection fixes it.** That means the top 3 semantic hits, about 300 tokens, which removes the competing context. For example, for the venv question the top hit was `marvin-venv-interpreter.md` at 0.86 similarity. Full injection buried it under 14 unrelated files.\n- **Keep it at 3 passages.** The stored rule is `n_results=3`, because more than 3 brings the noise back.\n\n**2. Smallest model that matched Haiku**\n- **qwen2.5:14b, and only with RAG injection.** 7B with RAG still failed; 14B with RAG passed the judge at $0.00.\n- **The parity is semantic, not exact.** The substring scorer still fails because the model adds one word (\"tag-keyword matching\" instead of \"tag matching\").\n- **Cost hierarchy the KB records as proven:** local 14B + RAG ($0.00, semantic match), then Haiku + MARVIN (about $0.02, exact match), then Sonnet + MARVIN (about $0.05, full).\n\n**3. Context quality vs model size**\nThe stored outcome reads: *\"Context quality matters more than model size for jargon retrieval.\"* A related entry points the same way: MARVIN's context helps weaker models more. Haiku without MARVIN failed task-007 (it made no tool calls and didn't search), while Sonnet passed it.\n\nThe sync check at session start also flagged an unresolved merge conflict in `~/.claude` on this Mac, stuck since 17:23 UTC today. Until it's fixed, nothing syncs between the two Macs.",
+      "num_turns": 4,
+      "duration_ms": 22035,
+      "cost_usd": 0.16644540000000002,
+      "input_tokens": 8,
+      "output_tokens": 1071,
+      "cache_creation_input_tokens": 15482,
+      "cache_read_input_tokens": 105687,
+      "total_tokens": 122248,
+      "tool_calls": 2,
+      "tools_used": [
+        "Skill",
+        "Bash"
+      ],
+      "wall_s": 30.4,
+      "infra_error": false,
+      "correctness": {
+        "score": 1.0,
+        "matched": [
+          "Context quality matters more than model size"
+        ],
+        "missed": []
+      },
+      "profile": "marvin",
+      "model": "default",
+      "judge_correctness": {
+        "score": 1.0,
+        "judge": "llm",
+        "rationale": "The response quotes the stored outcome \"Context quality matters more than model size for jargon retrieval,\" which matches the ground-truth phrase, and it answers all three questions."
+      }
+    }
+  ]
+}
