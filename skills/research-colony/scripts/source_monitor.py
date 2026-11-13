@@ -18,7 +18,7 @@ CACHE_DIR = Path.home() / ".claude" / "research-feed"
 def fetch_arxiv() -> list[dict]:
     cats = "cat:cs.AI+OR+cat:cs.LG+OR+cat:cs.MA+OR+cat:cs.PL"
     url = (
-        f"http://export.arxiv.org/api/query?search_query={cats}"
+        f"https://export.arxiv.org/api/query?search_query={cats}"
         "&max_results=15&sortBy=submittedDate&sortOrder=descending"
     )
     try:
