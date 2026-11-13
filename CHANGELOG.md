@@ -1,5 +1,7 @@
 # Changelog
 
+- sort_suggestions.py warns when a missing header merges two suggestions into one entry ([#1310](https://github.com/G-Eskayo/marvin/pull/1310))
+
 - improvement_sweep.py's "marvin" project key shadows "marvin-bench", so the bench entry can never match ([#1313](https://github.com/G-Eskayo/marvin/pull/1313))
 
 - fetch_related.py calls Semantic Scholar with no retry: a 429 silently empties `/pull-related`, and a network error… ([#1312](https://github.com/G-Eskayo/marvin/pull/1312))
