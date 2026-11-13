@@ -1,0 +1,5 @@
+1. Add `_pipeline_verify_timeouts(stages_dir=None, days=PROBE_WINDOW_DAYS, now=None, machine=None)` to `lib/purpose_metrics.py`, placed next to `_replanned_tickets`/`_prd_dispatches`: glob `stages_dir.glob("*.json")`, catch `ValueError` (malformed JSON) per file and skip, let `OSError` (unreadable file) propagate, filter events on `stage == "verifying"`, `status == "failed"`, `machine == machine_profile.registry_id()` (or override), `"timed out" in str(detail).lower()`, and `_when(timestamp) >= cut`; return `0.0` when `stages_dir` doesn't exist.
+2. Register `"pipeline-verify-timeouts": (lambda days=PROBE_WINDOW_DAYS: _pipeline_verify_timeouts(days=days), 0.0, "<description citing #881/#1316>")` in the `PROBES` dict.
+3. Write the 7 tests listed above in `lib/tests/test_purpose_metrics.py`.
+4. Run `lib/tests/test_purpose_metrics.py` (and the full suite if fast enough) to confirm everything passes and nothing else broke.
+5. Update ticket #1316's own `## Recurrence check` wiring is already satisfied by registration — no doc changes needed elsewhere (`incident_ladder.py`, `auto_merge_regression.py`, `CONTEXT.md` all read `PROBES` generically).
