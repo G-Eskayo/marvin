@@ -9,20 +9,29 @@ import path from 'node:path'
 
 const VENV_PYTHON = path.join(homedir(), '.agents', 'venv', 'bin', 'python')
 export const REBUILD_CHECK_ARGS = [path.join(homedir(), '.agents', 'lib', 'dashboard_rebuild.py')]
+export const WEBHOOK_RESTART_CHECK_ARGS = [path.join(homedir(), '.agents', 'lib', 'webhook_restart.py')]
 const MARVIN_REPO = 'G-Eskayo/marvin'
 
-export function createRebuildCheckTrigger({ spawn = nodeSpawn, now = Date.now, minGapMs = 60_000 } = {}) {
+export function createScriptCheckTrigger(scriptArgs, matchRepo, { spawn = nodeSpawn, now = Date.now, minGapMs = 60_000 } = {}) {
   let last = -Infinity
   return (repo) => {
-    if (repo !== MARVIN_REPO) return false
-    if (now() - last < minGapMs) return false // one merge is several GitHub events; one check is enough
+    if (repo !== matchRepo) return false
+    if (now() - last < minGapMs) return false
     last = now()
     try {
-      spawn(VENV_PYTHON, REBUILD_CHECK_ARGS, { detached: true, stdio: 'ignore' }).unref()
+      spawn(VENV_PYTHON, scriptArgs, { detached: true, stdio: 'ignore' }).unref()
     } catch (e) {
-      console.error(`[rebuild-check] could not start: ${String(e?.message || e)}`)
+      console.error(`[script-check] could not start: ${String(e?.message || e)}`)
       return false
     }
     return true
   }
+}
+
+export function createRebuildCheckTrigger(opts) {
+  return createScriptCheckTrigger(REBUILD_CHECK_ARGS, MARVIN_REPO, opts)
+}
+
+export function createWebhookRestartCheckTrigger(opts) {
+  return createScriptCheckTrigger(WEBHOOK_RESTART_CHECK_ARGS, MARVIN_REPO, opts)
 }

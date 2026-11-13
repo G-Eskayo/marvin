@@ -90,7 +90,7 @@ Common tasks:
 | Health sweep schedule | `config/jobs/health-check.json` | `every_s: 900`, runs at load |
 | Health status file | `~/.claude/logs/health-status.json` | What the Health tab and the boot read |
 | Auto-launch | launchd `com.marvin.dashboard-launch` | Opens the app by bundle id at login |
-| Merge server | launchd `com.marvin.dashboard-webhook` | Runs `dashboard/webhook-server/`; triggers rebuilds after merges |
+| Merge server | launchd `com.marvin.dashboard-webhook` | Runs `dashboard/webhook-server/`; triggers rebuilds and restarts after merges, safe during in-flight merges |
 | Rebuild log | `~/.claude/logs/dashboard-rebuild.log` | Output of the last install |
 | Rebuild backoff | `~/.claude/logs/dashboard-rebuild-failed` | Written on failure, cleared by the next good install |
 | Rebuild settle time | `SETTLE_SECONDS` in `lib/dashboard_rebuild.py` | 2 minutes |

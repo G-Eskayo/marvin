@@ -35,7 +35,7 @@ import { promisify } from 'util'
 import { createPortfolio } from '../electron/main/portfolio.js'
 import { handlePortfolioRequest } from '../electron/main/portfolio_remote.js'
 import { resolveServiceDefaults } from '../electron/main/device_identity.js'
-import { createRebuildCheckTrigger } from './rebuild_check.js'
+import { createRebuildCheckTrigger, createWebhookRestartCheckTrigger } from './rebuild_check.js'
 import { supportRepos, createSupportSync } from './support_sync.js'
 import { handleSafetyRequest, SAFETY_MAX_BODY } from './safety_labels.js'
 
@@ -347,6 +347,8 @@ function announceThisMac(why) {
 }
 
 const rebuildCheck = createRebuildCheckTrigger()
+const webhookRestartCheck = createWebhookRestartCheckTrigger()
+const webhookRestartCheckDeferred = createWebhookRestartCheckTrigger({ minGapMs: 0 })
 
 // marvin#568: which Mac runs the merges (shown on the card), and the in-flight record a restart reads.
 const machineId = resolveDeviceId()
@@ -453,8 +455,10 @@ const mergeQueue = createMergeQueue({
     return status === 200 ? { result: body } : { body }
   },
   // The merge's after-steps run in the repo's job line (stacked PRs moved onto main, the others conflict-checked):
-  // the next decision waits for them, so a stacked PR is seen on main, not as an orphan.
-  afterRun: (repo) => repoJobsDone(repo),
+  // the next decision waits for them, so a stacked PR is seen on main, not as an orphan. When done, retry any
+  // deferred webhook restart (merge is no longer in flight). Uses a separate trigger with no debounce, so the
+  // restart runs immediately (instead of being blocked by the ping's 60s debounce from earlier).
+  afterRun: (repo) => repoJobsDone(repo).then(() => webhookRestartCheckDeferred(repo)),
   onWaiting: (repo, pr, entry) => {
     if (entry.unbuilt) requestFollowUp(repo, pr.number)
     // A conflict goes to the #230 resolver, which the ticket scan runs (conflict_repair.py): started once per commit.
@@ -554,6 +558,7 @@ server.listen(PORT, () => {
       console.log(`[gh-watch] change detected on ${repo} at ${new Date().toISOString()}`)
       githubFeed?.refresh(repo)
       if (rebuildCheck(repo)) console.log(`[rebuild-check] started for ${repo}`) // #443: any merge path updates the app
+      if (webhookRestartCheck(repo)) console.log(`[webhook-restart-check] started for ${repo}`)
       // marvin#231: a PR updated, a ticket labelled, main's CI opening or closing its main-red ticket: the queue looks
       // again (answers first, so a just-built PR is seen built).
       refreshFacts().finally(() => mergeQueue.kick(repo).catch(() => {}))
