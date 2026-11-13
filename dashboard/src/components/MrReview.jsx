@@ -252,19 +252,19 @@ export function ApproveDenyActions({ pr, onApproved, onDenied, inDetail = false 
     const off = window.api.mr.onMergeEvent?.((url, op) => {
       if (cancelled || url !== pr.url) return
       pushed = true
-      apply(opForHead(op, pr.headRefOid))
+      apply(opForHead(op, pr.headSha))
     })
-    window.api.mr.mergeState(pr.url, pr.headRefOid)
+    window.api.mr.mergeState(pr.url, pr.headSha)
       .then((m) => { if (!cancelled && !pushed) apply(m) }) // a push that arrived first is newer than this read
       .catch(() => { /* keep whatever this component already knows */ })
     return () => { cancelled = true; off?.() }
-  }, [pr.url, pr.headRefOid])
+  }, [pr.url, pr.headSha])
 
   async function handleApprove() {
     setStatus('approving')
     setErrorMessage(null)
     try {
-      const result = await window.api.mr.approve({ number: pr.number, url: pr.url, head: pr.headRefOid })
+      const result = await window.api.mr.approve({ number: pr.number, url: pr.url, head: pr.headSha })
       if (result.cancelled) {
         if (!result.alreadyMerging) setStatus('idle')
         return
@@ -509,11 +509,11 @@ export function PrQueueLine({ pr, className = '' }) {
       pushed = true
       setMerging(op?.state === 'merging')
     })
-    window.api?.mr?.mergeState?.(pr.url, pr.headRefOid)
+    window.api?.mr?.mergeState?.(pr.url, pr.headSha)
       .then((m) => { if (!cancelled && !pushed) setMerging(m?.state === 'merging') })
       .catch(() => {})
     return () => { cancelled = true; off?.() }
-  }, [pr.url, pr.headRefOid])
+  }, [pr.url, pr.headSha])
   return merging ? null : <QueueLine entry={queueLineFor(pr)} className={className} />
 }
 

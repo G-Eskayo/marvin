@@ -401,11 +401,30 @@ describe('denyMr', () => {
     })
   })
 
-  it('throws when the webhook call fails, so the UI can surface it', async () => {
-    const post = vi.fn().mockResolvedValue({ ok: false, status: 500 })
+  it('parses error field from response body when webhook call fails', async () => {
+    const post = vi.fn().mockResolvedValue({
+      ok: false,
+      status: 403,
+      json: async () => ({ done: false, error: 'PR is already merged; deny cancelled' })
+    })
     await expect(
       denyMr(
         { prUrl: 'https://x/71', ticketNumber: 42, action: 'drop', reasons: [], comment: '' },
+        'http://localhost:7878/deny',
+        post
+      )
+    ).rejects.toThrow('PR is already merged; deny cancelled')
+  })
+
+  it('falls back to bare status when response body is not JSON', async () => {
+    const post = vi.fn().mockResolvedValue({
+      ok: false,
+      status: 500,
+      json: async () => { throw new Error('not json') }
+    })
+    await expect(
+      denyMr(
+        { prUrl: 'https://x/71', ticketNumber: 42, action: 'send_feedback', reasons: [], comment: '' },
         'http://localhost:7878/deny',
         post
       )

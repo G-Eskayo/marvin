@@ -79,6 +79,12 @@ export async function dropEntirely({ prUrl, ticketNumber }, exec = execFileAsync
   await releaseClaim(ticketNumber, exec, repo)
 }
 
+export async function fetchPrState(prUrl, exec = execFileAsync) {
+  assertGithubPrUrl(prUrl)
+  const { stdout } = await exec('gh', ['pr', 'view', prUrl, '--json', 'state'])
+  return JSON.parse(stdout).state
+}
+
 export async function handleDenyRequest({ action, prUrl, ticketNumber, reasons, comment }, exec = execFileAsync) {
   if (action !== 'send_feedback' && action !== 'drop') {
     return {
@@ -88,6 +94,28 @@ export async function handleDenyRequest({ action, prUrl, ticketNumber, reasons, 
   }
 
   try {
+    // Check PR state before dispatching -- guard against stale approvals
+    let prState
+    try {
+      prState = await fetchPrState(prUrl, exec)
+    } catch (stateErr) {
+      // Fail closed: if state check itself throws, refuse with a distinct message
+      return {
+        status: 500,
+        body: { done: false, error: `Could not verify PR state: ${String(stateErr.message || stateErr)}` },
+        error: `State check failed for ${prUrl}: ${stateErr?.stack || stateErr}`
+      }
+    }
+
+    // PR is no longer open: refuse with a 403
+    if (prState !== 'OPEN') {
+      const reason = prState === 'MERGED' ? 'already merged' : 'closed'
+      return {
+        status: 403,
+        body: { done: false, error: `PR is ${reason}; deny cancelled` }
+      }
+    }
+
     if (action === 'send_feedback') {
       await sendFeedback({ prUrl, ticketNumber, reasons, comment }, exec)
     } else {

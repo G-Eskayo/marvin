@@ -631,3 +631,64 @@ def test_ci_onnx_download_failures_is_registered():
     assert "ci-onnx-download-failures" in pm.PROBES
     fn, limit, what = pm.PROBES["ci-onnx-download-failures"]
     assert limit == 6.0 and "#1098" in what and "#1156" in what and "#1163" in what
+
+
+def test_stuck_approve_after_push_counts_deny_failures_in_the_window(tmp_path):
+    """The probe counts webhook errors where auto-deny failed and left PRs in APPROVED state."""
+    log = tmp_path / "dashboard-webhook-error.log"
+    log.write_text("2026-10-16T12:30:45 Deny failed for https://github.com/G-Eskayo/marvin/pull/71: timeout\n"
+                   "2026-10-16T13:45:00 State check failed for https://github.com/G-Eskayo/marvin/pull/72: timeout\n")
+    # Mock fetch using gh pr view format (returns correct field names: uppercase state, APPROVED reviewDecision)
+    def fetch_stuck(url):
+        return {'state': 'OPEN', 'reviewDecision': 'APPROVED'}
+    count = pm._stuck_approve_after_push(log=log, days=7, now=NOW, fetch=fetch_stuck)
+    # Both PRs are stuck: errors in window + state check confirms OPEN+APPROVED
+    assert count == 2.0
+
+
+def test_stuck_approve_after_push_with_missing_log_is_zero():
+    """If the log doesn't exist, the probe returns 0 (symptom absent)."""
+    from pathlib import Path
+    count = pm._stuck_approve_after_push(log=Path("/nonexistent/path"), days=7, now=NOW)
+    assert count == 0.0
+
+
+def test_stuck_approve_after_push_respects_the_window(tmp_path):
+    """The probe ignores errors outside the 7-day window."""
+    log = tmp_path / "dashboard-webhook-error.log"
+    # One error before the window, one within it
+    log.write_text("2026-10-09T11:59:59 Deny failed for https://github.com/G-Eskayo/marvin/pull/70: old\n"
+                   "2026-10-16T12:30:45 Deny failed for https://github.com/G-Eskayo/marvin/pull/71: recent\n")
+    def fetch_stuck(url):
+        return {'state': 'OPEN', 'reviewDecision': 'APPROVED'}
+    count = pm._stuck_approve_after_push(log=log, days=7, now=NOW, fetch=fetch_stuck)
+    # Only the recent one in the window; the old error is ignored
+    assert count == 1.0
+
+
+def test_stuck_approve_after_push_ignores_transient_failures(tmp_path):
+    """Transient deny failures that were later resolved (PR merged/closed or approval removed) don't count."""
+    log = tmp_path / "dashboard-webhook-error.log"
+    log.write_text("2026-10-16T12:30:45 Deny failed for https://github.com/G-Eskayo/marvin/pull/71: timeout\n"
+                   "2026-10-16T13:45:00 State check failed for https://github.com/G-Eskayo/marvin/pull/72: timeout\n"
+                   "2026-10-16T14:00:00 Deny failed for https://github.com/G-Eskayo/marvin/pull/73: timeout\n")
+    # PR 71: eventually merged (no longer OPEN)
+    # PR 72: approval was removed (reviewDecision not APPROVED)
+    # PR 73: still stuck (OPEN + APPROVED)
+    def fetch_state(url):
+        if '71' in url:
+            return {'state': 'MERGED', 'reviewDecision': ''}
+        elif '72' in url:
+            return {'state': 'OPEN', 'reviewDecision': 'CHANGES_REQUESTED'}
+        else:  # 73
+            return {'state': 'OPEN', 'reviewDecision': 'APPROVED'}
+    count = pm._stuck_approve_after_push(log=log, days=7, now=NOW, fetch=fetch_state)
+    # Only PR 73 is still stuck
+    assert count == 1.0
+
+
+def test_stuck_approve_after_push_is_registered():
+    """The probe is registered with a target of 0."""
+    assert "stuck-approve-after-push" in pm.PROBES
+    fn, limit, what = pm.PROBES["stuck-approve-after-push"]
+    assert limit == 0.0 and "marvin#1319" in what and "APPROVED" in what

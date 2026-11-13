@@ -435,6 +435,59 @@ def _ci_onnx_download_failures(fetch=None, repo: str = "G-Eskayo/marvin", runs: 
     return float(count)
 
 
+_DENY_OR_STATE_CHECK_FAILED = re.compile(r"(Deny failed for|State check failed for) (https://github\.com/[^\s]+): ")
+
+
+def _pr_view_json(url: str):
+    """Fetch PR state and reviewDecision using gh pr view, which handles full URLs correctly."""
+    out = subprocess.run(["gh", "pr", "view", url, "--json", "state,reviewDecision"],
+                         capture_output=True, text=True, timeout=60)
+    if out.returncode != 0:
+        raise OSError(out.stderr.strip()[:200])
+    return json.loads(out.stdout)
+
+
+def _stuck_approve_after_push(log: Path | None = None, days: float = PROBE_WINDOW_DAYS, now: datetime | None = None,
+                              fetch=None) -> float:
+    """Dashboard-webhook errors where an auto-deny after a push left the PR approved instead of clearing it.
+    Checks each PR's live state to confirm it's still OPEN and APPROVED, not transient deny failures.
+    Before the field-name fix (marvin#1319), approvals persisted when the auto-deny thought it
+    was checking a different commit. O(error log size + number of candidate PRs in errors)."""
+    log = log or Path.home() / ".claude" / "logs" / "dashboard-webhook-error.log"
+    fetch = fetch or _pr_view_json
+    now = now or datetime.now(timezone.utc)
+    cut = _cut(now, days)
+    try:
+        text = log.read_text(errors="ignore")
+    except OSError:
+        return 0.0
+    # Parse PR URLs from deny/state-check errors in the window, check live state
+    urls_in_window = set()
+    for line in text.splitlines():
+        try:
+            ts = line.split()[0]
+            when = _when(ts)
+            if not when:
+                continue
+        except (ValueError, IndexError):
+            continue
+        if when < cut:
+            continue
+        m = _DENY_OR_STATE_CHECK_FAILED.search(line)
+        if m:
+            urls_in_window.add(m.group(2))
+    # Check which are actually stuck: OPEN and APPROVED
+    count = 0
+    for pr_url in urls_in_window:
+        try:
+            data = fetch(pr_url)
+            if data.get('state') == 'OPEN' and data.get('reviewDecision') == 'APPROVED':
+                count += 1
+        except Exception:
+            pass  # Can't determine state; don't count as stuck
+    return float(count)
+
+
 # name -> (symptom counter, the most it may read while the fix holds, what it counts). Summed across Macs like any
 # measure; the logs are per Mac (~/.claude/logs doesn't sync), so nothing is counted twice.
 # Each counter takes `days` (default the 7-day window): a watched incident is re-measured over the time since its last
@@ -472,6 +525,8 @@ PROBES: dict[str, tuple[Callable[..., float], float, str]] = {
     "stale-relay-leaked": (lambda days=PROBE_WINDOW_DAYS: _stale_relay("leaked", days), 0.0,
                            "stale claims that reached the owner over 7 days (question log kind=stale + their own 'that's "
                            "already fixed' replies), per Mac, summed (#1224)"),
+    "stuck-approve-after-push": (lambda days=PROBE_WINDOW_DAYS: _stuck_approve_after_push(days=days), 0.0,
+                                 "dashboard auto-deny failures that left PRs in APPROVED state over 7 days, per Mac, summed (marvin#1319)"),
 }
 MEASURES.update({name: fn for name, (fn, _limit, _what) in PROBES.items()})
 MEASURES["stale-relay-caught"] = lambda: _stale_relay("caught")

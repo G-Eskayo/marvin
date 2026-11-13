@@ -485,7 +485,14 @@ export async function denyMr({ prUrl, ticketNumber, action, reasons, comment }, 
     comment
   })
   if (!response.ok) {
-    throw new Error(`Webhook call failed: ${response.status}`)
+    let body = null
+    try {
+      body = await response.json()
+    } catch {
+      // not JSON (or no body): fall back to the bare status below
+    }
+    const message = body?.error || `Webhook call failed: ${response.status}`
+    throw new Error(message)
   }
   return response
 }
