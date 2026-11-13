@@ -1,0 +1,9 @@
+1. Edit `skills/paper-dive/scripts/fetch_related.py`: add the `sys.path[:0] = [...]` preamble and `from s2_client import get_with_retry, s2_id, S2_PAPER_BASE` import, matching `paper_graph.py:19-23`. Remove the now-redundant local `S2_BASE` constant.
+2. Add module-level `failures: list[tuple[str, str]] = []`.
+3. Rewrite `s2_paper_by_doi` to call `get_with_retry(f"{S2_PAPER_BASE}/{s2_id(doi)}", ...)`, catching `requests.RequestException` (via the existing `get_requests()` helper, for the exception type) and JSON-decode errors, appending `("DOI lookup", reason)` to `failures` and returning `None` on either.
+4. Rewrite `s2_search` the same way against `S2_PAPER_BASE`, with source label `"search"`.
+5. Wrap `s2_recommendations`'s existing POST in try/except for `RequestException`, add an explicit non-200 status check, and a JSON-decode guard — all three failure modes append `("recommendations", reason)` and return `[]`.
+6. In `main()`: `failures.clear()` as the first statement; after building `lines` and before appending `"## Supporting / Extending"`, insert the warning line (`> Semantic Scholar unavailable (<joined source: reason pairs>): results below are arXiv-only`) directly under the `# Related Papers` heading when `failures` is non-empty.
+7. Edit `skills/paper-dive/SKILL.md` line ~223: replace "free, no key required for basic use" with "free but rate-limited (shared anonymous pool); calls go through `s2_client.get_with_retry`, and `S2_API_KEY` is used if set".
+8. Write `skills/paper-dive/scripts/tests/test_fetch_related.py` covering the 10 cases above, following `test_paper_graph.py`'s monkeypatch/`_FakeResponse` style and sys.path setup.
+9. Run `~/.agents/venv/bin/python -m pytest skills/paper-dive/scripts/tests/test_fetch_related.py -v` and the existing `test_paper_graph.py` suite (regression check on the shared `s2_client` import path) before calling this done.
