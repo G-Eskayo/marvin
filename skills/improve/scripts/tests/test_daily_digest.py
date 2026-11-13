@@ -482,3 +482,82 @@ def test_queue_summary_of_an_empty_pile(tmp_path, monkeypatch):
     (tmp_path / "inbox" / "improvement-queue").mkdir(parents=True)
     monkeypatch.setattr(dd, "CLAUDE_DIR", tmp_path)
     assert dd.improvement_queue_summary() == "(improvement queue is empty)"
+
+
+# ── CLAUDE_FAILED_PREFIX and failure handling tests ────────────────────────
+
+def test_claude_failed_prefix_constant():
+    """CLAUDE_FAILED_PREFIX is defined and used consistently."""
+    assert hasattr(dd, "CLAUDE_FAILED_PREFIX")
+    assert dd.CLAUDE_FAILED_PREFIX == "(claude call failed:"
+
+
+def test_call_claude_returns_failure_string_on_exception(monkeypatch):
+    """call_claude returns failure string when marvin_launcher raises."""
+    def mock_launch(*args, **kwargs):
+        raise ValueError("test exception")
+    monkeypatch.setattr(dd, "marvin_launcher", type('obj', (object,), {'launch': mock_launch})())
+
+    result = dd.call_claude("test prompt")
+    assert result.startswith(dd.CLAUDE_FAILED_PREFIX)
+    assert "test exception" in result
+
+
+def test_call_claude_returns_failure_string_on_nonzero_exit(monkeypatch):
+    """call_claude returns failure string on non-zero exit code."""
+    class MockResult:
+        exit_code = 1
+        text = ""
+        stderr = "error message"
+
+    def mock_launch(*args, **kwargs):
+        return MockResult()
+    monkeypatch.setattr(dd, "marvin_launcher", type('obj', (object,), {'launch': mock_launch})())
+
+    result = dd.call_claude("test prompt")
+    assert result.startswith(dd.CLAUDE_FAILED_PREFIX)
+    assert "error message" in result
+
+
+def test_call_claude_returns_failure_string_on_empty_output(monkeypatch):
+    """call_claude returns failure string when output is empty."""
+    class MockResult:
+        exit_code = 0
+        text = ""
+        stderr = ""
+
+    def mock_launch(*args, **kwargs):
+        return MockResult()
+    monkeypatch.setattr(dd, "marvin_launcher", type('obj', (object,), {'launch': mock_launch})())
+
+    result = dd.call_claude("test prompt")
+    assert result.startswith(dd.CLAUDE_FAILED_PREFIX)
+    assert "empty output" in result
+
+
+def test_main_skips_safety_monitor_on_claude_failure(tmp_path, monkeypatch):
+    """main() skips safety-monitor verification if call_claude already failed."""
+    out_file = tmp_path / "2026-10-22.md"
+    digest_dir = tmp_path
+    monkeypatch.setattr(dd, "OUT_FILE", out_file)
+    monkeypatch.setattr(dd, "DIGEST_DIR", digest_dir)
+    monkeypatch.setattr(dd, "CLAUDE_DIR", tmp_path)
+    monkeypatch.setattr(dd, "_SAFETY_MONITOR_AVAILABLE", True)
+
+    # Mock call_claude to return a failure string
+    def mock_call_claude(prompt: str):
+        return f"{dd.CLAUDE_FAILED_PREFIX} test error)"
+    monkeypatch.setattr(dd, "call_claude", mock_call_claude)
+
+    # Mock safety-monitor to raise if called
+    def mock_pass_or_quarantine(*args, **kwargs):
+        raise AssertionError("pass_or_quarantine should not be called on claude failure")
+    monkeypatch.setattr(dd, "pass_or_quarantine", mock_pass_or_quarantine, raising=False)
+
+    # Run main — should write the file with the failure message, skipping safety-monitor
+    dd.main()
+
+    # Verify the file was written with the failure message
+    assert out_file.exists()
+    content = out_file.read_text()
+    assert dd.CLAUDE_FAILED_PREFIX in content

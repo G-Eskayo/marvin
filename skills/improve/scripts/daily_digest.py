@@ -40,6 +40,8 @@ except ImportError:
 TODAY = datetime.now(timezone.utc).strftime("%Y-%m-%d")
 OUT_FILE = DIGEST_DIR / f"{TODAY}.md"
 
+CLAUDE_FAILED_PREFIX = "(claude call failed:"
+
 
 # ── context assembly ───────────────────────────────────────────────────────────
 
@@ -273,9 +275,9 @@ def call_claude(prompt: str) -> str:
             permission_mode=None, disallowed_tools="Write,Edit", timeout=240,
         )
     except Exception as exc:
-        return f"(claude call failed: {exc})"
+        return f"{CLAUDE_FAILED_PREFIX} {exc})"
     if result.exit_code != 0 or not result.text.strip():
-        return f"(claude call failed: {result.stderr[:200] or 'empty output, rc=' + str(result.exit_code)})"
+        return f"{CLAUDE_FAILED_PREFIX} {result.stderr[:200] or 'empty output, rc=' + str(result.exit_code)})"
     return result.text.strip()
 
 
@@ -319,7 +321,7 @@ def main() -> None:
     # sounding claim about a file/skill/metric that doesn't exist is the
     # actual failure mode this guards, not factual disagreement. Skip
     # verifying a known call_claude() failure string — nothing to catch there.
-    already_failed = content.startswith("(claude call failed:")
+    already_failed = content.startswith(CLAUDE_FAILED_PREFIX)
     if _SAFETY_MONITOR_AVAILABLE and not already_failed and not pass_or_quarantine(content, loop_name="daily_digest", source_context=prompt):
         print("[daily-digest] content quarantined by safety-monitor — see ~/.claude/quarantine.md", flush=True)
         notify("MARVIN daily-digest quarantined", "Today's digest was flagged for review — check ~/.claude/quarantine.md",
