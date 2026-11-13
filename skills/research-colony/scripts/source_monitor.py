@@ -181,7 +181,10 @@ def save_raw_cache(items: list[dict]) -> None:
 def main() -> int:
     all_items = fetch_arxiv() + fetch_github() + fetch_hackernews()
     print(f"[colony] fetched {len(all_items)} items total", file=sys.stderr)
-    save_raw_cache(all_items)
+    if not all_items:
+        print("[colony] ERROR: all sources returned 0 items", file=sys.stderr)
+    else:
+        save_raw_cache(all_items)
     added = store_items(all_items)
     print(f"[colony] stored {added} new items in research-feed", file=sys.stderr)
     return 0

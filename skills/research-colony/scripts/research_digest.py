@@ -107,6 +107,7 @@ def generate() -> Path | None:
     all_items = load_today_cache()
     if not all_items:
         print("[colony] no items in today's cache — run source_monitor first", file=sys.stderr)
+        notify("MARVIN research-colony failed", "no items fetched (all sources failed?)", open_target=str(Path.home() / ".claude" / "logs" / "research-colony-error.log"))
         return None
 
     correlated = load_correlated_from_chroma()
@@ -129,9 +130,11 @@ def generate() -> Path | None:
         )
     except Exception as exc:
         print(f"[colony] claude call failed: {exc}", file=sys.stderr)
+        notify("MARVIN research-colony failed", f"claude call failed: {str(exc)[:120]}", open_target=str(Path.home() / ".claude" / "logs" / "research-colony-error.log"))
         return None
     if result.exit_code != 0 or not result.text.strip():
         print(f"[colony] claude call failed: {(result.stderr or result.text)[:200]}", file=sys.stderr)
+        notify("MARVIN research-colony failed", f"claude call failed: {(result.stderr or result.text)[:120]}", open_target=str(Path.home() / ".claude" / "logs" / "research-colony-error.log"))
         return None
 
     body = result.text.strip()
