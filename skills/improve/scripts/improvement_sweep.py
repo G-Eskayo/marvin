@@ -51,7 +51,7 @@ KNOWN_PROJECTS: dict[str, Path] = {
 
 def find_project_path(project_name: str) -> Path | None:
     low = project_name.lower()
-    for key, path in KNOWN_PROJECTS.items():
+    for key, path in sorted(KNOWN_PROJECTS.items(), key=lambda kv: len(kv[0]), reverse=True):
         if key in low and path.exists():
             return path
     candidate = Path.home() / project_name
@@ -66,7 +66,7 @@ def extract_project(text: str) -> str:
     if not m:
         return "session"
     snippet = m.group(1).strip()[:200].lower()
-    for name in KNOWN_PROJECTS:
+    for name in sorted(KNOWN_PROJECTS, key=len, reverse=True):
         if name in snippet:
             return name
     return "session"

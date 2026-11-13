@@ -187,3 +187,100 @@ def test_in_inbox_mode_an_unparseable_finding_is_kept_as_an_untyped_item(piled):
     isw.append_to_queue("marvin", [{"metadata": {"category": "anti-pattern"}, "document": "weird ünïcode finding"}])
     assert any(i["title"] == "weird ünïcode finding" and "kind" not in i["fields"] for i in _items().values())
     json.dumps(inbox.list_items("improvement-queue"))
+
+
+# ── project resolution order (sorted longest-first) ──────────────────────────────────────────
+
+def test_find_project_path_matches_longer_names_before_shorter_substrings(tmp_path, monkeypatch):
+    marvin_path = tmp_path / "marvin"
+    bench_path = tmp_path / "marvin" / "bench"
+    marvin_path.mkdir()
+    bench_path.mkdir()
+
+    monkeypatch.setattr(isw, "KNOWN_PROJECTS", {
+        "marvin": marvin_path,
+        "marvin-bench": bench_path,
+    })
+
+    result = isw.find_project_path("marvin-bench")
+    assert result == bench_path, "Should match 'marvin-bench' before 'marvin'"
+
+
+def test_find_project_path_still_matches_shorter_names_when_longer_not_present(tmp_path, monkeypatch):
+    marvin_path = tmp_path / "marvin"
+    marvin_path.mkdir()
+
+    monkeypatch.setattr(isw, "KNOWN_PROJECTS", {
+        "marvin": marvin_path,
+        "marvin-bench": tmp_path / "nonexistent",
+    })
+
+    result = isw.find_project_path("marvin-bench")
+    assert result == marvin_path, "Should fall back to 'marvin' when 'marvin-bench' path doesn't exist"
+
+
+def test_extract_project_matches_longer_names_before_shorter_substrings():
+    text = """## What we were working on
+    marvin-bench performance improvements
+    """
+    result = isw.extract_project(text)
+    assert result == "marvin-bench", "Should match 'marvin-bench' before 'marvin'"
+
+
+def test_extract_project_matches_shorter_name_when_longer_not_in_text():
+    text = """## What we were working on
+    fixed bugs in the marvin codebase
+    """
+    result = isw.extract_project(text)
+    assert result == "marvin"
+
+
+def test_find_project_path_with_resume_tailor_takes_precedence_over_tailor(tmp_path, monkeypatch):
+    tailor_path = tmp_path / "tailor"
+    resume_tailor_path = tmp_path / "resume-tailor"
+    tailor_path.mkdir()
+    resume_tailor_path.mkdir()
+
+    monkeypatch.setattr(isw, "KNOWN_PROJECTS", {
+        "tailor": tailor_path,
+        "resume-tailor": resume_tailor_path,
+    })
+
+    result = isw.find_project_path("resume-tailor")
+    assert result == resume_tailor_path
+
+
+def test_extract_project_with_hermes_agent_text():
+    text = """## What we were working on
+    Updated the hermes-agent system
+    """
+    result = isw.extract_project(text)
+    assert result == "hermes-agent"
+
+
+def test_find_project_path_checks_projects_in_length_order(tmp_path, monkeypatch):
+    marvin_path = tmp_path / "marvin"
+    marvin_bench_path = tmp_path / "marvin-bench"
+    resume_tailor_path = tmp_path / "resume-tailor"
+
+    marvin_path.mkdir()
+    marvin_bench_path.mkdir()
+    resume_tailor_path.mkdir()
+
+    monkeypatch.setattr(isw, "KNOWN_PROJECTS", {
+        "marvin": marvin_path,
+        "marvin-bench": marvin_bench_path,
+        "resume-tailor": resume_tailor_path,
+    })
+
+    assert isw.find_project_path("resume-tailor") == resume_tailor_path
+    assert isw.find_project_path("marvin-bench") == marvin_bench_path
+    assert isw.find_project_path("marvin") == marvin_path
+
+
+def test_extract_project_prioritizes_longer_project_names_in_ambiguous_text():
+    text = """## What we were working on
+    updated marvin and marvin-bench integration tests
+    """
+    result = isw.extract_project(text)
+    assert result == "marvin-bench", "Should match 'marvin-bench' even though 'marvin' also appears"
