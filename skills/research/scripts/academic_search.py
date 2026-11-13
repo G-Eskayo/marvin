@@ -30,24 +30,23 @@ def search_semantic_scholar(query: str, limit: int = 10) -> list[dict]:
 
     Returns:
         List of paper objects with title, authors, year, abstract, citationCount, etc.
-        Returns empty list on network error (with warning to stderr).
+
+    Raises:
+        Any exceptions from the HTTP request or JSON parsing.
     """
-    try:
-        get_with_retry, S2_PAPER_BASE = _get_s2_client()
-        resp = get_with_retry(
-            f"{S2_PAPER_BASE}/search",
-            params={
-                "query": query,
-                "limit": limit,
-                "fields": "title,authors,year,abstract,citationCount,externalIds,openAccessPdf,url",
-            },
-            timeout=15,
-        )
-        data = resp.json()
-        return data.get("data", [])
-    except Exception as e:
-        print(f"[research] Semantic Scholar search failed: {e}", file=sys.stderr)
-        return []
+    get_with_retry, S2_PAPER_BASE = _get_s2_client()
+    resp = get_with_retry(
+        f"{S2_PAPER_BASE}/search",
+        params={
+            "query": query,
+            "limit": limit,
+            "fields": "title,authors,year,abstract,citationCount,externalIds,openAccessPdf,url",
+        },
+        timeout=15,
+        max_retries=3,
+    )
+    data = resp.json()
+    return data.get("data", [])
 
 
 def search_arxiv(query: str, max_results: int = 10) -> list[dict]:
@@ -59,59 +58,57 @@ def search_arxiv(query: str, max_results: int = 10) -> list[dict]:
 
     Returns:
         List of paper objects with title, authors, year, summary, arxiv_id, etc.
-        Returns empty list on network error (with warning to stderr).
+
+    Raises:
+        Network errors or XML parsing errors from arXiv API.
     """
-    try:
-        get_with_retry, S2_PAPER_BASE = _get_s2_client()
-        resp = get_with_retry(
-            "https://export.arxiv.org/api/query",
-            params={
-                "search_query": f"all:{query}",
-                "start": 0,
-                "max_results": max_results,
-                "sortBy": "relevance",
-                "sortOrder": "descending",
-            },
-            timeout=15,
+    get_with_retry, S2_PAPER_BASE = _get_s2_client()
+    resp = get_with_retry(
+        "https://export.arxiv.org/api/query",
+        params={
+            "search_query": f"all:{query}",
+            "start": 0,
+            "max_results": max_results,
+            "sortBy": "relevance",
+            "sortOrder": "descending",
+        },
+        timeout=15,
+    )
+    resp.encoding = "utf-8"
+    root = ET.fromstring(resp.text)
+
+    papers = []
+    # arXiv Atom feed namespace
+    ns = {"atom": "http://www.w3.org/2005/Atom"}
+
+    for entry in root.findall("atom:entry", ns):
+        arxiv_id = entry.findtext("atom:id", "", ns)
+        if arxiv_id:
+            arxiv_id = arxiv_id.split("/abs/")[-1]  # Extract just the ID
+
+        authors = []
+        for author in entry.findall("atom:author", ns):
+            name = author.findtext("atom:name", "", ns)
+            if name:
+                authors.append({"name": name})
+
+        published = entry.findtext("atom:published", "", ns)
+        year = None
+        if published:
+            year = int(published[:4]) if published[:4].isdigit() else None
+
+        papers.append(
+            {
+                "arxiv_id": arxiv_id,
+                "title": entry.findtext("atom:title", "", ns),
+                "authors": authors,
+                "year": year,
+                "summary": entry.findtext("atom:summary", "", ns),
+                "url": f"https://arxiv.org/abs/{arxiv_id}" if arxiv_id else None,
+            }
         )
-        resp.encoding = "utf-8"
-        root = ET.fromstring(resp.text)
 
-        papers = []
-        # arXiv Atom feed namespace
-        ns = {"atom": "http://www.w3.org/2005/Atom"}
-
-        for entry in root.findall("atom:entry", ns):
-            arxiv_id = entry.findtext("atom:id", "", ns)
-            if arxiv_id:
-                arxiv_id = arxiv_id.split("/abs/")[-1]  # Extract just the ID
-
-            authors = []
-            for author in entry.findall("atom:author", ns):
-                name = author.findtext("atom:name", "", ns)
-                if name:
-                    authors.append({"name": name})
-
-            published = entry.findtext("atom:published", "", ns)
-            year = None
-            if published:
-                year = int(published[:4])
-
-            papers.append(
-                {
-                    "arxiv_id": arxiv_id,
-                    "title": entry.findtext("atom:title", "", ns),
-                    "authors": authors,
-                    "year": year,
-                    "summary": entry.findtext("atom:summary", "", ns),
-                    "url": f"https://arxiv.org/abs/{arxiv_id}" if arxiv_id else None,
-                }
-            )
-
-        return papers
-    except Exception as e:
-        print(f"[research] arXiv search failed: {e}", file=sys.stderr)
-        return []
+    return papers
 
 
 def main() -> None:
@@ -135,12 +132,26 @@ def main() -> None:
     args = ap.parse_args()
 
     results = {}
+    errors = {}
 
     if args.source in ("semantic-scholar", "both"):
-        results["semantic_scholar"] = search_semantic_scholar(args.query, args.limit)
+        try:
+            results["semantic_scholar"] = search_semantic_scholar(args.query, args.limit)
+        except Exception as e:
+            print(f"[research] Semantic Scholar search failed: {e}", file=sys.stderr)
+            results["semantic_scholar"] = []
+            errors["semantic_scholar"] = str(e)
 
     if args.source in ("arxiv", "both"):
-        results["arxiv"] = search_arxiv(args.query, args.limit)
+        try:
+            results["arxiv"] = search_arxiv(args.query, args.limit)
+        except Exception as e:
+            print(f"[research] arXiv search failed: {e}", file=sys.stderr)
+            results["arxiv"] = []
+            errors["arxiv"] = str(e)
+
+    if errors:
+        results["errors"] = errors
 
     if args.format == "json":
         print(json.dumps(results, indent=2))
@@ -150,6 +161,16 @@ def main() -> None:
 
 def _print_markdown(results: dict, source: str) -> None:
     """Print search results in markdown format."""
+    source_display_names = {
+        "semantic_scholar": "Semantic Scholar",
+        "arxiv": "arXiv"
+    }
+
+    # Print error warnings for failed sources
+    for source_name, error_msg in results.get("errors", {}).items():
+        display_name = source_display_names.get(source_name, source_name)
+        print(f"> ⚠️ {display_name} unavailable ({error_msg}) — results below are incomplete\n")
+
     if source in ("semantic-scholar", "both") and results.get("semantic_scholar"):
         print("## Semantic Scholar Results\n")
         for paper in results["semantic_scholar"]:
