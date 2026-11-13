@@ -282,11 +282,6 @@ const server = createServer(async (req, res) => {
       reply.result(status, body)
       return
     }
-    // marvin#766: a PR this process is already merging is not started again (a retry after a dropped stream).
-    if (mergeQueue.isRunning(prUrl)) {
-      reply.result(409, alreadyMergingBody(machineId))
-      return
-    }
     // marvin#231: Approve queues the merge. The queue merges in the order it works out (stacked PRs base first, only the
     // fix while main is red), one at a time per repo. When this PR is next it runs now and this response follows it,
     // as before; otherwise the answer is its place and what it waits for, and it merges by itself when its turn comes.
@@ -434,11 +429,17 @@ const triggeredResolver = new Map() // url -> head sha the conflict resolver was
 const mergeQueue = createMergeQueue({
   store: createQueueStore(),
   load: createQueueLoader({ exec: execAsync, unbuilt: () => unbuiltCache.get(), baseOf: createBaseLookup({ exec: execAsync }) }),
-  run: async (url, attach) => {
+  run: async (url, attach, followers) => {
     attach?.ran()
     const { status, body } = await runMerge(url, { by: 'you', reply: attach?.reply || null })
     if (attach) attach.reply.result(status, body)
-    return status === 200 ? { result: body } : { body }
+    if (followers) {
+      for (const follower of followers) {
+        follower.reply.result(status, body)
+      }
+    }
+    // Return both status and body so merge_queue can answer remaining followers
+    return { status, body: status === 200 ? body : { ...body, status } }
   },
   // The merge's after-steps run in the repo's job line (stacked PRs moved onto main, the others conflict-checked):
   // the next decision waits for them, so a stacked PR is seen on main, not as an orphan.

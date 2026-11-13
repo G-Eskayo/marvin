@@ -42,6 +42,7 @@ import {
   execWithGroupTimeout,
   assertTargetsBase,
   assertNotSentBack,
+  assertOpen,
   rerunFailingTests
 } from '../webhook-server/merge.js'
 import { summarizeGateFailure } from '../webhook-server/failure.js'
@@ -1448,5 +1449,55 @@ describe('rebaseAndRetest on a branch whose base PR was squash-merged (#1183)', 
     } finally {
       rmSync(root, { recursive: true, force: true })
     }
+  })
+})
+
+describe('assertOpen', () => {
+  const PR = 'https://github.com/G-Eskayo/marvin/pull/99'
+
+  it('refuses a PR with state MERGED', async () => {
+    const exec = vi.fn().mockResolvedValue({ stdout: JSON.stringify({ state: 'MERGED' }), stderr: '' })
+    await expect(assertOpen(PR, exec)).rejects.toMatchObject({
+      payload: { code: 'ALREADY_MERGED', message: expect.stringContaining('already merged') }
+    })
+  })
+
+  it('refuses a PR with state CLOSED', async () => {
+    const exec = vi.fn().mockResolvedValue({ stdout: JSON.stringify({ state: 'CLOSED' }), stderr: '' })
+    await expect(assertOpen(PR, exec)).rejects.toMatchObject({
+      payload: { code: 'PR_CLOSED' }
+    })
+  })
+
+  it('passes through when state is OPEN', async () => {
+    const exec = vi.fn().mockResolvedValue({ stdout: JSON.stringify({ state: 'OPEN' }), stderr: '' })
+    await expect(assertOpen(PR, exec)).resolves.toBeUndefined()
+  })
+
+  it('fails open when the gh pr view call rejects', async () => {
+    const exec = vi.fn().mockRejectedValue(new Error('network error'))
+    await expect(assertOpen(PR, exec)).resolves.toBeUndefined()
+  })
+
+  it('fails open when output is garbled JSON', async () => {
+    const exec = vi.fn().mockResolvedValue({ stdout: 'not json', stderr: '' })
+    await expect(assertOpen(PR, exec)).resolves.toBeUndefined()
+  })
+
+  it('mergePr short-circuits before calling gh pr merge when a PR is already merged', async () => {
+    const exec = vi.fn(async (cmd, args) => {
+      if (args[0] === 'pr' && args[1] === 'view' && args[3] === '--json' && args[4] === 'state') {
+        return { stdout: JSON.stringify({ state: 'MERGED' }), stderr: '' }
+      }
+      if (args[0] === 'pr' && args[1] === 'view') return { stdout: JSON.stringify({ baseRefName: 'main' }), stderr: '' }
+      if (cmd === 'python') return { stdout: JSON.stringify({ clean: true, findings: [] }), stderr: '' }
+      if (args[0] === 'pr' && args[1] === 'merge') throw new Error('should not be called')
+      return { stdout: '', stderr: '' }
+    })
+    const shouldGateMerge = vi.fn().mockResolvedValue({ gate: false, headRefName: 'b', body: '' })
+    await expect(mergePr(PR, exec, noopRebuild, noopRedispatch, shouldGateMerge)).rejects.toMatchObject({
+      payload: { code: 'ALREADY_MERGED' }
+    })
+    expect(exec).not.toHaveBeenCalledWith('gh', ['pr', 'merge', PR, '--merge'])
   })
 })

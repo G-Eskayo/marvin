@@ -157,6 +157,7 @@ export function createMergeQueue({ store, load, run, afterRun = async () => {}, 
   const busy = new Set()
   const again = new Set()
   const running = new Map() // repo -> url
+  const followers = new Map() // repo -> Map(url -> attach[])
   const views = new Map() // repo -> the last decision, for GET /merge-queue
 
   async function evaluate(repo) {
@@ -188,9 +189,18 @@ export function createMergeQueue({ store, load, run, afterRun = async () => {}, 
   async function drain(repo, attach = null) {
     if (busy.has(repo)) {
       again.add(repo)
-      // The runner is merging another PR: this Approve is told its place now (one read), and the runner takes it in turn.
+      // The runner is merging another PR: if this Approve is for that same URL, join its stream (followers);
+      // otherwise tell it its place in the queue.
       if (attach) {
-        try { attach.queued((await evaluate(repo)).entries[attach.url] || null) } catch { attach.queued(null) }
+        if (attach.url === running.get(repo)) {
+          // This PR is already running: it will be answered when the run finishes
+          if (!followers.has(repo)) followers.set(repo, new Map())
+          const urlFollowers = followers.get(repo)
+          if (!urlFollowers.has(attach.url)) urlFollowers.set(attach.url, [])
+          urlFollowers.get(attach.url).push(attach)
+        } else {
+          try { attach.queued((await evaluate(repo)).entries[attach.url] || null) } catch { attach.queued(null) }
+        }
       }
       return false
     }
@@ -215,39 +225,71 @@ export function createMergeQueue({ store, load, run, afterRun = async () => {}, 
         const mine = attach && attach.url === url ? attach : null
         attach = null
         running.set(repo, url)
+        // Snapshot the followers that were waiting when this PR started running, then clear the map
+        // so new followers that arrive during the run don't get added to this snapshot
+        const urlFollowers = followers.has(repo) && followers.get(repo).has(url) ? [...followers.get(repo).get(url)] : []
+        if (followers.has(repo)) followers.get(repo).delete(url)
         log(`[merge-queue] ${repo}: merging #${prNumber(url)} (${out.order.length} queued)`)
+        let runResult
         let outcome
+        let runStatus
+        let runBody
         try {
-          outcome = await run(url, mine)
-        } catch (e) {
-          outcome = { body: { code: 'UNKNOWN', message: String(e?.message || e) } }
+          try {
+            runResult = await run(url, mine, urlFollowers)
+            // run() returns { status, body } where body is the actual outcome
+            runStatus = runResult?.status
+            runBody = runResult?.body
+            // Reconstruct the outcome in the format outcomeFor() expects:
+            // { result: ... } for merge results (has 'merged' or 'reengaged' key)
+            // { body: ... } for refusals (API and gate refusals, no result structure)
+            if (runBody && typeof runBody === 'object' && ('merged' in runBody || 'reengaged' in runBody)) {
+              outcome = { result: runBody }
+            } else {
+              outcome = { body: runBody }
+            }
+          } catch (e) {
+            runResult = { status: 500, body: { code: 'UNKNOWN', message: String(e?.message || e) } }
+            runStatus = 500
+            runBody = runResult.body
+            outcome = { body: runBody }
+          }
+          const o = outcomeFor(outcome)
+          if (o.kind === 'merged') store.merged(repo, url)
+          else if (o.kind === 'conflict') store.markConflict(repo, url, out.heads.get(url), clock())
+          else if (o.kind === 'hold') {
+            const v = views.get(repo)
+            const pr = (v?.prs || []).find((p) => p.url === url)
+            const key = holdKey(o.until, pr, v?.main)
+            const temporary = TEMPORARY_CODES.has(o.code)
+            const prev = store.forRepo(repo).items.find((i) => i.url === url)?.hold
+            const tries = temporary ? (prev?.code === o.code ? (Number(prev.tries) || 0) + 1 : 1) : null
+            if (temporary && tries >= TEMPORARY_TRIES) {
+              store.fail(repo, url, { reason: `${o.reason} (after ${tries} tries)`, code: o.code })
+              log(`[merge-queue] ${repo}: #${prNumber(url)} left the queue after ${tries} tries (${o.code}): ${o.reason}`)
+            } else {
+              const notBefore = o.until === 'later' || key == null ? (temporary ? retryAt(o.reason, clock()) : clock() + HOLD_RETRY_MS) : null
+              store.hold(repo, url, { code: o.code, until: o.until, reason: o.reason, key, notBefore, at: clock(), ...(temporary ? { tries } : {}) })
+              log(`[merge-queue] ${repo}: #${prNumber(url)} held (${o.code}${temporary ? `, try ${tries} of ${TEMPORARY_TRIES}` : ''}): ${o.reason}`)
+            }
+          }
+          else if (o.kind === 'failed') {
+            store.fail(repo, url, { reason: o.reason, code: o.code })
+            log(`[merge-queue] ${repo}: #${prNumber(url)} left the queue: ${o.reason}`)
+          } else log(`[merge-queue] ${repo}: #${prNumber(url)} conflicts (${o.code}); it stays queued, held until a new commit (the resolver's)`)
+          try { await afterRun(repo) } catch { /* the next decision reads GitHub as it is */ }
         } finally {
           running.delete(repo)
-        }
-        const o = outcomeFor(outcome)
-        if (o.kind === 'merged') store.merged(repo, url)
-        else if (o.kind === 'conflict') store.markConflict(repo, url, out.heads.get(url), clock())
-        else if (o.kind === 'hold') {
-          const v = views.get(repo)
-          const pr = (v?.prs || []).find((p) => p.url === url)
-          const key = holdKey(o.until, pr, v?.main)
-          const temporary = TEMPORARY_CODES.has(o.code)
-          const prev = store.forRepo(repo).items.find((i) => i.url === url)?.hold
-          const tries = temporary ? (prev?.code === o.code ? (Number(prev.tries) || 0) + 1 : 1) : null
-          if (temporary && tries >= TEMPORARY_TRIES) {
-            store.fail(repo, url, { reason: `${o.reason} (after ${tries} tries)`, code: o.code })
-            log(`[merge-queue] ${repo}: #${prNumber(url)} left the queue after ${tries} tries (${o.code}): ${o.reason}`)
-          } else {
-            const notBefore = o.until === 'later' || key == null ? (temporary ? retryAt(o.reason, clock()) : clock() + HOLD_RETRY_MS) : null
-            store.hold(repo, url, { code: o.code, until: o.until, reason: o.reason, key, notBefore, at: clock(), ...(temporary ? { tries } : {}) })
-            log(`[merge-queue] ${repo}: #${prNumber(url)} held (${o.code}${temporary ? `, try ${tries} of ${TEMPORARY_TRIES}` : ''}): ${o.reason}`)
+          // New followers that arrived while the run was happening (after we cleared the map entry) are in a fresh entry.
+          // Answer them now; the initial followers (the snapshot we passed to run()) were already answered by run().
+          const newFollowers = followers.get(repo)?.get(url) || []
+          if (followers.has(repo)) followers.get(repo).delete(url)
+          if (newFollowers.length && runStatus !== undefined && runBody !== undefined) {
+            for (const follower of newFollowers) {
+              try { follower.reply.result(runStatus, runBody) } catch { /* answering never breaks the queue */ }
+            }
           }
         }
-        else if (o.kind === 'failed') {
-          store.fail(repo, url, { reason: o.reason, code: o.code })
-          log(`[merge-queue] ${repo}: #${prNumber(url)} left the queue: ${o.reason}`)
-        } else log(`[merge-queue] ${repo}: #${prNumber(url)} conflicts (${o.code}); it stays queued, held until a new commit (the resolver's)`)
-        try { await afterRun(repo) } catch { /* the next decision reads GitHub as it is */ }
       }
     } finally {
       busy.delete(repo)

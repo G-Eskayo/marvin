@@ -2,7 +2,7 @@ import { describe, it, expect, vi } from 'vitest'
 import { snapshotExec, SNAPSHOT_FIELDS } from '../webhook-server/pr_snapshot.js'
 
 const URL = 'https://github.com/G-Eskayo/marvin/pull/569'
-const PR = { baseRefName: 'main', body: 'Closes #560', isDraft: false, files: [{ path: 'a.js' }], headRefName: 'feat/x', statusCheckRollup: [{ __typename: 'CheckRun', name: 'ci', status: 'COMPLETED', conclusion: 'SUCCESS' }] }
+const PR = { baseRefName: 'main', body: 'Closes #560', isDraft: false, files: [{ path: 'a.js' }], headRefName: 'feat/x', statusCheckRollup: [{ __typename: 'CheckRun', name: 'ci', status: 'COMPLETED', conclusion: 'SUCCESS' }], state: 'OPEN' }
 
 function fakeExec(pr = PR, { fail = false } = {}) {
   return vi.fn(async (cmd, args) => {
@@ -75,7 +75,7 @@ describe('snapshotExec: the approve preflight reads the PR once', () => {
     const wrapped = snapshotExec(URL, exec)
     await wrapped('gh', view('body', 'https://github.com/G-Eskayo/marvin/pull/1'))
     await wrapped('gh', ['pr', 'view', URL, '--json', 'files', '--jq', '.files[].path'])
-    await wrapped('gh', view('state'))
+    await wrapped('gh', view('mergeable'))
     expect(exec).toHaveBeenCalledTimes(3)
     expect(exec.mock.calls.every((c) => !String(c[1][4]).includes('isDraft'))).toBe(true)
   })

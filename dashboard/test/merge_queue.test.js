@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeEach, afterEach } from 'vitest'
+import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest'
 import { mkdtempSync, rmSync, readFileSync, writeFileSync } from 'fs'
 import { tmpdir } from 'os'
 import path from 'path'
@@ -38,7 +38,17 @@ function world(prs, { issues = [] } = {}) {
       w.merged.push(n)
       w.pendingRetarget = head
     }
-    return out
+    // Convert outcome to run() return format: { status, body }
+    let status = 200
+    let body = {}
+    if (out.result) {
+      body = out.result
+      status = out.result.merged === true ? 200 : 400
+    } else if (out.body) {
+      body = out.body
+      status = out.body.status || 400
+    }
+    return { status, body }
   }
   // What post_merge_rebase.js does after a merge, in the repo's job line: stacked PRs move onto main.
   w.afterRun = async () => {
@@ -548,5 +558,94 @@ describe('a conflict held too long is told once (#1183)', () => {
     now += DAY + 1
     await queue.approve(REPO, url(2))
     expect(w.merged).toEqual([2])
+  })
+})
+
+describe('followers: a second Approve for a PR already merging gets answered', () => {
+  it('a second Approve while the first is merging is answered with the merge result', async () => {
+    const w = world([{ number: 100 }])
+    const followerAnswered = []
+    const { queue } = make(w, {
+      run: async (u, attach, followers) => {
+        // Answer attach if present
+        if (attach) attach.reply.result(200, { merged: true })
+        // Answer followers
+        for (const f of followers) f.reply.result(200, { merged: true })
+        // Simulate followers joining while we run
+        await new Promise((r) => setTimeout(r, 5))
+        return { status: 200, body: { merged: true } }
+      }
+    })
+    const first = queue.approve(REPO, url(100), { attach: { url: url(100), ran: () => {}, reply: { result: () => {} } } })
+    await new Promise((r) => setTimeout(r, 1))
+    const second = queue.approve(REPO, url(100), { attach: { url: url(100), ran: () => {}, reply: { result: (s) => { followerAnswered.push(s) } } } })
+    await Promise.all([first, second])
+    expect(followerAnswered).toContain(200)
+  })
+
+  it('a follower that joins while the run is happening is answered with the result', async () => {
+    const w = world([{ number: 101 }])
+    const followerAnswered = []
+    const runCalled = []
+    const { queue } = make(w, {
+      run: async (u, attach, followers) => {
+        runCalled.push({ attach: !!attach, followerCount: followers.length })
+        if (attach) attach.reply.result(200, { merged: true })
+        for (const f of followers) f.reply.result(200, { merged: true })
+        await new Promise((r) => setTimeout(r, 5))
+        return { status: 200, body: { merged: true } }
+      }
+    })
+    queue.approve(REPO, url(101), { attach: { url: url(101), ran: () => {}, reply: { result: (s) => {} } } })
+    await new Promise((r) => setTimeout(r, 1))
+    queue.approve(REPO, url(101), { attach: { url: url(101), ran: () => {}, reply: { result: (s) => { followerAnswered.push(s) } } } })
+    await new Promise((r) => setTimeout(r, 20))
+    expect(followerAnswered).toContainEqual(200)
+    expect(runCalled[0]).toMatchObject({ attach: true, followerCount: 0 })
+  })
+
+  it('multiple followers joining during a run all get answered', async () => {
+    const w = world([{ number: 102 }])
+    const answered = []
+    const { queue } = make(w, {
+      run: async (u, attach, followers) => {
+        if (attach) attach.reply.result(200, { merged: true })
+        for (const f of followers) f.reply.result(200, { merged: true })
+        await new Promise((r) => setTimeout(r, 10))
+        return { status: 200, body: { merged: true } }
+      }
+    })
+    queue.approve(REPO, url(102), { attach: { url: url(102), ran: () => {}, reply: { result: (s) => { answered.push(['first', s]) } } } })
+    await new Promise((r) => setTimeout(r, 1))
+    queue.approve(REPO, url(102), { attach: { url: url(102), ran: () => {}, reply: { result: (s) => { answered.push(['second', s]) } } } })
+    await new Promise((r) => setTimeout(r, 1))
+    queue.approve(REPO, url(102), { attach: { url: url(102), ran: () => {}, reply: { result: (s) => { answered.push(['third', s]) } } } })
+    await new Promise((r) => setTimeout(r, 20))
+    expect(answered.filter((a) => a[1] === 200)).toHaveLength(3)
+  })
+
+  it('followers are cleared from the map after being answered', async () => {
+    const w = world([{ number: 103 }, { number: 104 }])
+    const followerData = []
+    const { queue } = make(w, {
+      run: async (u, attach, followers) => {
+        followerData.push({ url: u.split('/').pop(), followerCount: followers.length })
+        if (attach) attach.reply.result(200, { merged: true })
+        for (const f of followers) f.reply.result(200, { merged: true })
+        await new Promise((r) => setTimeout(r, 5))
+        return { status: 200, body: { merged: true } }
+      }
+    })
+    queue.approve(REPO, url(103), { attach: { url: url(103), ran: () => {}, reply: { result: () => {} } } })
+    await new Promise((r) => setTimeout(r, 1))
+    queue.approve(REPO, url(103), { attach: { url: url(103), ran: () => {}, reply: { result: () => {} } } })
+    await new Promise((r) => setTimeout(r, 15))
+    // Now 104 should run with no lingering followers from 103
+    queue.approve(REPO, url(104), { attach: { url: url(104), ran: () => {}, reply: { result: () => {} } } })
+    await new Promise((r) => setTimeout(r, 15))
+    expect(followerData).toEqual([
+      { url: '103', followerCount: 0 },
+      { url: '104', followerCount: 0 }
+    ])
   })
 })

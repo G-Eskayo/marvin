@@ -767,6 +767,29 @@ export async function assertNotSentBack(prUrl, exec) {
   }
 }
 
+// A merged PR or closed PR cannot be merged again. The state check rides the preflight snapshot (pr_snapshot.js),
+// saving a separate read. A lookup hiccup never blocks: the merge itself would then fail loudly on its own,
+// same policy as assertTargetsBase.
+export async function assertOpen(prUrl, exec) {
+  let state
+  try {
+    const { stdout } = await exec('gh', ['pr', 'view', prUrl, '--json', 'state'])
+    state = JSON.parse(stdout).state
+  } catch {
+    return
+  }
+  if (state === 'MERGED') {
+    throw new MergeFailure(refusal('ALREADY_MERGED', 'request',
+      'this PR is already merged',
+      'Nothing to do — the work is on main. The PR was not sent back or changed.'))
+  }
+  if (state === 'CLOSED') {
+    throw new MergeFailure(refusal('PR_CLOSED', 'request',
+      'this PR is closed',
+      'Reopen it on GitHub, then approve again. The PR was not sent back or changed.'))
+  }
+}
+
 // Only a human's Approve reaches mergePr (dashboard and phone), so that click is the "ready" decision for a draft.
 // Before this, a draft ran the whole rebase-and-retest gate and then failed at merge with "Pull Request is still
 // a draft", reported as UNKNOWN (clarity-captions #77/#78, 2026-10-09). Mark it ready first, say so on the PR, and
@@ -874,6 +897,7 @@ async function mergePrUnqueued(
   const repo = repoFromPrUrl(prUrl)
   const ctx = repo && repo !== MARVIN_REPO ? await gateContext(repo, exec) : null
 
+  await assertOpen(prUrl, exec)
   await assertTargetsBase(prUrl, exec, ctx ? ctx.base : 'main')
   await assertNotSentBack(prUrl, exec)
   const draftWasMarkedReady = await readyIfDraft(prUrl, exec)
