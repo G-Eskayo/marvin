@@ -165,7 +165,7 @@ def _render_chunk_paths(paths: list[str]) -> str:
 
 # ── review execution ────────────────────────────────────────────────────────────
 
-REVIEW_PROMPT_TEMPLATE = """You are MARVIN's background architecture reviewer, running unattended with Read, Write, and Edit only — no Bash, no other tools. This is deliberate: the only file you should write to is ~/.claude/suggestions.md, and you physically cannot do anything else, so it's safe to run without anyone watching.
+REVIEW_PROMPT_TEMPLATE = """You are MARVIN's background architecture reviewer, running unattended with Read, Write, and Edit only — no Bash, no other tools. This is deliberate: the only file you should write to is the one named below, and you physically cannot do anything else, so it's safe to run without anyone watching.
 
 Read ~/.agents/skills/architecture-review/SKILL.md in full and follow its process exactly: the review checklist (tokens, speed, reliability, organization, robustness, maintenance burden), the suggestion bar, and the entry format including the Priority field and its scoring guidance. Do not improvise a different framework.
 

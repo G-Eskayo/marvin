@@ -362,6 +362,7 @@ def test_inbox_mode_the_reviewer_writes_a_staging_file_that_is_added_to_the_inbo
     assert not bar.STAGING_FILE.exists()
     assert len(calls) == 1  # no sort_suggestions subprocess in inbox mode
     assert str(bar.STAGING_FILE) in prompts[0] and "Append your findings to ~/.claude/suggestions.md" not in prompts[0]
+    assert "only file you should write to is ~/.claude/suggestions.md" not in prompts[0]
     assert "## Old idea" in bar.SNAPSHOT_FILE.read_text()  # the reviewer can read what's already there
     assert "1 new suggestion(s) added" in bar.LOG_FILE.read_text()
     assert bar.LOCK_FILE.exists()
@@ -414,3 +415,44 @@ def test_sort_suggestions_still_sorts_before_the_import(tmp_path, monkeypatch):
     md.write_text("# S\n\n" + EXISTING + "\n" + NEW)
     monkeypatch.setattr(ss, "SUGGESTIONS_FILE", md)
     assert ss.sort_suggestions() == 2 and md.read_text().index("## New idea") < md.read_text().index("## Old idea")
+
+
+def test_legacy_mode_prompt_names_suggestions_md_via_destination_block(tmp_path, monkeypatch):
+    # When the inbox does not exist (legacy mode), the prompt should reference
+    # suggestions.md only via the MD_DESTINATION block, not in the hardcoded opening sentence.
+    claude = tmp_path / ".claude"
+    claude.mkdir()
+    md = claude / "suggestions.md"
+    md.write_text(EXISTING)
+    state = tmp_path / "state"
+    monkeypatch.setattr(bar, "STATE_DIR", state)
+    monkeypatch.setattr(bar, "CURSOR_FILE", state / "chunk-cursor.json")
+    monkeypatch.setattr(bar, "LOCK_FILE", state / ".last-run")
+    monkeypatch.setattr(bar, "LOG_FILE", state / "background-review.log")
+    monkeypatch.setattr(bar, "SUGGESTIONS_FILE", md)
+    monkeypatch.setattr(bar, "SNAPSHOT_FILE", state / "suggestions-now.md")
+    monkeypatch.setattr(bar, "STAGING_FILE", state / "new-suggestions.md")
+    monkeypatch.setattr(inbox, "default_root", lambda: tmp_path / "nonexistent-inbox")
+    monkeypatch.setattr(bar, "_resolve_claude_bin", lambda: "/usr/bin/true")
+
+    calls, prompts = _fake_claude(monkeypatch, rc=0)
+    bar.run_review({"name": "handoffs", "paths": []}, "test reason", False)
+
+    assert "Append your findings to ~/.claude/suggestions.md" in prompts[0]
+    assert "only file you should write to is ~/.claude/suggestions.md" not in prompts[0]
+    assert "only file you should write to is the one named below" in prompts[0]
+
+
+def test_inbox_mode_staging_file_path_with_spaces_is_named_correctly_in_prompt(piled, monkeypatch, tmp_path):
+    # When the staging file path contains spaces, it should be correctly included
+    # in the rendered prompt without breaking the formatting.
+    state_with_spaces = tmp_path / "state dir with spaces"
+    state_with_spaces.mkdir()
+    staging_with_spaces = state_with_spaces / "new-suggestions with spaces.md"
+    monkeypatch.setattr(bar, "STAGING_FILE", staging_with_spaces)
+
+    calls, prompts = _fake_claude(monkeypatch, write=lambda: staging_with_spaces.write_text(NEW))
+    bar.run_review({"name": "handoffs", "paths": []}, "test reason", False)
+
+    assert str(staging_with_spaces) in prompts[0]
+    assert "New idea" in [i["title"] for i in inbox.list_items("suggestions")["items"]]
