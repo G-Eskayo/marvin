@@ -1,5 +1,7 @@
 # Changelog
 
+- Fix non-additive diff skip and destructive quarantine revert in background_review.py ([#1329](https://github.com/G-Eskayo/marvin/pull/1329))
+
 - source_monitor.py fetches arXiv over plain HTTP into an unattended digest prompt ([#1328](https://github.com/G-Eskayo/marvin/pull/1328))
 
 - continuity_checker.py: say per seed why it found no pairs, and fix SKILL.md's seeds-json key ([#1327](https://github.com/G-Eskayo/marvin/pull/1327))
