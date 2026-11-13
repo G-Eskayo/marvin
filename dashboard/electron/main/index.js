@@ -39,6 +39,7 @@ import { sendBackForOptions } from './decisions_submit.js'
 import { createLocalFirst, coalesce, createIssueReader, createRepoHeadCheck } from './local_first.js'
 import { createMrActions } from './mr_actions.js'
 import { createInstanceHandlers } from './instance.js'
+import { startCpuSampler } from './cpu_sampler.js'
 
 const mergeOps = createMergeOps()
 // marvin#568: every change to a merge op is pushed to the renderer (the card subscribes; it reads once on mount).
@@ -1370,6 +1371,8 @@ app.whenReady().then(() => {
   registerDocsHandlers()
   registerActivityHandlers()
   const showWindows = registerShowHandlers()
+  const cpuSampler = startCpuSampler({ interval: 5000 })
+  cpuSampler.start()
   createWindow()
 
   // Local state: watch where it's stored, so every writer (Python, Node, any chat) is covered.

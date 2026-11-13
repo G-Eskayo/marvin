@@ -33,6 +33,7 @@ export const ALLOWLIST = {
   'electron/main/boards.js': { ttl: [2, 'cache bounds: cross-project 30 min safety net cleared by change pings (#318); evidence 5 min'] },
   'electron/main/chat_helpers.js': { ttl: [1, 'read-through cache bound (10 s) on the other Mac\'s GET /helpers; no timer'] },
   'electron/main/chat_tabs.js': { ttl: [1, 'read-through cache bound (10 s) on the other Mac\'s GET /chats (marvin#1064); no timer'] },
+  'electron/main/cpu_sampler.js': { interval: [1, '5 s hardware profiling sampler for mac-mini-2012 idle-CPU diagnosis; no event source for metrics'] },
   'electron/main/devices.js': { ttl: [1, 'read-through cache bound (8 s) on an ssh round-trip; no timer, never triggers a read'] },
   'electron/main/github_state.js': { ttl: [1, 'the cache itself: its 30-min safety lifetime (#557 removed the ttlFor hook)'] },
   'electron/main/index.js': { interval: [1, `starts ${CHECK_WATCH}`] },

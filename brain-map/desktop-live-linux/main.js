@@ -9,6 +9,7 @@ const os = require('os')
 const path = require('path')
 const { execFile, execFileSync } = require('child_process')
 const h = require('./host.js')
+const { startCpuSampler } = require('./cpu_sampler.js')
 
 const BRAIN = path.resolve(__dirname, '..')
 const PAGE = path.join(BRAIN, 'index.html')
@@ -150,8 +151,10 @@ function checkStall() {
 
 if (!app.requestSingleInstanceLock()) app.exit(0)   // one wallpaper per session; a second launch just leaves
 app.disableHardwareAcceleration()   // Ivy Bridge GPU: software canvas is steadier for a 24 fps ambient view
+const cpuSampler = startCpuSampler({ interval: 5000 })
 app.whenReady().then(() => {
   log('start', PAGE)
+  cpuSampler.start()
   activityLast = h.linesAfter(read(ACTIVITY), null, true).last
   demoCount = lineCount(DEMO)
   try { lastTreeMtime = fs.statSync(TREE).mtimeMs } catch { /* first generate.py run creates it */ }
