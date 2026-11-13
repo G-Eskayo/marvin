@@ -61,11 +61,12 @@ Other skills query the KB inline to enrich their output:
 
 ```python
 import subprocess, json
+from pathlib import Path
 result = subprocess.run(
-    ["~/.agents/venv/bin/python",
-     "~/.agents/skills/qa-agent/scripts/qa_query.py",
+    [str(Path.home() / ".agents/venv/bin/python"),
+     str(Path.home() / ".agents/skills/qa-agent/scripts/qa_query.py"),
      "topic", "--json"],
-    capture_output=True, text=True
+    capture_output=True, text=True, check=True
 )
 entries = json.loads(result.stdout)
 ```
