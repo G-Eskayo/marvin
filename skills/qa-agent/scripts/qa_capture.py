@@ -142,8 +142,7 @@ def main() -> None:
     ap.add_argument("--outcome",       default="",
                     help="what happened when this was applied (free text)")
     ap.add_argument("--pattern-type",  default="",
-                    help="mechanism type: idempotent|caching|context-injection|cost-optimization|"
-                         "error-handling|runtime-config|schema|pipeline|routing|api-integration|data-pattern")
+                    help="mechanism type: " + "|".join(_PATTERN_TYPE_KEYWORDS))
     args = ap.parse_args()
 
     entry = build_entry(

@@ -247,3 +247,139 @@ def test_test_class_method_not_flagged_as_static_candidate():
     p = make_project({"main.py": src})
     issues = analyze_python_file(p / "main.py")
     assert not any(i["kind"] == "oop" for i in issues)
+
+
+# ── Documentation and path robustness ─────────────────────────────────────────
+
+def extract_fenced_block(markdown_text: str, section_header: str) -> str:
+    """Extract the first ```python...``` block from a markdown section.
+
+    Raises ValueError if the section header is not found.
+    """
+    lines = markdown_text.split('\n')
+    header_idx = None
+    for i, line in enumerate(lines):
+        if section_header in line:
+            header_idx = i
+            break
+
+    if header_idx is None:
+        raise ValueError(f"Section '{section_header}' not found")
+
+    in_block = False
+    block_lines = []
+    for line in lines[header_idx:]:
+        if line.strip().startswith("```python"):
+            in_block = True
+            continue
+        if in_block and line.strip().startswith("```"):
+            break
+        if in_block:
+            block_lines.append(line)
+
+    if not block_lines:
+        raise ValueError(f"No fenced code block found after '{section_header}'")
+
+    return '\n'.join(block_lines)
+
+
+def test_sub_agent_snippet_no_tilde_and_check_true():
+    """Sub-agent usage snippet must use Path.home(), not ~/..., and check=True."""
+    skill_path = Path(__file__).resolve().parents[2] / "SKILL.md"
+    markdown = skill_path.read_text()
+    snippet = extract_fenced_block(markdown, "## Sub-agent usage")
+
+    assert "~/" not in snippet, "Snippet contains hardcoded ~/ path"
+    assert "check=True" in snippet, "Snippet missing check=True"
+
+
+def test_sub_agent_snippet_extraction_fails_loudly_if_section_missing():
+    """Helper must raise if section header is missing or misspelled."""
+    with pytest.raises(ValueError, match="not found"):
+        extract_fenced_block("no such section here", "## Sub-agent usage")
+
+
+def test_pattern_type_help_lists_every_keyword():
+    """qa_capture.py --help must list every key from _PATTERN_TYPE_KEYWORDS."""
+    import re
+    script = SCRIPTS / "qa_capture.py"
+    result = __import__("subprocess").run(
+        [sys.executable, str(script), "--help"],
+        capture_output=True, text=True
+    )
+    # Find the mechanism type line by looking for "mechanism type:" and capturing until the end
+    lines = result.stdout.split('\n')
+    mechanism_line = None
+    for i, line in enumerate(lines):
+        if 'mechanism type:' in line:
+            # Capture this line and all subsequent indented lines (continuation)
+            mechanism_line = line.split('mechanism type:')[1]
+            i += 1
+            while i < len(lines) and lines[i] and not lines[i][0].isalpha():
+                mechanism_line += ' ' + lines[i].strip()
+                i += 1
+            break
+
+    if not mechanism_line:
+        raise AssertionError("Could not find 'mechanism type:' in help output")
+
+    # Import the keywords to check against
+    from qa_capture import _PATTERN_TYPE_KEYWORDS
+    for key in _PATTERN_TYPE_KEYWORDS:
+        # Create a regex pattern that matches the key even if wrapped with whitespace
+        # e.g., "context-injection" matches "context-\n                        injection"
+        pattern = re.sub(r'-', r'-\\s*', re.escape(key))
+        if not re.search(pattern, mechanism_line):
+            raise AssertionError(f"Pattern type '{key}' not found in mechanism type help")
+
+
+def test_sub_agent_snippet_imports_path():
+    """Sub-agent usage snippet must import Path from pathlib."""
+    skill_path = Path(__file__).resolve().parents[2] / "SKILL.md"
+    markdown = skill_path.read_text()
+    snippet = extract_fenced_block(markdown, "## Sub-agent usage")
+
+    assert "from pathlib import Path" in snippet, "Snippet must import Path from pathlib"
+
+
+def test_sub_agent_snippet_with_check_true_raises_on_failure():
+    """Extracted sub-agent snippet code must raise when qa_query fails, due to check=True."""
+    import subprocess
+    import json
+
+    # Extract the actual snippet from SKILL.md
+    skill_path = Path(__file__).resolve().parents[2] / "SKILL.md"
+    markdown = skill_path.read_text()
+    snippet = extract_fenced_block(markdown, "## Sub-agent usage")
+
+    # Create a modified version that triggers qa_query failure with an invalid flag
+    # This test verifies the snippet will raise CalledProcessError because of check=True
+    modified_snippet = snippet.replace(
+        '"topic"',  # Replace the query topic
+        '"--invalid-flag"'  # with an invalid flag to make qa_query.py exit non-zero
+    )
+
+    # Verify the replacement actually happened
+    assert modified_snippet != snippet, "Topic replacement failed — snippet unchanged"
+
+    # Point paths at the repo copy, not the deployed version
+    modified_snippet = modified_snippet.replace(
+        'str(Path.home() / ".agents/venv/bin/python")',
+        'sys.executable'
+    )
+    modified_snippet = modified_snippet.replace(
+        'str(Path.home() / ".agents/skills/qa-agent/scripts/qa_query.py")',
+        f'str(SCRIPTS / "qa_query.py")'
+    )
+
+    # Execute the modified snippet in a local scope with the necessary imports
+    local_scope = {}
+    with pytest.raises(subprocess.CalledProcessError):
+        exec(modified_snippet, {
+            "subprocess": subprocess,
+            "json": json,
+            "Path": Path,
+            "sys": sys,
+            "SCRIPTS": SCRIPTS,
+        })
+

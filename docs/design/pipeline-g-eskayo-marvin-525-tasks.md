@@ -1,0 +1,5 @@
+1. Add the 5 tests above to `skills/qa-agent/scripts/tests/test_qa.py` (test-local extraction helper, no production code changes yet) — confirm they fail against current code.
+2. Fix `skills/qa-agent/SKILL.md` lines 62–70: add `from pathlib import Path` inside the snippet, replace the two `"~/..."` strings with `str(Path.home() / ".agents/venv/bin/python")` and `str(Path.home() / ".agents/skills/qa-agent/scripts/qa_query.py")`, add `check=True` to the `subprocess.run` call.
+3. Fix `skills/qa-agent/scripts/qa_capture.py` line 144–146: replace the hardcoded `--pattern-type` help string with `"mechanism type: " + "|".join(_PATTERN_TYPE_KEYWORDS)`.
+4. Run `~/.agents/venv/bin/python -m pytest skills/qa-agent/scripts/tests/test_qa.py -v` — confirm all tests (existing + new) pass.
+5. `marvin-show` the diff to Gil before opening the PR.
