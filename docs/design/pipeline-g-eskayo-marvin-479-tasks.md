@@ -1,0 +1,5 @@
+1. In `sort_suggestions.py`, add `_looks_merged(block: str) -> bool`: returns `True` if `re.findall(r"^\*\*Added\*\*:", block, re.MULTILINE)` has more than one match, or the same for `^\*\*Priority\*\*:`.
+2. In `sort_suggestions()`, right after `preamble, blocks = _split_entries(text)` (and before `blocks.sort(...)`, since sort order must stay byte-identical), loop over `blocks` in their original order; for each where `_looks_merged(block)` is true, extract the title via `HEADER_RE.match(block)` and print `[sort-suggestions] warning: entry '<title>' looks merged with a neighbour (missing '## ' header?)` to `sys.stderr`.
+3. Write tests 1–10 above in `skills/architecture-review/scripts/tests/test_sort_suggestions.py`, alongside the existing `test_missing_priority_field_sorts_below_every_real_priority` (don't touch that test).
+4. Run the test file and confirm all pass, including the pre-existing #480 test (regression check).
+5. Do **not** touch `~/.claude/suggestions.md` — the issue marks that data fix as "done by hand in triage," outside this repo change, and it's outside the sandboxed home-dir write path anyway.

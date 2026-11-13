@@ -33,6 +33,7 @@ PRIORITY_RE = re.compile(r"^\*\*Priority\*\*:\s*(\d+)", re.MULTILINE)
 IMPACT_RE = re.compile(r"^\*\*Impact\*\*:\s*(\S+)", re.MULTILINE)
 EFFORT_RE = re.compile(r"^\*\*Effort\*\*:\s*(\S+)", re.MULTILINE)
 STATUS_RE = re.compile(r"^\*\*Status\*\*:\s*(\S+)", re.MULTILINE)
+ADDED_RE = re.compile(r"^\*\*Added\*\*:", re.MULTILINE)
 
 DEFAULT_HEADER = (
     "# Suggestions\n\n"
@@ -40,6 +41,14 @@ DEFAULT_HEADER = (
     "and `audit`. Highest priority first — kept sorted by `sort_suggestions.py`, not insertion order.\n"
     "Check every session (CLAUDE.md session-start step 2); never implement without explicit approval.\n"
 )
+
+
+def _looks_merged(block: str) -> bool:
+    """Returns True if the block appears to be merged with a neighbor, indicated by
+    multiple **Added**: or **Priority**: fields that should each appear only once."""
+    added_matches = re.findall(r"^\*\*Added\*\*:", block, re.MULTILINE)
+    priority_matches = re.findall(r"^\*\*Priority\*\*:", block, re.MULTILINE)
+    return len(added_matches) > 1 or len(priority_matches) > 1
 
 
 def _split_entries(text: str) -> tuple[str, list[str]]:
@@ -83,6 +92,13 @@ def sort_suggestions() -> int:
     preamble, blocks = _split_entries(text)
     if not preamble.strip():
         preamble = DEFAULT_HEADER
+
+    for block in blocks:
+        if _looks_merged(block):
+            header_match = HEADER_RE.match(block)
+            title = header_match.group(1) if header_match else "<unknown>"
+            print(f"[sort-suggestions] warning: entry '{title}' looks merged with a neighbour (missing '## ' header?)",
+                  file=sys.stderr)
 
     blocks.sort(key=_sort_key)
 
