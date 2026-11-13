@@ -1,0 +1,5 @@
+1. Edit `skills/research-colony/scripts/source_monitor.py` line 21: change `http://export.arxiv.org/api/query` to `https://export.arxiv.org/api/query`.
+2. Create `skills/research-colony/scripts/tests/test_source_monitor.py` with the 5 tests above, run them, confirm all fail against the pre-fix code and pass after the fix (red-green per `tdd` default).
+3. Run the full `skills/research-colony/scripts/tests/` suite (plus `skills/research/scripts/tests/test_academic_search.py`, since it touches the same host) to confirm no regression.
+4. Manually run `fetch_arxiv()` once by hand (e.g. `python3 -c "import source_monitor; print(len(source_monitor.fetch_arxiv()))"` from the script dir with `lib/` on `sys.path`) against the real network; note the returned item count in the PR description. If a TLS reset occurs against this host (per `paper_graph.py`'s noted flakiness), retry by hand — do not add an http fallback.
+5. Open the PR naming issue #553 ("Closes #553"), including the manual-run item count from step 4.
