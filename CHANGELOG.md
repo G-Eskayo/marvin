@@ -1,5 +1,7 @@
 # Changelog
 
+- Write improve-codebase-architecture's HTML report to ~/.claude/outbox/ under a distinct name, not $TMPDIR as… ([#1324](https://github.com/G-Eskayo/marvin/pull/1324))
+
 - paper-dive/SKILL.md: /pull-related promises contradicting papers and a scihub source the script never provides ([#1323](https://github.com/G-Eskayo/marvin/pull/1323))
 
 - Digest merge saves a failed claude call as the day's merged digest on both Macs and never retries ([#1320](https://github.com/G-Eskayo/marvin/pull/1320))
