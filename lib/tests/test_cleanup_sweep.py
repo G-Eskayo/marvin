@@ -429,8 +429,8 @@ def test_drop_build_output_refuses_paths_outside_the_worktree(tmp_path):
 STOCK = {"iPhone 17 Pro", "iPhone 17", "iPad Pro 13-inch (M5)", "iPad (A16)"}
 
 
-def _sim(name, state="Shutdown", udid=None):
-    return {"name": name, "udid": udid or f"U-{name}", "state": state}
+def _sim(name, state="Shutdown", udid=None, data_path=None):
+    return {"name": name, "udid": udid or f"U-{name}", "state": state, "data_path": data_path or ""}
 
 
 def test_a_simulator_named_for_a_merged_ticket_is_removed_even_while_booted():
@@ -499,6 +499,75 @@ def test_ticket_open_checks_every_project_and_counts_open_anywhere_as_open(monke
 def test_a_number_that_is_not_an_issue_in_any_project_counts_as_open():
     """No such ticket anywhere: the name only looks like a ticket, so leave it for a person."""
     assert cs._ticket_open_anywhere(9999, repos=["G-Eskayo/a"], issue_state=lambda r, n: None) is True
+
+
+def test_a_booted_capture_simulator_is_never_pruned_by_age(tmp_path):
+    # Test 5: booted CAPTURE_SIM_RE devices should never be pruned, even if older than 14 days.
+    def last_used(sim):
+        return 30  # 30 days old
+    action, _ = cs.decide_simulator(_sim("marvin-abcd1234", "Booted", data_path=str(tmp_path)), STOCK,
+                                     ticket_open=lambda n: True, last_used=lambda s: last_used(s))
+    assert action == "keep", "booted simulator should always be kept"
+
+
+def test_capture_simulators_unused_14_days_are_deleted(tmp_path):
+    # Test 6: CAPTURE_SIM_RE simulators unused 14+ days should be removed; < 14 days should be kept.
+    def make_last_used(days):
+        return lambda sim: days
+    # At 13 days: keep
+    action_13, _ = cs.decide_simulator(_sim("marvin-abcd1234", data_path=str(tmp_path)), STOCK,
+                                        ticket_open=lambda n: False, last_used=make_last_used(13))
+    assert action_13 == "keep", "simulator unused 13 days should be kept"
+    # At 14 days: remove
+    action_14, _ = cs.decide_simulator(_sim("marvin-abed5678", data_path=str(tmp_path)), STOCK,
+                                        ticket_open=lambda n: False, last_used=make_last_used(14))
+    assert action_14 == "remove", "simulator unused 14 days should be removed"
+    # At 15 days: remove
+    action_15, _ = cs.decide_simulator(_sim("marvin-babe0012", data_path=str(tmp_path)), STOCK,
+                                        ticket_open=lambda n: False, last_used=make_last_used(15))
+    assert action_15 == "remove", "simulator unused 15 days should be removed"
+
+
+def test_running_simulator_sweep_twice_is_idempotent(tmp_path):
+    # Test 7: a second sweep should find nothing to remove.
+    sims = [_sim("marvin-abcd1234", data_path=str(tmp_path / "sim1")),
+            _sim("Seal-118", data_path=str(tmp_path / "sim2"))]
+    deleted_count = [0]
+    def delete_sim(s):
+        deleted_count[0] += 1
+        return True
+    def make_last_used(days):
+        return lambda sim: days
+    # First sweep removes the old capture sim.
+    out1 = cs.sweep_simulators(list_simulators=lambda: [s.copy() for s in sims],
+                                stock_names=lambda: STOCK,
+                                ticket_open=lambda n: n == 118,  # Seal-118 is open
+                                delete_simulator=delete_sim,
+                                last_used=make_last_used(30))  # both 30 days old
+    assert len(out1["removed"]) == 1 and out1["removed"][0]["name"] == "marvin-abcd1234"
+    assert deleted_count[0] == 1
+    # Second sweep on same state should find nothing to remove (no simulators left to review).
+    deleted_count[0] = 0
+    out2 = cs.sweep_simulators(list_simulators=lambda: [_sim("Seal-118", data_path=str(tmp_path / "sim2"))],
+                                stock_names=lambda: STOCK,
+                                ticket_open=lambda n: n == 118,
+                                delete_simulator=delete_sim,
+                                last_used=make_last_used(30))
+    assert out2["removed"] == [] and deleted_count[0] == 0
+
+
+def test_xcode_stock_simulator_and_unrecognized_names_are_not_affected_by_age(tmp_path):
+    # Test 8: the age-based rule only applies to CAPTURE_SIM_RE simulators; stock and unrecognized names are unaffected.
+    def make_last_used(days):
+        return lambda sim: days
+    # Stock iPhone should always be kept, even if 30 days old.
+    action_stock, _ = cs.decide_simulator(_sim("iPhone 17 Pro", data_path=str(tmp_path)), STOCK,
+                                           ticket_open=lambda n: False, last_used=make_last_used(30))
+    assert action_stock == "keep", "stock device should always be kept"
+    # Unrecognized name should go to review, not be deleted by age.
+    action_unknown, _ = cs.decide_simulator(_sim("My Device", data_path=str(tmp_path)), STOCK,
+                                             ticket_open=lambda n: False, last_used=make_last_used(30))
+    assert action_unknown == "review", "unrecognized device should be flagged for review, not auto-deleted"
 
 
 def test_the_nightly_outcome_check_also_runs_ticket_promotion_on_the_mini(monkeypatch):

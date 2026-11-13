@@ -1159,7 +1159,7 @@ nothing connected them. "Where things are" was only the tidy agent's file-filing
 
 The ticket executor (`sandbox_orchestration` + `run_ticket`) was written for marvin: marvin's checkout,
 pytest + vitest, a dashboard screenshot as evidence. A **profile** (`config/projects/<repo>.json`, versioned
-in this repo) tells it how to do the same job for another project, so a ready clarity-captions ticket can
+in the private instance repo per ADR 0071) tells it how to do the same job for another project, so a ready clarity-captions ticket can
 flow ticket -> worktree -> implement -> verify -> PR like a marvin one. marvin keeps its built-in path
 untouched (it is the "legacy profile"); only repos with a profile file use the profile path.
 

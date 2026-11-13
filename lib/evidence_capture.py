@@ -315,6 +315,20 @@ def _run_checked(run, cmd, cwd=None, **kw):
         raise RuntimeError(f"{cmd[0]} failed: {' / '.join(lines[-2:])[:300]}") from e
 
 
+def _setup_swiftpm_shared_cache() -> list[str] | None:
+    """Prepare the shared SwiftPM cache directory and return the xcodebuild flags,
+    or None if the dir can't be created/written (degrade gracefully per ADR 0065)."""
+    import logging
+    import disk_trim  # noqa: E402 -- lazy: breaks circular import
+    try:
+        disk_trim.SWIFTPM_SHARED_CACHE_DIR.mkdir(parents=True, exist_ok=True)
+        disk_trim.SWIFTPM_SHARED_CACHE_DIR.chmod(0o755)
+        return ["-clonedSourcePackagesDirPath", str(disk_trim.SWIFTPM_SHARED_CACHE_DIR)]
+    except (OSError, PermissionError) as e:
+        logging.warning(f"Failed to set up SwiftPM shared cache at {disk_trim.SWIFTPM_SHARED_CACHE_DIR}: {e}, omitting flag")
+        return None
+
+
 def _with_build_folder(prefix: str, capture):
     """Runs capture(derived_data_dir) and always removes the folder: each Xcode build is about 1 GB, and left in $TMPDIR
     they filled the Mini's disk until the merge gate's disk check refused (2026-10-27)."""
@@ -346,9 +360,14 @@ def capture_ios_simulator(worktree_path: Path, cfg: dict, run=subprocess.run, sl
 
 def _capture_ios(worktree_path: Path, cfg: dict, project_dir: Path, derived: Path, run, sleep) -> list[dict]:
     configuration = cfg.get("configuration", "Debug")
-    _run_checked(run, ["xcodebuild", "-project", cfg["project"], "-scheme", cfg["scheme"],
-                       "-destination", f"platform=iOS Simulator,name={cfg['simulator']}", "-configuration", configuration,
-                       "CODE_SIGNING_ALLOWED=NO", "-derivedDataPath", str(derived), "build"], cwd=project_dir)
+    cmd = ["xcodebuild", "-project", cfg["project"], "-scheme", cfg["scheme"],
+           "-destination", f"platform=iOS Simulator,name={cfg['simulator']}", "-configuration", configuration,
+           "CODE_SIGNING_ALLOWED=NO", "-derivedDataPath", str(derived)]
+    cache_flags = _setup_swiftpm_shared_cache()
+    if cache_flags:
+        cmd.extend(cache_flags)
+    cmd.append("build")
+    _run_checked(run, cmd, cwd=project_dir)
     apps = sorted((derived / "Build" / "Products" / f"{configuration}-iphonesimulator").glob("*.app"))
     if not apps:
         raise RuntimeError("xcodebuild failed: no .app was built for the simulator")
@@ -410,9 +429,14 @@ def _capture_macos(worktree_path: Path, cfg: dict, project_dir: Path, run, deriv
     configuration = cfg.get("configuration", "Debug")
     if derived is not None:
         # Ad-hoc signed: pipeline machines have no signing identity, and an arm64 Mac won't run an unsigned binary.
-        _run_checked(run, ["xcodebuild", "-project", cfg["project"], "-scheme", cfg["scheme"], "-destination", "platform=macOS",
-                           "-configuration", configuration, "CODE_SIGN_IDENTITY=-", "DEVELOPMENT_TEAM=",
-                           "-derivedDataPath", str(derived), "build"], cwd=project_dir)
+        cmd = ["xcodebuild", "-project", cfg["project"], "-scheme", cfg["scheme"], "-destination", "platform=macOS",
+               "-configuration", configuration, "CODE_SIGN_IDENTITY=-", "DEVELOPMENT_TEAM=",
+               "-derivedDataPath", str(derived)]
+        cache_flags = _setup_swiftpm_shared_cache()
+        if cache_flags:
+            cmd.extend(cache_flags)
+        cmd.append("build")
+        _run_checked(run, cmd, cwd=project_dir)
         apps = sorted((derived / "Build" / "Products" / configuration).glob("*.app"))
         exes = sorted(p for p in (apps[0] / "Contents" / "MacOS").iterdir()) if apps else []
         if not exes:

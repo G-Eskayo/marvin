@@ -24,6 +24,7 @@ import cleanup_sweep as cs  # noqa: E402
 
 HOME = Path.home()
 DISK_YELLOW_BELOW_PCT = 20  # Imported from health_checks, duplicated here for self-contained module
+SWIFTPM_SHARED_CACHE_DIR = HOME / "Library" / "Caches" / "SwiftPM"
 
 
 def get_disk_free_pct() -> float:
@@ -141,10 +142,9 @@ def _trim_electron():
 
 def _trim_swiftpm():
     """Remove SwiftPM cache."""
-    p = HOME / "Library" / "Caches" / "SwiftPM"
-    if p.exists():
-        kb = _get_size_kb(p)
-        shutil.rmtree(p)
+    if SWIFTPM_SHARED_CACHE_DIR.exists():
+        kb = _get_size_kb(SWIFTPM_SHARED_CACHE_DIR)
+        shutil.rmtree(SWIFTPM_SHARED_CACHE_DIR)
         return kb
 
 

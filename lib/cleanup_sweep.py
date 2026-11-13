@@ -562,7 +562,7 @@ def _simctl_json(*args: str) -> dict:
 
 def _default_list_simulators() -> list[dict]:
     devices = _simctl_json("devices").get("devices", {})
-    return [{"name": d["name"], "udid": d["udid"], "state": d.get("state", "")} for ds in devices.values() for d in ds]
+    return [{"name": d["name"], "udid": d["udid"], "state": d.get("state", ""), "data_path": d.get("dataPath", "")} for ds in devices.values() for d in ds]
 
 
 def _default_stock_names() -> set[str]:
@@ -597,14 +597,38 @@ def _ticket_open_anywhere(number: int, repos: list[str] | None = None,
     return "OPEN" in states or not any(states)
 
 
-def decide_simulator(sim: dict, stock: set[str], ticket_open: Callable[[int], bool]) -> tuple[str, str]:
-    """("remove" | "keep" | "review", reason)."""
+def _default_sim_last_used_days(sim: dict) -> int | None:
+    """Get days since last use, based on the simulator's dataPath mtime.
+    Returns None if the path doesn't exist or can't be accessed."""
+    import time
+    data_path = sim.get("data_path", "")
+    if not data_path:
+        return None
+    try:
+        from pathlib import Path
+        mtime = Path(data_path).stat().st_mtime
+        return int((time.time() - mtime) / 86400)
+    except (OSError, ValueError):
+        return None
+
+
+def decide_simulator(sim: dict, stock: set[str], ticket_open: Callable[[int], bool],
+                     last_used: Callable[[dict], int | None] | None = None) -> tuple[str, str]:
+    """("remove" | "keep" | "review", reason).
+    last_used: optional callable to determine days since last use (default: sim's dataPath mtime).
+    For CAPTURE_SIM_RE simulators, removes them if unused for 14+ days (unless booted)."""
     name = sim["name"]
     if name in stock:
         return "keep", "one of Xcode's own devices"
     if CAPTURE_SIM_RE.match(name):
         if sim.get("state") == "Booted":
             return "keep", "a screenshot capture may be using it"
+        last_used_fn = last_used or _default_sim_last_used_days
+        days = last_used_fn(sim)
+        if days is not None and days >= 14:
+            return "remove", f"leftover screenshot-capture simulator, unused for {days} days"
+        if days is not None:
+            return "keep", f"leftover screenshot-capture simulator, used {days} days ago"
         return "remove", "leftover screenshot-capture simulator"
     match = SIM_TICKET_RE.search(name)
     if not match:
@@ -620,6 +644,7 @@ def sweep_simulators(
     stock_names: Callable[[], set[str]] | None = None,
     ticket_open: Callable[[int], bool] | None = None,
     delete_simulator: Callable[[dict], bool] | None = None,
+    last_used: Callable[[dict], int | None] | None = None,
 ) -> dict:
     if list_simulators is None and shutil.which("xcrun") is None:
         return {"removed": [], "review": []}   # no Xcode on this machine (mac-mini-2012): no simulators exist
@@ -635,7 +660,7 @@ def sweep_simulators(
     removed, review = [], []
     for sim in sims:
         try:
-            action, reason = decide_simulator(sim, stock, ticket_open)
+            action, reason = decide_simulator(sim, stock, ticket_open, last_used=last_used)
         except Exception as exc:  # a GitHub failure must never read as "ticket closed"
             review.append({**sim, "reason": f"could not check GitHub: {str(exc)[:120]}"})
             continue
