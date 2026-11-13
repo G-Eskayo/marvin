@@ -105,10 +105,10 @@ def _seed_continuity_collection(tmp_path):
     return col
 
 
-def test_find_citation_pairs_uses_both_edge_directions():
+def test_find_citation_pairs_uses_both_edge_directions(tmp_path):
     # marvin#699: the one real traversal stored only "reference" edges, so a citers-only filter found 0 pairs. A reference
     # is a continuity pair too, the other way round: the seed (later) builds on the paper it cites (earlier).
-    client = chromadb.PersistentClient(path=str(Path.home() / ".test_chroma_continuity"))
+    client = chromadb.PersistentClient(path=str(tmp_path / "chroma_continuity"))
     col = client.get_or_create_collection("test-paper-knowledge")
     col.add(
         ids=["seed-a", "citer-1", "ref-1", "other-edge"],
@@ -129,8 +129,8 @@ def test_find_citation_pairs_uses_both_edge_directions():
     assert (pairs["ref-1"]["earlier_doi"], pairs["ref-1"]["later_doi"]) == ("ref-1", "seed-a")
 
 
-def test_find_citation_pairs_ignores_unrelated_papers():
-    client = chromadb.PersistentClient(path=str(Path.home() / ".test_chroma_continuity2"))
+def test_find_citation_pairs_ignores_unrelated_papers(tmp_path):
+    client = chromadb.PersistentClient(path=str(tmp_path / "chroma_continuity2"))
     col = client.get_or_create_collection("test-paper-knowledge2")
     col.add(
         ids=["seed-a", "unrelated", "citer-1"],
@@ -176,8 +176,8 @@ def test_build_continuity_report_extracts_and_classifies_pairs(tmp_path):
     assert ref_judgement.index("Paper referenced by seed-a") < ref_judgement.index("Seed A abstract.")
 
 
-def test_build_continuity_report_handles_missing_papers():
-    client = chromadb.PersistentClient(path=str(Path.home() / ".test_chroma_continuity3"))
+def test_build_continuity_report_handles_missing_papers(tmp_path):
+    client = chromadb.PersistentClient(path=str(tmp_path / "chroma_continuity3"))
     col = client.get_or_create_collection("test-paper-knowledge3")
     col.add(
         ids=["seed-a"],
@@ -263,3 +263,195 @@ def test_main_fails_loudly_when_no_pairs_are_found(tmp_path, monkeypatch, capsys
         cc.main()
     assert e.value.code == 1
     assert "no citation or reference edges" in capsys.readouterr().err
+
+
+# ── find_citation_pairs with data parameter ────────────────────────────────
+
+def test_find_citation_pairs_accepts_data_parameter(tmp_path):
+    client = chromadb.PersistentClient(path=str(tmp_path / "chroma_data_param"))
+    col = client.get_or_create_collection("test-data-param")
+    col.add(
+        ids=["seed-a", "citer-1"],
+        documents=["seed", "citer"],
+        metadatas=[
+            {"doi": "seed-a"},
+            {"doi": "citer-1", "parent_doi": "seed-a", "edge_type": "citation"},
+        ],
+    )
+
+    # Fetch data once
+    data = col.get(include=["metadatas"])
+
+    # Track that collection.get is NOT called when data is passed
+    call_count = {"count": 0}
+    original_get = col.get
+
+    def tracked_get(**kwargs):
+        call_count["count"] += 1
+        return original_get(**kwargs)
+
+    col.get = tracked_get
+
+    # Pass the same data to find_citation_pairs
+    pairs = find_citation_pairs(col, ["seed-a"], data=data)
+    assert len(pairs) == 1
+    assert pairs[0]["other_doi"] == "citer-1"
+    # Verify collection.get was NOT called (data was used instead)
+    assert call_count["count"] == 0
+
+
+def test_find_citation_pairs_without_data_parameter_calls_collection(tmp_path):
+    client = chromadb.PersistentClient(path=str(tmp_path / "chroma_no_data_param"))
+    col = client.get_or_create_collection("test-no-data-param")
+    col.add(
+        ids=["seed-a", "citer-1"],
+        documents=["seed", "citer"],
+        metadatas=[
+            {"doi": "seed-a"},
+            {"doi": "citer-1", "parent_doi": "seed-a", "edge_type": "citation"},
+        ],
+    )
+
+    # Track calls to collection.get
+    call_count = {"count": 0}
+    original_get = col.get
+
+    def tracked_get(**kwargs):
+        call_count["count"] += 1
+        return original_get(**kwargs)
+
+    col.get = tracked_get
+
+    # When data=None (default), find_citation_pairs should call collection.get internally
+    pairs = find_citation_pairs(col, ["seed-a"], data=None)
+    assert len(pairs) == 1
+    assert pairs[0]["other_doi"] == "citer-1"
+    # Verify collection.get WAS called exactly once
+    assert call_count["count"] == 1
+
+
+# ── build_continuity_report with data parameter optimization ────────────────
+
+def test_build_continuity_report_avoids_second_chroma_call(tmp_path):
+    col = _seed_continuity_collection(tmp_path)
+    call_count = {"count": 0}
+
+    # Mock the collection.get method to track how many times it's called
+    original_get = col.get
+
+    def tracked_get(**kwargs):
+        call_count["count"] += 1
+        return original_get(**kwargs)
+
+    col.get = tracked_get
+
+    def fake_chat(messages):
+        if "VERDICT" in messages[-1]["content"] or "EARLIER" in messages[-1]["content"]:
+            return "VERDICT: CONSISTENT\nRATIONALE: test"
+        return "claim"
+
+    build_continuity_report(col, ["seed-a"], chat_fn=fake_chat)
+    # Should call get() exactly once (in build_continuity_report), not twice
+    assert call_count["count"] == 1
+
+
+# ── Seed diagnostic output tests ────────────────────────────────────────────
+
+def test_build_continuity_report_outputs_diagnostic_for_seed_not_in_collection(tmp_path, capsys):
+    client = chromadb.PersistentClient(path=str(tmp_path / "chroma_missing_seed"))
+    col = client.get_or_create_collection("test-missing-seed")
+    col.add(
+        ids=["other-paper"],
+        documents=["other"],
+        metadatas=[{"doi": "other-paper"}],
+    )
+
+    report = build_continuity_report(col, ["missing-seed"], chat_fn=lambda m: "VERDICT: CONSISTENT\nRATIONALE: test")
+    assert len(report) == 0
+    stderr = capsys.readouterr().err
+    assert "missing-seed: not in the collection" in stderr
+
+
+def test_build_continuity_report_outputs_diagnostic_for_seed_with_no_pairs(tmp_path, capsys):
+    client = chromadb.PersistentClient(path=str(tmp_path / "chroma"))
+    col = client.get_or_create_collection("test-no-pairs")
+    col.add(
+        ids=["seed-a", "unrelated"],
+        documents=["seed", "unrelated"],
+        metadatas=[
+            {"doi": "seed-a"},
+            {"doi": "unrelated"},
+        ],
+    )
+
+    report = build_continuity_report(col, ["seed-a"], chat_fn=lambda m: "VERDICT: CONSISTENT\nRATIONALE: test")
+    assert len(report) == 0
+    stderr = capsys.readouterr().err
+    assert "seed-a: in the collection but nothing links to it" in stderr
+    assert "search-seeded seeds get no edges" in stderr
+
+
+def test_build_continuity_report_multiple_seeds_with_mixed_presence(tmp_path, capsys):
+    col = _seed_continuity_collection(tmp_path)
+
+    def fake_chat(messages):
+        if "VERDICT" in messages[-1]["content"] or "EARLIER" in messages[-1]["content"]:
+            return "VERDICT: CONSISTENT\nRATIONALE: test"
+        return "claim"
+
+    # Add another seed that exists but has no links, and a seed that doesn't exist
+    col.add(
+        ids=["seed-b"],
+        documents=["seed-b abstract"],
+        metadatas=[{"doi": "seed-b"}],
+    )
+
+    report = build_continuity_report(col, ["seed-a", "seed-b", "seed-c"], chat_fn=fake_chat)
+    # seed-a has pairs, seed-b and seed-c should get diagnostics
+    assert len(report) == 3  # 3 pairs for seed-a
+    stderr = capsys.readouterr().err
+    assert "seed-b: in the collection but nothing links to it" in stderr
+    assert "seed-c: not in the collection" in stderr
+
+
+def test_build_continuity_report_diagnostic_mentions_doi_or_arxiv(tmp_path, capsys):
+    client = chromadb.PersistentClient(path=str(tmp_path / "chroma"))
+    col = client.get_or_create_collection("test-diagnostic")
+    col.add(
+        ids=["other-paper"],
+        documents=["other"],
+        metadatas=[{"doi": "other-paper"}],
+    )
+
+    report = build_continuity_report(col, ["missing-seed"], chat_fn=lambda m: "VERDICT: CONSISTENT\nRATIONALE: test")
+    stderr = capsys.readouterr().err
+    # The diagnostic should explain what keying mechanism is used
+    assert "DOI/arXiv id" in stderr or "session slug" in stderr
+
+
+def test_build_continuity_report_diagnostic_mentions_search_seeds(tmp_path, capsys):
+    client = chromadb.PersistentClient(path=str(tmp_path / "chroma"))
+    col = client.get_or_create_collection("test-search-seeds")
+    col.add(
+        ids=["seed-a"],
+        documents=["seed"],
+        metadatas=[{"doi": "seed-a"}],
+    )
+
+    report = build_continuity_report(col, ["seed-a"], chat_fn=lambda m: "VERDICT: CONSISTENT\nRATIONALE: test")
+    stderr = capsys.readouterr().err
+    # The diagnostic for seeds with no pairs should mention search-seeded seeds
+    assert "search-seeded seeds" in stderr
+
+
+# ── SKILL.md documentation test ────────────────────────────────────────────
+
+def test_skill_md_documents_seeds_json_id_keying():
+    skill_md_path = Path(__file__).resolve().parents[2] / "SKILL.md"
+    assert skill_md_path.exists(), f"SKILL.md not found at {skill_md_path}"
+    skill_content = skill_md_path.read_text()
+    # Verify the documentation mentions id keying by DOI or arXiv
+    assert "id: title" in skill_content
+    assert "DOI or arXiv id" in skill_content
+    # Verify it mentions search-seeded seeds have no edges
+    assert "Search-seeded seeds have no edges" in skill_content

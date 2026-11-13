@@ -102,11 +102,14 @@ def _parse_continuity_result(response: str) -> dict[str, str]:
 _DIRECTION = {"citation": "cited_by", "reference": "cites"}
 
 
-def find_citation_pairs(collection, seed_slugs: list[str]) -> list[dict]:
+def find_citation_pairs(collection, seed_slugs: list[str], data: dict | None = None) -> list[dict]:
     """Every (earlier, later) pair between a seed and a paper linked to it, in both directions. A seed that Semantic
     Scholar doesn't index only ever gets reference edges (paper_graph can't find who cites it), so a citers-only filter
-    found nothing for the one real run (2026-07-13). Returns {seed_doi, other_doi, direction, earlier_doi, later_doi}."""
-    data = collection.get(include=["metadatas"])
+    found nothing for the one real run (2026-07-13). Returns {seed_doi, other_doi, direction, earlier_doi, later_doi}.
+
+    If data is None, fetches from collection; otherwise uses the passed-in dict directly."""
+    if data is None:
+        data = collection.get(include=["metadatas"])
     pairs = []
 
     for doi, meta in zip(data["ids"], data["metadatas"]):
@@ -140,7 +143,12 @@ def build_continuity_report(
         return title, claims[doi]
 
     result = []
-    for pair in find_citation_pairs(collection, seed_slugs):
+    pairs = find_citation_pairs(collection, seed_slugs, data=data)
+
+    # Track which seeds have at least one pair
+    seeds_with_pairs = {p["seed_doi"] for p in pairs}
+
+    for pair in pairs:
         seed_id, other_id = pair["seed_doi"], pair["other_doi"]
         if seed_id not in by_id or other_id not in by_id:
             continue
@@ -162,6 +170,14 @@ def build_continuity_report(
             "verdict": continuity.get("verdict", "unknown"),
             "rationale": continuity.get("rationale", ""),
         })
+
+    # Diagnostic output for seeds without pairs
+    for seed_id in set(seed_slugs):
+        if seed_id not in seeds_with_pairs:
+            if seed_id in by_id:
+                print(f"{seed_id}: in the collection but nothing links to it (search-seeded seeds get no edges)", file=sys.stderr)
+            else:
+                print(f"{seed_id}: not in the collection (key by DOI/arXiv id, or session slug only for no-DOI seeds)", file=sys.stderr)
 
     return result
 
