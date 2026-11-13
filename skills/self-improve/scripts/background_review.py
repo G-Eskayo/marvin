@@ -17,9 +17,12 @@ here would otherwise stall the hook chain for the interactive session.
 Never blocks or errors the originating tool; any failure exits silently.
 """
 from __future__ import annotations
+import collections
 import json
+import os
 import subprocess
 import sys
+import tempfile
 import time
 from datetime import datetime, timezone
 from pathlib import Path
@@ -80,6 +83,92 @@ Handoff to review:
 """
 
 
+def _diff_lines(before: str, after: str) -> tuple[list[str], list[str]]:
+    """Multiset line diff via Counter, returning added/removed lines in
+    their original order with duplicates preserved correctly (lines that
+    appear more in after than before are added, and vice versa)."""
+    before_lines = before.splitlines()
+    after_lines = after.splitlines()
+
+    before_counter = collections.Counter(before_lines)
+    after_counter = collections.Counter(after_lines)
+
+    # added: lines that appear more in after than before, in after's order
+    added = []
+    after_counter_copy = after_counter.copy()
+    for line in after_lines:
+        if after_counter_copy[line] > before_counter[line]:
+            added.append(line)
+            after_counter_copy[line] -= 1
+
+    # removed: lines that appear more in before than after, in before's order
+    removed = []
+    before_counter_copy = before_counter.copy()
+    for line in before_lines:
+        if before_counter_copy[line] > after_counter[line]:
+            removed.append(line)
+            before_counter_copy[line] -= 1
+
+    return added, removed
+
+
+def _remove_lines(text: str, lines_to_remove: list[str]) -> str:
+    """Removes exactly one occurrence of each flagged line from text,
+    leaving everything else (including lines that arrived after the
+    added lines were computed) untouched. Removes from the end
+    (last/most recent occurrence) to safely undo appends. Preserves
+    the original file's line endings (\\n, \\r\\n, etc.)."""
+    if not lines_to_remove:
+        return text
+
+    lines_with_ends = text.splitlines(keepends=True)
+    removal_counter = collections.Counter(lines_to_remove)
+
+    # Mark indices to skip (from the end, for each line to remove).
+    # Iterate backwards so we remove the last occurrence of each line.
+    skip_indices = set()
+    for idx in range(len(lines_with_ends) - 1, -1, -1):
+        line_with_end = lines_with_ends[idx]
+        # Strip line endings using splitlines() without keepends.
+        # This correctly handles all line separators that splitlines() recognizes.
+        split_result = line_with_end.splitlines()
+        content = split_result[0] if split_result else ''
+
+        if removal_counter[content] > 0:
+            removal_counter[content] -= 1
+            skip_indices.add(idx)
+
+    # Reconstruct, skipping marked indices
+    result = ""
+    for idx, line_with_end in enumerate(lines_with_ends):
+        if idx not in skip_indices:
+            result += line_with_end
+
+    return result
+
+
+def _atomic_write(path: Path, text: str) -> None:
+    """Atomically write text to path using a temporary file + os.replace,
+    preserving the original file's permissions if it exists."""
+    fd, tmp = tempfile.mkstemp(dir=path.parent, prefix=f".{path.name}.", suffix=".tmp")
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8") as f:
+            f.write(text)
+            f.flush()
+            os.fsync(f.fileno())
+        try:
+            os.chmod(tmp, path.stat().st_mode & 0o777)
+        except FileNotFoundError:
+            os.chmod(tmp, 0o644)
+        os.replace(tmp, path)
+    except BaseException:
+        try:
+            os.unlink(tmp)
+        except FileNotFoundError:
+            pass
+        raise
+
+
 def _verify_and_reconcile(before: str, log) -> None:
     """Post-hoc check on what the review actually appended to the append-only
     retrospective-log.md — the reviewer itself has Write/Edit and no
@@ -88,26 +177,29 @@ def _verify_and_reconcile(before: str, log) -> None:
     before any git commit, and verify_retrospective_integrity.py only checks
     the working tree against the last *commit*, not against this script."""
     after = RETRO_LOG.read_text() if RETRO_LOG.exists() else ""
-    if after == before:
-        log.write("VERIFY: no new retrospective-log.md entry — nothing to check\n")
-        return
-    if not after.startswith(before):
+
+    added, removed = _diff_lines(before, after)
+
+    if removed:
         log.write("VERIFY: retrospective-log.md changed non-additively — leaving "
                    "as-is for verify_retrospective_integrity.py to catch\n")
-        return
 
-    new_lines = after[len(before):].strip()
-    if not new_lines:
+    if not added:
+        log.write("VERIFY: no new retrospective-log.md entry — nothing to check\n")
         return
 
     if not _SAFETY_MONITOR_AVAILABLE:
+        new_lines = "\n".join(added)
         log.write(f"VERIFY: safety-monitor unavailable, appended unchecked: {new_lines!r}\n")
         return
 
+    new_lines = "\n".join(added)
     score = verify(new_lines, loop_name="self_improve")
     tau = get_tau("self_improve")
     if score >= tau:
-        RETRO_LOG.write_text(before)
+        current = RETRO_LOG.read_text() if RETRO_LOG.exists() else ""
+        updated = _remove_lines(current, added)
+        _atomic_write(RETRO_LOG, updated)
         quarantine(new_lines, score, "self_improve", tau,
                    reason="flagged before landing in retrospective-log.md; append reverted")
         log.write(f"VERIFY: QUARANTINED (score {score:.2f} >= tau {tau:.2f}), "
