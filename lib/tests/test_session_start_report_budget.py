@@ -58,7 +58,7 @@ def home(monkeypatch, tmp_path):
                  "check_auto_merge_report", "check_daily_digest", "check_research_digest",
                  "check_sync_block", "check_morning_brief"):
         monkeypatch.setattr(ssr, name, lambda: None)
-    monkeypatch.setattr(ssr, "check_identity", lambda: "MARVIN active — test-mac · agents@aaaa · claude@bbbb · 3 skills wired")
+    monkeypatch.setattr(ssr, "check_identity", lambda: "MARVIN active — test-mac · agents@aaaa · claude@bbbb · 3 skills (2 wired)")
     return claude
 
 
@@ -90,7 +90,7 @@ def test_report_fits_the_cap_even_when_every_source_is_huge(home, monkeypatch, c
 def test_banner_is_always_the_first_line(home, monkeypatch, capsys):
     monkeypatch.setattr(ssr, "check_sync_block", lambda: "## ⛔ SYNC BLOCKED\n\n" + "s" * 50_000)
     out = _report(capsys)
-    assert out.splitlines()[0] == "MARVIN active — test-mac · agents@aaaa · claude@bbbb · 3 skills wired"
+    assert out.splitlines()[0] == "MARVIN active — test-mac · agents@aaaa · claude@bbbb · 3 skills (2 wired)"
 
 
 def test_a_cut_section_says_so_and_where_the_rest_is(home, monkeypatch, capsys):

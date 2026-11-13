@@ -34,6 +34,7 @@ import resume_check  # noqa: E402
 
 HOME = Path.home()
 CLAUDE_DIR = HOME / ".claude"
+SKILLS_DIR = HOME / ".agents" / "skills"
 HOOK_NAME = "session_start_report"
 
 # Claude Code caps hook stdout at 10,000 characters. Over that it saves the output to a file and puts only the
@@ -86,17 +87,89 @@ def _git_short_head(repo: Path) -> str:
         return "?"
 
 
+def _dir_entries(d: Path) -> list[Path]:
+    """Safe iterdir(): returns [] on OSError, otherwise sorted list of direct subdirectories."""
+    try:
+        return sorted([p for p in d.iterdir() if p.is_dir()])
+    except OSError:
+        return []
+
+
+def skill_names(skills_dir: Path) -> list[str]:
+    """Direct subdirectories of skills_dir that contain a file named exactly SKILL.md."""
+    names = []
+    for d in _dir_entries(skills_dir):
+        if (d / "SKILL.md").exists():
+            names.append(d.name)
+    return sorted(names)
+
+
+def _prune_dangling_commands(commands_dir: Path) -> None:
+    """Unlink any symlink under commands_dir that no longer resolves, logging failures via log_hook_error."""
+    if not commands_dir.exists():
+        return
+    try:
+        entries = sorted(commands_dir.iterdir())
+    except OSError:
+        return
+    for p in entries:
+        if not p.is_symlink():
+            continue
+        try:
+            p.resolve(strict=True)
+        except (OSError, RuntimeError):
+            try:
+                p.unlink()
+            except OSError as exc:
+                log_hook_error(HOOK_NAME, f"_prune_dangling_commands {p.name}", exc)
+
+
+def _wired_skill_names(skills_dir: Path, commands_dir: Path) -> set[str]:
+    """Set of skill names that are wired: a .md command file's stem matches, or its content references skills/<name>/SKILL.md."""
+    wired = set()
+    skills = skill_names(skills_dir)
+    if not commands_dir.exists():
+        return wired
+    try:
+        entries = list(commands_dir.iterdir())
+    except OSError:
+        return wired
+    for p in sorted(entries):
+        if not p.suffix == ".md":
+            continue
+        if p.is_symlink():
+            try:
+                p.resolve(strict=True)
+            except (OSError, RuntimeError):
+                continue
+        if not p.is_file():
+            continue
+        name = p.stem
+        if name in skills:
+            wired.add(name)
+        try:
+            text = p.read_text(errors="replace")
+            for skill in skills:
+                if skill not in wired and f"skills/{skill}/SKILL.md" in text:
+                    wired.add(skill)
+        except OSError:
+            pass
+    return wired
+
+
 def check_identity() -> str:
     """A single, verifiable line proving this session is actually running
     with MARVIN's infrastructure wired in — not just prose claiming to be
-    MARVIN. Every field is checkable against live state (git log, ls
-    ~/.claude/commands) rather than a static greeting string, so it can't
+    MARVIN. Every field is checkable against live state (git log, live skills,
+    wired skills) rather than a static greeting string, so it can't
     silently go stale the way a hardcoded banner could."""
+    _prune_dangling_commands(CLAUDE_DIR / "commands")
     machine = machine_profile.machine_label()
     agents_head = _git_short_head(HOME / ".agents")
     claude_head = _git_short_head(CLAUDE_DIR)
-    skills = len(list((CLAUDE_DIR / "commands").glob("*.md")))
-    return f"MARVIN active — {machine} · agents@{agents_head} · claude@{claude_head} · {skills} skills wired"
+    total_skills = len(skill_names(SKILLS_DIR))
+    wired_skills = len(_wired_skill_names(SKILLS_DIR, CLAUDE_DIR / "commands"))
+    return f"MARVIN active — {machine} · agents@{agents_head} · claude@{claude_head} · {total_skills} skills ({wired_skills} wired)"
 
 
 def check_handoff() -> str | None:

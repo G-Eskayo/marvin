@@ -389,6 +389,33 @@ def _model_run_timeouts(days: float = PROBE_WINDOW_DAYS, path: Path | None = Non
     return float(count)
 
 
+def _banner_skill_count_drift(repo: Path | None = None, run=subprocess.run) -> float:
+    r"""marvin#997: the drift in skills count between live ~/.agents/skills and the repo's origin/main.
+    Returns 0.0 on any git/path failure (dependency-failing-reads-zero, matching every other probe).
+    Compares skill_names(~/.agents/skills) against git ls-tree count matching skills/[^/]+/SKILL\.md on
+    origin/main."""
+    import session_start_report
+    repo = repo or Path.home() / ".agents"
+    if not (repo / ".git").exists():
+        return 0.0
+    try:
+        live_skills = set(session_start_report.skill_names(session_start_report.SKILLS_DIR))
+        out = run(
+            ["git", "-C", str(repo), "ls-tree", "-r", "--name-only", "origin/main"],
+            capture_output=True, text=True, timeout=10,
+        )
+        if out.returncode != 0:
+            return 0.0
+        remote_skills = set()
+        for line in out.stdout.splitlines():
+            m = re.match(r"^skills/([^/]+)/SKILL\.md$", line)
+            if m:
+                remote_skills.add(m.group(1))
+        return float(len(live_skills - remote_skills))
+    except Exception:
+        return 0.0
+
+
 def _ci_onnx_download_failures(fetch=None, repo: str = "G-Eskayo/marvin", runs: int = 20,
                                days: float = PROBE_WINDOW_DAYS, now: datetime | None = None) -> float:
     """#1098/#1156 (2026-11-09): GitHub's 'Python tests' job failures in the 7-day window. Option B: counts the job's
@@ -472,6 +499,9 @@ PROBES: dict[str, tuple[Callable[..., float], float, str]] = {
     "stale-relay-leaked": (lambda days=PROBE_WINDOW_DAYS: _stale_relay("leaked", days), 0.0,
                            "stale claims that reached the owner over 7 days (question log kind=stale + their own 'that's "
                            "already fixed' replies), per Mac, summed (#1224)"),
+    # marvin#997: local skills that exist on live ~/.agents/skills but not in the repo's origin/main (missing upstream).
+    "banner-skill-count-drift": (lambda days=PROBE_WINDOW_DAYS: _banner_skill_count_drift(), 0.0,
+                                 "skills on live ~/.agents/skills but not in origin/main (marvin#997)"),
 }
 MEASURES.update({name: fn for name, (fn, _limit, _what) in PROBES.items()})
 MEASURES["stale-relay-caught"] = lambda: _stale_relay("caught")
