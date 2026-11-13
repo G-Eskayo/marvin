@@ -85,21 +85,29 @@ def test_a_ui_change_with_a_broken_link_is_refused_naming_the_link():
 
 
 def test_images_older_than_a_later_ui_change_are_stale():
-    changed_since = {SHA: ["site/index.html"]}.get
+    def changed_since(pin):
+        return ["site/index.html"] if pin.get("sha") == SHA else None
     problems = pi.verdict(["site/index.html"], f"![x]({RAW})", changed_since=changed_since)
     assert codes(problems) == ["STALE_UI_EVIDENCE"]
     assert "site/index.html" in problems[0][1]
 
 
 def test_images_are_current_when_only_non_ui_files_or_the_images_changed_since():
-    changed_since = {SHA: ["lib/x.py", "docs/images/pr/a.png"]}.get
+    def changed_since(pin):
+        return ["lib/x.py", "docs/images/pr/a.png"] if pin.get("sha") == SHA else None
     assert pi.verdict(["site/index.html"], f"![x]({RAW})", changed_since=changed_since) == []
 
 
-def test_with_several_pinned_commits_the_newest_one_decides():
+def test_with_several_pinned_commits_if_any_is_stale_the_pr_is_stale():
     body = f"![x]({RAW})\n![y](https://raw.githubusercontent.com/o/r/{OLD}/b.png)"
-    changed_since = {SHA: [], OLD: ["site/index.html"]}.get
-    assert pi.verdict(["site/index.html"], body, changed_since=changed_since) == []
+    def changed_since(pin):
+        if pin.get("sha") == SHA:
+            return []
+        elif pin.get("sha") == OLD:
+            return ["site/index.html"]
+        return None
+    problems = pi.verdict(["site/index.html"], body, changed_since=changed_since)
+    assert codes(problems) == ["STALE_UI_EVIDENCE"]
 
 
 def test_staleness_cant_be_judged_without_pinned_commits_so_dragged_images_pass():
@@ -107,8 +115,9 @@ def test_staleness_cant_be_judged_without_pinned_commits_so_dragged_images_pass(
     assert pi.verdict(["site/index.html"], body, changed_since=lambda s: ["site/index.html"]) == []
 
 
-def test_when_github_cant_say_what_changed_since_the_images_it_isnt_called_stale():
-    assert pi.verdict(["site/index.html"], f"![x]({RAW})", changed_since=lambda s: None) == []
+def test_when_github_cant_say_what_changed_since_the_images_the_pr_fails_closed():
+    problems = pi.verdict(["site/index.html"], f"![x]({RAW})", changed_since=lambda p: None, fail_closed=True)
+    assert codes(problems) == ["UI_EVIDENCE_UNCHECKED"]
 
 
 # ── which gh calls are checked ──────────────────────────────────────────────
@@ -149,3 +158,174 @@ def test_the_shots_section_is_replaced_not_duplicated():
 
 def test_the_shots_section_goes_at_the_end_when_there_are_no_decisions():
     assert pi.with_shots_section("Intro.", "![a](u)").startswith("Intro.\n\n" + pi.SHOTS_START)
+
+
+# ── image_pins ──────────────────────────────────────────────────────────────
+
+def test_image_pins_extracts_owner_repo_and_sha_from_raw_links():
+    body = f"![a]({RAW})\n![b](https://raw.githubusercontent.com/o/r/{OLD}/x.png)"
+    pins = pi.image_pins(body)
+    assert len(pins) == 2
+    assert pins[0] == {"repo": "G-Eskayo/marvin-voice", "sha": SHA}
+    assert pins[1] == {"repo": "o/r", "sha": OLD}
+
+
+def test_image_pins_ignores_non_pinned_images():
+    body = f"![a]({RAW})\n![b](https://github.com/user-attachments/assets/abc)\n![c](https://raw.githubusercontent.com/o/r/feat-x/x.png)"
+    pins = pi.image_pins(body)
+    assert len(pins) == 1 and pins[0]["sha"] == SHA
+
+
+def test_image_pins_deduplicates_same_repo_and_sha():
+    body = f"![a]({RAW})\n![b]({RAW})"
+    pins = pi.image_pins(body)
+    assert len(pins) == 1
+
+
+# ── parse_pr_url ────────────────────────────────────────────────────────────
+
+def test_parses_pr_url_into_owner_repo_number():
+    url = "https://github.com/G-Eskayo/marvin/pull/42"
+    result = pi.parse_pr_url(url)
+    assert result == {"owner": "G-Eskayo", "repo": "marvin", "number": "42"}
+
+
+def test_parse_pr_url_rejects_invalid_urls():
+    assert pi.parse_pr_url("not a url") is None
+    assert pi.parse_pr_url("https://github.com/o/r/issues/42") is None
+    assert pi.parse_pr_url("https://github.com/o/r") is None
+
+
+# ── make_changed_since ──────────────────────────────────────────────────────
+
+def test_make_changed_since_builds_a_callable_that_compares_commits():
+    def ask_gh(args):
+        if args[:2] == ["api", f"repos/o/r/compare/{SHA}...{OLD}"]:
+            return {"files": [{"filename": "a.js"}, {"filename": "b.js"}]}
+        return {"files": []}
+
+    changed_since = pi.make_changed_since("o/r", OLD, ask_gh)
+    assert changed_since({"repo": "o/r", "sha": SHA}) == ["a.js", "b.js"]
+
+
+def test_make_changed_since_returns_none_on_error():
+    def ask_gh(args):
+        raise Exception("offline")
+
+    changed_since = pi.make_changed_since("o/r", OLD, ask_gh)
+    assert changed_since({"repo": "o/r", "sha": SHA}) is None
+
+
+# ── CLI entry point ─────────────────────────────────────────────────────────
+
+def test_cli_main_requires_check_subcommand_with_url():
+    rc = pi.main(["check"])
+    assert rc == 2  # missing URL argument
+
+
+def test_check_pr_with_good_images():
+    """check_pr returns [] when a PR with UI changes has current pinned images (including cross-repo pins)."""
+    def ask_gh(args):
+        if args[:2] == ["pr", "view"]:
+            return {"files": [{"path": "site/page.html"}], "body": f"![x]({RAW})", "headRefOid": "f" * 40}
+        # Must compare in the pin's repo (G-Eskayo/marvin-voice), not the PR's repo (o/r)
+        if args[:2] == ["api", f"repos/G-Eskayo/marvin-voice/compare/{SHA}...{'f' * 40}"]:
+            return {"files": []}  # no changes since the image
+        raise AssertionError(f"unexpected call: {args}")
+
+    result = pi.check_pr(f"https://github.com/o/r/pull/42", None, ask_gh, None)
+    assert result == []
+
+
+def test_check_pr_with_no_images_fails():
+    """check_pr returns a refusal when UI changes have no images."""
+    def ask_gh(args):
+        if args[:2] == ["pr", "view"]:
+            return {"files": [{"path": "site/page.html"}], "body": "no pictures", "headRefOid": "f" * 40}
+        raise AssertionError(args)
+
+    result = pi.check_pr(f"https://github.com/o/r/pull/42", None, ask_gh, None)
+    assert len(result) == 1
+    assert result[0][0] == "NO_UI_EVIDENCE"
+
+
+def test_check_pr_invalid_url_fails_open_by_default():
+    """check_pr returns [] for invalid URLs when strict=False (default)."""
+    def ask_gh(args):
+        raise AssertionError("should not call gh")
+
+    result = pi.check_pr("not-a-url", None, ask_gh, None, strict=False)
+    assert result == []
+
+
+def test_check_pr_invalid_url_throws_when_strict():
+    """check_pr throws for invalid URLs when strict=True."""
+    def ask_gh(args):
+        raise AssertionError("should not call gh")
+
+    try:
+        pi.check_pr("not-a-url", None, ask_gh, None, strict=True)
+        assert False, "should have raised"
+    except ValueError as e:
+        assert "Invalid PR URL" in str(e)
+
+
+def test_check_pr_github_offline_fails_open_by_default():
+    """check_pr returns [] when GitHub is offline and strict=False (default)."""
+    def ask_gh(args):
+        raise RuntimeError("offline")
+
+    result = pi.check_pr(f"https://github.com/o/r/pull/42", None, ask_gh, None, strict=False)
+    assert result == []
+
+
+def test_check_pr_github_offline_throws_when_strict():
+    """check_pr throws when GitHub is offline and strict=True."""
+    def ask_gh(args):
+        raise RuntimeError("offline")
+
+    try:
+        pi.check_pr(f"https://github.com/o/r/pull/42", None, ask_gh, None, strict=True)
+        assert False, "should have raised"
+    except RuntimeError:
+        pass  # expected
+
+
+def test_check_pr_cross_repo_pin_fails_open_by_default():
+    """check_pr returns [] for cross-repo pins when strict=False (fail open), since we can't check them."""
+    def ask_gh(args):
+        if args[:2] == ["pr", "view"]:
+            return {"files": [{"path": "site/page.html"}], "body": f"![x]({RAW})", "headRefOid": "f" * 40}
+        # We don't even try to compare cross-repo pins
+        raise AssertionError(f"unexpected call: {args}")
+
+    result = pi.check_pr(f"https://github.com/o/r/pull/42", None, ask_gh, None, strict=False)
+    assert result == []
+
+
+def test_check_pr_cross_repo_pin_fails_strict():
+    """check_pr fails strictly when a cross-repo pin can't be checked."""
+    def ask_gh(args):
+        if args[:2] == ["pr", "view"]:
+            return {"files": [{"path": "site/page.html"}], "body": f"![x]({RAW})", "headRefOid": "f" * 40}
+        # Strict mode fails closed: we try to check but can't
+        raise RuntimeError("404")
+
+    result = pi.check_pr(f"https://github.com/o/r/pull/42", None, ask_gh, None, strict=True)
+    assert codes(result) == ["UI_EVIDENCE_UNCHECKED"]
+
+
+def test_verdict_skips_stale_check_when_changed_since_returns_none_and_fail_closed_is_false():
+    """verdict with fail_closed=False skips stale check when changed_since fails."""
+    def changed_since(pin):
+        return None  # Can't check
+    problems = pi.verdict(["site/index.html"], f"![x]({RAW})", changed_since=changed_since, fail_closed=False)
+    assert codes(problems) == []
+
+
+def test_verdict_fails_when_changed_since_returns_none_and_fail_closed_is_true():
+    """verdict with fail_closed=True (default) fails when changed_since returns None."""
+    def changed_since(pin):
+        return None  # Can't check
+    problems = pi.verdict(["site/index.html"], f"![x]({RAW})", changed_since=changed_since, fail_closed=True)
+    assert codes(problems) == ["UI_EVIDENCE_UNCHECKED"]

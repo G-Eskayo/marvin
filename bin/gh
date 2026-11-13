@@ -288,14 +288,20 @@ def ui_evidence_refusal(argv: list[str], ask, read_file=None, current_branch=Non
         pr = ask(["pr", "view", *target, "--repo", repo, "--json", "files,body,headRefOid"])
         files, body, head_ref = [f["path"] for f in pr.get("files", [])], pr.get("body") or "", pr.get("headRefOid")
 
-    def changed_since(sha):
+    def changed_since(pin):
         try:
-            return [f["filename"] for f in ask(["api", f"repos/{repo}/compare/{sha}...{head_ref}"]).get("files", [])]
+            pin_repo = pin.get("repo", repo)
+            pin_sha = pin.get("sha")
+            if not pin_sha:
+                return None
+            if pin_repo != repo:
+                return None
+            return [f["filename"] for f in ask(["api", f"repos/{pin_repo}/compare/{pin_sha}...{head_ref}"]).get("files", [])]
         except Exception:  # noqa: BLE001
             return None
 
     extra = pi.ui_paths_for(repo, profiles_dir or Path(os.environ.get("MARVIN_INSTANCE_DIR") or Path.home() / ".agents" / "instance") / "config" / "projects")
-    problems = pi.verdict(files, body, extra, changed_since if head_ref else None)
+    problems = pi.verdict(files, body, extra, changed_since if head_ref else None, head_ref, fail_closed=False)
     if not problems:
         return None
     code, message = problems[0]

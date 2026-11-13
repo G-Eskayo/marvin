@@ -178,8 +178,10 @@ SHA735 = "a7174e5642d35c6272c1787ae7db24aa2015db34"
 RAW735 = f"https://raw.githubusercontent.com/o/r/{SHA735}/docs/images/pr/a.png"
 
 
-def _asker(files, body="", compare_since=None):
-    """A fake GitHub: the PR's files and body, and what changed since a pinned commit."""
+def _asker(files, body="", compare_since=None, cross_repo_pins=None):
+    """A fake GitHub: the PR's files and body, and what changed since a pinned commit.
+    compare_since is what changed in the main repo since SHA735.
+    cross_repo_pins maps (repo, sha) to what changed since that commit in that repo."""
     def ask(args):
         if args[:2] == ["repo", "view"]:
             return {"nameWithOwner": "o/r"}
@@ -187,9 +189,20 @@ def _asker(files, body="", compare_since=None):
             return {"files": [{"path": f} for f in files], "body": body, "headRefOid": "f" * 40}
         if args[0] == "api" and args[1] == "repos/o/r":
             return {"default_branch": "main"}
-        if args[0] == "api" and args[1].startswith(f"repos/o/r/compare/{SHA735}..."):
-            return {"files": [{"filename": f} for f in (compare_since or [])]}
-        if args[0] == "api" and args[1].startswith("repos/o/r/compare/"):
+        if args[0] == "api" and args[1].startswith("repos/"):
+            # Parse "repos/<repo>/compare/<ref>..." to get the repo and ref (sha or branch)
+            import re
+            m = re.search(r"repos/([^/]+/[^/]+)/compare/([^.]+)\.\.\.", args[1])
+            if not m:
+                raise AssertionError(f"couldn't parse {args[1]}")
+            repo = m.group(1)
+            ref = m.group(2)
+            # Check cross-repo pins first, then default to main repo (only for full SHAs)
+            if cross_repo_pins and (repo, ref) in cross_repo_pins:
+                return {"files": [{"filename": f} for f in cross_repo_pins[(repo, ref)]]}
+            elif repo == "o/r" and ref == SHA735:
+                return {"files": [{"filename": f} for f in (compare_since or [])]}
+            # For branch comparisons or unknown refs, return the files being changed
             return {"files": [{"filename": f} for f in files]}
         raise AssertionError(args)
     return ask

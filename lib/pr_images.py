@@ -10,6 +10,7 @@ for the facts and refuses; bin/pr-shots pins images the one way that keeps worki
 """
 from __future__ import annotations
 import re
+from pathlib import Path
 
 from evidence_capture import ui_files
 
@@ -60,10 +61,50 @@ def _list(paths, n=3) -> str:
     return ", ".join(paths[:n]) + (f" and {len(paths) - n} more" if len(paths) > n else "")
 
 
-def verdict(files, body, extra_patterns=(), changed_since=None) -> list[tuple[str, str]]:
+def image_pins(body) -> list[dict]:
+    """The commits that images are pinned to: [{"repo": "o/r", "sha": "abc...def"}].
+    Parses raw.githubusercontent.com/<o>/<r>/<sha>/... URLs only (full SHAs pinned to those commits)."""
+    from collections import OrderedDict
+    seen = OrderedDict()
+    for u in image_urls(body):
+        m = re.match(r"^https://raw\.githubusercontent\.com/([^/]+)/([^/]+)/([0-9a-f]{40})/", u)
+        if not m:
+            continue
+        repo = f"{m.group(1)}/{m.group(2)}"
+        sha = m.group(3)
+        seen[f"{repo}@{sha}"] = {"repo": repo, "sha": sha}
+    return list(seen.values())
+
+
+def make_changed_since(repo: str, head: str, ask_gh) -> callable:
+    """Returns a callable changed_since(pin_dict) that lists files changed between pin[sha] and head in pin[repo].
+    Takes a pin dict with 'repo' and 'sha' keys (from image_pins()). Requires ask_gh(args) to call gh and return JSON.
+    Returns None if the query fails (e.g., offline, cross-repo SHA not found). For cross-repo pins, returns None since
+    GitHub's compare endpoint doesn't work across repos."""
+    def changed_since(pin: dict):
+        try:
+            pin_repo = pin.get("repo", repo)
+            pin_sha = pin.get("sha")
+            if not pin_sha:
+                return None
+            if pin_repo != repo:
+                return None
+            result = ask_gh(["api", f"repos/{pin_repo}/compare/{pin_sha}...{head}"])
+            return [f["filename"] for f in result.get("files", [])]
+        except Exception:  # noqa: BLE001
+            return None
+    return changed_since
+
+
+def verdict(files, body, extra_patterns=(), changed_since=None, head=None, fail_closed=True) -> list[tuple[str, str]]:
     """Problems that keep a PR from opening or merging, as (code, plain message); [] when it may go ahead.
-    `changed_since(sha)` lists files changed between that commit and the PR head, or None when it can't be told;
-    without it, staleness isn't judged."""
+
+    `changed_since(pin)` takes a pin dict (from image_pins: {repo, sha}) and returns the list of files
+    changed between that commit and `head` (or the PR head), or None when it can't be told. Without it, staleness isn't judged.
+    When `changed_since` returns [], staleness check passes (no UI files changed since the images).
+    When `changed_since` returns None and `fail_closed=True`, we reject the PR (strict mode, for dashboard/Approve).
+    When `changed_since` returns None and `fail_closed=False`, we skip the staleness check (lenient mode, for bin/gh).
+    """
     ui = ui_files(files, extra_patterns)
     if not ui:
         return []
@@ -75,18 +116,22 @@ def verdict(files, body, extra_patterns=(), changed_since=None) -> list[tuple[st
         lines = "; ".join(f"{u} is {_WHY[p]}" for u, p in bad[:3])
         return [("BAD_IMAGE_LINK", f"Some images won't show or will go stale: {lines}. {_FIX}")]
     if changed_since:
-        later = []
-        for sha in pinned_shas(urls):
-            since = changed_since(sha)
-            if since is None:
-                return []
-            newer_ui = [f for f in ui_files(since, extra_patterns) if not _IMAGE_FILE.search(f)]
-            if not newer_ui:
-                return []  # the newest pinned commit already shows the current look
-            later.append(newer_ui)
-        if later:
-            return [("STALE_UI_EVIDENCE", f"The images are older than later changes to how it looks ({_list(min(later, key=len))}). "
-                     f"Retake them and re-pin: {_FIX}")]
+        pins = image_pins(body)
+        if pins:
+            stale_ui = None
+            for pin in pins:
+                since = changed_since(pin)
+                if since is None:
+                    if fail_closed:
+                        return [("UI_EVIDENCE_UNCHECKED", f"Could not check whether images are current (GitHub unavailable or cross-repo pin not found). "
+                                 f"Retake them and re-pin: {_FIX}")]
+                    continue
+                newer_ui = [f for f in ui_files(since, extra_patterns) if not _IMAGE_FILE.search(f)]
+                if newer_ui:
+                    stale_ui = newer_ui
+            if stale_ui:
+                return [("STALE_UI_EVIDENCE", f"The images are older than later changes to how it looks ({_list(stale_ui)}). "
+                         f"Retake them and re-pin: {_FIX}")]
     return []
 
 
@@ -141,7 +186,6 @@ def with_shots_section(body: str, section: str) -> str:
 def ui_paths_for(repo: str | None, profiles_dir) -> list[str]:
     """The project's own UI paths (`evidence.ui_paths` in its profile), so an app whose views aren't named *View counts."""
     import json
-    from pathlib import Path
     d = Path(profiles_dir)
     if not repo or not d.is_dir():
         return []
@@ -154,3 +198,81 @@ def ui_paths_for(repo: str | None, profiles_dir) -> list[str]:
             paths = (data.get("evidence") or {}).get("ui_paths") or []
             return [p for p in paths if isinstance(p, str) and p]
     return []
+
+
+def parse_pr_url(pr_url: str) -> dict | None:
+    """Parses a PR URL (https://github.com/owner/repo/pull/N) into {owner, repo, number}.
+    Returns None if the URL is invalid."""
+    import re
+    match = re.match(r"^https://github\.com/([^/]+)/([^/]+)/pull/(\d+)$", pr_url)
+    if not match:
+        return None
+    return {"owner": match.group(1), "repo": match.group(2), "number": match.group(3)}
+
+
+def check_pr(pr_url: str, head_sha: str, ask_gh, profiles_dir, strict=False) -> list[tuple[str, str]]:
+    """Checks whether a PR URL's images follow the owner's rule (current, working, pinned).
+
+    Returns a list of (code, message) problems, or [] if the PR is OK.
+    `ask_gh(args)` calls gh and returns JSON.
+    `strict=False` (default): when we can't check (GitHub offline, invalid URL), return [] (pass the PR);
+    `strict=True` (for bin/gh): throw an exception so the gate can log and retry.
+    """
+    import os
+    pr = parse_pr_url(pr_url)
+    if not pr:
+        if strict:
+            raise ValueError(f"Invalid PR URL: {pr_url}")
+        return []
+
+    repo = f"{pr['owner']}/{pr['repo']}"
+    try:
+        pr_data = ask_gh(["pr", "view", pr_url, "--json", "files,body,headRefOid"])
+        files = [f["path"] for f in pr_data.get("files", [])]
+        body = pr_data.get("body") or ""
+        head = pr_data.get("headRefOid") or head_sha
+    except Exception as e:  # noqa: BLE001
+        if strict:
+            raise
+        return []
+
+    extra = ui_paths_for(repo, profiles_dir or Path(os.environ.get("MARVIN_INSTANCE_DIR") or Path.home() / ".agents" / "instance") / "config" / "projects")
+    changed_since = make_changed_since(repo, head, ask_gh) if head else None
+    return verdict(files, body, extra, changed_since, head, fail_closed=strict)
+
+
+def main(argv: list[str]) -> int:
+    """CLI entry point: `check <pr_url> [<head_sha>]` checks a PR's images and prints JSON results."""
+    import json
+    import subprocess
+    import sys
+
+    if not argv or argv[0] == "check":
+        if len(argv) < 2:
+            sys.stderr.write("usage: check <pr_url> [<head_sha>]\n")
+            return 2
+        pr_url = argv[1]
+        head_sha = argv[2] if len(argv) > 2 else None
+
+        def ask_gh(args):
+            p = subprocess.run(["gh", *args], capture_output=True, text=True, timeout=60)
+            if p.returncode != 0:
+                raise RuntimeError((p.stderr or p.stdout).strip())
+            return json.loads(p.stdout)
+
+        try:
+            problems = check_pr(pr_url, head_sha, ask_gh, None, strict=True)
+        except Exception as e:  # noqa: BLE001
+            sys.stderr.write(f"error: {e}\n")
+            return 1
+
+        print(json.dumps({"problems": problems}))
+        return 0
+
+    sys.stderr.write(f"unknown command: {argv[0]}\n")
+    return 2
+
+
+if __name__ == "__main__":
+    import sys
+    sys.exit(main(sys.argv[1:]))

@@ -83,7 +83,7 @@ def test_it_commits_pushes_and_pins_the_images_to_the_full_sha_in_the_pr(tmp_pat
     assert f"![The menu-bar M while listening]({url})" in body
     assert body.index(pr_images.SHOTS_START) < body.index("## Decisions")
     # The gate agrees: a UI PR with these images, nothing changed since, goes through.
-    assert pr_images.verdict(["site/page.html"], body, changed_since=lambda s: []) == []
+    assert pr_images.verdict(["site/page.html"], body, changed_since=lambda p: []) == []
 
 
 def test_running_it_again_re_pins_instead_of_adding_a_second_section(tmp_path, monkeypatch):
