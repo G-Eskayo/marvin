@@ -1,0 +1,4 @@
+1. In `skills/improve/scripts/improvement_sweep.py`, change `find_project_path` (line 54) to iterate `sorted(KNOWN_PROJECTS.items(), key=lambda kv: len(kv[0]), reverse=True)` instead of `KNOWN_PROJECTS.items()`.
+2. In the same file, change `extract_project` (line 69) to iterate `sorted(KNOWN_PROJECTS, key=len, reverse=True)` instead of `KNOWN_PROJECTS`.
+3. Add the 8 tests above to `skills/improve/scripts/tests/test_improvement_sweep.py` (new tests only; the existing `test_known_project_paths_point_where_the_projects_actually_live` and all dedup/inbox tests stay as-is since they don't touch resolution order).
+4. Run `~/.agents/venv/bin/python -m pytest skills/improve/scripts/tests/test_improvement_sweep.py -v` and confirm all tests (old and new) pass.
