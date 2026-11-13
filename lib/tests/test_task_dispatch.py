@@ -125,3 +125,218 @@ def test_online_hosts_reads_peers_when_tailscale_answers(monkeypatch):
            "100.102.243.126  box             geskayo@  linux  offline, last seen 1d ago\n")
     monkeypatch.setattr(td.subprocess, "run", lambda *a, **k: sp.CompletedProcess(a, 0, out, ""))
     assert td.tailscale_online_hosts_or_none() == {"gils-mac-mini", "mbp"}
+
+
+# ── error logging for hook failures ──────────────────────────────────────────────────────────────────────
+
+from unittest.mock import Mock, patch
+
+
+@pytest.fixture
+def hook_errors_log(tmp_path, monkeypatch):
+	"""Hook errors log in tmp_path. Also stubs error_log.record so tests don't write to the real error store."""
+	import hook_errors
+	import error_log
+	log_file = tmp_path / "hook-errors.log"
+	monkeypatch.setattr(hook_errors, "LOG_PATH", log_file)
+	monkeypatch.setattr(error_log, "record", Mock())  # Stub to prevent writing to real ~/.claude/logs/errors.jsonl
+	yield log_file
+
+
+def test_tailscale_subprocess_exception_is_logged(hook_errors_log, monkeypatch):
+	"""When subprocess.run raises, the exception is logged and None is returned."""
+	import subprocess as sp
+	import task_dispatch as td
+	with patch.object(td.subprocess, "run", side_effect=OSError("Tailscale binary not found")):
+		result = td.tailscale_online_hosts_or_none()
+	assert result is None
+	assert hook_errors_log.exists()
+	logs = hook_errors_log.read_text()
+	assert "[task_dispatch]" in logs
+	assert "tailscale_online_hosts_or_none" in logs
+	assert "OSError" in logs
+
+
+def test_tailscale_timeout_exception_is_logged(hook_errors_log, monkeypatch):
+	"""When subprocess times out, the exception is logged and None is returned."""
+	import subprocess as sp
+	import task_dispatch as td
+	with patch.object(td.subprocess, "run", side_effect=sp.TimeoutExpired("cmd", 10)):
+		result = td.tailscale_online_hosts_or_none()
+	assert result is None
+	assert hook_errors_log.exists()
+	logs = hook_errors_log.read_text()
+	assert "TimeoutExpired" in logs
+	assert "tailscale_online_hosts_or_none" in logs
+
+
+def test_tailscale_non_zero_exit_is_not_logged(hook_errors_log, monkeypatch):
+	"""When subprocess exits non-zero but completes, no exception is logged (it's a normal path)."""
+	import subprocess as sp
+	import task_dispatch as td
+	with patch.object(td.subprocess, "run", return_value=sp.CompletedProcess(["cmd"], 1, "", "error")):
+		result = td.tailscale_online_hosts_or_none()
+	assert result is None
+	logs = hook_errors_log.read_text() if hook_errors_log.exists() else ""
+	assert "tailscale_online_hosts_or_none" not in logs
+
+
+def test_tailscale_success_path_no_logging(hook_errors_log, monkeypatch):
+	"""When subprocess succeeds normally, no logging happens."""
+	import subprocess as sp
+	import task_dispatch as td
+	with patch.object(td.subprocess, "run", return_value=sp.CompletedProcess(["cmd"], 0, "100.1.1.1 mac-mini status=active\n", "")):
+		result = td.tailscale_online_hosts_or_none()
+	assert result is not None
+	logs = hook_errors_log.read_text() if hook_errors_log.exists() else ""
+	assert "tailscale_online_hosts_or_none" not in logs
+
+
+def test_read_remote_ssh_non_zero_is_logged(hook_errors_log, monkeypatch):
+	"""When ssh exits non-zero, a RuntimeError is logged."""
+	import subprocess as sp
+	import task_dispatch as td
+	with patch.object(td.subprocess, "run", return_value=sp.CompletedProcess(["cmd"], 255, "", "ssh: could not resolve hostname")):
+		result = td._read_remote_dispatch_state("box.ts")
+	assert result == {"busy": False}
+	assert hook_errors_log.exists()
+	logs = hook_errors_log.read_text()
+	assert "[task_dispatch]" in logs
+	assert "_read_remote_dispatch_state" in logs
+	assert "RuntimeError" in logs
+	assert "exited 255" in logs
+
+
+def test_read_remote_ssh_non_zero_truncates_stderr(hook_errors_log, monkeypatch):
+	"""SSH error message is truncated to 300 chars in the log."""
+	import subprocess as sp
+	import task_dispatch as td
+	long_err = "x" * 500
+	with patch.object(td.subprocess, "run", return_value=sp.CompletedProcess(["cmd"], 1, "", long_err)):
+		result = td._read_remote_dispatch_state("box.ts")
+	assert result == {"busy": False}
+	assert hook_errors_log.exists()
+	logs = hook_errors_log.read_text()
+	assert logs.count("x") <= 320, "stderr truncated to at most 300 chars plus some formatting"
+	assert logs.count("x") >= 250, "stderr includes most of the error message"
+
+
+def test_read_remote_empty_stdout_not_logged(hook_errors_log, monkeypatch):
+	"""Empty stdout returns normally with no logging."""
+	import subprocess as sp
+	import task_dispatch as td
+	with patch.object(td.subprocess, "run", return_value=sp.CompletedProcess(["cmd"], 0, "", "")):
+		result = td._read_remote_dispatch_state("box.ts")
+	assert result == {"busy": False}
+	logs = hook_errors_log.read_text() if hook_errors_log.exists() else ""
+	assert "_read_remote_dispatch_state" not in logs
+
+
+def test_read_remote_subprocess_exception_is_logged(hook_errors_log, monkeypatch):
+	"""When subprocess raises an exception, it's logged."""
+	import subprocess as sp
+	import task_dispatch as td
+	with patch.object(td.subprocess, "run", side_effect=TimeoutError("ssh timed out")):
+		result = td._read_remote_dispatch_state("box.ts")
+	assert result == {"busy": False}
+	assert hook_errors_log.exists()
+	logs = hook_errors_log.read_text()
+	assert "TimeoutError" in logs
+	assert "_read_remote_dispatch_state" in logs
+
+
+def test_read_remote_json_decode_exception_is_logged(hook_errors_log, monkeypatch):
+	"""When JSON parsing fails, it's logged."""
+	import subprocess as sp
+	import task_dispatch as td
+	with patch.object(td.subprocess, "run", return_value=sp.CompletedProcess(["cmd"], 0, "not valid json", "")):
+		result = td._read_remote_dispatch_state("box.ts")
+	assert result == {"busy": False}
+	assert hook_errors_log.exists()
+	logs = hook_errors_log.read_text()
+	assert "_read_remote_dispatch_state" in logs
+
+
+def test_read_remote_success_path_no_logging(hook_errors_log, monkeypatch):
+	"""When subprocess and JSON parsing succeed, no logging."""
+	import subprocess as sp
+	import task_dispatch as td
+	with patch.object(td.subprocess, "run", return_value=sp.CompletedProcess(["cmd"], 0, '{"busy": true}', "")):
+		result = td._read_remote_dispatch_state("box.ts")
+	assert result == {"busy": True}
+	logs = hook_errors_log.read_text() if hook_errors_log.exists() else ""
+	assert "_read_remote_dispatch_state" not in logs
+
+
+def test_machine_load_remote_subprocess_exception_is_logged(hook_errors_log, monkeypatch):
+	"""When remote ssh raises an exception, it's logged."""
+	import subprocess as sp
+	import task_dispatch as td
+	with patch.object(td.subprocess, "run", side_effect=OSError("no ssh")):
+		result = td.machine_load("box-id", {"is_self": False, "tailscale_hostname": "box.ts"})
+	assert result is None
+	assert hook_errors_log.exists()
+	logs = hook_errors_log.read_text()
+	assert "OSError" in logs
+	assert "machine_load" in logs
+
+
+def test_machine_load_remote_timeout_is_logged(hook_errors_log, monkeypatch):
+	"""When remote ssh times out, it's logged."""
+	import subprocess as sp
+	import task_dispatch as td
+	with patch.object(td.subprocess, "run", side_effect=sp.TimeoutExpired("cmd", 10)):
+		result = td.machine_load("box-id", {"is_self": False, "tailscale_hostname": "box.ts"})
+	assert result is None
+	assert hook_errors_log.exists()
+	logs = hook_errors_log.read_text()
+	assert "TimeoutExpired" in logs
+	assert "machine_load" in logs
+
+
+def test_machine_load_remote_parse_error_is_logged(hook_errors_log, monkeypatch):
+	"""When output parsing fails, it's logged."""
+	import subprocess as sp
+	import task_dispatch as td
+	with patch.object(td.subprocess, "run", return_value=sp.CompletedProcess(["cmd"], 0, "not parseable", "")):
+		result = td.machine_load("box-id", {"is_self": False, "tailscale_hostname": "box.ts"})
+	assert result is None
+	assert hook_errors_log.exists()
+	logs = hook_errors_log.read_text()
+	assert "machine_load" in logs
+
+
+def test_machine_load_remote_success_no_logging(hook_errors_log, monkeypatch):
+	"""When remote load succeeds, no logging."""
+	import subprocess as sp
+	import task_dispatch as td
+	output = "{ 1.5 2.0 1.2 }\n4\n2"
+	with patch.object(td.subprocess, "run", return_value=sp.CompletedProcess(["cmd"], 0, output, "")):
+		result = td.machine_load("box-id", {"is_self": False, "tailscale_hostname": "box.ts"})
+	assert result == (1.5, 4, 2)
+	logs = hook_errors_log.read_text() if hook_errors_log.exists() else ""
+	assert "machine_load" not in logs
+
+
+def test_machine_load_local_success_no_logging(hook_errors_log, monkeypatch):
+	"""When local load succeeds, no logging."""
+	import os as os_module
+	import task_dispatch as td
+	monkeypatch.setattr(os_module, "getloadavg", Mock(return_value=(1.0, 2.0, 3.0)))
+	monkeypatch.setattr(os_module, "cpu_count", Mock(return_value=4))
+	monkeypatch.setattr(td, "_live_task_count", Mock(return_value=0))
+	result = td.machine_load("self-id", {"is_self": True})
+	assert result == (1.0, 4, 0)
+	logs = hook_errors_log.read_text() if hook_errors_log.exists() else ""
+	assert "machine_load" not in logs
+
+
+def test_machine_load_local_oserror_no_logging(hook_errors_log, monkeypatch):
+	"""When local getloadavg fails with OSError (normal on some systems), no logging."""
+	import os as os_module
+	import task_dispatch as td
+	monkeypatch.setattr(os_module, "getloadavg", Mock(side_effect=OSError("not supported")))
+	result = td.machine_load("self-id", {"is_self": True})
+	assert result is None
+	logs = hook_errors_log.read_text() if hook_errors_log.exists() else ""
+	assert "machine_load" not in logs

@@ -29,6 +29,15 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from machine_profile import registry_id, remote_devices, _load_registry  # noqa: E402
 import host_os  # noqa: E402
+from hook_errors import log_hook_error  # noqa: E402
+
+
+def _log_hook_error_safe(context: str, exc: BaseException) -> None:
+	try:
+		log_hook_error("task_dispatch", context, exc)
+	except Exception:
+		pass
+
 
 DISPATCH_STATE_PATH = Path.home() / ".claude" / "dispatch-state.json"
 # The same files as a shell sees them on whichever machine runs the command. Homes differ between machines
@@ -75,7 +84,8 @@ def tailscale_online_hosts_or_none() -> set[str] | None:
     missing, exits non-zero or hangs. A view must say "can't check", never "every peer is offline" (marvin#889)."""
     try:
         proc = subprocess.run([TAILSCALE_BIN, "status"], capture_output=True, text=True, timeout=10, env=TAILSCALE_ENV)
-    except Exception:
+    except Exception as exc:
+        _log_hook_error_safe("tailscale_online_hosts_or_none", exc)
         return None
     if proc.returncode != 0:
         return None
@@ -106,10 +116,14 @@ def _read_remote_dispatch_state(host: str) -> dict:
             ["ssh", *SSH_OPTS, host, f"cat {SHELL_STATE_PATH}"],
             capture_output=True, text=True, timeout=10,
         )
-        if proc.returncode != 0 or not proc.stdout.strip():
+        if proc.returncode != 0:
+            _log_hook_error_safe("_read_remote_dispatch_state", RuntimeError(f"ssh to {host} exited {proc.returncode}: {proc.stderr[:300]}"))
+            return {"busy": False}
+        if not proc.stdout.strip():
             return {"busy": False}
         return json.loads(proc.stdout)
-    except Exception:
+    except Exception as exc:
+        _log_hook_error_safe("_read_remote_dispatch_state", exc)
         return {"busy": False}
 
 
@@ -200,7 +214,8 @@ def machine_load(device_id: str, info: dict) -> tuple[float, int, int] | None:
         lines = proc.stdout.split("\n")
         load1 = float(lines[0].strip("{} ").split()[0])
         return load1, int(lines[1]), int((lines[2] if len(lines) > 2 else "0").strip() or 0)
-    except Exception:
+    except Exception as exc:
+        _log_hook_error_safe("machine_load", exc)
         return None
 
 
