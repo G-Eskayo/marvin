@@ -1,6 +1,7 @@
 """Converting a short project page into a long-form page (lib/portfolio_longform.py)."""
 import json
 import sys
+from datetime import datetime, timezone
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -95,7 +96,20 @@ def test_converting_saves_the_short_page_first_and_rollback_restores_it(tmp_path
     assert saved["content"] == short()
     update = next(inp for c, inp in r.calls if "post update" in c)
     assert "[fusion_code]" in update                                   # a long-form page is emitted raw
-    assert lf.rollback("p", outbox=tmp_path, runner=_runner("")) == {"ok": True, "restored": "/ai-projects/p/"}
+
+    rollback_runner = _runner("LIVE CONTENT")
+    rollback_out = lf.rollback("p", outbox=tmp_path, runner=rollback_runner)
+    assert rollback_out["ok"] and rollback_out["restored"] == "/ai-projects/p/"
+    assert "saved_current" in rollback_out
+
+    before_rollback_files = list((tmp_path / "p").glob("before-rollback-*.json"))
+    assert len(before_rollback_files) == 1
+    current = json.loads(before_rollback_files[0].read_text())
+    assert current["content"] == "LIVE CONTENT"
+
+    # Check that the restore's post update input is the original saved content
+    restore_update = next(inp for c, inp in rollback_runner.calls if "post update" in c)
+    assert restore_update == saved["content"]
 
 
 def test_a_page_without_structure_is_skipped_not_failed(tmp_path):
@@ -132,3 +146,96 @@ def test_authoring_requires_a_lead_and_sections_and_leaves_the_page_alone_otherw
     out = lf.author("/ai-projects/p/", {"lead_html": "", "sections": []}, outbox=tmp_path, runner=r, regenerate=None)
     assert out["ok"] is False and out["stage"] == "invalid"
     assert not any("post update" in c for c, _ in r.calls)
+
+
+# ── rollback edge cases ──────────────────────────────────────────────
+
+def test_rollback_with_missing_backup_returns_no_backup():
+    runner = _runner("")
+    out = lf.rollback("nonexistent", outbox=Path("/tmp/no-such-outbox"), runner=runner)
+    assert out == {"ok": False, "stage": "no-backup", "url": "nonexistent"}
+    assert not any("post update" in c for c, _ in runner.calls)
+
+
+def test_rollback_with_corrupt_json_backup_returns_no_backup(tmp_path):
+    backup_dir = tmp_path / "p"
+    backup_dir.mkdir()
+    (backup_dir / "before-longform.json").write_text("{ invalid json }")
+    runner = _runner("")
+    out = lf.rollback("p", outbox=tmp_path, runner=runner)
+    assert out == {"ok": False, "stage": "no-backup", "url": "p"}
+    assert not any("post update" in c for c, _ in runner.calls)
+
+
+def test_rollback_raises_on_failing_post_get(tmp_path):
+    backup_dir = tmp_path / "p"
+    backup_dir.mkdir()
+    (backup_dir / "before-longform.json").write_text(json.dumps({"page_id": 10, "url": "/ai-projects/p/", "content": "OLD"}))
+
+    calls = []
+
+    def failing_runner(cmd, input=None):
+        j = " ".join(map(str, cmd))
+        calls.append((j, input))
+        if "post get" in j:
+            return SimpleNamespace(returncode=1, stdout="", stderr="error")
+        return SimpleNamespace(returncode=0, stdout="", stderr="")
+
+    with pytest.raises(lf.pm.MigrationError, match="fetching the current page"):
+        lf.rollback("p", outbox=tmp_path, runner=failing_runner)
+
+    # Verify no post update was called and no before-rollback file was written
+    assert not any("post update" in c for c, _ in calls)
+    before_rollback_files = list(backup_dir.glob("before-rollback-*.json"))
+    assert len(before_rollback_files) == 0
+
+
+def test_rollback_with_empty_live_content_saves_it(tmp_path):
+    backup_dir = tmp_path / "p"
+    backup_dir.mkdir()
+    (backup_dir / "before-longform.json").write_text(json.dumps({"page_id": 10, "url": "/ai-projects/p/", "content": "OLD"}))
+
+    rollback_runner = _runner("")
+    rollback_out = lf.rollback("p", outbox=tmp_path, runner=rollback_runner)
+    assert rollback_out["ok"]
+    before_rollback_files = list(backup_dir.glob("before-rollback-*.json"))
+    assert len(before_rollback_files) == 1
+    current = json.loads(before_rollback_files[0].read_text())
+    assert current["content"] == ""
+
+
+def test_rollback_handles_same_second_collision(tmp_path, monkeypatch):
+    backup_dir = tmp_path / "p"
+    backup_dir.mkdir()
+    (backup_dir / "before-longform.json").write_text(json.dumps({"page_id": 10, "url": "/ai-projects/p/", "content": "OLD"}))
+
+    fixed_time = datetime(2026, 11, 13, 12, 30, 45, tzinfo=timezone.utc)
+
+    class FakeDatetime:
+        @staticmethod
+        def now(tz=None):
+            return fixed_time
+
+    monkeypatch.setattr(lf, "datetime", FakeDatetime)
+
+    rollback_runner = _runner("NEW")
+    first_out = lf.rollback("p", outbox=tmp_path, runner=rollback_runner)
+    assert first_out["ok"]
+
+    rollback_runner2 = _runner("NEW2")
+    second_out = lf.rollback("p", outbox=tmp_path, runner=rollback_runner2)
+    assert second_out["ok"]
+
+    before_rollback_files = list(backup_dir.glob("before-rollback-*.json"))
+    assert len(before_rollback_files) == 2
+    # Verify the second file has the -2 suffix by checking second_out["saved_current"]
+    assert second_out["saved_current"].endswith("-2.json")
+
+    first_file_path = first_out["saved_current"]
+    second_file_path = second_out["saved_current"]
+    assert first_file_path != second_file_path
+
+    first_json = json.loads(Path(first_file_path).read_text())
+    second_json = json.loads(Path(second_file_path).read_text())
+    assert first_json["content"] == "NEW"
+    assert second_json["content"] == "NEW2"

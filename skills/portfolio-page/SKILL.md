@@ -34,7 +34,7 @@ Write `content/longform/<slug>.json`: `subtitle`, `lead_html`, `content_type`, `
 
 ## 5. Author it on the dev site
 On the mac-mini, from `~/.agents/lib`:
-- A page already in long form must be rolled back first: `portfolio_longform.py <url> --rollback`, then `--author <content.json>` (a `--plan` dry run first). You can tell it's long form when `--plan` answers "not a project-page layout page", or when its content has `longform-section` blocks (often base64 inside `[fusion_code]`). Save your own backup of the current page content before rolling back: `ID=$(${=W} post list --post_type=page --name=<slug> --field=ID); ${=W} post get $ID --field=post_content > backup/longform-<date>/<slug>.html`, with `W` set to the `wp_base()` command.
+- A page already in long form must be rolled back first: `portfolio_longform.py <url> --rollback`, then `--author <content.json>` (a `--plan` dry run first). You can tell it's long form when `--plan` answers "not a project-page layout page", or when its content has `longform-section` blocks (often base64 inside `[fusion_code]`). `--rollback` saves the page it replaces to `~/.claude/outbox/migrations/<slug>/before-rollback-*.json` first.
 - A short page converts directly with `--author`.
 - Writes go through `portfolio_apply.wp_base()` (wp-cli as the admin, so WordPress keeps tags like `<source>`). In zsh, split a command held in a variable with `${=VAR}`.
 
