@@ -545,7 +545,12 @@ def _auto_merge_shadow(step) -> None:
         import auto_merge_shadow
         seen = auto_merge_shadow.run()
         would = sum(1 for s in seen if s["current"]["verdict"] == "auto")
-        step("Auto-merge shadow", f"{len(seen)} open PR(s), {would} it would merge; {auto_merge_shadow.report()['line']}")
+        scan = auto_merge_shadow.last_scan() or {}
+        elapsed = scan.get("elapsed_sec", 0)
+        disk = scan.get("disk_kb", 0)
+        scan_line = (f"scored {scan.get('scored', 0)}, failed {scan.get('failed', 0)}, "
+                     f"{elapsed:.1f}s, {disk} KB")  if scan else ""
+        step("Auto-merge shadow", f"{len(seen)} open PR(s), {would} it would merge; {auto_merge_shadow.report()['line']}; {scan_line}")
         import auto_merge_regression  # rung 3's own merge for known-incident regressions, shadow too (ADR 0064 amendment)
         auto_merge_regression.run()
     except Exception as e:  # noqa: BLE001 -- bookkeeping, never blocks dispatch

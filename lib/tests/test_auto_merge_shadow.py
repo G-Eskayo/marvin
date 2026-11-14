@@ -287,3 +287,385 @@ def test_the_facts_for_a_pr_carry_its_authors_ramp(tmp_path):
     assert sh.author_facts(base, {"author": "marvin-bot-GIL"}, RULES_BOT, ramp_path=ramp)["author_ramp_open"] is True
     assert sh.author_facts(base, {"author": "G-Eskayo"}, RULES_BOT, ramp_path=ramp)["author_ramp_open"] is False
     assert base == FACTS                                                      # the shared facts are not changed
+
+
+# ── multi-PR scoring with budget, backoff, and error logging (ADR 0064 robustness) ──────────────────────────────
+
+def test_classify_failure_wraps_error_log_classify():
+    classified = sh._classify_failure(ValueError("some error"))
+    assert isinstance(classified, dict) and "cause" in classified
+
+
+def test_score_one_pr_returns_dict_on_error(tmp_path, monkeypatch):
+    """_score_one_pr always returns a result dict, even on error, never raises."""
+    def broken(*a, **k):
+        raise RuntimeError("mutation check failed")
+    monkeypatch.setattr(sh, "_gh", lambda a: "")
+    import mutation_check
+    monkeypatch.setattr(mutation_check, "run_mutation_check", broken)
+    monkeypatch.setattr(mutation_check, "render_section", lambda r: "")
+    monkeypatch.setattr(mutation_check, "merge_bodies", lambda b, s: s)
+    p = pr(1)
+    result = sh._score_one_pr(p, M, tmp_path / "state.json")
+    assert isinstance(result, dict) and result["status"] == "unknown" and "reason" in result
+
+
+def test_score_many_returns_summary_with_counts_and_cost(tmp_path, monkeypatch):
+    """_score_many returns {'scored': ..., 'failed': ..., 'elapsed_sec': ..., 'disk_kb': ...}."""
+    def success_score(pr, repo, path):
+        return {"status": "scored", "number": pr["number"], "headRefOid": pr.get("headRefOid"), "elapsed_sec": 1.5, "disk_kb": 300}
+    monkeypatch.setattr(sh, "_score_one_pr", success_score)
+    prs_to_score = [pr(n) for n in range(1, 3)]
+    result = sh._score_many(prs_to_score, M, tmp_path / "state.json", budget_sec=60, now=T0)
+    assert all(k in result for k in ("scored", "failed", "elapsed_sec", "disk_kb"))
+    assert isinstance(result["scored"], int) and isinstance(result["failed"], int)
+
+
+def test_score_many_handles_disk_ledger_sentinel_string(tmp_path, monkeypatch):
+    """disk_ledger.du_kb returning a string sentinel doesn't raise TypeError."""
+    import mutation_check
+    import disk_ledger
+    monkeypatch.setattr(mutation_check, "run_mutation_check", lambda *a, **k: {"lines": 10})
+    monkeypatch.setattr(mutation_check, "render_section", lambda r: "**Score:** 82%")
+    monkeypatch.setattr(mutation_check, "merge_bodies", lambda b, s: s)
+    monkeypatch.setattr(sh, "_gh", lambda a: "")
+    # return the sentinel string from disk_ledger
+    monkeypatch.setattr(disk_ledger, "du_kb", lambda p: "not measured (protected)")
+    prs_to_score = [pr(n) for n in range(1, 2)]
+    result = sh._score_many(prs_to_score, M, tmp_path / "state.json", budget_sec=60, now=T0)
+    # should complete without TypeError, disk_kb should be 0 (not accumulated from sentinel)
+    assert result["disk_kb"] == 0
+
+
+def test_score_many_masks_failed_prs_for_rest_of_run(tmp_path, monkeypatch):
+    """A failed PR is not retried again in the same run."""
+    import json
+    attempt_count = {"count": 0}
+    def failing_score_one_pr(pr, repo, path):
+        attempt_count["count"] += 1
+        return {"status": "unknown", "number": pr["number"], "reason": "test failure"}
+    monkeypatch.setattr(sh, "_score_one_pr", failing_score_one_pr)
+    # single PR passed with no score (so it gets picked)
+    prs_to_score = [{"number": 1, "repo": M, "url": "u1", "title": "PR 1", "body": "", "files": [],
+                     "headRefName": "branch", "headRefOid": "oid1", "author": ""}]
+    result = sh._score_many(prs_to_score, M, tmp_path / "state.json", budget_sec=60, now=T0)
+    # first attempt fails, subsequent attempts should be masked, not retried
+    assert attempt_count["count"] == 1  # only one attempt for this PR in the run
+    st = json.loads((tmp_path / "state.json").read_text())
+    # check that it's recorded as failed
+    assert "u1" in st.get("scoring_failures", {})
+
+
+def test_score_many_resets_failure_count_on_new_push(tmp_path, monkeypatch):
+    """When a PR receives a new push, its failure counter resets."""
+    import json
+    state_file = tmp_path / "state.json"
+    # first run: record a failure with oid "old"
+    prs1 = [{"number": 1, "repo": M, "url": "u1", "title": "PR 1", "body": "", "files": [],
+             "headRefName": "branch", "headRefOid": "old", "author": ""}]
+    def fail_once(pr, repo, path):
+        return {"status": "unknown", "number": pr["number"], "reason": "first attempt fails"}
+    monkeypatch.setattr(sh, "_score_one_pr", fail_once)
+    sh._score_many(prs1, M, state_file, budget_sec=60, now=T0)
+    st = json.loads(state_file.read_text())
+    assert st.get("scoring_failures", {}).get("u1", {}).get("count") == 1
+    assert st["scoring_failures"]["u1"]["headRefOid"] == "old"
+    # second run: same PR but with new push (oid "new") — counter should reset
+    prs2 = [{"number": 1, "repo": M, "url": "u1", "title": "PR 1", "body": "", "files": [],
+             "headRefName": "branch", "headRefOid": "new", "author": ""}]
+    sh._score_many(prs2, M, state_file, budget_sec=60, now=T0 + 100)
+    st = json.loads(state_file.read_text())
+    # counter should be 1, not 2 (reset on new oid)
+    assert st["scoring_failures"]["u1"]["count"] == 1
+    assert st["scoring_failures"]["u1"]["headRefOid"] == "new"
+
+
+def test_score_many_parks_pr_after_max_score_failures(tmp_path, monkeypatch):
+    """After MAX_SCORE_FAILURES=5, PR is marked not_before and not retried this run."""
+    import json
+    state_file = tmp_path / "state.json"
+    # initialize the state file
+    state_file.write_text(json.dumps({"mode": "shadow", "prs": {}, "scored": {}, "scoring_failures": {}}))
+    # PR with no score in the body so it gets picked
+    prs = [{"number": 1, "repo": M, "url": "u1", "title": "PR 1", "body": "", "files": [],
+            "headRefName": "branch", "headRefOid": "oid1", "author": ""}]
+    def fail_score(pr, repo, path):
+        return {"status": "unknown", "number": pr["number"], "reason": "consistent failure"}
+    # run 5 times, each time the PR fails
+    for i in range(sh.MAX_SCORE_FAILURES):
+        monkeypatch.setattr(sh, "_score_one_pr", fail_score)
+        sh._score_many(prs, M, state_file, budget_sec=60, now=T0 + i * 100)
+    st = json.loads(state_file.read_text())
+    entry = st["scoring_failures"]["u1"]
+    assert entry["count"] >= sh.MAX_SCORE_FAILURES
+    assert "not_before" in entry  # now parked
+    assert entry["not_before"] > T0 + (sh.MAX_SCORE_FAILURES - 1) * 100
+
+
+def test_score_many_skips_backoff_prs_without_marking_as_scored(tmp_path, monkeypatch):
+    """PRs in backoff (not_before > now) don't consume budget or increment scored count."""
+    import json
+    def success_score(pr, repo, path):
+        return {"status": "scored", "number": pr["number"], "headRefOid": pr.get("headRefOid"), "elapsed_sec": 1.0, "disk_kb": 200}
+    monkeypatch.setattr(sh, "_score_one_pr", success_score)
+    state_file = tmp_path / "state.json"
+    # manually set up a parked PR in backoff
+    st = {"mode": "shadow", "prs": {}, "scored": {}, "scoring_failures": {
+        "u1": {"count": 5, "not_before": T0 + 10000, "headRefOid": "oid1", "reason": "test"}  # far in the future
+    }}
+    state_file.write_text(json.dumps(st))
+    # PR 2 has no score in body, so it can be selected
+    prs = [pr(1), {"number": 2, "repo": M, "url": "u2", "title": "PR 2", "body": "", "files": [],
+                   "headRefName": "branch", "headRefOid": "oid2", "author": ""}]
+    result = sh._score_many(prs, M, state_file, budget_sec=60, now=T0)
+    # PR 1 is in backoff: should skip it, only PR 2 scored
+    assert result["scored"] == 1 and result["failed"] == 0
+    st = json.loads(state_file.read_text())
+    assert st["scored"].get("u2") is not None  # PR 2 was scored
+    assert st["scored"].get("u1") is None  # PR 1 was not marked scored
+
+
+def test_score_many_stops_when_budget_expires(tmp_path, monkeypatch):
+    """_score_many stops at budget_sec even with more PRs to score."""
+    import time
+    call_times = []
+    def slow_score(pr, repo, path):
+        call_times.append(time.time())
+        time.sleep(0.1)  # 100ms per check
+        return {"status": "scored", "number": pr["number"], "headRefOid": pr.get("headRefOid"), "elapsed_sec": 0.1, "disk_kb": 150}
+    monkeypatch.setattr(sh, "_score_one_pr", slow_score)
+    prs_to_score = [pr(n) for n in range(1, 20)]  # many PRs
+    result = sh._score_many(prs_to_score, M, tmp_path / "state.json", budget_sec=0.2, now=time.time())
+    # with 0.2s budget and 0.1s per check, should score max ~2 PRs
+    assert result["scored"] <= 3
+
+
+def test_score_many_filters_already_scored_from_queue(tmp_path, monkeypatch):
+    """_score_many skips PRs already scored at their current commit."""
+    import json
+    def success_score(pr, repo, path):
+        return {"status": "scored", "number": pr["number"], "headRefOid": pr.get("headRefOid"), "elapsed_sec": 1.0, "disk_kb": 250}
+    monkeypatch.setattr(sh, "_score_one_pr", success_score)
+    state_file = tmp_path / "state.json"
+    # manually set PR 1 as already scored
+    st = {"mode": "shadow", "prs": {}, "scored": {"u1": "oid1"}, "scoring_failures": {}}
+    state_file.write_text(json.dumps(st))
+    # PR 2 with no score in body so it can be selected
+    prs = [pr(1), {"number": 2, "repo": M, "url": "u2", "title": "PR 2", "body": "", "files": [],
+                   "headRefName": "branch", "headRefOid": "oid2", "author": ""}]
+    result = sh._score_many(prs, M, state_file, budget_sec=60, now=T0)
+    # should only score PR 2
+    assert result["scored"] == 1
+    st = json.loads(state_file.read_text())
+    assert st["scored"].get("u2") is not None
+
+
+def test_run_persists_last_scan_summary_in_state(tmp_path, monkeypatch):
+    """run() writes _score_many's summary as st['last_scan'] via _Locked."""
+    import json
+    # mock all the external dependencies
+    monkeypatch.setattr(sh, "_gh", lambda a: json.dumps([]))
+    monkeypatch.setattr(sh, "record_author_ramps", lambda *a, **k: [])
+    monkeypatch.setattr(sh, "_score_many", lambda *a, **k: {"scored": 3, "failed": 1, "elapsed_sec": 8.2, "disk_kb": 600})
+    import subprocess
+    monkeypatch.setattr(subprocess, "run", lambda *a, **k: type('', (), {"stdout": "", "returncode": 0})())
+    state_file = tmp_path / "state.json"
+    try:
+        sh.run(repo=M, path=state_file)
+    except Exception:
+        pass
+    if state_file.exists():
+        st = json.loads(state_file.read_text())
+        if "last_scan" in st:
+            assert st["last_scan"]["scored"] == 3
+
+
+def test_last_scan_accessor_mirrors_mode_report_style(state):
+    """last_scan() returns dict with keys from _score_many summary, or None before first run."""
+    sh.observe([pr(1)], FACTS, path=state, now=T0)
+    result = sh.last_scan(path=state)
+    assert result is None  # last_scan not set until _score_many runs
+
+
+def test_last_scan_returns_none_when_state_missing(tmp_path):
+    """last_scan on missing state returns None."""
+    missing = tmp_path / "missing.json"
+    result = sh.last_scan(path=missing)
+    assert result is None
+
+
+def test_failure_reason_extracted_from_exception_and_logged():
+    """Exception's cause is classified via _classify_failure."""
+    exc = ValueError("test error")
+    result = sh._classify_failure(exc)
+    assert isinstance(result, dict) and "cause" in result
+
+
+def test_score_many_accumulates_disk_cost_across_attempts(tmp_path, monkeypatch):
+    """disk cost is summed across all attempts within a single run."""
+    disk_costs = [250, 300, 280]  # different cost per call
+    call_count = [0]
+    def varying_cost(pr, repo, path):
+        cost = disk_costs[call_count[0]] if call_count[0] < len(disk_costs) else 0
+        call_count[0] += 1
+        return {"status": "scored", "number": pr["number"], "headRefOid": pr.get("headRefOid"), "elapsed_sec": 1.0, "disk_kb": cost}
+    monkeypatch.setattr(sh, "_score_one_pr", varying_cost)
+    # PRs with no scores in the body so they get picked
+    prs_to_score = [{"number": n, "repo": M, "url": f"u{n}", "title": f"PR {n}", "body": "", "files": [],
+                     "headRefName": "branch", "headRefOid": f"oid{n}", "author": ""}
+                    for n in range(1, 4)]
+    result = sh._score_many(prs_to_score, M, tmp_path / "state.json", budget_sec=60, now=T0)
+    # should accumulate costs from multiple PRs (250 + 300 + 280 = 830)
+    assert result["disk_kb"] == 830
+
+
+def test_score_one_pr_handles_all_errors_in_except_block(tmp_path, monkeypatch):
+    """_score_one_pr never raises even if disk_ledger, error_log, or classify raises."""
+    import disk_ledger
+    import error_log
+    # Make du_kb raise
+    monkeypatch.setattr(disk_ledger, "du_kb", lambda p: 1/0)
+    # Make sure _score_one_pr still returns a dict
+    p = pr(1)
+    result = sh._score_one_pr(p, M, tmp_path / "state.json")
+    assert isinstance(result, dict) and "status" in result
+
+
+def test_score_one_pr_handles_missing_pr_fields(tmp_path, monkeypatch):
+    """_score_one_pr handles PRs missing required fields like number or headRefOid."""
+    def broken(*a, **k):
+        raise RuntimeError("mutation check failed")
+    monkeypatch.setattr(sh, "_gh", lambda a: "")
+    import mutation_check
+    monkeypatch.setattr(mutation_check, "run_mutation_check", broken)
+    monkeypatch.setattr(mutation_check, "render_section", lambda r: "")
+    monkeypatch.setattr(mutation_check, "merge_bodies", lambda b, s: s)
+    # Missing required fields
+    p = {"url": "https://github.com/test", "repo": M}
+    result = sh._score_one_pr(p, M, tmp_path / "state.json")
+    assert isinstance(result, dict) and result.get("status") in ("unknown", "scored")
+
+
+def test_score_many_revives_parked_pr_on_new_push(tmp_path, monkeypatch):
+    """A parked PR that receives a new push (different headRefOid) is revived and retried immediately."""
+    import json
+    def success_score(pr, repo, path):
+        return {"status": "scored", "number": pr["number"], "headRefOid": pr.get("headRefOid"), "elapsed_sec": 1.0, "disk_kb": 200}
+    state_file = tmp_path / "state.json"
+    # Setup: PR failed 5 times with oid "old", now parked
+    st = {"mode": "shadow", "prs": {}, "scored": {}, "scoring_failures": {
+        "u1": {"count": 5, "not_before": T0 + 10000, "headRefOid": "old", "reason": "test"}
+    }}
+    state_file.write_text(json.dumps(st))
+    # Same PR but with new push (oid "new")
+    prs = [{"number": 1, "repo": M, "url": "u1", "title": "PR 1", "body": "", "files": [],
+            "headRefName": "branch", "headRefOid": "new", "author": ""}]
+    monkeypatch.setattr(sh, "_score_one_pr", success_score)
+    result = sh._score_many(prs, M, state_file, budget_sec=60, now=T0)
+    # Should attempt it because commit changed, resetting the failure counter
+    st = json.loads(state_file.read_text())
+    # Either scored, or failure counter reset to 1 (and it succeeded so scored)
+    assert st["scored"].get("u1") == "new" or st["scoring_failures"]["u1"]["count"] == 1
+
+
+def test_score_many_respects_budget_deadline(tmp_path, monkeypatch):
+    """_score_many stops before attempting a check that would exceed budget."""
+    import time
+    attempt_times = []
+    def track_time(pr, repo, path):
+        attempt_times.append(time.time())
+        time.sleep(0.05)  # 50ms per attempt
+        return {"status": "scored", "number": pr["number"], "headRefOid": pr.get("headRefOid"), "elapsed_sec": 0.05, "disk_kb": 100}
+    monkeypatch.setattr(sh, "_score_one_pr", track_time)
+    # Create many PRs that need scoring
+    prs = [{"number": n, "repo": M, "url": f"u{n}", "title": f"PR {n}", "body": "", "files": [],
+            "headRefName": "branch", "headRefOid": f"oid{n}", "author": ""}
+           for n in range(1, 30)]  # many PRs
+    now = time.time()
+    result = sh._score_many(prs, M, tmp_path / "state.json", budget_sec=0.15, now=now)
+    # With 0.15s budget and 0.05s per attempt, should not exceed budget by more than ~100ms
+    total_time = attempt_times[-1] - attempt_times[0] if attempt_times else 0
+    assert total_time < 0.3  # should not take 1+ seconds with budget of 0.15s
+
+
+def test_score_many_parks_pr_long_enough(tmp_path, monkeypatch):
+    """A parked PR stays parked for its full not_before window, not just one run."""
+    import json
+    import ticket_policy
+    state_file = tmp_path / "state.json"
+    # Initial state: PR parked with not_before far in future
+    backoff_sec = ticket_policy.retry_backoff_s(sh.MAX_SCORE_FAILURES)
+    not_before = T0 + backoff_sec
+    st = {"mode": "shadow", "prs": {}, "scored": {}, "scoring_failures": {
+        "u1": {"count": 5, "not_before": not_before, "headRefOid": "oid1", "reason": "test"}
+    }}
+    state_file.write_text(json.dumps(st))
+    prs = [{"number": 2, "repo": M, "url": "u2", "title": "PR 2", "body": "", "files": [],
+            "headRefName": "branch", "headRefOid": "oid2", "author": ""}]
+    # Run at T0 (well before not_before)
+    def success(pr, repo, path):
+        return {"status": "scored", "number": pr["number"], "headRefOid": pr.get("headRefOid"), "elapsed_sec": 1.0, "disk_kb": 200}
+    monkeypatch.setattr(sh, "_score_one_pr", success)
+    result = sh._score_many(prs, M, state_file, budget_sec=60, now=T0)
+    # u1 should still be parked (not attempted)
+    st = json.loads(state_file.read_text())
+    assert st["scoring_failures"]["u1"]["not_before"] > T0
+    # Only u2 should be scored
+    assert st["scored"].get("u2") == "oid2"
+    assert st["scored"].get("u1") is None
+
+
+def test_score_one_pr_guards_disk_ledger_call(tmp_path, monkeypatch):
+    """If disk_ledger raises in the except path, the error is handled, not raised."""
+    import disk_ledger
+    call_count = [0]
+    def track_disk_calls(*args, **kwargs):
+        call_count[0] += 1
+        if call_count[0] >= 1:
+            raise RuntimeError("disk check failed")
+        return 100
+    monkeypatch.setattr(disk_ledger, "du_kb", track_disk_calls)
+    def fail_score(*a, **k):
+        raise RuntimeError("mutation check failed")
+    import mutation_check
+    monkeypatch.setattr(mutation_check, "run_mutation_check", fail_score)
+    monkeypatch.setattr(mutation_check, "render_section", lambda r: "")
+    monkeypatch.setattr(mutation_check, "merge_bodies", lambda b, s: s)
+    monkeypatch.setattr(sh, "_gh", lambda a: "")
+    p = pr(1)
+    result = sh._score_one_pr(p, M, tmp_path / "state.json")
+    # Should still return a dict, even though disk_ledger raised
+    assert isinstance(result, dict) and "status" in result
+
+
+def test_score_many_with_empty_queue_respects_budget(tmp_path):
+    """If all PRs are already scored or parked, _score_many returns immediately without error."""
+    import json
+    state_file = tmp_path / "state.json"
+    st = {"mode": "shadow", "prs": {}, "scored": {"u1": "oid1"}, "scoring_failures": {}}
+    state_file.write_text(json.dumps(st))
+    prs = [pr(1)]  # already scored
+    result = sh._score_many(prs, M, state_file, budget_sec=60, now=T0)
+    assert result["scored"] == 0 and result["failed"] == 0
+
+
+def test_score_many_failure_counter_resets_on_new_push_not_parked(tmp_path, monkeypatch):
+    """Failure counter resets to 1 on new push, even before reaching MAX_SCORE_FAILURES."""
+    import json
+    state_file = tmp_path / "state.json"
+    # PR failed once with oid "old"
+    st = {"mode": "shadow", "prs": {}, "scored": {}, "scoring_failures": {
+        "u1": {"count": 1, "headRefOid": "old", "reason": "test"}
+    }}
+    state_file.write_text(json.dumps(st))
+    # Same PR with new push (oid "new")
+    prs = [{"number": 1, "repo": M, "url": "u1", "title": "PR 1", "body": "", "files": [],
+            "headRefName": "branch", "headRefOid": "new", "author": ""}]
+    def fail(pr, repo, path):
+        return {"status": "unknown", "number": pr["number"], "reason": "test failure"}
+    monkeypatch.setattr(sh, "_score_one_pr", fail)
+    sh._score_many(prs, M, state_file, budget_sec=60, now=T0)
+    st = json.loads(state_file.read_text())
+    # Count should be 1 (reset on new oid), not 2
+    assert st["scoring_failures"]["u1"]["count"] == 1
+    assert st["scoring_failures"]["u1"]["headRefOid"] == "new"

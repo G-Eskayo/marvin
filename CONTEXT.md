@@ -437,6 +437,12 @@ ever been closed unmerged. Gil approves almost everything; the wait is the cost.
   card shows what auto-merge would have done and its mutation score while Gil keeps approving. Then a report (would
   have merged N; any Gil would have denied) surfaces in the next session's start report, the morning brief and an MR
   Review banner. Auto-merge switches on **only when Gil says yes**; until then it keeps shadowing.
+- **Scan budget and backoff** (robustness fix to ADR 0064): the hourly mutation-score scan is bounded to 480 seconds
+  (8 min headroom) per run. Failures are logged (error_log), stated in each PR's body, and parked in backoff after 5
+  consecutive failures; backoff PRs are skipped until their retry window (ticket_policy.retry_backoff_s(5), ~4 hours).
+  A parked PR that receives a new push is revived immediately (failure counter resets on new commit). Budget remaining
+  is checked before each attempt; a mutation check may take ~10 min, so worst-case a run might extend ~20 min if a
+  check is already underway when the budget expires.
 - **Deciding the area**: one readable rules file lists owned and core paths; the rules file is itself core (auto-merge
   can never widen its own permissions); one core file anywhere in a PR makes the whole PR wait. **New folders need no
   permission** (Gil): a new folder inherits its parent's area; a brand-new top-level folder counts as owned, but at
