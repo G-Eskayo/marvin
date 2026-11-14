@@ -157,7 +157,7 @@ def _safe(reader, *args):
 
 
 def can_start_another(machine: str, settings: dict, *, slots_in_use, disk_free_gb, github_budget_pct,
-                      breaker_tripped, missing_tools, credit_ready=None) -> tuple[bool, str | None]:
+                      breaker_tripped, missing_tools, credit_ready=None, cold_local_gb=None) -> tuple[bool, str | None]:
     # An unreadable credit state means the plan's slots only: never a block, never extra builds on a guess.
     limit = effective_limit(settings, machine, credit_ready=bool(credit_ready and _safe(credit_ready, machine)))
     used = slots_in_use(machine)
@@ -168,7 +168,11 @@ def can_start_another(machine: str, settings: dict, *, slots_in_use, disk_free_g
     g = settings["guards"]
     disk = _safe(disk_free_gb, machine)
     if disk is not None and disk < g["min_disk_gb"]:
-        return False, f"disk {disk:g} GB free on {machine}, minimum {g['min_disk_gb']:g}"
+        reason = f"disk {disk:g} GB free on {machine}, minimum {g['min_disk_gb']:g}"
+        cold = _safe(cold_local_gb) if cold_local_gb else None
+        if cold:
+            reason += f" (cold store: {cold:g} GB locally)"
+        return False, reason
     pct = _safe(github_budget_pct)
     if pct is not None and pct < g["min_github_budget_pct"]:
         return False, f"GitHub request budget {pct:g}% left, minimum {g['min_github_budget_pct']:g}%"

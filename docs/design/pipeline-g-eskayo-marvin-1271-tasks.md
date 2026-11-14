@@ -1,0 +1,11 @@
+1. `lib/cold_store.py`: add `hash_selected(folder, rels)` (self-contained, mirrors `build_manifest`'s shipped-over-ssh style) + `REMOTE_HASH_SELECTED_PY` + `Store.remote_hash_selected(name, rels)` (writes a temp rels-list file remotely via `_remote_write`, runs the script, removes the temp file).
+2. `lib/cold_store.py`: add `Store._local_bytes(path)` and `Store.parkable_gb()`.
+3. `lib/cold_store.py`: add `Store._repark(path, marker)` implementing the flow above (lock → empty-check/no-op → busy → trusted old manifest → diff → targeted upload+verify+repair → remote manifest/entry rewrite → race re-check → swap → catalog save after swap).
+4. `lib/cold_store.py`: change `park()`'s marker-exists branch (`lib/cold_store.py:372-375`) to call `_repark` instead of the bare finish-swap-and-return.
+5. `lib/cold_store.py`: `listing()` — add `local_bytes` alongside `here` for this machine's catalog entries; `_print_listing` — show it when nonzero.
+6. `lib/cold_store.py`: CLI — add `--then-park` + `command` (`REMAINDER`) to the `ensure` subparser; `main()` — when `--then-park`, run the command after `ensure` and call `store.park(...)` in a `finally`, regardless of the command's exit code; clean refusal when no command follows `--`.
+7. `lib/cold_store.py`: update the module docstring (park's complexity note, usage line) to describe re-park and `--then-park`.
+8. `lib/dispatch_concurrency.py`: add optional `cold_local_gb` reader param to `can_start_another`; append the hint to the disk-low refusal reason via the existing `_safe()` wrapper.
+9. `lib/ticket_pipeline.py`: add `_cold_parkable_gb()` (mirrors `_free_disk_gb`); wire it into `_select_for_profile`'s `can_start_another` call as `cold_local_gb=(lambda: _cold_parkable_gb()) if is_self else None`.
+10. Write all 16 tests above, confirm the full existing `test_cold_store.py` and `test_dispatch_concurrency.py` suites still pass unmodified (especially the idempotent-double-park and no-marker-matched regression tests), then the new ones.
+11. Update `CONTEXT.md`'s Cold store section (`CONTEXT.md:2050-2062`) to mention re-park and `--then-park`, consistent with how that section already documents `ensure`.

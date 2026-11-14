@@ -2059,7 +2059,11 @@ runs no merge or test of its own and its memory is normal).
 - **Ensure**: what a caller runs before it reads a folder that may be parked (`marvin-cold ensure PATH [--part SUB]`).
   When the data is here it returns at once with no network. When the folder is parked it fetches the data back
   (locked, space-checked, verified) and returns. A path inside a parked folder fetches only that part. This is the
-  trigger: nothing polls.
+  trigger: nothing polls. `--then-park` flag: after ensure, run a command (whether it succeeds or fails), then
+  re-park the folder with its new state.
+- **Re-park**: when `park` is called on an already-parked folder, it detects which files changed (comparing SHA256s),
+  uploads only the changed bytes (targeted rsync), verifies, and atomically swaps. Idempotent: running twice in a row
+  is safe (second run finds the SHA unchanged and returns at once).
 
 ## Stamped copies (marvin#1223, decided with Gil 2026-11-09)
 

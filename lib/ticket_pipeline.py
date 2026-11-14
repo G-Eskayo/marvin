@@ -767,6 +767,16 @@ def _free_disk_gb() -> float | None:
         return None
 
 
+def _cold_parkable_gb() -> float | None:
+    """Sum of bytes in every locally parked folder from the cold store, in GB."""
+    try:
+        from lib.cold_store import default_store
+        store, _ = default_store()
+        return store.parkable_gb()
+    except Exception:
+        return None
+
+
 def _github_budget_pct() -> float | None:
     """Percent of this hour's GitHub allowance left; None when it cannot be read (an unreadable guard never blocks)."""
     try:
@@ -851,7 +861,8 @@ def _select_for_profile(profile: dict, settings: dict | None = None, taken: dict
                 disk_free_gb=lambda m, s=is_self: _free_disk_gb() if s else None,
                 github_budget_pct=_github_budget_pct,
                 breaker_tripped=lambda: [],   # a tripped breaker already removed that project from this scan
-                missing_tools=lambda m: [])
+                missing_tools=lambda m: [],
+                cold_local_gb=lambda: _cold_parkable_gb() if is_self else None)
             if not ok:
                 if refusals is not None:
                     refusals.append(why)
