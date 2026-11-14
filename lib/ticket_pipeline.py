@@ -508,7 +508,6 @@ def _run_ticket_agents(step, summary) -> None:
                                 running=lambda repo: None if live is None else {n for r, n in live if r == repo})
         step("Ticket agents", f"{res['applied']} applied, {res['proposed']} proposed, {res['failed']} failed")
         _update_board_lifecycle(snap, step)
-        _auto_merge_shadow(step)
         elsewhere = ticket_agents.ready_elsewhere(snap, executable)
         if elsewhere:
             def why(r):
@@ -930,7 +929,11 @@ def _scan(run, dry_run: bool) -> str | None:
         step("Onboarding plans", _refresh_onboarding_plans())
         step("Project catalog", "refresh if older than 50 min")
         _refresh_catalog()
-        _run_ticket_agents(step, summary)
+        try:
+            _run_ticket_agents(step, summary)
+        except Exception as e:  # noqa: BLE001 -- keep going; auto-merge-shadow and dispatch still run
+            print(f"{LOG_PREFIX} ticket agents uncaught: {e}", file=sys.stderr)
+        _auto_merge_shadow(step)
 
     if not dry_run:
         _background_checks()

@@ -11,6 +11,13 @@ After SHADOW_DAYS the report says how many PRs it would have merged and lists ev
 disagreement). The report reaches Gil in the session-start report, the morning brief and an MR Review banner.
 Switch-on: only by Gil (`switch-on`), only once the report is ready, and only with no disagreements.
 
+Scoring (marvin#1241): A budgeted loop scores up to 30 minutes of real mutations per scan (budget_sec=1800), with
+per-PR isolation so a failure never blocks the rest of that run. The real cause is written to the PR body (e.g., "JS
+isn't mutation-tested yet") so the verdict shows why, not a generic "pending". A PR open over 24h with no score and no
+reason gets a "still queued" note, so nothing silent ever happens. Every scan reports its measured time, disk usage,
+and success/failure counts so the 30-minute budget can be tuned. PRs with no Python changes are exempt from the
+mutation gate (js_only_gate decision B, marvin#1241); all other PRs need at least 80% mutation score to auto-merge.
+
 State: ~/.claude/logs/auto-merge-shadow.json on the mini. Missing = a fresh start; corrupt = shadow, never on, and not
 overwritten.
 
@@ -48,6 +55,31 @@ def mutation_score(body: str) -> int | None:
     return n if 0 <= n <= 100 else None
 
 
+def mutation_reason(body: str) -> str | None:
+    """Extract the real reason (e.g., 'JS isn't mutation-tested yet') from an 'unknown' section, or None."""
+    if not body:
+        return None
+    # Look for the "unknown" section marker and extract everything after it
+    m = re.search(r"Score:\s*unknown\s*\(([^)]+)\)", body)
+    if not m:
+        # Alternative format: look for "unknown" followed by content
+        m = re.search(r"\*\*score:\*\*\s*unknown[^\n]*", body, re.I)
+        if not m:
+            return None
+        reason = m.group(0).replace("**score:**", "").replace("**", "").strip()
+    else:
+        reason = m.group(1)
+
+    # Also extract per-file details if present (lines starting with "- not measured:")
+    details = re.findall(r"-\s*not measured:[^\n]+(?:JS[^\n]*)?", body)
+    if details:
+        details_text = "; ".join(d.strip("- ").strip() for d in details if d.strip())
+        if details_text:
+            reason = reason + " (" + details_text + ")"
+
+    return reason.strip() if reason else None
+
+
 def verdict(pr: dict, facts: dict, rules: dict | None = None) -> dict:
     d = amp.decide(pr["repo"], pr["files"], rules or amp.load_rules(), existing_top_level=facts["existing_top_level"],
                    new_top_level_this_week=facts["new_top_level_this_week"], ramp_open=facts["ramp_open"],
@@ -56,8 +88,13 @@ def verdict(pr: dict, facts: dict, rules: dict | None = None) -> dict:
                    author_ramp_streak=facts.get("author_ramp_streak"))
     reasons = list(d["reasons"]) if d["verdict"] == "ask" else []
     score = mutation_score(pr.get("body", ""))
+    body = pr.get("body", "")
+    reason = mutation_reason(body)
     if score is None:
-        reasons.append("mutation score pending (its tests haven't been checked by planting bugs yet, #339)")
+        if reason:
+            reasons.append(f"mutation score pending ({reason})")
+        else:
+            reasons.append("mutation score pending (its tests haven't been checked by planting bugs yet, #339)")
     elif score < MIN_SCORE:
         reasons.append(f"its tests caught {score}% of planted bugs; auto-merge needs {MIN_SCORE}%")
     return {"verdict": "ask" if reasons else "auto", "reasons": reasons or d["reasons"], "score": score}
@@ -263,22 +300,21 @@ def _gh(args):
     return subprocess.run(["gh", *args], capture_output=True, text=True, check=True, timeout=60, env=env).stdout
 
 
-def _score_one(prs: list[dict], repo: str, path: Path) -> None:
-    """Score one unscored PR with the mutation check (#339) in a scratch worktree, and write the section into its body
-    (one per hourly run: each check can take 10 minutes). Best effort; no check installed = nothing scored."""
+def _clone_and_score(pr: dict, repo: str, *, gh=None) -> dict:
+    """Clone PR to a scratch worktree, run mutation check, measure disk cost, and return result dict."""
     import subprocess
     import tempfile
+    import disk_ledger
     try:
         import mutation_check as mc
         mc.render_section, mc.merge_bodies                       # the reviewed engine (PR #351)
     except (ImportError, AttributeError):
-        return
-    st = _read(path) or {}
-    pr = pick_unscored(prs, st.get("scored", {}))
-    if pr is None:
-        return
+        return {"error": "mutation_check not available"}
+
+    gh = gh or _gh
     clone = Path.home() / ".agents"
     scratch = Path(tempfile.mkdtemp(prefix="shadow-mutation-"))
+    disk_cost = 0
     try:
         subprocess.run(["git", "fetch", "-q", "origin", "main", pr["headRefName"]], cwd=clone, timeout=120, check=True)
         subprocess.run(["git", "worktree", "add", "-q", "--detach", str(scratch), pr["headRefOid"]], cwd=clone, timeout=120, check=True)
@@ -286,23 +322,114 @@ def _score_one(prs: list[dict], repo: str, path: Path) -> None:
                               text=True, timeout=60).stdout.strip()
         result = mc.run_mutation_check(str(scratch), pr["headRefName"], "main", base)
         body = mc.merge_bodies(pr.get("body") or "", mc.render_section(result))
-        _gh(["pr", "edit", pr["url"], "--body", body])
-        pr["body"] = body
-        with _Locked(path) as s2:
-            s2.setdefault("scored", {})[pr["url"]] = pr["headRefOid"]
-    except Exception as e:  # noqa: BLE001 -- try again next hour
-        print(f"auto-merge shadow: scoring PR #{pr['number']} failed: {e}", file=sys.stderr)
+        gh(["pr", "edit", pr["url"], "--body", body])
+        score = mutation_score(body)
+        # Measure disk cost before removing the worktree
+        disk_cost = disk_ledger.du_kb(scratch, timeout=30)
+        if isinstance(disk_cost, str):
+            disk_cost = 0  # not-measured sentinels convert to 0
+        return {"score": score, "body": body, "error": None, "disk_kb": disk_cost}
+    except Exception as e:
+        return {"error": str(e), "score": None, "body": pr.get("body", ""), "disk_kb": disk_cost}
     finally:
         subprocess.run(["git", "worktree", "remove", "--force", str(scratch)], cwd=clone, capture_output=True, timeout=60)
+
+
+def _score_many(prs: list[dict], repo: str, path: Path, budget_sec: int = 1800, *, gh=None, clone_and_score=None, now=None) -> dict:
+    """Score multiple unscored PRs in a budgeted loop with per-PR isolation. Returns cost summary."""
+    import time
+    try:
+        import error_log
+    except ImportError:
+        error_log = None
+    try:
+        import mutation_check as mc
+    except ImportError:
+        mc = None
+
+    gh = gh or _gh
+    clone_and_score = clone_and_score or _clone_and_score
+    start_time = time.time()
+
+    scored = 0
+    failed = 0
+    disk_kb_total = 0
+
+    st = _read(path) or {}
+    scored_dict = st.get("scored", {})
+
+    for pr in prs:
+        if time.time() - start_time > budget_sec:
+            break
+        if scored_dict.get(pr["url"]) == pr.get("headRefOid"):
+            continue  # already scored at this commit
+        if mutation_score(pr.get("body", "")) is not None and pr["url"] not in scored_dict:
+            continue  # already has a score and hasn't been re-pushed
+
+        try:
+            result = clone_and_score(pr, repo, gh=gh)
+            if result.get("error"):
+                failed += 1
+                if error_log:
+                    error_log.record("auto_merge_shadow", f"Failed to score PR #{pr['number']}", raw=result.get("error", ""))
+                print(f"auto-merge shadow: scoring PR #{pr['number']} failed: {result.get('error', 'unknown error')}", file=sys.stderr)
+                # Write error section to PR body (idempotent: don't re-write if already there)
+                try:
+                    current_body = pr.get("body", "")
+                    if "could not run" not in current_body and mc:
+                        error_msg = f"Error: could not run the mutation check: {result.get('error', 'unknown')}"
+                        error_body = f"## Mutation check\n\n{error_msg}"
+                        new_body = mc.merge_bodies(current_body, error_body)
+                        gh(["pr", "edit", pr["url"], "--body", new_body])
+                except Exception:  # noqa: BLE001 -- don't let body-write errors block the scan
+                    pass
+            else:
+                scored += 1
+                disk_kb_total += result.get("disk_kb", 0)
+                with _Locked(path) as s2:
+                    s2.setdefault("scored", {})[pr["url"]] = pr["headRefOid"]
+        except Exception as e:  # noqa: BLE001 -- per-PR isolation: continue with next PR
+            failed += 1
+            print(f"auto-merge shadow: scoring PR #{pr['number']} failed: {e}", file=sys.stderr)
+            if error_log:
+                error_log.record("auto_merge_shadow", f"Exception scoring PR #{pr['number']}", raw=str(e))
+            # Try to write error section to body for exceptions too
+            try:
+                current_body = pr.get("body", "")
+                if "could not run" not in current_body and mc:
+                    error_msg = f"Error: could not run the mutation check: {str(e)}"
+                    error_body = f"## Mutation check\n\n{error_msg}"
+                    new_body = mc.merge_bodies(current_body, error_body)
+                    gh(["pr", "edit", pr["url"], "--body", new_body])
+            except Exception:  # noqa: BLE001
+                pass
+
+    elapsed = time.time() - start_time
+    return {
+        "scored": scored,
+        "failed": failed,
+        "disk_kb": disk_kb_total,
+        "elapsed_sec": elapsed
+    }
 
 
 def run(repo: str = "G-Eskayo/marvin", path: Path = STATE_PATH) -> list[dict]:
     """Verdicts for every open PR in `repo`, and the outcome of PRs that closed since. Best effort."""
     import subprocess
     import trust_ramp
+    import time
+    try:
+        import mutation_check as mc
+    except ImportError:
+        mc = None
+
+    start_time = time.time()
     prs = json.loads(_gh(["pr", "list", "--repo", repo, "--state", "open", "--limit", "100",
-                          "--json", "number,url,title,body,files,headRefName,headRefOid,author"]))
-    _score_one(prs, repo, path)
+                          "--json", "number,url,title,body,files,headRefName,headRefOid,author,createdAt"]))
+
+    # Score PRs in a budgeted loop (30 minutes per scan)
+    score_result = _score_many(prs, repo, path, budget_sec=1800)
+
     clone = Path.home() / ".agents"
     tops = {l for l in subprocess.run(["git", "ls-tree", "--name-only", "-d", "origin/main"], cwd=clone,
                                       capture_output=True, text=True).stdout.split()}
@@ -310,6 +437,36 @@ def run(repo: str = "G-Eskayo/marvin", path: Path = STATE_PATH) -> list[dict]:
     record_author_ramps(repo, rules)
     facts = {"existing_top_level": tops, "new_top_level_this_week": 0, "ramp_open": trust_ramp.is_open(repo),
              "render_check_passed": False}
+
+    # Add 24h stuck-queue safety net: note old PRs with no score and no existing reason
+    now_time = time.time()
+    for pr in prs:
+        created = pr.get("createdAt")
+        try:
+            if created:
+                # Handle both ISO string and numeric timestamp formats
+                if isinstance(created, (int, float)):
+                    created_time = created
+                else:
+                    from datetime import datetime
+                    created_time = datetime.fromisoformat(created.replace("Z", "+00:00")).timestamp()
+                age_seconds = now_time - created_time
+                if age_seconds > 86400:  # 24 hours
+                    body = pr.get("body", "")
+                    score = mutation_score(body)
+                    reason = mutation_reason(body)
+                    if score is None and reason is None and mc:
+                        # No score and no reason: write "still queued" note
+                        try:
+                            still_queued_msg = "Score: unknown (still queued for mutation check; it's been >24h)"
+                            queued_body = f"## Mutation check\n\n{still_queued_msg}"
+                            new_body = mc.merge_bodies(body, queued_body)
+                            _gh(["pr", "edit", pr["url"], "--body", new_body])
+                        except Exception:  # noqa: BLE001 -- best effort, don't break the scan
+                            pass
+        except Exception:  # noqa: BLE001
+            pass
+
     seen = observe([{"number": p["number"], "repo": repo, "url": p["url"], "title": p["title"], "body": p.get("body") or "",
                      "author": (p.get("author") or {}).get("login") or "",    # unreadable author: "" fails closed
                      "files": [{"path": f["path"], "additions": f.get("additions", 0), "deletions": f.get("deletions", 0),
@@ -322,6 +479,11 @@ def run(repo: str = "G-Eskayo/marvin", path: Path = STATE_PATH) -> list[dict]:
             state = json.loads(_gh(["pr", "view", url, "--json", "state"]))["state"]
             record_outcome(url, "merged" if state == "MERGED" else "closed", path)
     r = report(path)
+
+    # Add cost summary to last_report
+    cost_detail = f"scored {score_result['scored']}, failed {score_result['failed']}, used {score_result['elapsed_sec']:.0f}s, {score_result['disk_kb']} KB"
+    r["cost"] = cost_detail
+
     with _Locked(path) as st:                                # the dashboard and the morning brief read this
         st["last_report"] = r
     return seen

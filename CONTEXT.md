@@ -446,6 +446,14 @@ ever been closed unmerged. Gil approves almost everything; the wait is the cost.
   always waits for Gil (supply-chain trust); more than 1,500 changed lines (tests included) waits too (the ticket was
   probably too big). Design complete: ADR 0064.
 
+### Auto-merge scoring (marvin#1241, 2026-11-11)
+
+- **Scan budget**: 30 minutes per hourly run (`budget_sec=1800`), budgeted per-PR scoring loop on the mini. Drains the ~15–20 PR backlog within a few hours; every PR older than 24h without a score gets a "still queued" note so nothing silent ever happens.
+- **Per-PR isolation**: one PR's scoring failure never blocks others in that run; failures are logged to `error_log` and printed to stderr. Idempotent: a persistent failure on the same commit is retried each scan without re-editing an unchanged PR body.
+- **Real cause reporting**: the actual reason (e.g., "JS isn't mutation-tested yet") replaces the generic "mutation score pending" message in auto-merge's verdict, so the PR body and verdict always match.
+- **js_only_gate** (decided B): a PR with no Python changes is exempt from the mutation gate (the score is never taken, and mutation_reason shows why). All other PRs need ≥ 80% mutation score to auto-merge; the test-tries-to-break-it principle means absence of a JS mutation engine is a design fact, not a gap to patch.
+- **Measured costs**: every scan reports the number of PRs scored, failures, wall-clock time and disk KB used (accumulated across all worktrees), so the 30-minute budget can be tuned by Gil if real runs show a different profile.
+
 ## Dashboard app — Files tab (in design, 2026-08-27; folded into Docs 2026-10-21, #403 / #570)
 
 - **Folded into Docs** (marvin#570 "Docs: fold the Files tab into Docs", decided in #403, design

@@ -1767,3 +1767,57 @@ def test_a_dry_run_claims_nothing_for_the_box(monkeypatch):
 def test_the_box_has_its_own_claim_label_never_the_m4_minis():
     assert tp._label_for_device("mac-mini-2012") == "mac-mini-2012"
     assert tp._label_for_device("mac-mini-1") == "mac-mini"
+
+
+# ── decoupling: auto-merge-shadow.run() is independent (marvin#1241) ─────────────────────────────────
+
+def test_auto_merge_shadow_runs_even_when_ticket_agents_fails(monkeypatch):
+    """Regression test: _auto_merge_shadow(step) is called from _scan even when ticket_agents raises."""
+    import json
+
+    # Set up to have a ready ticket so _scan doesn't return early
+    issues = [_issue(1, "2026-01-01T00:00:00Z", labels=["ready-for-agent"])]
+
+    auto_merge_calls = []
+
+    def mock_subprocess_run(*args, **kwargs):
+        returncode = 0
+        stdout = json.dumps(issues) if any("issue" in str(a) for a in args[0]) else ""
+        if any("git" in str(a) for a in args[0]):
+            stdout = "lib\ndocs\n"
+        return SimpleNamespace(returncode=returncode, stdout=stdout, stderr="")
+
+    def mock_run_ticket_agents(step, summary):
+        # This is the failing ticket_agents call
+        raise RuntimeError("ticket_agents.load_config failed")
+
+    def mock_auto_merge_shadow(step):
+        # Track that auto_merge_shadow was called
+        auto_merge_calls.append(step)
+
+    # Monkeypatch the imports and functions
+    monkeypatch.setattr(tp.subprocess, "run", mock_subprocess_run)
+    monkeypatch.setattr(tp, "_run_ticket_agents", mock_run_ticket_agents)
+    monkeypatch.setattr(tp, "_auto_merge_shadow", mock_auto_merge_shadow)
+    monkeypatch.setattr(tp, "_background_checks", lambda: None)
+    monkeypatch.setattr(tp, "_requeue_all", lambda *a: [])
+    monkeypatch.setattr(tp, "_owner_decisions", lambda: "none")
+    monkeypatch.setattr(tp, "_parked", lambda: "none")
+    monkeypatch.setattr(tp.failure_breaker, "code_freshness", lambda *a, **k: {"state": "current", "detail": ""})
+    monkeypatch.setattr(tp.failure_breaker, "code_trip", lambda *a, **k: None)
+    monkeypatch.setattr(tp.failure_breaker, "tripped", lambda: [])
+
+    # Create a mock run object
+    class MockRun:
+        def step(self, *a, **k):
+            pass
+        def summary(self, *a, **k):
+            pass
+        def fail(self, *a, **k):
+            pass
+
+    # Call _scan; it should call _auto_merge_shadow despite _run_ticket_agents raising
+    tp._scan(MockRun(), dry_run=False)
+
+    # Verify auto_merge_shadow was called
+    assert len(auto_merge_calls) > 0, "auto_merge_shadow.run() was not called when ticket_agents failed"
