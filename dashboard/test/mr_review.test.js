@@ -506,3 +506,78 @@ describe('listPipelinePrs: post-merge rebase result (#225)', () => {
     expect(without.rebase).toBe(null)
   })
 })
+
+describe('listPipelinePrs: merge server health', () => {
+  const rollup = []
+
+  it('test 7: mergeServerUp option defaults to async () => true', async () => {
+    const [pr] = await listPipelinePrs(async () => [{ number: 1, title: 't', url: 'u', body: '', statusCheckRollup: rollup }])
+    expect(pr.mergeServerDown).toBe(false)
+  })
+
+  it('test 8: when server is up, all three operations run via Promise.all', async () => {
+    const mergeServerUp = vi.fn(async () => true)
+    const rebaseStatus = vi.fn(async () => ({}))
+    const autoMergeShadow = vi.fn(async () => ({ prs: {} }))
+    const mergeQueue = vi.fn(async () => ({}))
+
+    const [pr] = await listPipelinePrs(
+      async () => [{ number: 1, title: 't', url: 'u', body: '', statusCheckRollup: rollup }],
+      { mergeServerUp, rebaseStatus, autoMergeShadow, mergeQueue }
+    )
+
+    expect(mergeServerUp).toHaveBeenCalledTimes(1)
+    expect(rebaseStatus).toHaveBeenCalledTimes(1)
+    expect(autoMergeShadow).toHaveBeenCalledTimes(1)
+    expect(mergeQueue).toHaveBeenCalledTimes(1)
+    expect(pr.mergeServerDown).toBe(false)
+  })
+
+  it('test 8b: when server is down, all three operations are skipped', async () => {
+    const mergeServerUp = vi.fn(async () => false)
+    const rebaseStatus = vi.fn(async () => ({}))
+    const autoMergeShadow = vi.fn(async () => ({ prs: {} }))
+    const mergeQueue = vi.fn(async () => ({}))
+
+    const [pr] = await listPipelinePrs(
+      async () => [{ number: 1, title: 't', url: 'u', body: '', statusCheckRollup: rollup }],
+      { mergeServerUp, rebaseStatus, autoMergeShadow, mergeQueue }
+    )
+
+    expect(mergeServerUp).toHaveBeenCalledTimes(1)
+    expect(rebaseStatus).not.toHaveBeenCalled()
+    expect(autoMergeShadow).not.toHaveBeenCalled()
+    expect(mergeQueue).not.toHaveBeenCalled()
+    expect(pr.mergeServerDown).toBe(true)
+  })
+
+  it('test 9: when mergeServerUp returns false, mergeServerDown is true', async () => {
+    const [pr] = await listPipelinePrs(
+      async () => [{ number: 1, title: 't', url: 'u', body: '', statusCheckRollup: rollup }],
+      { mergeServerUp: async () => false }
+    )
+    expect(pr.mergeServerDown).toBe(true)
+  })
+
+  it('test 10: mergeServerUp failures are treated as server down', async () => {
+    const [pr] = await listPipelinePrs(
+      async () => [{ number: 1, title: 't', url: 'u', body: '', statusCheckRollup: rollup }],
+      { mergeServerUp: async () => { throw new Error('timeout') } }
+    )
+    expect(pr.mergeServerDown).toBe(true)
+  })
+
+  it('test 11: all PRs get the same mergeServerDown value from a single await', async () => {
+    const mergeServerUp = vi.fn(async () => true)
+    const prs = await listPipelinePrs(
+      async () => [
+        { number: 1, title: 't1', url: 'u1', body: '', statusCheckRollup: rollup },
+        { number: 2, title: 't2', url: 'u2', body: '', statusCheckRollup: rollup }
+      ],
+      { mergeServerUp }
+    )
+    expect(mergeServerUp).toHaveBeenCalledTimes(1)
+    expect(prs[0].mergeServerDown).toBe(false)
+    expect(prs[1].mergeServerDown).toBe(false)
+  })
+})

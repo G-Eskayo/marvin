@@ -24,7 +24,7 @@ export function describePrState(pr, opts = {}) {
   return view.approve === 'hidden' ? view : { ...view, approve: 'hidden' }
 }
 
-function describeState(pr, { status = 'idle', errorMessage = null, progress = false, machine = null } = {}) {
+function describeStateCore(pr, { status = 'idle', errorMessage = null, progress = false, machine = null } = {}) {
   const ci = pr.checks || { state: 'none', failing: [], pending: [] }
   const base = (kind, tone, headline, detail, approve, deny, extra = {}) => ({ kind, tone, headline, detail, approve, deny, actions: [], note: null, rework: null, checkProgress: false, ...extra })
   const main = pr.baseProblem?.expected || 'main'
@@ -192,6 +192,16 @@ function describeState(pr, { status = 'idle', errorMessage = null, progress = fa
     : `Auto-merge (shadow): would wait for you: ${(am.reasons || [])[0] || 'see the rules'}`
   const notes = [ci.state === 'passing' ? 'GitHub checks passed' : null, rb?.state === 'clean' ? `still merges cleanly onto ${main} after #${rb.after} merged` : null, amNote].filter(Boolean)
   return base('ready', 'ready', 'Ready to merge', null, 'enabled', 'enabled', { note: notes.length ? notes.join(' · ') : null })
+}
+
+function describeState(pr, opts = {}) {
+  const view = describeStateCore(pr, opts)
+  // Merge server down only matters when we'd normally approve; drafts never approve anyway.
+  if (pr.mergeServerDown && view.approve === 'enabled' && !pr.isDraft) {
+    const machine = opts.machine || "the Mac mini"
+    return { ...view, kind: 'merge-server-down', tone: 'wait', approve: 'disabled', headline: `Can't approve: ${machine} isn't answering`, detail: 'Approvals will wait until it answers again.' }
+  }
+  return view
 }
 
 // marvin#231, owner decision on PR #987 ("Hide the line"): the queue line is not shown when the card's headline already

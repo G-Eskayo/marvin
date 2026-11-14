@@ -283,3 +283,38 @@ describe('describePrState: drafts (marvin#848)', () => {
     expect(state({ isDraft: false })).toMatchObject({ kind: 'ready', approve: 'enabled' })
   })
 })
+
+describe('describePrState: merge server down (marvin#1248)', () => {
+  const state = (pr, opts) => describePrState(pr, opts)
+
+  it('test 12: when mergeServerDown is false, state is unaffected', () => {
+    expect(state({ mergeServerDown: false })).toMatchObject({ kind: 'ready', approve: 'enabled' })
+    expect(state({ mergeServerDown: false, isDraft: true })).toMatchObject({ kind: 'draft', approve: 'hidden' })
+  })
+
+  it('test 13: when mergeServerDown is true and approve is enabled, state shows server down', () => {
+    const result = state({ mergeServerDown: true })
+    expect(result).toMatchObject({
+      kind: 'merge-server-down',
+      tone: 'wait',
+      approve: 'disabled',
+      headline: "Can't approve: the Mac mini isn't answering"
+    })
+    expect(result.detail).toMatch(/wait/)
+  })
+
+  it('test 14: when mergeServerDown is true but approve is already hidden, no change', () => {
+    const result = state({ mergeServerDown: true, isDraft: true })
+    expect(result.kind).toBe('draft')
+    expect(result.approve).toBe('hidden')
+  })
+
+  it('test 15: merge-server-down headline references the machine name when provided', () => {
+    const result = state({ mergeServerDown: true }, { machine: 'backup-mac' })
+    expect(result.headline).toMatch(/backup-mac/)
+  })
+
+  it('test 16: merge-server-down tone is "wait" for a state that would normally be ready', () => {
+    expect(state({ mergeServerDown: true }).tone).toBe('wait')
+  })
+})

@@ -301,15 +301,15 @@ export function queueLines(prs, { queue = null, issuesFor = () => [], sentBackKe
   return out
 }
 
-export async function listPipelinePrs(listOpenPrs, { canMerge = canMergeFromDashboard, sentBackTickets = null, reworkStatus = null, rebaseStatus = null, closedTickets = null, autoMergeShadow = null, uiPathsFor = () => [], mergeQueue = null, issuesFor = null } = {}) {
+export async function listPipelinePrs(listOpenPrs, { canMerge = canMergeFromDashboard, sentBackTickets = null, reworkStatus = null, rebaseStatus = null, closedTickets = null, autoMergeShadow = null, uiPathsFor = () => [], mergeQueue = null, issuesFor = null, mergeServerUp = null } = {}) {
   const prs = await listOpenPrs()
-  // The webhook's post-merge rebase results, by PR url (#225). Best effort: without them a card just doesn't say.
-  let rebased = {}
-  if (rebaseStatus) {
+  // Webhook server health: whether the Mac mini (or merge host) is answering (marvin#1248).
+  let serverUp = true
+  if (mergeServerUp) {
     try {
-      rebased = (await rebaseStatus()) || {}
+      serverUp = await mergeServerUp()
     } catch {
-      rebased = {}
+      serverUp = false
     }
   }
   // Which tickets were sent back for rework ("repo#number" keys), asked once for the repos that have PRs. A failing
@@ -320,15 +320,6 @@ export async function listPipelinePrs(listOpenPrs, { canMerge = canMergeFromDash
       sentBackKeys = await sentBackTickets([...new Set(prs.map((p) => p.repo || MARVIN_REPO))])
     } catch {
       sentBackKeys = new Set()
-    }
-  }
-  // Auto-merge's shadow verdicts by PR url (#341), from the mini's merge server. Best effort.
-  let shadow = {}
-  if (autoMergeShadow) {
-    try {
-      shadow = ((await autoMergeShadow()) || {}).prs || {}
-    } catch {
-      shadow = {}
     }
   }
   // Tickets already closed ("repo#number"): a PR still open for one is probably a duplicate (#326). Best effort.
@@ -353,12 +344,44 @@ export async function listPipelinePrs(listOpenPrs, { canMerge = canMergeFromDash
   // Each PR with the facts that decide whether it can be waited on (sent back for rework; conflicts), so merge order skips the
   // ones that cannot merge as they stand.
   const withState = markBlocked(markSentBack(prs, sentBackKeys), uiPathsFor)
-  // The merge queue's line for each PR (marvin#231). Best effort, like the rebase results.
+
+  // The webhook's post-merge rebase results, by PR url (#225), auto-merge verdicts (#341), and merge queue (#231):
+  // all three are best-effort reads from the merge server, so they're skipped when the server is down.
+  let rebased = {}
+  let shadow = {}
   let lines = {}
-  if (mergeQueue) {
-    let queue = null
-    try { queue = await mergeQueue() } catch { queue = null }
-    try { lines = queueLines(prs, { queue, issuesFor: issuesFor || (() => []), sentBackKeys, rebased }) } catch { lines = {} }
+  if (serverUp) {
+    const [rebaseResult, shadowResult] = await Promise.all([
+      (async () => {
+        if (rebaseStatus) {
+          try {
+            return (await rebaseStatus()) || {}
+          } catch {
+            return {}
+          }
+        }
+        return {}
+      })(),
+      (async () => {
+        if (autoMergeShadow) {
+          try {
+            return ((await autoMergeShadow()) || {}).prs || {}
+          } catch {
+            return {}
+          }
+        }
+        return {}
+      })()
+    ])
+    rebased = rebaseResult
+    shadow = shadowResult
+
+    // mergeQueue depends on rebased, so it runs after
+    if (mergeQueue) {
+      let queue = null
+      try { queue = await mergeQueue() } catch { queue = null }
+      try { lines = queueLines(prs, { queue, issuesFor: issuesFor || (() => []), sentBackKeys, rebased }) } catch { lines = {} }
+    }
   }
   return prs.map((pr) => {
     const ticketRef = parseTicketRef(pr.body || '')
@@ -410,6 +433,8 @@ export async function listPipelinePrs(listOpenPrs, { canMerge = canMergeFromDash
       rework: ticketRef !== null && sentBackKeys.has(`${pr.repo || MARVIN_REPO}#${ticketRef}`) ? rework[`${pr.repo || MARVIN_REPO}#${ticketRef}`] || null : null,
       ticketNumber: evidence?.ticketRef ? Number(evidence.ticketRef) : null,
       evidence,
+      // Merge server health (marvin#1248): whether the Mac mini is answering.
+      mergeServerDown: !serverUp,
       // Full body, untruncated -- MrDetail.jsx needs the whole thing since
       // it's exactly the "drill in and actually read it" view; PrCard.jsx
       // truncates its own display slice for the compact list card.

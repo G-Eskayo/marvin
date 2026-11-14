@@ -25,8 +25,12 @@ function miniBanner(source, errors) {
   return { tone: source.state === 'missing' ? 'red' : 'amber', text: source.text }
 }
 
-export function prFetchBanner({ errors = [], projects = 0, lastGoodAt = null, source = null } = {}, now = Date.now()) {
+export function prFetchBanner({ errors = [], projects = 0, lastGoodAt = null, source = null, mergeServerUp = true } = {}, now = Date.now()) {
   if (source?.from === 'mini') return miniBanner(source, errors)
+  // Merge server health (marvin#1248): when the Mac mini isn't answering, show it first before GitHub status.
+  if (mergeServerUp === false) {
+    return { tone: 'amber', text: "The Mac mini isn't answering, so approvals will wait." }
+  }
   if (!errors.length) return null
   const causes = [...new Set(errors.map((e) => plainCause(e.message)))].join('; ')
   const all = projects > 0 && errors.length >= projects

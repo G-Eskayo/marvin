@@ -13,6 +13,7 @@ import { createGithubState, repoOfSource, gateCooldownUntil } from './github_sta
 import { startCheckWatch, createCheckProbe, createTreeProbe, startChangeWatch, createGithubProbe } from '../../webhook-server/gh_watch.js'
 import { createStackRetarget } from './stack_retarget.js'
 import { prsForOrderCheck, listPipelinePrs, denyMr, fetchTicketContext, sentBackKeys, clearSentBackLabel } from './mr_review.js'
+import { createMergeServerHealth } from './merge_server_health.js'
 import { approveMrStream } from './approve_stream.js'
 import { readSeenNumbers, markSeen, computeReviewStatus } from './mr_seen.js'
 import { readDispatchStatus } from './dispatch_status.js'
@@ -220,6 +221,17 @@ const MR_DENY_WEBHOOK_URL = process.env.MARVIN_MR_DENY_WEBHOOK_URL || `http://${
 // refreshes immediately instead of waiting on its own fallback poll.
 // 0 = ephemeral (the evidence-capture copy); junk falls back to 7879.
 const DASHBOARD_REFRESH_PORT = parseRefreshPort(process.env.MARVIN_DASHBOARD_REFRESH_PORT)
+
+// Merge server health: probe the Mac mini's webhook for liveness (marvin#1248)
+const probeMergeServerHealth = async () => {
+  try {
+    await fetch(MR_WEBHOOK_URL.replace(/\/approve$/, '/health'), { signal: AbortSignal.timeout(1500) })
+    return true
+  } catch {
+    return false
+  }
+}
+const mergeServerHealth = createMergeServerHealth({ probe: probeMergeServerHealth, ttlMs: 30_000 })
 
 const ghListOpenPrs = (light) => async (repo) => JSON.parse(await ghOut(prListArgs(repo, { light })))
 
@@ -1107,14 +1119,15 @@ function registerMrReviewHandlers() {
       autoMergeShadow: getAutoMergeShadow,
       uiPathsFor: (repo) => readUiPaths(repo),
       mergeQueue: getMergeQueue,
-      issuesFor: boardIssuesFor
+      issuesFor: boardIssuesFor,
+      mergeServerUp: () => mergeServerHealth.check()
     })
     return cards.find((p) => p.url === url) || null
   }
   const mrList = coalesce(
-    () => listPipelinePrs(fixturePrs || listOpenPrs, { canMerge: (repo) => canMergeHere(pullOnly, canMergeFromDashboard(repo, readMergeableRepos())), sentBackTickets, reworkStatus: reworkFromMemory, rebaseStatus: getRebaseStatus, closedTickets, autoMergeShadow: getAutoMergeShadow, uiPathsFor: (repo) => readUiPaths(repo), mergeQueue: getMergeQueue, issuesFor: boardIssuesFor })
+    () => listPipelinePrs(fixturePrs || listOpenPrs, { canMerge: (repo) => canMergeHere(pullOnly, canMergeFromDashboard(repo, readMergeableRepos())), sentBackTickets, reworkStatus: reworkFromMemory, rebaseStatus: getRebaseStatus, closedTickets, autoMergeShadow: getAutoMergeShadow, uiPathsFor: (repo) => readUiPaths(repo), mergeQueue: getMergeQueue, issuesFor: boardIssuesFor, mergeServerUp: () => mergeServerHealth.check() })
       .then((prs) => withReadOnlyReason(prs, pullOnly)),
-    () => `${githubState.localSeq()}:${githubState._genOf(null)}`
+    () => `${githubState.localSeq()}:${githubState._genOf(null)}:${mergeServerHealth.peek()}`
   )
   // MR Review by project (marvin#848): the projects with their one name (overrides.json applied now), and the helper
   // tabs for the cards' chips. Both read when the list is read, never on a timer of their own.
@@ -1124,6 +1137,7 @@ function registerMrReviewHandlers() {
   ipcMain.handle('mr:list', async () => {
     if (!fixturePrs && !pullOnly) listOpenPrs().then((prs) => stackRetarget.check(prs)).catch(() => {})
     const list = await mrList()
+    prFetch = { ...prFetch, mergeServerUp: mergeServerHealth.peek() }
     catchUpMerges(list)
     return list
   })

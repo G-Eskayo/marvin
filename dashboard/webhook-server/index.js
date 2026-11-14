@@ -204,6 +204,12 @@ const server = createServer(async (req, res) => {
     return
   }
 
+  // Health check: webhook is running and answering (marvin#1248).
+  if (req.method === 'GET' && req.url === '/health') {
+    res.writeHead(200, { 'Content-Type': 'application/json' }).end(JSON.stringify({ ok: true }))
+    return
+  }
+
   // marvin#762: another Mac's webhook just started, so it can merge again: tell the dashboard here, which retries the
   // approvals it saved while no Mac could merge. Only ever triggers that retry; the body names the machine, nothing more.
   // marvin#231 follow-up: a merge's stage event from the merge server on another Mac, for the dashboard here (topic
