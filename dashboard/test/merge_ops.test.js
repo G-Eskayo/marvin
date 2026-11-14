@@ -305,3 +305,58 @@ describe('failover notice and queued approvals', () => {
     expect(ops.get(URL).state).toBe('merging')
   })
 })
+
+describe('stuck ops (error, reengaged, interrupted)', () => {
+  it('stuckOps() lists all ops in error/reengaged/interrupted state', () => {
+    const ops = createMergeOps()
+    const url1 = 'https://github.com/o/r/pull/1'
+    const url2 = 'https://github.com/o/r/pull/2'
+    const url3 = 'https://github.com/o/r/pull/3'
+    ops.start(url1); ops.fail(url1, 'Failed')
+    ops.start(url2); ops.finish(url2, { reengaged: true, reason: 'Rebase conflict' })
+    ops.start(url3); ops.interrupt(url3)
+    const stuck = ops.stuckOps()
+    expect(stuck).toHaveLength(3)
+    expect(stuck).toContainEqual(expect.objectContaining({ url: url1, repo: 'o/r', number: '1' }))
+    expect(stuck).toContainEqual(expect.objectContaining({ url: url2, repo: 'o/r', number: '2' }))
+    expect(stuck).toContainEqual(expect.objectContaining({ url: url3, repo: 'o/r', number: '3' }))
+  })
+
+  it('stuckOps() does not list merging or idle ops', () => {
+    const ops = createMergeOps()
+    ops.start(URL)
+    expect(ops.stuckOps()).toEqual([])
+    ops.cancel(URL)
+    expect(ops.stuckOps()).toEqual([])
+  })
+
+  it('resetStuckOp() clears an error op and returns true', () => {
+    const ops = createMergeOps()
+    ops.start(URL); ops.fail(URL, 'boom')
+    expect(ops.get(URL).state).toBe('error')
+    expect(ops.resetStuckOp(URL)).toBe(true)
+    expect(ops.get(URL)).toEqual({ state: 'idle' })
+  })
+
+  it('resetStuckOp() clears a reengaged op and returns true', () => {
+    const ops = createMergeOps()
+    ops.start(URL); ops.finish(URL, { reengaged: true, reason: 'x' })
+    expect(ops.resetStuckOp(URL)).toBe(true)
+    expect(ops.get(URL)).toEqual({ state: 'idle' })
+  })
+
+  it('resetStuckOp() clears an interrupted op and returns true', () => {
+    const ops = createMergeOps()
+    ops.start(URL); ops.interrupt(URL)
+    expect(ops.resetStuckOp(URL)).toBe(true)
+    expect(ops.get(URL)).toEqual({ state: 'idle' })
+  })
+
+  it('resetStuckOp() returns false for non-stuck ops', () => {
+    const ops = createMergeOps()
+    expect(ops.resetStuckOp(URL)).toBe(false)
+    ops.start(URL)
+    expect(ops.resetStuckOp(URL)).toBe(false)
+    expect(ops.get(URL).state).toBe('merging')
+  })
+})

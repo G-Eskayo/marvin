@@ -13,6 +13,7 @@ import { analyzeSource, scanFiles, checkAllowlist, GUIDANCE, EVIDENCE_SCRIPT } f
 // setters and Date.now) are allowed by rule, never by name, and need no entry.
 const TODO_558 = 'TODO: move to trigger, see follow-up #558'
 const CHECK_WATCH = 'the #557 check watch: one ETag (conditional) request per PR head with checks running, 304 is free, the same pattern as the change-detector; real push replaces it (#566)'
+const HEAD_WATCH = 'the stuck PR head watch: one ETag (conditional) request per stuck op\'s PR head per ~20 s, 304 is free; detects bare pushes that change head.sha'
 export const ALLOWLIST = {
   // Renderer. Each reads main-process IPC; GitHub-backed IPC answers from github_state's cache (change-ping driven).
   'src/App.jsx': { interval: [2, 'backstops: MR status dot behind mr.onRefresh push (2 min), Health dot reads the local snapshot (60 s)'] },
@@ -35,13 +36,13 @@ export const ALLOWLIST = {
   'electron/main/chat_tabs.js': { ttl: [1, 'read-through cache bound (10 s) on the other Mac\'s GET /chats (marvin#1064); no timer'] },
   'electron/main/devices.js': { ttl: [1, 'read-through cache bound (8 s) on an ssh round-trip; no timer, never triggers a read'] },
   'electron/main/github_state.js': { ttl: [1, 'the cache itself: its 30-min safety lifetime (#557 removed the ttlFor hook)'] },
-  'electron/main/index.js': { interval: [1, `starts ${CHECK_WATCH}`] },
+  'electron/main/index.js': { interval: [2, `starts ${CHECK_WATCH} and ${HEAD_WATCH}`] },
   'electron/main/queue.js': { ttl: [1, 'read-through cache bound (60 s) on ticket_queue.py; no timer of its own'] },
   'electron/main/relations_service.js': { ttl: [1, 'read-through cache bound (60 s), invalidated by the board/docs triggers'] },
   'electron/main/rework.js': { ttl: [1, 'read-through cache bound (60 s); index.js calls it through github_state with minInterval'] },
   'electron/main/usage_report.js': { ttl: [1, 'read-through cache bound (60 s) on a local scan + ssh; no GitHub, no timer'] },
   // Servers.
-  'webhook-server/gh_watch.js': { interval: [2, 'THE change-detector (one ETag request per repo per ~20 s, 304 is free) and the check watch beside it (#557)'] },
+  'webhook-server/gh_watch.js': { interval: [3, 'THE change-detector (one ETag request per repo per ~20 s, 304 is free), the check watch (#557), and the head watch (one ETag per stuck op per ~20 s, 304 is free)'] },
   'webhook-server/index.js': { interval: [3, `starts the one gh_watch change-detector tick, (marvin#231) ${CHECK_WATCH} for queued PRs only: nothing queued, no requests, and (marvin#954, primary only) ${CHECK_WATCH} over the box feed's pending PRs`] },
   'webhook-server/failure.js': { 'timeout-loop': [1, 'withRetry: bounded exponential backoff on a failed call, not a poll for change'] },
   'webhook-server/merge.js': { 'timeout-loop': [1, 'mergeableNow: GitHub computes mergeable lazily with no event; bounded 6 x 5 s'] },

@@ -1,5 +1,5 @@
 import { describe, it, expect, vi } from 'vitest'
-import { formatFeedback, sendFeedback, dropEntirely, handleDenyRequest } from '../webhook-server/deny.js'
+import { formatFeedback, sendFeedback, dropEntirely, handleDenyRequest, currentPrState } from '../webhook-server/deny.js'
 
 const PR_URL = 'https://github.com/G-Eskayo/marvin/pull/71'
 
@@ -124,17 +124,64 @@ describe('feedback and drop for another project', () => {
   })
 })
 
+describe('currentPrState', () => {
+  it('returns the PR state from gh pr view', async () => {
+    const exec = vi.fn().mockResolvedValue({ stdout: JSON.stringify({ state: 'OPEN' }) })
+    const result = await currentPrState(PR_URL, exec)
+    expect(result).toEqual({ state: 'OPEN' })
+    expect(exec).toHaveBeenCalledWith('gh', ['pr', 'view', PR_URL, '--json', 'state'])
+  })
+
+  it('rejects a non-GitHub URL', async () => {
+    const exec = vi.fn()
+    await expect(currentPrState('not-a-url', exec)).rejects.toThrow('Not a GitHub PR URL')
+    expect(exec).not.toHaveBeenCalled()
+  })
+})
+
 describe('handleDenyRequest', () => {
   it('rejects unknown actions with 400', async () => {
-    const exec = execReturning('')
+    const exec = vi.fn().mockImplementation((cmd, args) => {
+      if (args[0] === 'pr' && args[1] === 'view' && args[2] === PR_URL && args.includes('state')) {
+        return Promise.resolve({ stdout: JSON.stringify({ state: 'OPEN' }) })
+      }
+      return Promise.resolve({ stdout: '', stderr: '' })
+    })
     const result = await handleDenyRequest({ action: 'unknown', prUrl: PR_URL, ticketNumber: 42, reasons: [], comment: '' }, exec)
     expect(result.status).toBe(400)
     expect(result.body).toEqual({ done: false, error: expect.stringMatching(/Unknown deny action/) })
     expect(result.error).toBeUndefined()
   })
 
+  it('returns 409 when the PR is already merged', async () => {
+    const exec = vi.fn().mockImplementation((cmd, args) => {
+      if (args[0] === 'pr' && args[1] === 'view' && args.includes('state')) {
+        return Promise.resolve({ stdout: JSON.stringify({ state: 'MERGED' }) })
+      }
+      return Promise.resolve({ stdout: '', stderr: '' })
+    })
+    const result = await handleDenyRequest({ action: 'send_feedback', prUrl: PR_URL, ticketNumber: 42, reasons: [], comment: '' }, exec)
+    expect(result.status).toBe(409)
+    expect(result.body).toEqual({ done: false, error: expect.stringMatching(/already/i) })
+  })
+
+  it('returns 409 when the PR is already closed', async () => {
+    const exec = vi.fn().mockImplementation((cmd, args) => {
+      if (args[0] === 'pr' && args[1] === 'view' && args.includes('state')) {
+        return Promise.resolve({ stdout: JSON.stringify({ state: 'CLOSED' }) })
+      }
+      return Promise.resolve({ stdout: '', stderr: '' })
+    })
+    const result = await handleDenyRequest({ action: 'drop', prUrl: PR_URL, ticketNumber: 42, reasons: [], comment: '' }, exec)
+    expect(result.status).toBe(409)
+    expect(result.body.error).toMatch(/already.*closed/)
+  })
+
   it('dispatches send_feedback to sendFeedback and returns success', async () => {
     const exec = vi.fn().mockImplementation((cmd, args) => {
+      if (args[0] === 'pr' && args[1] === 'view' && args.includes('state')) {
+        return Promise.resolve({ stdout: JSON.stringify({ state: 'OPEN' }) })
+      }
       if (args[0] === 'issue' && args[1] === 'view') {
         return Promise.resolve({ stdout: JSON.stringify({ labels: [] }) })
       }
@@ -148,7 +195,12 @@ describe('handleDenyRequest', () => {
   })
 
   it('dispatches drop to dropEntirely and returns success', async () => {
-    const exec = vi.fn().mockResolvedValue({ stdout: JSON.stringify({ labels: [] }), stderr: '' })
+    const exec = vi.fn().mockImplementation((cmd, args) => {
+      if (args[0] === 'pr' && args[1] === 'view' && args.includes('state')) {
+        return Promise.resolve({ stdout: JSON.stringify({ state: 'OPEN' }) })
+      }
+      return Promise.resolve({ stdout: JSON.stringify({ labels: [] }), stderr: '' })
+    })
     const result = await handleDenyRequest({ action: 'drop', prUrl: PR_URL, ticketNumber: 42, reasons: [], comment: '' }, exec)
     expect(result.status).toBe(200)
     expect(result.body).toEqual({ done: true })
@@ -157,7 +209,12 @@ describe('handleDenyRequest', () => {
   })
 
   it('returns 500 and error details when dispatch fails', async () => {
-    const exec = vi.fn().mockRejectedValue(new Error('gh command failed'))
+    const exec = vi.fn().mockImplementation((cmd, args) => {
+      if (args[0] === 'pr' && args[1] === 'view' && args.includes('state')) {
+        return Promise.resolve({ stdout: JSON.stringify({ state: 'OPEN' }) })
+      }
+      return Promise.reject(new Error('gh command failed'))
+    })
     const result = await handleDenyRequest({ action: 'send_feedback', prUrl: PR_URL, ticketNumber: 42, reasons: [], comment: '' }, exec)
     expect(result.status).toBe(500)
     expect(result.body).toEqual({ done: false, error: expect.stringMatching(/gh command failed/) })

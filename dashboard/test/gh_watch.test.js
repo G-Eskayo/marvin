@@ -1,5 +1,5 @@
 import { describe, it, expect, vi } from 'vitest'
-import { createChangeDetector, createGithubProbe, issuesEndpoint } from '../webhook-server/gh_watch.js'
+import { createChangeDetector, createGithubProbe, issuesEndpoint, createHeadWatcher, createHeadProbe, prHeadEndpoint, headSha } from '../webhook-server/gh_watch.js'
 
 const probeFrom = (script) => {
   const calls = []
@@ -157,5 +157,149 @@ describe('createGithubProbe', () => {
 describe('issuesEndpoint', () => {
   it('asks for only the most recently updated item, any state', () => {
     expect(issuesEndpoint('o/r')).toBe('https://api.github.com/repos/o/r/issues?state=all&sort=updated&direction=desc&per_page=1')
+  })
+})
+
+describe('createHeadWatcher', () => {
+  const prHeadFrom = (script) => {
+    const calls = []
+    const probe = vi.fn(async ({ repo, number, etag }) => {
+      calls.push({ repo, number, etag })
+      return script.shift()
+    })
+    return { probe, calls }
+  }
+
+  const prHead = (etag, sha) => ({ status: 200, etag, body: { head: { sha } } })
+
+  it('records the first answer silently, then fires only when the head sha changes', async () => {
+    const { probe, calls } = prHeadFrom([prHead('a', 'sha1'), { status: 304 }, prHead('b', 'sha2')])
+    const onChange = vi.fn()
+    const w = createHeadWatcher({ probe, onChange })
+    await w.tick([{ repo: 'o/r', number: 1 }])
+    expect(onChange).not.toHaveBeenCalled()
+    await w.tick([{ repo: 'o/r', number: 1 }])
+    expect(onChange).not.toHaveBeenCalled()
+    await w.tick([{ repo: 'o/r', number: 1 }])
+    expect(onChange).toHaveBeenCalledWith({ repo: 'o/r', number: 1, head: null })
+    expect(calls.map((c) => c.etag)).toEqual([undefined, 'a', 'a'])
+  })
+
+  it('fires on the first probe when watching for a specific head that differs from the current head', async () => {
+    const { probe } = prHeadFrom([prHead('a', 'sha1')])
+    const onChange = vi.fn()
+    const w = createHeadWatcher({ probe, onChange })
+    // Watch for a specific head 'old-head', but the current head is 'sha1' — should fire on first probe
+    await w.tick([{ repo: 'o/r', number: 1, head: 'old-head' }])
+    expect(onChange).toHaveBeenCalledWith({ repo: 'o/r', number: 1, head: 'old-head' })
+  })
+
+  it('fires when moving away from the watched head', async () => {
+    const { probe } = prHeadFrom([prHead('a', 'sha1'), prHead('b', 'sha2')])
+    const onChange = vi.fn()
+    const w = createHeadWatcher({ probe, onChange })
+    // Start watching the current head 'sha1' as the watched head
+    await w.tick([{ repo: 'o/r', number: 1, head: 'sha1' }])
+    expect(onChange).not.toHaveBeenCalled() // No change on first tick
+    // Now the head changes to 'sha2' — should fire because we've moved away from the watched head
+    await w.tick([{ repo: 'o/r', number: 1, head: 'sha1' }])
+    expect(onChange).toHaveBeenCalledWith({ repo: 'o/r', number: 1, head: 'sha1' })
+  })
+
+  it('does not fire when a 200 brings a new etag but the same head sha', async () => {
+    const { probe } = prHeadFrom([prHead('a', 'sha1'), prHead('b', 'sha1'), prHead('c', 'sha1'), { status: 304 }])
+    const onChange = vi.fn()
+    const w = createHeadWatcher({ probe, onChange })
+    for (let i = 0; i < 4; i++) await w.tick([{ repo: 'o/r', number: 1 }])
+    expect(onChange).not.toHaveBeenCalled()
+  })
+
+  it('fires once per change, not again on the next identical 200', async () => {
+    const { probe } = prHeadFrom([prHead('a', 'sha1'), prHead('b', 'sha2'), prHead('c', 'sha2')])
+    const onChange = vi.fn()
+    const w = createHeadWatcher({ probe, onChange })
+    for (let i = 0; i < 3; i++) await w.tick([{ repo: 'o/r', number: 1 }])
+    expect(onChange).toHaveBeenCalledTimes(1)
+  })
+
+  it('ignores non-200 answers and keeps its last state', async () => {
+    const { probe } = prHeadFrom([prHead('a', 'sha1'), { status: 403 }, { status: 502 }, prHead('b', 'sha1')])
+    const onChange = vi.fn()
+    const w = createHeadWatcher({ probe, onChange })
+    for (let i = 0; i < 4; i++) await w.tick([{ repo: 'o/r', number: 1 }])
+    expect(onChange).not.toHaveBeenCalled()
+  })
+
+  it('tracks each PR separately', async () => {
+    const { probe } = prHeadFrom([prHead('x', 'sha1'), prHead('y', 'sha2'), prHead('x2', 'sha2'), { status: 304 }])
+    const onChange = vi.fn()
+    const w = createHeadWatcher({ probe, onChange })
+    await w.tick([{ repo: 'o/r', number: 1 }, { repo: 'o/s', number: 2 }])
+    await w.tick([{ repo: 'o/r', number: 1 }, { repo: 'o/s', number: 2 }])
+    expect(onChange.mock.calls).toEqual([[{ repo: 'o/r', number: 1, head: null }]])
+  })
+
+  it('ignores probe failures and keeps its last state', async () => {
+    const answers = [async () => prHead('a', 'sha1'), async () => { throw new Error('offline') }, async () => ({ status: 304 }), async () => prHead('b', 'sha2')]
+    const probe = vi.fn((obj) => answers.shift()(obj))
+    const onChange = vi.fn()
+    const w = createHeadWatcher({ probe, onChange })
+    await w.tick([{ repo: 'o/r', number: 1 }])
+    await expect(w.tick([{ repo: 'o/r', number: 1 }])).resolves.toBeUndefined()
+    await w.tick([{ repo: 'o/r', number: 1 }])
+    await w.tick([{ repo: 'o/r', number: 1 }])
+    expect(onChange).toHaveBeenCalledTimes(1)
+  })
+
+  it('forgets PRs that left the candidate list', async () => {
+    const { probe, calls } = prHeadFrom([prHead('a', 'sha1'), prHead('b', 'sha2')])
+    const onChange = vi.fn()
+    const w = createHeadWatcher({ probe, onChange })
+    await w.tick([{ repo: 'o/r', number: 1 }])
+    await w.tick([])
+    await w.tick([{ repo: 'o/r', number: 1 }])
+    expect(onChange).not.toHaveBeenCalled()
+    expect(calls[1].etag).toBeUndefined()
+  })
+})
+
+describe('createHeadProbe', () => {
+  const fakeFetch = (status, etag, body) => vi.fn(async () => ({ status, headers: { get: (h) => (h === 'etag' ? etag : null) }, json: async () => body }))
+
+  it('sends the etag conditionally and returns the body on a 200', async () => {
+    const doFetch = fakeFetch(200, 'W/"e2"', { head: { sha: 'abc123' } })
+    const res = await createHeadProbe({ GH_TOKEN: 'tok' }, doFetch)({ repo: 'o/r', number: 42, etag: 'W/"e1"' })
+    expect(doFetch.mock.calls[0][0]).toBe(prHeadEndpoint('o/r', 42))
+    expect(doFetch.mock.calls[0][1].headers['If-None-Match']).toBe('W/"e1"')
+    expect(doFetch.mock.calls[0][1].headers.Authorization).toBe('Bearer tok')
+    expect(res).toEqual({ status: 200, etag: 'W/"e2"', body: { head: { sha: 'abc123' } } })
+  })
+
+  it('does not read a body on a 304', async () => {
+    const doFetch = fakeFetch(304, null, undefined)
+    const json = vi.fn()
+    doFetch.mockImplementation(async () => ({ status: 304, headers: { get: () => null }, json }))
+    const res = await createHeadProbe({}, doFetch)({ repo: 'o/r', number: 42, etag: 'W/"e1"' })
+    expect(res).toEqual({ status: 304, etag: undefined })
+    expect(json).not.toHaveBeenCalled()
+  })
+})
+
+describe('headSha', () => {
+  it('extracts the sha from a PR head', () => {
+    expect(headSha({ head: { sha: 'abc123' } })).toBe('abc123')
+  })
+
+  it('returns undefined for a missing or invalid body', () => {
+    expect(headSha(null)).toBeUndefined()
+    expect(headSha({})).toBeUndefined()
+    expect(headSha({ head: null })).toBeUndefined()
+    expect(headSha({ head: {} })).toBeUndefined()
+  })
+})
+
+describe('prHeadEndpoint', () => {
+  it('builds the correct endpoint URL', () => {
+    expect(prHeadEndpoint('o/r', 42)).toBe('https://api.github.com/repos/o/r/pulls/42')
   })
 })

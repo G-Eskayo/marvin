@@ -216,3 +216,99 @@ export function startCheckWatch({ getHeads, probe, onChange, intervalMs = 20_000
   timer?.unref?.()
   return { watcher, timer, run }
 }
+
+// Head watch (stuck PR detection): watch the head.sha of specific PRs with an ETag on each ~20 s rhythm.
+// A 304 is free, and only a 200 whose head.sha differs triggers onChange. Used to detect when a bare push
+// updates a PR's head without any issue/label/comment change (which createChangeDetector would miss).
+export const prHeadEndpoint = (repo, number) => `https://api.github.com/repos/${repo}/pulls/${number}`
+
+// What a PR's head looks like, as a comparable string.
+export function headSha(body) {
+  if (!body || typeof body !== 'object') return undefined
+  const { head } = body
+  if (!head || typeof head !== 'object') return undefined
+  return head.sha || undefined
+}
+
+export function createHeadWatcher({ probe, onChange, now = Date.now }) {
+  const watched = new Map() // `${repo}@${number}` -> { etag, sha }
+
+  async function tick(candidates) {
+    const wanted = new Map()
+    for (const c of Array.isArray(candidates) ? candidates : []) {
+      if (!c || !c.repo || !c.number) continue
+      const key = `${c.repo}@${c.number}`
+      if (!wanted.has(key)) wanted.set(key, { repo: c.repo, number: c.number, head: c.head ?? null })
+    }
+    for (const key of [...watched.keys()]) if (!wanted.has(key)) watched.delete(key)
+    const changed = new Set()
+    for (const [key, w] of wanted) {
+      const known = watched.get(key) || {}
+      let res
+      try {
+        res = await probe({ repo: w.repo, number: w.number, etag: known.etag })
+      } catch {
+        continue
+      }
+      if (!res || (res.status !== 200 && res.status !== 304)) continue
+      if (res.status === 200) {
+        const sha = headSha(res.body)
+        if (sha !== undefined) {
+          watched.set(key, { etag: res.etag, sha })
+          // When w.head is set (we're watching for a specific sha), check if we've moved away from it.
+          // Fire if: we had a previous sha and it changed, OR we're watching for a specific head and it differs.
+          const leftWatchedHead = w.head && sha !== w.head
+          if ((known.sha !== undefined && sha !== known.sha) || leftWatchedHead) changed.add(w)
+        }
+      } else {
+        // 304: keep the old sha but update etag if we have one
+        watched.set(key, { etag: res.etag || known.etag, sha: known.sha })
+      }
+    }
+    for (const w of changed) onChange(w)
+  }
+
+  return { tick, size: () => watched.size }
+}
+
+// Real probe: authenticated conditional GET for a specific PR.
+export function createHeadProbe(env = process.env, doFetch = fetch) {
+  return async ({ repo, number, etag }) => {
+    const headers = { Accept: 'application/vnd.github+json', 'User-Agent': 'marvin-dashboard-watch' }
+    if (env.GH_TOKEN) headers.Authorization = `Bearer ${env.GH_TOKEN}`
+    if (etag) headers['If-None-Match'] = etag
+    const res = await doFetch(prHeadEndpoint(repo, number), { headers })
+    const out = { status: res.status, etag: res.headers.get('etag') || undefined }
+    if (res.status === 200) {
+      try {
+        out.body = await res.json()
+      } catch {
+        out.body = undefined
+      }
+    }
+    return out
+  }
+}
+
+// Runs the watcher on an interval: a slow tick never stacks, nothing is asked while skip() says so,
+// and a failing getCandidates only skips that tick.
+export function startHeadWatch({ getCandidates, probe, onChange, intervalMs = 20_000, setIntervalFn = setInterval, skip = () => false, now = Date.now }) {
+  const watcher = createHeadWatcher({ probe, onChange, now })
+  let running = false
+  const run = async () => {
+    if (running) return
+    running = true
+    try {
+      if (skip()) return
+      await watcher.tick(getCandidates())
+    } catch {
+      // the watch must never die: try again next tick
+    } finally {
+      running = false
+    }
+  }
+  run()
+  const timer = setIntervalFn(run, intervalMs)
+  timer?.unref?.()
+  return { watcher, timer, run }
+}

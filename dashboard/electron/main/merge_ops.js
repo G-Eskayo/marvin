@@ -156,6 +156,24 @@ export function createMergeOps({ maxMergingMs = 45 * 60_000 } = {}) {
         changed.push(url)
       }
       return changed
+    },
+    // Stuck ops: ones in error/reengaged/interrupted state. Each carries {url, repo, number, head}.
+    stuckOps() {
+      return [...ops]
+        .filter(([, o]) => o.state === 'error' || o.state === 'reengaged' || o.state === 'interrupted')
+        .map(([url, o]) => ({
+          url,
+          repo: repoFromPrUrl(url),
+          number: url.split('/').pop(),
+          head: o.head ?? null
+        }))
+    },
+    // Clear a stuck op when its GitHub head has been confirmed as changed: resets it to idle.
+    resetStuckOp(url) {
+      const o = ops.get(url)
+      if (!o || (o.state !== 'error' && o.state !== 'reengaged' && o.state !== 'interrupted')) return false
+      ops.delete(url)
+      return true
     }
   }
 }

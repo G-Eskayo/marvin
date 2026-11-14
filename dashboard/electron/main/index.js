@@ -10,7 +10,7 @@ import { promisify } from 'util'
 import { listSubsystems, readHistory, buildIndex } from './metrics.js'
 import { getReworkStatus, clearReworkCache } from './rework.js'
 import { createGithubState, repoOfSource, gateCooldownUntil } from './github_state.js'
-import { startCheckWatch, createCheckProbe, createTreeProbe, startChangeWatch, createGithubProbe } from '../../webhook-server/gh_watch.js'
+import { startCheckWatch, createCheckProbe, createTreeProbe, startChangeWatch, createGithubProbe, startHeadWatch, createHeadProbe } from '../../webhook-server/gh_watch.js'
 import { createStackRetarget } from './stack_retarget.js'
 import { prsForOrderCheck, listPipelinePrs, denyMr, fetchTicketContext, sentBackKeys, clearSentBackLabel } from './mr_review.js'
 import { approveMrStream } from './approve_stream.js'
@@ -313,6 +313,34 @@ function startPrCheckWatch() {
       githubChanged(`github:${repo}`)
       mainWindow?.webContents.send('mr:refresh')
       checkMergedElsewhere(repo)
+    },
+    skip: () => Date.now() < gateCooldownUntil()
+  })
+}
+
+// Head watch (stuck PR detection): watch the head.sha of specific PRs with an ETag on ~20 s rhythm.
+// A bare push updates a PR's head without issue/label/comment changes (which createChangeDetector would miss).
+// When a stuck op's head changes, reset it and refresh so the card shows the new state.
+let headWatch = null
+function startPrHeadWatch() {
+  if (pullOnly) return // the Mini watches; its feed carries head data (marvin#954)
+  headWatch = startHeadWatch({
+    getCandidates: () => mergeOps.stuckOps(),
+    probe: createHeadProbe(),
+    onChange: (candidate) => {
+      if (!candidate) return
+      const { repo, number } = candidate
+      githubChanged(`github:${repo}`)
+      mainWindow?.webContents.send('mr:refresh')
+      // When a stuck PR's head changed, reset only that op so the card is no longer showing the old failure.
+      for (const op of mergeOps.stuckOps()) {
+        if (String(op.repo || '').toLowerCase() === String(repo).toLowerCase() &&
+            op.number === String(number)) {
+          mergeOps.resetStuckOp(op.url)
+          pushMergeOp(op.url, mergeOps.get(op.url))
+          mainWindow?.webContents.send('mr:mergeEvent', op.url, { state: 'idle' })
+        }
+      }
     },
     skip: () => Date.now() < gateCooldownUntil()
   })
@@ -1027,6 +1055,8 @@ function registerMrReviewHandlers() {
   ipcMain.handle('mr:history', (_event, opts) => mrHistory.get({ fresh: !!opts?.fresh }))
   // #422: whether the last Open list read every project, and if not which failed and why.
   ipcMain.handle('mr:listStatus', () => prFetch)
+  // Stuck ops for evidence collection (stuck_ops_evidence.mjs)
+  ipcMain.handle('mr:stuckOps', () => mergeOps.stuckOps())
   // One merged (or refused) PR as the usual detail view, read-only: never mergeable from here.
   ipcMain.handle('mr:historyDetail', async (_event, url) => {
     const repo = repoFromPrUrl(url)
@@ -1423,6 +1453,7 @@ app.whenReady().then(() => {
   // External pings (webhook-server): bare = the legacy "MR list changed"; with topics = what changed.
   // Port already taken (another dashboard running) = one log line, not a crash (#384).
   startPrCheckWatch()
+  startPrHeadWatch()
   startRefreshServer((payload = {}) => {
     const topics = Array.isArray(payload.topics) ? payload.topics : ['mr']
     for (const topic of topics) {

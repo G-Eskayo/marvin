@@ -15,6 +15,13 @@ function assertGithubPrUrl(prUrl) {
   }
 }
 
+// Check a PR's current state before acting on it: if it is already merged or closed, refuse.
+export async function currentPrState(prUrl, exec = execFileAsync) {
+  assertGithubPrUrl(prUrl)
+  const { stdout } = await exec('gh', ['pr', 'view', prUrl, '--json', 'state'])
+  return JSON.parse(stdout)
+}
+
 // ADR 0025's structured feedback: reason categories plus an optional
 // free-text comment, folded into one comment body posted to both the PR
 // and its originating ticket.
@@ -88,6 +95,14 @@ export async function handleDenyRequest({ action, prUrl, ticketNumber, reasons, 
   }
 
   try {
+    assertGithubPrUrl(prUrl)
+    const prState = await currentPrState(prUrl, exec)
+    if (prState?.state !== 'OPEN') {
+      return {
+        status: 409,
+        body: { done: false, error: `This PR is already ${String(prState?.state || 'unknown').toLowerCase()}. Nothing to do.` }
+      }
+    }
     if (action === 'send_feedback') {
       await sendFeedback({ prUrl, ticketNumber, reasons, comment }, exec)
     } else {
