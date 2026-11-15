@@ -1,4 +1,5 @@
 import { useState } from 'react'
+import { redactPrivate } from '../lib/redact.js'
 
 const SEVERITY_LABEL = {
   red: 'Broken',
@@ -73,7 +74,7 @@ export default function HealthDrilldown({ check, onBack, onRebuildGraph }) {
 
       <div className="mt-4 rounded-lg border border-neutral-800 bg-neutral-900 p-4">
         <h3 className="mb-2 text-xs uppercase tracking-wide text-neutral-500">Detail</h3>
-        <p className="whitespace-pre-wrap font-mono text-sm text-neutral-200">{check.detail}</p>
+        <p className="whitespace-pre-wrap font-mono text-sm text-neutral-200">{redactPrivate(check.detail)}</p>
       </div>
 
       {check.id === 'graphify:fresh' && onRebuildGraph && <RebuildGraphButton onRebuildGraph={onRebuildGraph} />}

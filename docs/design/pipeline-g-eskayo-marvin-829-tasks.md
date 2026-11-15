@@ -1,0 +1,8 @@
+1. Add `dashboard/src/lib/redact.js`: pure `redactPrivate(text)` — IPv6 regex, IPv4 regex (placeholder per the `ip-redaction` decision), `/Users/<name>` → `~`, `docs/plans/<slug>.md` → `docs/plans/…`. No registry/IPC dependency.
+2. Add `dashboard/src/lib/fade_message.js`: `MESSAGE_FADE_MS = 4000` and pure `messageExpired(setAt, now)`.
+3. Write `dashboard/test/redact.test.js` and `dashboard/test/fade_message.test.js` (tests 1-13 above) against the not-yet-correct/empty implementations, then implement `redact.js`/`fade_message.js` until green.
+4. Wire `MarvinButton.jsx`: apply `redactPrivate` to `result.dir` and `result?.error` before putting them in `state.message`/error text; add a `useEffect` that clears `state.message` after `MESSAGE_FADE_MS` (clearing the timer on unmount/re-trigger). Write/extend `marvin_button.test.jsx` (tests 16-18).
+5. Edit `boot_data.js`: `handoffLine` drops the slug (date only); `deviceReason` (and its caller `deviceLines`) run `c.detail` through `redactPrivate` before deriving the summary text. Extend `boot_data.test.js` (tests 14-15).
+6. Apply `redactPrivate` at the three remaining render sites in `HealthDashboard.jsx` (`CheckCard`'s `check.detail`, `RecentErrors`'s `e.message`/`e.raw`) and `HealthDrilldown.jsx` (`check.detail`). Add/extend the corresponding component test (test 19).
+7. Run the full dashboard suite (`npm test` in `dashboard/`) once, per [[feedback-full-suites-before-hand-merge]] — not just the new files — before calling this done, since a prior attempt on this same ticket regressed main.
+8. Take 900px and 1440px screenshots of the MARVIN button message and a Health check detail panel showing redacted text, pin them on the PR (`marvin-show --pr N`), per the ticket's acceptance criterion.

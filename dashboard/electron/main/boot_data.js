@@ -5,6 +5,7 @@ import { HEALTH_STATUS_PATH } from './health.js'
 import { readStamped } from './stamped.js'
 import { readNetworkRegistry } from './github_feed.js'
 import { resolveDeviceId } from './device_identity.js'
+import { redactPrivate } from '../../src/lib/redact.js'
 
 // The boot sequence's data (#431, design in docs/design/celestial-navigation on #428). Every status the boot
 // shows comes from here, built from files that already exist -- nothing is decorative. The verdict banner says
@@ -78,10 +79,11 @@ function memoryLine({ memoryDir, skillsDir }, freshInstall) {
 }
 
 function deviceReason(c) {
-  const pct = c.detail.match(/\((\d+)%\)/)
+  const detail = redactPrivate(c.detail)
+  const pct = detail.match(/\((\d+)%\)/)
   if (c.id.startsWith('disk:space') && pct) return `DISK ${pct[1]}% FREE`
-  if (c.id.startsWith('jobs:exit')) return `${(c.detail.match(/exit \d+/g) || []).length} JOBS FAILED`
-  return up(c.detail.split(/ -- |; |:/)[0]).slice(0, 40) || up(c.label)
+  if (c.id.startsWith('jobs:exit')) return `${(detail.match(/exit \d+/g) || []).length} JOBS FAILED`
+  return up(detail.split(/ -- |; |:/)[0]).slice(0, 40) || up(c.label)
 }
 
 function deviceLines(checks, registry, selfId, freshInstall) {
@@ -124,9 +126,9 @@ function handoffLine(handoffsDir) {
     }
   } catch { /* no handoffs dir */ }
   if (!newest) return { chip: 'PLOT', level: 'lock', text: 'HANDOFF · NONE' }
-  const m = newest.f.replace(/\.md$/, '').match(/^handoff-(\d{4}-\d{2}-\d{2})(?:-\d{2}-\d{2})?-?(.*)$/)
-  const name = m ? m[1] + (m[2] ? ' · ' + m[2].replace(/-/g, ' ') : '') : newest.f
-  return { chip: 'PLOT', level: 'lock', text: ('HANDOFF · ' + up(name)).slice(0, 54) }
+  const m = newest.f.replace(/\.md$/, '').match(/^handoff-(\d{4}-\d{2}-\d{2})/)
+  const date = m ? m[1] : 'RECENT'
+  return { chip: 'PLOT', level: 'lock', text: ('HANDOFF · ' + up(date)).slice(0, 54) }
 }
 
 function testLine(checks, freshInstall) {

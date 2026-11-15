@@ -373,6 +373,48 @@ describe('first-run detection: fresh install with no health and no peers', () =>
   })
 })
 
+describe('redaction in boot data', () => {
+  it('handoffLine shows only the date, no slug', () => {
+    const t = tree({ health: GREEN(), handoffs: [['handoff-2026-10-14-my-feature-name.md', new Date('2026-10-14T10:00:00Z')]] })
+    const d = buildBootData(t)
+    const line = d.lines.find((l) => l.chip === 'PLOT')
+    expect(line.text).toMatch(/2026-10-14/)
+    expect(line.text).not.toMatch(/FEATURE/)
+    t.done()
+  })
+
+  it('deviceReason redacts private paths before deriving summary text', () => {
+    const t = tree({ health: GREEN([check('disk:space@mac-mini-1', 'yellow', 'Disk space', '22 GiB free of 228 (10%); /Users/testuser/.claude uses 2 GiB')]) })
+    const d = buildBootData(t)
+    const link = d.lines.find((l) => l.chip === 'LINK')
+    // The disk percentage should be extracted correctly even with paths in the detail
+    expect(link.text).toMatch(/DISK 10% FREE/)
+    // Verify the path is NOT in the output (redaction happened)
+    expect(link.text).not.toContain('/Users/testuser')
+    t.done()
+  })
+
+  it('deviceReason redacts paths in fallback branch when check has no percentage or exit count', () => {
+    const t = tree({ health: GREEN([check('machine:mac-mini-1', 'yellow', 'Device status', 'System issue at /Users/testuser/.cache -- needs investigation')]) })
+    const d = buildBootData(t)
+    const link = d.lines.find((l) => l.chip === 'LINK')
+    // Verify the path is redacted in the fallback branch (where detail.split is used)
+    expect(link.text).toContain('SYSTEM ISSUE AT ~')
+    expect(link.text).not.toContain('/Users/testuser')
+    t.done()
+  })
+
+  it('handoffLine uses RECENT when handoff filename does not match date pattern', () => {
+    const t = tree({ health: GREEN(), handoffs: [['handoff-invalid-name.md', new Date('2026-10-14T10:00:00Z')]] })
+    const d = buildBootData(t)
+    const line = d.lines.find((l) => l.chip === 'PLOT')
+    expect(line.text).toContain('HANDOFF · RECENT')
+    expect(line.text).not.toContain('invalid')
+    expect(line.text).not.toContain('name')
+    t.done()
+  })
+})
+
 describe('the boot plays once per app launch', () => {
   it('the first window load gets the boot; reloads after it do not', () => {
     const gate = createBootGate()

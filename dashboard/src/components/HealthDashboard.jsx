@@ -8,6 +8,7 @@ import AgentsPanel from './AgentsPanel.jsx'
 import ProjectReadinessPanel from './ProjectReadinessPanel.jsx'
 import SafetyReviews from './SafetyReviews.jsx'
 import { healthFocus } from '../lib/boot_view.js'
+import { redactPrivate } from '../lib/redact.js'
 
 // How long a check is trusted at full color before it starts visually
 // greying out (ADR 0033's Staleness gradient term). All v1 checks run in
@@ -69,7 +70,7 @@ function CheckCard({ check, onClick }) {
         )}
         <h3 className="truncate text-sm font-medium text-white">{check.label}</h3>
       </div>
-      <p className={`line-clamp-2 text-xs [overflow-wrap:anywhere] ${colors.text}`}>{check.detail}</p>
+      <p className={`line-clamp-2 text-xs [overflow-wrap:anywhere] ${colors.text}`}>{redactPrivate(check.detail)}</p>
     </button>
   )
 }
@@ -98,8 +99,8 @@ export function RecentErrors({ errors, now = Date.now() }) {
                 <span className="font-medium text-neutral-100">{e.cause}</span>
                 <span className="ml-auto shrink-0 text-xs text-neutral-500">×{e.count} · {ago(e.last_t, now)}</span>
               </div>
-              <div className="pl-4 text-xs text-neutral-400">{e.machine} · <span className="font-mono">{e.source}</span>{e.message ? ` · ${e.message}` : ''}</div>
-              {e.raw && <pre className="ml-4 mt-1 max-h-24 overflow-auto whitespace-pre-wrap rounded bg-neutral-900 p-2 font-mono text-[11px] text-neutral-500">{e.raw}</pre>}
+              <div className="pl-4 text-xs text-neutral-400">{e.machine} · <span className="font-mono">{e.source}</span>{e.message ? ` · ${redactPrivate(e.message)}` : ''}</div>
+              {e.raw && <pre className="ml-4 mt-1 max-h-24 overflow-auto whitespace-pre-wrap rounded bg-neutral-900 p-2 font-mono text-[11px] text-neutral-500">{redactPrivate(e.raw)}</pre>}
             </li>
           ))}
         </ul>

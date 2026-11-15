@@ -1,22 +1,34 @@
-import { useState } from 'react'
+import { useState, useEffect } from 'react'
+import { redactPrivate } from '../lib/redact.js'
+import { MESSAGE_FADE_MS } from '../lib/fade_message.js'
 
 // The MARVIN button (marvin#228): the main way in. Opens a ready MARVIN session in WezTerm on this Mac, in the
 // ticket's own worktree, or at home with no ticket. Bare `claude` in a terminal stays the fallback.
 export default function MarvinButton({ open = (request) => window.api.marvin.openSession(request) }) {
   const [panel, setPanel] = useState(false)
   const [ticket, setTicket] = useState('')
-  const [state, setState] = useState({ busy: false, message: null, error: false })
+  const [state, setState] = useState({ busy: false, message: null, error: false, setAt: null })
+
+  useEffect(() => {
+    if (!state.message) return
+    const fadeTimer = setTimeout(() => {
+      setState((s) => ({ ...s, message: null }))
+    }, MESSAGE_FADE_MS)
+    return () => clearTimeout(fadeTimer)
+  }, [state.message])
 
   async function launch(withTicket) {
-    setState({ busy: true, message: null, error: false })
+    setState({ busy: true, message: null, error: false, setAt: null })
     const result = await open(withTicket ? { ticket: ticket.trim() } : {})
     if (result?.ok) {
       // marvin#1063: a ticket whose chat is already open gets that chat brought forward, not a second one
-      setState({ busy: false, message: result.focused ? 'That ticket\u2019s chat was already open, so it\u2019s in front now' : `Opened in ${result.dir}`, error: false })
+      const rawMessage = result.focused ? 'That ticket\u2019s chat was already open, so it\u2019s in front now' : `Opened in ${result.dir}`
+      setState({ busy: false, message: redactPrivate(rawMessage), error: false, setAt: Date.now() })
       setPanel(false)
       setTicket('')
     } else {
-      setState({ busy: false, message: result?.error || 'Could not open a session', error: true })
+      const errorMsg = result?.error || 'Could not open a session'
+      setState({ busy: false, message: redactPrivate(errorMsg), error: true, setAt: Date.now() })
     }
   }
 
