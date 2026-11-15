@@ -34,7 +34,7 @@ function labelOf(id) {
   return id ? machineLabel(id) : 'Mac mini'
 }
 
-const the = (m) => (m.here ? `this ${m.label.replace(/^this /, '')}` : `the ${m.label}`)
+export const the = (m) => (m.here ? `this ${m.label.replace(/^this /, '')}` : `the ${m.label}`)
 
 export function failoverNotice(down, next) {
   return `The ${down.label} is offline, merging on ${the(next)} instead.`
@@ -97,6 +97,23 @@ async function getJson(url, init, timeoutMs) {
 // The machine's own answer, { ready, why, os }. Throws when it can't be asked.
 export async function askReady(machine, repo, { timeoutMs = 5000 } = {}) {
   return getJson(`${machine.readyUrl || endpoint(machine, 'merge-ready')}?repo=${encodeURIComponent(repo)}`, {}, timeoutMs)
+}
+
+// marvin#808: after a disconnect, check whether a merge is still running on the machine before declaring it interrupted
+export async function reconcileInterrupted(machine, prUrl, { timeoutMs = 5000 } = {}) {
+  try {
+    // First: ask for merge-progress snapshot, which covers "finished while disconnected"
+    const progress = await getJson(`${endpoint(machine, 'merge-progress')}?url=${encodeURIComponent(prUrl)}`, {}, timeoutMs)
+    if (progress?.merge) return progress.merge
+  } catch { /* no progress snapshot; try inflight */ }
+
+  try {
+    // Fallback: ask for in-flight record, which covers "still running"
+    const inflight = await getJson(`${endpoint(machine, 'inflight')}?url=${encodeURIComponent(prUrl)}`, {}, timeoutMs)
+    return inflight?.inflight ? { running: true, ...inflight.inflight } : null
+  } catch { /* neither endpoint answered */ }
+
+  return null
 }
 
 // True only when the machine says it dropped its queued copy of this PR.

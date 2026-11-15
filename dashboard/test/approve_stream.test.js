@@ -118,6 +118,33 @@ describe('approveMrStream', () => {
     expect(await approveMrStream(PR, url, { onEvent: () => { throw new Error('renderer gone') } })).toEqual({ merged: true })
   })
 
+  it('inactivity timeout: no data chunk within streamInactivityMs destroys the request and resolves interrupted', async () => {
+    let alive = false
+    const url = await serve(async (req, res) => {
+      const reply = approveResponder(res, { streaming: true })
+      reply.event(ev(1, 'queued', 'running')); await tick()
+      alive = true
+      // silence for longer than the inactivity timeout, no keepalive sent
+      await new Promise((r) => setTimeout(r, 150))
+    })
+    const r = await approveMrStream(PR, url, { streamInactivityMs: 50 })
+    expect(alive).toBe(true) // we got past the first event
+    expect(r).toEqual({ merged: false, interrupted: true, reason: 'The merge was interrupted when the webhook restarted. Approve again.' })
+  })
+
+  it('inactivity timeout: a keepalive chunk resets the timer', async () => {
+    const url = await serve(async (req, res) => {
+      const reply = approveResponder(res, { streaming: true })
+      reply.event(ev(1, 'queued', 'running')); await tick()
+      // the server's keepalive should be sending automatically
+      // send the result while keepalive keeps the connection alive
+      await new Promise((r) => setTimeout(r, 50))
+      reply.result(200, { merged: true })
+    })
+    const r = await approveMrStream(PR, url, { streamInactivityMs: 80 })
+    expect(r).toEqual({ merged: true })
+  })
+
   it('a junk webhook URL is refused before anything is sent', async () => {
     await expect(approveMrStream(PR, 'not a url')).rejects.toThrow(/Not a webhook URL/)
   })
@@ -136,6 +163,36 @@ describe('approveResponder (the webhook side)', () => {
     const res = await fetch(url, { method: 'POST', body: '{}' })
     expect(res.headers.get('content-type')).toBe('application/json')
     expect(await res.json()).toEqual({ merged: true })
+  })
+
+  it('approveResponder.keepalive sends a keepalive heartbeat to reset the client timer', async () => {
+    const url = await serve(async (req, res) => {
+      const reply = approveResponder(res, { streaming: true, keepaliveMs: 20 })
+      reply.event(ev(1, 'queued', 'running')); await tick()
+      // change to a faster interval to allow testing
+      const ka = reply.keepalive({ intervalMs: 20 })
+      // wait for at least one keepalive to be sent (20ms interval)
+      await new Promise((r) => setTimeout(r, 50))
+      clearInterval(ka)
+      // now the result comes
+      reply.result(200, { merged: true })
+    })
+    const lines = []
+    let data = ''
+    const res = await fetch(url, { method: 'POST', body: '{}' })
+    for await (const chunk of res.body) {
+      data += new TextDecoder().decode(chunk)
+      while (data.includes('\n')) {
+        const i = data.indexOf('\n')
+        const line = data.slice(0, i)
+        data = data.slice(i + 1)
+        if (line.trim()) lines.push(JSON.parse(line))
+      }
+    }
+    const types = lines.map((l) => l.type)
+    expect(types).toContain('progress')
+    expect(types).toContain('keepalive')
+    expect(types[types.length - 1]).toBe('result')
   })
 
   it('writing after the reader went away is harmless', async () => {

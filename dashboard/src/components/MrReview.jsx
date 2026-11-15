@@ -295,6 +295,8 @@ export function ApproveDenyActions({ pr, onApproved, onDenied, inDetail = false 
         setErrorMessage(result.reason)
         return
       }
+      // marvin#808: lost contact but the merge is still running; card already updated by notice/adopt pushes
+      if (result.reconnecting) return
       // G-Eskayo/marvin#91's merge-time gate: a rebase or retest failure
       // blocks the merge and routes to re-engagement instead -- a real
       // outcome the user needs to see, not the same thing as onApproved's

@@ -16,6 +16,8 @@ export const MAX_LINE = 64 * 1024
 // marvin#762: how long to wait for a connection before calling the machine unreachable. A powered-off Mac on Tailscale
 // never refuses, it just doesn't answer, and the OS would wait about 75 s; the owner was clicking Approve again by then.
 export const CONNECT_TIMEOUT_MS = 4000
+// marvin#808: how long to wait for a data chunk (event, keepalive, or result) before assuming the merge is stuck
+export const STREAM_INACTIVITY_MS = 30_000
 
 // Could not reach the webhook (refused, no route, no answer to connect): nothing was sent, so another machine may
 // merge it instead. Marked `unreachable`, with the OS's code; an error after the connection is never marked.
@@ -23,15 +25,15 @@ function unreachable(err, code = err?.code) {
   return Object.assign(err instanceof Error ? err : new Error(String(err)), { unreachable: true, code })
 }
 
-export function approveMrStream(prUrl, webhookUrl, { onEvent = () => {}, request = null, connectTimeoutMs = CONNECT_TIMEOUT_MS } = {}) {
+export function approveMrStream(prUrl, webhookUrl, { onEvent = () => {}, request = null, connectTimeoutMs = CONNECT_TIMEOUT_MS, streamInactivityMs = STREAM_INACTIVITY_MS } = {}) {
   return new Promise((resolve, reject) => {
     let target
     try { target = new URL(webhookUrl) } catch { reject(new Error(`Not a webhook URL: ${webhookUrl}`)); return }
     const send = request || (target.protocol === 'https:' ? https.request : http.request)
     const body = JSON.stringify({ pr_url: prUrl })
-    let answered = false, started = false, connected = false, connectTimer = null
+    let answered = false, started = false, connected = false, connectTimer = null, inactivityTimer = null
     const interrupted = () => done(resolve, { merged: false, interrupted: true, reason: 'The merge was interrupted when the webhook restarted. Approve again.' })
-    const done = (fn, v) => { clearTimeout(connectTimer); if (!answered) { answered = true; fn(v) } }
+    const done = (fn, v) => { clearTimeout(connectTimer); clearTimeout(inactivityTimer); if (!answered) { answered = true; fn(v) } }
     const req = send(target, { method: 'POST', headers: { 'Content-Type': 'application/json', Accept: 'application/x-ndjson', 'Content-Length': Buffer.byteLength(body) } }, (res) => {
       started = true
       const type = String(res.headers['content-type'] || '')
@@ -65,7 +67,18 @@ export function approveMrStream(prUrl, webhookUrl, { onEvent = () => {}, request
         }
       }
       res.setEncoding('utf8')
+      const resetInactivityTimer = () => {
+        clearTimeout(inactivityTimer)
+        if (Number.isFinite(streamInactivityMs) && streamInactivityMs > 0) {
+          inactivityTimer = setTimeout(() => {
+            try { req.destroy(new Error('Stream inactivity timeout')) } catch { /* already destroyed */ }
+          }, streamInactivityMs)
+          inactivityTimer.unref?.()
+        }
+      }
+      resetInactivityTimer() // start timer once headers received
       res.on('data', (chunk) => {
+        resetInactivityTimer()
         buf += chunk
         let i
         while ((i = buf.indexOf('\n')) >= 0) { line(buf.slice(0, i)); buf = buf.slice(i + 1) }

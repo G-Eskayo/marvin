@@ -8,7 +8,7 @@ import { approveMrStream } from '../electron/main/approve_stream.js'
 import { approveResponder, createMergeLatch, alreadyMergingBody } from '../webhook-server/merge_progress.js'
 import { describeApproveFailure } from '../electron/main/mr_review.js'
 import { createMergeOps } from '../electron/main/merge_ops.js'
-import { mergeMachines, approveOnAnyMachine, failoverNotice, noMachineReason } from '../electron/main/merge_failover.js'
+import { mergeMachines, approveOnAnyMachine, failoverNotice, noMachineReason, reconcileInterrupted } from '../electron/main/merge_failover.js'
 import { createApprovalLedger } from '../electron/main/approval_ledger.js'
 import { createApprovalRetry } from '../electron/main/approval_retry.js'
 import { createApproveFlow } from '../electron/main/approve_flow.js'
@@ -489,6 +489,45 @@ describe('interrupted merges are retried by themselves (owner decision on #766),
     expect(ledger.get(PR)).toMatchObject({ outcome: 'interrupted', attempts: 1 })
   })
 
+  it('marvin#808: stream dropped but merge is still running: reconcile finds it and reports reconnecting, not interrupted', async () => {
+    const latch = createMergeLatch()
+    const inflightRecord = { seq: 10, stage: 'tests', startedAt: Date.now() - 5000 }
+    const mini = await serve((req, res, raw) => {
+      const path = new URL(req.url, 'http://localhost').pathname
+      const query = new URL(req.url, 'http://localhost').searchParams
+      if (path === '/approve') {
+        const url = JSON.parse(raw).pr_url
+        const reply = approveResponder(res, { streaming: true })
+        if (latch.take(url)) {
+          reply.event({ id: 'x', seq: 1, stage: 'queued', state: 'running', at: 1 })
+          // stream drops here
+          setTimeout(() => res.socket.destroy(), 10)
+        } else {
+          reply.result(409, alreadyMergingBody('mac-mini-1'))
+        }
+      } else if (path === '/merge-progress' && query.get('url') === PR) {
+        res.writeHead(200, { 'Content-Type': 'application/json' }).end(JSON.stringify({ merge: null }))
+      } else if (path === '/inflight' && query.get('url') === PR) {
+        res.writeHead(200, { 'Content-Type': 'application/json' }).end(JSON.stringify({ inflight: inflightRecord }))
+      } else {
+        res.writeHead(200, { 'Content-Type': 'application/json' }).end('{}')
+      }
+    })
+    const machines = [MINI(mini), BOOK(await closedPortUrl())]
+    const pushed = []
+    const approve = createApproveFlow({
+      mergeOps: ops,
+      ledger,
+      machines: () => machines,
+      send: (u, url, o) => approveMrStream(u, url, { ...o, connectTimeoutMs: 300 }),
+      push: (u, op) => op && pushed.push(op),
+      reconcile: reconcileInterrupted
+    })
+    const result = await approve(PR, { number: 900, head: 'abc' })
+    expect(result).toMatchObject({ reconnecting: true, merged: false })
+    expect(pushed.some((op) => op.notice && op.notice.includes('Lost contact'))).toBe(true)
+  })
+
   it('the stream dropped but the Mini is still merging it (a network blip): the retry is refused ALREADY_MERGING, the gate runs once, it stays waiting', async () => {
     const latch = createMergeLatch()
     const gateRuns = []
@@ -540,5 +579,53 @@ describe('createMergeLatch: one merge of a PR at a time on a webhook', () => {
     const body = alreadyMergingBody('mac-mini-1')
     expect(body).toMatchObject({ merged: false, code: 'ALREADY_MERGING' })
     expect(describeApproveFailure(409, body)).toBe('ALREADY_MERGING at queued: This PR is already being merged on the Mac mini. Its result shows when that merge finishes.')
+  })
+})
+
+describe('marvin#808: reconcileInterrupted checks whether a merge is still running after disconnect', () => {
+  it('merge-progress snapshot when it exists takes precedence: finished while disconnected is reported', async () => {
+    const url = await serve((req, res) => {
+      const query = new URL(req.url, 'http://localhost').searchParams
+      if (query.get('url') === PR) {
+        res.writeHead(200, { 'Content-Type': 'application/json' }).end(JSON.stringify({ merge: { outcome: 'merged', stages: { done: { state: 'done' } } } }))
+      } else {
+        res.writeHead(200, { 'Content-Type': 'application/json' }).end('{}')
+      }
+    })
+    const machine = { url, id: 'mac-mini-1', label: 'Mac mini', here: false }
+    const result = await reconcileInterrupted(machine, PR)
+    expect(result).toMatchObject({ outcome: 'merged' })
+  })
+
+  it('inflight record when merge-progress has nothing: still running is reported', async () => {
+    const url = await serve((req, res) => {
+      const path = new URL(req.url, 'http://localhost').pathname
+      const query = new URL(req.url, 'http://localhost').searchParams
+      if (path === '/merge-progress') {
+        res.writeHead(200, { 'Content-Type': 'application/json' }).end(JSON.stringify({ merge: null }))
+      } else if (path === '/inflight' && query.get('url') === PR) {
+        res.writeHead(200, { 'Content-Type': 'application/json' }).end(JSON.stringify({ inflight: { seq: 42, stage: 'tests', startedAt: Date.now() } }))
+      } else {
+        res.writeHead(200, { 'Content-Type': 'application/json' }).end('{}')
+      }
+    })
+    const machine = { url, id: 'mac-mini-1', label: 'Mac mini', here: false }
+    const result = await reconcileInterrupted(machine, PR)
+    expect(result).toMatchObject({ running: true, seq: 42, stage: 'tests' })
+  })
+
+  it('both endpoints unreachable: null means the merge is definitely not running', async () => {
+    const machine = { url: await closedPortUrl(), id: 'mac-mini-1', label: 'Mac mini', here: false }
+    const result = await reconcileInterrupted(machine, PR)
+    expect(result).toBe(null)
+  })
+
+  it('timeout waiting for the reconcile check: null, not an error', async () => {
+    const url = await serve(async (req, res) => {
+      await new Promise(() => {}) // never respond
+    })
+    const machine = { url, id: 'mac-mini-1', label: 'Mac mini', here: false }
+    const result = await reconcileInterrupted(machine, PR, { timeoutMs: 10 })
+    expect(result).toBe(null)
   })
 })

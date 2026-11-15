@@ -905,6 +905,13 @@ unbounded: any chat, either machine, raw `gh`, the GitHub UI). Polling stays onl
   merge started elsewhere. The main process folds the events into the merge op (`src/lib/merge_progress.js`, the same
   reducer the webhook uses) and pushes `mr:mergeEvent`; a card reads once on mount. A PR merged by hand on GitHub mid-
   merge ends as "Merged on GitHub" on the next change trigger (one `gh pr view` per merging op, none otherwise).
+
+  **marvin#808 addendum (2026-11-12):** when the stream drops, `GET /inflight` + `GET /merge-progress` reconcile
+  whether the merge is still running before declaring it interrupted. The webhook sends keepalive heartbeats
+  (`{"type":"keepalive"}`) every 10 s on the stream to prevent client-side inactivity timeouts (30 s default). The
+  client checks `GET /merge-progress` first (finished snapshots), falls back to `GET /inflight` (in-flight records),
+  and reports "lost contact but still running" with a `mergeOps.notice()` and `adopt()` if it finds the merge;
+  otherwise it's truly interrupted.
 - **Coverage guard**: the 60s backstop poll compares what it fetched with what it last showed; a change
   no trigger announced is appended to `~/.claude/logs/trigger-misses.jsonl` and surfaces as the
   `triggers:missed` Health check, so a gap identifies itself instead of waiting to be noticed.

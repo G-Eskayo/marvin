@@ -32,7 +32,7 @@ import { createMergeOps, receiveMergeMessage } from './merge_ops.js'
 import { createApprovalLedger } from './approval_ledger.js'
 import { createApprovalRetry } from './approval_retry.js'
 import { createApproveFlow } from './approve_flow.js'
-import { mergeMachines, askReady, askForget } from './merge_failover.js'
+import { mergeMachines, askReady, askForget, reconcileInterrupted } from './merge_failover.js'
 import { readPrefs } from './prefs.js'
 import { guardApprove } from './approve_guard.js'
 import { recordRefusal } from '../../webhook-server/refusal_log.js'
@@ -93,7 +93,9 @@ const approveFlow = createApproveFlow({
     if (result?.merged) mrActions.merged(url)
     else mrActions.reengaged(url)
     clearReworkCache()
-  }
+  },
+  // marvin#808: reconcile interrupted approvals by checking if the merge is still running
+  reconcile: (machine, prUrl) => reconcileInterrupted(machine, prUrl)
 })
 const approvalRetry = createApprovalRetry({
   ledger: approvalLedger,

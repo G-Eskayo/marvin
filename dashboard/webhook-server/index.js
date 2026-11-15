@@ -232,6 +232,14 @@ const server = createServer(async (req, res) => {
     return
   }
 
+  // marvin#808: inflight merges that are currently running, used to reconcile interrupted approvals
+  if (req.method === 'GET' && req.url.split('?')[0] === '/inflight') {
+    const want = new URL(req.url, 'http://localhost').searchParams.get('url')
+    const all = inflight.read()
+    res.writeHead(200, { 'Content-Type': 'application/json' }).end(JSON.stringify(want ? { inflight: all[want] ?? null } : { inflight: all }))
+    return
+  }
+
   if (req.method === 'POST' && req.url === '/merge-host-up') {
     let body = null
     try { body = await readJsonBody(req) } catch { /* the trigger is the request itself */ }
@@ -356,6 +364,7 @@ const repoOfPr = (url) => (String(url).match(/github\.com\/([^/]+\/[^/]+)\/pull\
 async function runMerge(prUrl, { by = 'you', reply = null } = {}) {
   const valid = typeof prUrl === 'string' && prUrl.startsWith('https://github.com/')
   if (valid && !mergeLatch.take(prUrl)) return { status: 409, body: alreadyMergingBody(machineId) }
+  let keepalive = null
   try {
     const tracker = valid ? createMergeTracker({
       url: prUrl,
@@ -382,6 +391,7 @@ async function runMerge(prUrl, { by = 'you', reply = null } = {}) {
       })()
     }) : null
     tracker?.start(mergesAhead(prUrl))
+    keepalive = reply?.keepalive?.({ intervalMs: 10_000 })
     try {
       // mergePr() returning normally covers both a real merge (merged: true) and G-Eskayo/marvin#91's merge-time gate
       // routing the ticket to re-engagement instead (merged: false, reengaged: true): an expected outcome, a 200.
@@ -412,6 +422,7 @@ async function runMerge(prUrl, { by = 'you', reply = null } = {}) {
       return { status, body }
     }
   } finally {
+    if (keepalive) clearInterval(keepalive)
     if (valid) mergeLatch.release(prUrl)
   }
 }

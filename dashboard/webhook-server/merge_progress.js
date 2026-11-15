@@ -301,22 +301,41 @@ export function createMergeTracker({ url, repo = null, machineId = null, emit = 
 export const NDJSON = 'application/x-ndjson'
 export const wantsStream = (accept) => String(accept || '').toLowerCase().includes(NDJSON)
 
-export function approveResponder(res, { streaming }) {
+export function approveResponder(res, { streaming, keepaliveMs = 10_000 } = {}) {
+  let keepaliveInterval = null
+  const line = (v) => JSON.stringify(v) + '\n'
+  const startKeepalive = (ms) => {
+    if (!streaming) return null
+    if (keepaliveInterval) clearInterval(keepaliveInterval)
+    keepaliveInterval = setInterval(() => {
+      if (!res.writableEnded && !res.destroyed) res.write(line({ type: 'keepalive' }))
+    }, ms)
+    keepaliveInterval.unref?.()
+    return keepaliveInterval
+  }
   if (streaming) {
     res.writeHead(200, { 'Content-Type': NDJSON, 'Cache-Control': 'no-store' })
     res.on?.('error', () => {}) // the reader went away: the merge carries on
+    res.on?.('close', () => { if (keepaliveInterval) clearInterval(keepaliveInterval) })
+    res.on?.('finish', () => { if (keepaliveInterval) clearInterval(keepaliveInterval) })
+    // start keepalive immediately once headers are written
+    startKeepalive(keepaliveMs)
   }
-  const line = (v) => JSON.stringify(v) + '\n'
   return {
     event(ev) {
       if (streaming && !res.writableEnded && !res.destroyed) res.write(line({ type: 'progress', event: ev }))
     },
     result(status, body) {
+      if (keepaliveInterval) clearInterval(keepaliveInterval)
       if (streaming) {
         if (!res.writableEnded) res.end(line({ type: 'result', status, body }))
       } else {
         res.writeHead(status, { 'Content-Type': 'application/json' }).end(JSON.stringify(body))
       }
+    },
+    keepalive({ intervalMs } = {}) {
+      const ms = Number.isFinite(intervalMs) ? intervalMs : keepaliveMs
+      return startKeepalive(ms)
     }
   }
 }
