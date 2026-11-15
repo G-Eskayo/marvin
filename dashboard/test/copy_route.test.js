@@ -11,6 +11,7 @@ import { copyRoute, COPY_NAMES } from '../webhook-server/copy_route.js'
 const dir = mkdtempSync(join(tmpdir(), 'copy-'))
 const paths = Object.fromEntries(COPY_NAMES.map((n) => [n, join(dir, `${n}.json`)]))
 writeFileSync(paths['health-status'], JSON.stringify({ host: 'mac-mini-1', generated_at: '2026-11-10T12:00:00Z', tolerance_s: 1200, checks: [] }))
+writeFileSync(paths['accounts-status'], JSON.stringify({ generated_at: '2026-11-10T12:00:00Z', by: 'mac-mini-1', accounts: [] }))
 
 function call({ method = 'GET', url, ip = '100.101.1.2', maxBytes } = {}) {
   const res = { status: null, headers: null, body: null, writeHead(s, h) { this.status = s; this.headers = h; return this }, end(b) { this.body = b; return this } }
@@ -64,6 +65,13 @@ describe('GET /copy/<name>', () => {
   it('an oversized file is refused (413), not streamed', () => {
     writeFileSync(paths['boards-registry'], JSON.stringify({ boards: [], pad: 'x'.repeat(5000) }))
     expect(call({ url: '/copy/boards-registry', maxBytes: 1000 }).status).toBe(413)
+  })
+
+  it('serves accounts-status to a peer when it has been written', () => {
+    const r = call({ url: '/copy/accounts-status' })
+    expect(r.handled).toBe(true)
+    expect(r.status).toBe(200)
+    expect(JSON.parse(r.body)).toMatchObject({ generated_at: '2026-11-10T12:00:00Z', by: 'mac-mini-1' })
   })
 
   it('leaves every other URL to the other routes', () => {

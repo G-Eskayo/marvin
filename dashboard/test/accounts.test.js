@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { readAccountsStatus, mergeLocal, renewPlan, createAccounts, RENEWABLE } from '../electron/main/accounts.js'
+import { readAccountsStatus, readAccountsStatusFresh, mergeLocal, renewPlan, createAccounts, RENEWABLE } from '../electron/main/accounts.js'
 
 const row = (id, machine = 'mac-mini-1', extra = {}) => ({ id, machine, state: 'works', renew: { how: 'tab', command: `~/.agents/bin/marvin-renew ${id}` }, ...extra })
 const statusText = (accounts) => JSON.stringify({ generated_at: '2026-10-30T12:00:00+00:00', by: 'mac-mini-1', accounts })
@@ -9,6 +9,53 @@ describe('readAccountsStatus: the saved view, never a crash', () => {
     expect(readAccountsStatus('/x', () => { throw Object.assign(new Error('no'), { code: 'ENOENT' }) }).problem).toBe('missing')
     for (const bad of ['{trunc', 'null', '{"accounts": "x"}', '[]']) expect(readAccountsStatus('/x', () => bad).problem).toBe('unreadable')
     expect(readAccountsStatus('/x', () => statusText([row('tailscale'), null, { id: 5 }])).accounts).toHaveLength(1)
+  })
+})
+
+describe('readAccountsStatusFresh: peer read of the producer\'s live copy', () => {
+  it('serves the producer\'s copy when read succeeds', async () => {
+    const peers = { read: async () => ({ value: { generated_at: '2026-11-10T12:00:00Z', by: 'mac-mini-1', accounts: [row('tailscale')] }, from: 'mac-mini-1', ageS: 30, host: 'mac-mini-1', stale: false, legacy: false }) }
+    const r = await readAccountsStatusFresh(peers)
+    expect(r.accounts).toHaveLength(1)
+    expect(r.copy.from).toBe('mac-mini-1')
+    expect(r.copy.host).toBe('mac-mini-1')
+    expect(r.copy.ageS).toBe(30)
+  })
+
+  it('returns empty with a problem when the read fails', async () => {
+    const peers = { read: async () => ({ missing: true, ageS: 1200, toleranceS: 1200 }) }
+    const r = await readAccountsStatusFresh(peers)
+    expect(r.problem).toBe('missing')
+    expect(r.accounts).toEqual([])
+    expect(r.copy.stale).toBe(false)
+  })
+
+  it('marks as stale when ageS exceeds toleranceS', async () => {
+    const peers = { read: async () => ({ value: { generated_at: '2026-11-10T12:00:00Z', by: 'mac-mini-1', accounts: [] }, from: 'mac-mini-1', ageS: 1500, stale: true, host: 'mac-mini-1', legacy: false, toleranceS: 1200 }) }
+    const r = await readAccountsStatusFresh(peers)
+    expect(r.copy.stale).toBe(true)
+    expect(r.copy.toleranceS).toBe(1200)
+  })
+
+  it('notes when the producer is unreachable', async () => {
+    const peers = { read: async () => ({ value: { generated_at: '2026-11-10T12:00:00Z', by: 'mac-mini-1', accounts: [] }, from: 'mac-mini-1', ageS: 0, host: null, producerUnreachable: true, stale: false, legacy: false }) }
+    const r = await readAccountsStatusFresh(peers)
+    expect(r.copy.producerUnreachable).toBe(true)
+    expect(r.copy.host).toBeNull()
+  })
+
+  it('filters invalid rows like readAccountsStatus does', async () => {
+    const peers = { read: async () => ({ value: { generated_at: '2026-11-10T12:00:00Z', by: 'mac-mini-1', accounts: [row('tailscale'), null, { id: 5 }, row('github-token')] }, from: 'mac-mini-1', ageS: 0, host: 'mac-mini-1', stale: false, legacy: false }) }
+    const r = await readAccountsStatusFresh(peers)
+    expect(r.accounts).toHaveLength(2)
+    expect(r.accounts.every((a) => typeof a.id === 'string')).toBe(true)
+  })
+
+  it('preserves generated_at and by from the value', async () => {
+    const peers = { read: async () => ({ value: { generated_at: '2026-11-10T11:30:00Z', by: 'mac-mini-2012', accounts: [] }, from: 'mac-mini-1', ageS: 30, host: 'mac-mini-1', stale: false, legacy: false }) }
+    const r = await readAccountsStatusFresh(peers)
+    expect(r.generatedAt).toBe('2026-11-10T11:30:00Z')
+    expect(r.by).toBe('mac-mini-2012')
   })
 })
 
@@ -73,5 +120,15 @@ describe('createAccounts', () => {
     const v = await bad.list({ fresh: true })
     expect(v.accounts).toHaveLength(2)
     expect(v.freshProblem).toBe('timeout')
+  })
+
+  it('list: when peers is supplied, reads from the peer copy and includes copy metadata', async () => {
+    const peers = { read: async () => ({ value: { generated_at: '2026-11-10T12:00:00Z', by: 'mac-mini-1', accounts: [row('tailscale')] }, from: 'mac-mini-1', ageS: 30, host: 'mac-mini-1', stale: false, legacy: false }) }
+    const a = createAccounts({ machine: () => 'mac-mini-1', execFile: async () => ({ stdout: '{}' }), peers })
+    const v = await a.list()
+    expect(v.accounts).toHaveLength(1)
+    expect(v.copy.from).toBe('mac-mini-1')
+    expect(v.thisMachine).toBe('mac-mini-1')
+    expect(v.problem).toBeUndefined()
   })
 })

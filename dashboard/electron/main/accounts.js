@@ -42,6 +42,18 @@ export function readAccountsStatus(file = ACCOUNTS_STATUS_PATH, read = (p) => re
   }
 }
 
+// The standby's read (marvin#1223): past its tolerance on a Mac that isn't the producer, the producer's live copy
+// (peer_copy.js); `copy.from` says which one this is.
+export async function readAccountsStatusFresh(peers, statusPath = ACCOUNTS_STATUS_PATH) {
+  const c = await peers.read('accounts-status', statusPath, { defaultToleranceS: 20 * 60 })
+  if (c.missing) return { generatedAt: null, by: null, accounts: [], problem: 'missing', copy: { ...copyMeta(c), from: c.from, producerUnreachable: !!c.producerUnreachable } }
+  const d = c.value
+  if (!d || !Array.isArray(d.accounts)) return { generatedAt: null, by: null, accounts: [], problem: 'unreadable', copy: { ...copyMeta(c), from: c.from, producerUnreachable: !!c.producerUnreachable } }
+  return { generatedAt: d.generated_at || null, by: d.by || null, accounts: d.accounts.filter((r) => r && typeof r.id === 'string'), copy: { ...copyMeta(c), from: c.from, producerUnreachable: !!c.producerUnreachable } }
+}
+
+const copyMeta = (c) => ({ host: c.host || null, ageS: c.ageS, stale: !!c.stale, legacy: !!c.legacy, toleranceS: c.toleranceS ?? null })
+
 // The saved view with this machine's rows replaced by a fresh local check (rows of other machines are kept).
 export function mergeLocal(saved, fresh, machine) {
   if (!fresh || !Array.isArray(fresh.accounts) || !fresh.accounts.length) return saved
@@ -66,11 +78,12 @@ export function renewPlan(row, thisMachine) {
   }
 }
 
-export function createAccounts({ machine = () => null, execFile, statusPath = ACCOUNTS_STATUS_PATH, read } = {}) {
+export function createAccounts({ machine = () => null, execFile, statusPath = ACCOUNTS_STATUS_PATH, read, peers } = {}) {
   return {
     // fresh=false: the saved view at once. fresh=true: this machine checked now (a few seconds), merged in.
     async list({ fresh = false } = {}) {
-      const saved = { ...readAccountsStatus(statusPath, read), thisMachine: machine() }   // the card marks "this machine"
+      const saved = peers ? await readAccountsStatusFresh(peers, statusPath) : { ...readAccountsStatus(statusPath, read), thisMachine: machine() }   // the card marks "this machine"
+      if (typeof saved.thisMachine === 'undefined') saved.thisMachine = machine()
       if (!fresh) return saved
       try {
         const { stdout } = await execFile(PY, [ACCOUNTS_PY, 'check', '--json'], { timeout: 90_000 })
@@ -82,7 +95,7 @@ export function createAccounts({ machine = () => null, execFile, statusPath = AC
     // Renew one account. Only ids from the inventory; the row comes from the saved view, never from the renderer.
     async renew(id, rowMachine) {
       if (typeof id !== 'string' || !(id in RENEWABLE || /^[a-z][a-z-]{1,40}$/.test(id))) throw new Error('unknown account')
-      const saved = readAccountsStatus(statusPath, read)
+      const saved = peers ? await readAccountsStatusFresh(peers, statusPath) : readAccountsStatus(statusPath, read)
       const here = machine()
       const row = saved.accounts.find((r) => r.id === id && (rowMachine ? r.machine === rowMachine : r.machine === here)) ||
         (RENEWABLE[id] ? { id, machine: rowMachine || here, renew: {} } : null)

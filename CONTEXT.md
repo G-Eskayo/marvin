@@ -2074,6 +2074,8 @@ runs no merge or test of its own and its memory is normal).
 - **Producer**: the Mac that made a copy. A non-producing Mac shows the producer's live copy, labelled "<Mac>, as of
   N min ago" (Gil's decision); a stale copy is never shown as current. The board registry is derived on read: a repo
   whose profile is `archived` is left out by `list_boards()`, so a Mac that doesn't scan agrees with the one that does.
+- **Note (marvin#1308)**: `accounts-status.json` also rides the same `GET /copy/<name>` route (marvin#1223), as a legacy
+  (unstamped, mtime-dated) copy; the four fully-stamped files above remain unchanged.
 
 ## Loops (ADR 0083, marvin#1123, 2026-11-04)
 
