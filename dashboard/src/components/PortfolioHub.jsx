@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from 'react'
+import { useCallback, useEffect, useState, useRef } from 'react'
 import ImageViewer from './ImageViewer.jsx'
 import ReactMarkdown from 'react-markdown'
 import remarkGfm from 'remark-gfm'
@@ -6,6 +6,7 @@ import {
   groupFindingsByRule, parseRulesText, previewDocument, formatRunTime,
   buttonVerdict, groupTemplates, countByType, inventoryIsStale, slugify, CATEGORIES
 } from '../lib/portfolio.js'
+import { createFadingMessage } from '../lib/fading_message.js'
 
 // The Portfolio hub (CONTEXT.md "Dashboard app -- Portfolio tab"): the single place that defines how
 // a portfolio Project Page is built -- guide + design rules, the component library, the evaluation
@@ -1241,12 +1242,22 @@ function Images() {
 // inline under the button, the way the MARVIN button shows them.
 export function OpenDevSiteButton({ open = () => window.api.portfolio.openDevSite() }) {
   const [state, setState] = useState({ busy: false, message: null, error: false })
+  const timeoutRef = useRef(null)
+  const scheduleFade = createFadingMessage()
+
+  useEffect(() => {
+    return () => {
+      if (timeoutRef.current) clearTimeout(timeoutRef.current)
+    }
+  }, [])
+
   async function go() {
     setState({ busy: true, message: null, error: false })
     let result
     try { result = await open() } catch (e) { result = { ok: false, error: errText(e) } }
-    if (result?.ok) setState({ busy: false, message: result.action === 'focused' ? 'Took you to the open tab' : 'Opened in Chrome', error: false })
-    else setState({ busy: false, message: result?.error || 'Could not open the dev site', error: true })
+    const message = result?.ok ? (result.action === 'focused' ? 'Took you to the open tab' : 'Opened in Chrome') : (result?.error || 'Could not open the dev site')
+    const error = !result?.ok
+    scheduleFade(setState, timeoutRef, { busy: false, message, error })
   }
   return (
     <div className="relative mb-2 ml-3">

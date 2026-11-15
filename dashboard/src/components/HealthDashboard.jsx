@@ -8,6 +8,7 @@ import AgentsPanel from './AgentsPanel.jsx'
 import ProjectReadinessPanel from './ProjectReadinessPanel.jsx'
 import SafetyReviews from './SafetyReviews.jsx'
 import { healthFocus } from '../lib/boot_view.js'
+import { redactText } from '../lib/redact.js'
 
 // How long a check is trusted at full color before it starts visually
 // greying out (ADR 0033's Staleness gradient term). All v1 checks run in
@@ -54,6 +55,7 @@ function stalenessOpacity(checkedAt) {
 function CheckCard({ check, onClick }) {
   const colors = SEVERITY_COLOR[check.severity] ?? SEVERITY_COLOR.unmonitored
   const opacity = stalenessOpacity(check.checked_at)
+  const redactedDetail = redactText(check.detail)
   return (
     <button
       onClick={onClick}
@@ -69,7 +71,7 @@ function CheckCard({ check, onClick }) {
         )}
         <h3 className="truncate text-sm font-medium text-white">{check.label}</h3>
       </div>
-      <p className={`line-clamp-2 text-xs [overflow-wrap:anywhere] ${colors.text}`}>{check.detail}</p>
+      <p className={`line-clamp-2 text-xs [overflow-wrap:anywhere] ${colors.text}`}>{redactedDetail}</p>
     </button>
   )
 }

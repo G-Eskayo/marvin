@@ -5,6 +5,7 @@ import { HEALTH_STATUS_PATH } from './health.js'
 import { readStamped } from './stamped.js'
 import { readNetworkRegistry } from './github_feed.js'
 import { resolveDeviceId } from './device_identity.js'
+import { redactText } from '../../src/lib/redact.js'
 
 // The boot sequence's data (#431, design in docs/design/celestial-navigation on #428). Every status the boot
 // shows comes from here, built from files that already exist -- nothing is decorative. The verdict banner says
@@ -50,13 +51,14 @@ function readHealth(healthPath) {
   }
 }
 
-function syncLine(checks, freshInstall) {
+function syncLine(checks, freshInstall, registry = {}) {
   if (freshInstall) return { chip: 'SYNC', level: 'lock', text: 'MEMORY SYNC · PENDING', target: null }
   const sync = checks.filter((c) => c.id.startsWith('repo:sync:~/.claude') || c.id.startsWith('sync:stuck') || c.id === 'repo:integrity:~/.claude')
   if (!sync.length) return { chip: 'SYNC', level: 'yellow', text: 'MEMORY SYNC · UNKNOWN', target: HEALTH }
   const lvl = worst(sync.map((c) => c.severity))
   const bad = sync.find((c) => c.severity === lvl && lvl !== 'green')
-  return { chip: 'SYNC', level: lvl, text: 'MEMORY SYNC · MBP ⇄ MINI' + (bad ? ' · ' + up(bad.label) : ''), target: onCheck(bad ?? sync[0]) }
+  const detail = bad ? ' · ' + up(redactText(bad.detail, { registry })) : ''
+  return { chip: 'SYNC', level: lvl, text: 'MEMORY SYNC · MBP ⇄ MINI' + detail, target: onCheck(bad ?? sync[0]) }
 }
 
 function memoryLine({ memoryDir, skillsDir }, freshInstall) {
@@ -77,11 +79,16 @@ function memoryLine({ memoryDir, skillsDir }, freshInstall) {
   return { chip: 'OK', level: 'green', text }
 }
 
-function deviceReason(c) {
+function deviceReason(c, registry = {}) {
   const pct = c.detail.match(/\((\d+)%\)/)
   if (c.id.startsWith('disk:space') && pct) return `DISK ${pct[1]}% FREE`
-  if (c.id.startsWith('jobs:exit')) return `${(c.detail.match(/exit \d+/g) || []).length} JOBS FAILED`
-  return up(c.detail.split(/ -- |; |:/)[0]).slice(0, 40) || up(c.label)
+  if (c.id.startsWith('jobs:exit')) {
+    // Still redact the detail before extracting the count, in case it contains sensitive info
+    const redactedDetail = redactText(c.detail, { registry })
+    return `${(redactedDetail.match(/exit \d+/g) || []).length} JOBS FAILED`
+  }
+  const reason = up(c.detail.split(/ -- |; |:/)[0]).slice(0, 40) || up(c.label)
+  return redactText(reason, { registry })
 }
 
 function deviceLines(checks, registry, selfId, freshInstall) {
@@ -98,7 +105,7 @@ function deviceLines(checks, registry, selfId, freshInstall) {
     const reason = keys.find((c) => c.severity === lvl && lvl !== 'green')
     // Use display name if set in registry, otherwise use the device ID
     const displayName = registry[deviceId]?.display_name || registry[deviceId]?.display || registry[deviceId]?.name || deviceId
-    lines.push({ chip: 'LINK', level: lvl, text: String(displayName).toUpperCase() + ' · ' + (reason ? deviceReason(reason) : 'NOMINAL'), target: onCheck(reason ?? keys[0]) })
+    lines.push({ chip: 'LINK', level: lvl, text: String(displayName).toUpperCase() + ' · ' + (reason ? deviceReason(reason, registry) : 'NOMINAL'), target: onCheck(reason ?? keys[0]) })
   }
 
   // Fallback only when no devices in registry
@@ -107,7 +114,7 @@ function deviceLines(checks, registry, selfId, freshInstall) {
     if (keys.length) {
       const lvl = worst(keys.map((c) => c.severity))
       const reason = keys.find((c) => c.severity === lvl && lvl !== 'green')
-      lines.push({ chip: 'LINK', level: lvl, text: 'MAC-MINI · ' + (reason ? deviceReason(reason) : 'NOMINAL'), target: onCheck(reason ?? keys[0]) })
+      lines.push({ chip: 'LINK', level: lvl, text: 'MAC-MINI · ' + (reason ? deviceReason(reason, registry) : 'NOMINAL'), target: onCheck(reason ?? keys[0]) })
     }
   }
 
@@ -124,9 +131,9 @@ function handoffLine(handoffsDir) {
     }
   } catch { /* no handoffs dir */ }
   if (!newest) return { chip: 'PLOT', level: 'lock', text: 'HANDOFF · NONE' }
-  const m = newest.f.replace(/\.md$/, '').match(/^handoff-(\d{4}-\d{2}-\d{2})(?:-\d{2}-\d{2})?-?(.*)$/)
-  const name = m ? m[1] + (m[2] ? ' · ' + m[2].replace(/-/g, ' ') : '') : newest.f
-  return { chip: 'PLOT', level: 'lock', text: ('HANDOFF · ' + up(name)).slice(0, 54) }
+  const m = newest.f.replace(/\.md$/, '').match(/^handoff-(\d{4}-\d{2}-\d{2})/)
+  const date = m ? m[1] : newest.f
+  return { chip: 'PLOT', level: 'lock', text: ('HANDOFF · ' + up(date)).slice(0, 54) }
 }
 
 function testLine(checks, freshInstall) {
@@ -164,7 +171,7 @@ export function buildBootData(opts = {}) {
 
   const lines = [
     { chip: 'LOCK', level: 'lock', text: 'ORIGIN · MARVIN' },
-    syncLine(checks, freshInstall),
+    syncLine(checks, freshInstall, registry),
     memoryLine(p, freshInstall),
     ...deviceLines(checks, registry, selfId, freshInstall),
     handoffLine(p.handoffsDir),

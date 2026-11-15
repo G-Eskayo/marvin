@@ -373,6 +373,56 @@ describe('first-run detection: fresh install with no health and no peers', () =>
   })
 })
 
+describe('redaction of sensitive text', () => {
+  it('redacts home paths and IPs in check details before they reach lines[].text', () => {
+    const detail = 'Error at /Users/bob/.agents/cache connecting to 192.168.1.100'
+    const t = tree({ health: GREEN([check('jobs:exit@mac-mini-1', 'red', 'Jobs', detail)]), registry: {}, selfId: 'macbook-1' })
+    const d = buildBootData(t)
+    const link = line(d, 'LINK')
+    // deviceReason extracts and redacts the detail
+    expect(link.text).not.toContain('/Users/bob')
+    expect(link.text).not.toContain('192.168.1.100')
+    t.done()
+  })
+
+  it('handoffLine shows date only, no descriptive slug', () => {
+    const t = tree({
+      health: GREEN(),
+      handoffs: [['handoff-2026-11-15-my-task-name.md', new Date('2026-11-15T10:00:00Z')]]
+    })
+    const d = buildBootData(t)
+    const plot = line(d, 'PLOT')
+    expect(plot.text).toBe('HANDOFF · 2026-11-15')
+    expect(plot.text).not.toContain('MY-TASK-NAME')
+    t.done()
+  })
+
+  it('preserves disk percent and job count in LINK text even when detail contains paths', () => {
+    const h = GREEN()
+    h.checks = h.checks.map((c) => {
+      if (c.id === 'disk:space@mac-mini-1') return { ...c, detail: '22 GiB free of 228 (10%); some process /Users/admin/.cache' }
+      if (c.id === 'jobs:exit@mac-mini-1') return { ...c, detail: 'last run failed: a (exit 1), b (exit 1)' }
+      return c
+    })
+    const t = tree({ health: h, registry: {}, selfId: 'macbook-1' })
+    const d = buildBootData(t)
+    const links = d.lines.filter((l) => l.chip === 'LINK')
+    // Disk and job checks should not be modified by redaction of the fallback path
+    expect(links.some((l) => l.text.includes('DISK 10% FREE'))).toBe(true)
+    expect(links.some((l) => l.text.includes('2 JOBS FAILED'))).toBe(true)
+    t.done()
+  })
+
+  it('redacts IP addresses in sync check details', () => {
+    const h = GREEN([check('repo:integrity:~/.claude', 'red', 'stash integrity', 'stash conflict at 10.0.0.1')])
+    const t = tree({ health: h, registry: {}, selfId: 'macbook-1' })
+    const d = buildBootData(t)
+    const sync = line(d, 'SYNC')
+    expect(sync.text).not.toContain('10.0.0.1')
+    t.done()
+  })
+})
+
 describe('the boot plays once per app launch', () => {
   it('the first window load gets the boot; reloads after it do not', () => {
     const gate = createBootGate()

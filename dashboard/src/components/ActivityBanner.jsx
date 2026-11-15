@@ -1,4 +1,5 @@
 import { useEffect, useState } from 'react'
+import { redactText } from '../lib/redact.js'
 
 const RED_CHECK_IDS = new Set([
   'pipeline:breaker',
@@ -54,7 +55,7 @@ export default function ActivityBanner() {
           <span className="mt-0.5 h-2 w-2 shrink-0 rounded-full bg-red-500" />
           <div className="flex-1 min-w-0">
             <p className="font-medium text-red-300 truncate">{check.label}</p>
-            <p className="text-xs text-red-400 line-clamp-2">{check.detail}</p>
+            <p className="text-xs text-red-400 line-clamp-2">{redactText(check.detail)}</p>
           </div>
         </div>
       ))}

@@ -1,4 +1,17 @@
-import { useState } from 'react'
+import { useState, useRef, useEffect } from 'react'
+import { redactText } from '../lib/redact.js'
+import { createFadingMessage } from '../lib/fading_message.js'
+
+export function composeOpenMessage(result) {
+  if (!result || result.ok !== true) {
+    return result?.error || 'Could not open a session'
+  }
+  if (result.focused) {
+    return 'That ticket\u2019s chat was already open, so it\u2019s in front now'
+  }
+  const redactedDir = redactText(result.dir)
+  return `Opened in ${redactedDir}`
+}
 
 // The MARVIN button (marvin#228): the main way in. Opens a ready MARVIN session in WezTerm on this Mac, in the
 // ticket's own worktree, or at home with no ticket. Bare `claude` in a terminal stays the fallback.
@@ -6,17 +19,24 @@ export default function MarvinButton({ open = (request) => window.api.marvin.ope
   const [panel, setPanel] = useState(false)
   const [ticket, setTicket] = useState('')
   const [state, setState] = useState({ busy: false, message: null, error: false })
+  const timeoutRef = useRef(null)
+  const scheduleFade = createFadingMessage()
+
+  useEffect(() => {
+    return () => {
+      if (timeoutRef.current) clearTimeout(timeoutRef.current)
+    }
+  }, [])
 
   async function launch(withTicket) {
     setState({ busy: true, message: null, error: false })
     const result = await open(withTicket ? { ticket: ticket.trim() } : {})
+    const message = composeOpenMessage(result)
+    const error = !result?.ok
+    scheduleFade(setState, timeoutRef, { busy: false, message, error })
     if (result?.ok) {
-      // marvin#1063: a ticket whose chat is already open gets that chat brought forward, not a second one
-      setState({ busy: false, message: result.focused ? 'That ticket\u2019s chat was already open, so it\u2019s in front now' : `Opened in ${result.dir}`, error: false })
       setPanel(false)
       setTicket('')
-    } else {
-      setState({ busy: false, message: result?.error || 'Could not open a session', error: true })
     }
   }
 
