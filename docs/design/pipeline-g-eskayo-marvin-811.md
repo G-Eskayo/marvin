@@ -1,0 +1,68 @@
+## North-star fit
+
+- **Reuses before adding:** the existing `<details><summary>Technical details…</summary>` disclosure pattern already shipped in `dashboard/src/components/SupportTab.jsx:216-219` and `ProposalsSection.jsx:175`; the existing "separate the part that matters from the IPC/HTTP plumbing so it's unit-testable" pattern already used for `mergePr` vs `index.js` (`dashboard/webhook-server/merge.js:723-725`) and for `guardApprove` vs `ipcMain.handle` (`dashboard/electron/main/approve_guard.js`); the existing `refusal()`/`MergeFailure` structured-failure shape (`dashboard/webhook-server/failure.js`) is kept as-is — I'm not touching its per-call-site `message`/`remediation` text (many tests pin exact substrings there), only how the *display* layer sources a per-code fallback.
+- **Simplest sufficient approach:** the ticket's "three tables" bug and the "code leaks to the user" bug turn out to be two different root causes, both fixable without a persistence/schema change:
+  1. Display-layer: `stage_strip.js`'s `REMEDIATION_BY_CODE` and `mr_history.js`'s `REASONS` are two independent, incomplete, hand-duplicated code→text maps (plus `failure.js` has a third, currently *unused*, `REMEDIATION_BY_CODE`). Consolidating into one table in `failure.js` (already imported by both `src/lib` and `electron/main` today) removes the duplication and the "falls back to the bare code" leak, with no data-format change — both consumers already key off `code` alone.
+  2. Plumbing: the *live* approve failure (`{code, message, remediation}`) never actually reaches the renderer today. `approve_flow.js`'s generic refusal and `approve_guard.js`'s pre-flight refusal both `throw`, and that throw crosses `ipcMain.handle` → `ipcRenderer.invoke`, where Electron strips every property except `.message` (hence `ipcError.js`'s `cleanIpcError` existing at all — it's a workaround for exactly this). The renderer has only ever seen `describeApproveFailure`'s flattened string. Fix at that one choke point (new `runApprove` wrapper in `approve_guard.js`, reusing the "separate the testable part from the IPC glue" pattern), not by changing the many call sites that already compute good `{code, message, remediation}` payloads.
+- **Where this saves/spends tokens:** spends a moderate one-time token budget (touches ~8 source files + ~5 test files) to remove a *recurring* support cost — Gil currently has to mentally decode `"GATE_INFRA at gate: … -- needs you"` on every refusal; this stops that permanently. No new runtime cost (pure lookup table, no added I/O).
+- **Phone-OS direction:** `stage_strip.js` is explicitly shared with "future MARVIN Mobile renderer" (its own header comment) — a complete, single, code-keyed plain-text table is exactly the kind of portable, UI-framework-agnostic piece Mobile will need; a third copy of the table would have been one more thing to port.
+- **More capable or more passive:** more capable — the owner stops needing to hold a mental map of ~30 internal codes to know what a refusal means or whether it's actually his move.
+- **Judgment call I'm making (not a Decision for Gil):** which codes are `needsYou: true` vs `false`. The ticket gives one explicit example (`GATE_INFRA` must *not* say "needs you" when the fix is "approve again"). I determined the rest by reading each code's actual remediation text (self-resolving/auto-retried/reworked-automatically → `false`; requires a human to change something on GitHub, a config, a credential, or retake evidence → `true`). This is plain-text content curation, not a design option, so I'm deciding it rather than posing it as a Decision — listed in full in the task list below for review on the PR diff itself.
+
+## Why CONTEXT.md needs updating, not followed as-is
+
+`CONTEXT.md:967-968` currently documents: *"failed stages show the error code and human-readable remediation on hover… missing codes degrade to raw detail, never throw."* In practice `StageStrip.jsx`'s tooltip never actually renders the bare code (the `cause` field already strips the `"CODE: "` prefix), so no live contradiction — but "missing codes degrade to raw detail" is exactly the behavior ticket #811 forbids for the other two surfaces (`mr_history.js`, `prState.js`/`MrDetail.jsx`), and the line doesn't mention the "one shared table" requirement. I'll update this CONTEXT.md entry alongside the fix rather than leave it describing a now-superseded per-component table design.
+
+## Tests to write first
+
+**failure.js (canonical table)**
+1. Every code actually thrown anywhere in the codebase — `GH_AUTH_INVALID, NOT_MERGEABLE, PR_DRAFT, BRANCH_PROTECTION, BASE_MOVED, RATE_LIMITED, GITHUB_OUTAGE, TRANSIENT_NETWORK, TOOL_MISSING, PR_NOT_FOUND, INVALID_REQUEST, UI_EVIDENCE_UNCHECKED, NO_UI_EVIDENCE, IMAGES_UNPINNED, IMAGES_STALE, DECISIONS_UNCHECKED, DECISIONS_PENDING, DECISIONS_UNSTRUCTURED, CI_FAILED, CI_PENDING, NO_MERGE_PROFILE, ENV_MISSING, WRONG_BASE, SENT_BACK, MEMORY_PRESSURE, GATE_INFRA, MAIN_RED, MERGE_REFUSED, VERSION_BUMP_FAILED, UNKNOWN, ALREADY_MERGING, GATE_TESTS_FAILED, REBASE_CONFLICT, OUT_OF_ORDER` — has a truthy `label` and `remediation` and a boolean `needsYou`. *(This is the literal "a test fails if any refusal code has no plain text" acceptance criterion.)*
+2. A code not in the table (adversarial/malformed input, e.g. `'MADE_UP_CODE'`, `''`, `null`, `undefined`) returns the generic `UNKNOWN` entry's text, never the input itself.
+3. Spot checks matching the owner's literal complaint: `needsYouFor('GATE_INFRA') === false`, `needsYouFor('RATE_LIMITED') === false`, `needsYouFor('GH_AUTH_INVALID') === true`, `needsYouFor('UNKNOWN') === true`.
+
+**stage_strip.js**
+4. `REMEDIATION_BY_CODE` (re-exported from the canonical table) now has an entry for the *full* code list above, not just the previous ~16 — extends the existing "every code has remediation" test.
+5. `remediationFor('UNKNOWN_CODE')` and `remediationFor(null)` still return `null` (unchanged low-level contract — the generic-fallback behavior lives one level up, in `deriveStageStrip`'s `cause`, which already never shows the bare code).
+
+**mr_history.js**
+6. `plainReason('WHATEVER')` → a generic plain phrase, **not** the bare code `'WHATEVER'` (this *replaces* the existing test at `test/mr_history.test.js:89` that currently asserts `['WHATEVER', 'WHATEVER']` — that assertion encodes the bug).
+7. `plainReason(code)` for every real code in the list above returns something other than `code` itself.
+8. `plainReason(undefined)`, `plainReason('')` → generic fallback, never throws.
+
+**approve_guard.js (new `runApprove`, the actual IPC choke point)**
+9. `guardApprove` throwing a coded error (`WRONG_BASE`, `NO_MERGE_PROFILE`, `OUT_OF_ORDER`) → `runApprove` **resolves** `{merged:false, code, message, remediation, stage, cancelled:false}` — never rejects.
+10. `guardApprove` throwing a plain `Error` with no `.code`/`.payload` (dependency failure, e.g. "gh down") → resolves with `code:'UNKNOWN'`, a non-null generic remediation, and the real message preserved (person's-mistake / dependency-failing case).
+11. `guardApprove` passes, `approveFlow` throws a `MergeFailure`-shaped error (`.payload = {code:'GATE_INFRA', message, remediation, stage:'gate'}`) → resolved payload matches it exactly, unaltered.
+12. `guardApprove` passes, `approveFlow` resolves normally (merged, queued, waiting-memory, reengaged, interrupted) → passed through byte-for-byte, untouched by the new catch (regression guard — stale-state/no-op path).
+13. Two overlapping calls for the same PR (concurrency) — `mergeOps.start`'s existing `cancelled:true` short-circuit still fires before `guardApprove`/`approveFlow` run (regression guard on existing behavior, not new).
+
+**prState.js**
+14. `describePrState` with `status:'error', errorPayload:{code:'GATE_INFRA', message, remediation:'Approve it again. …'}` → `detail` contains `message` + `remediation`, does **not** match `/needs you/i`, and `technicalDetails === 'GATE_INFRA'`.
+15. Same shape with `code:'GH_AUTH_INVALID'` → `detail` **does** match `/needs you/i` (the owner's exact complaint, inverted and fixed).
+16. Parametrized over the full code list: `detail`/`headline` never contain the raw code token as standalone text; `technicalDetails` always equals the code.
+17. Existing `IMAGES_STALE`, `GITHUB_OUTAGE`, "stale refusal clears" (migrated from `errorMessage: 'CODE at stage: text'` strings to `errorPayload:{code,message,remediation}` objects), and "a real merge failure is shown" tests in `test/pr_state.test.js` updated to the new shape, same assertions preserved.
+18. `errorPayload` missing/undefined while `status==='error'` (stale/old-shape caller) degrades to a generic line, never throws (malformed/stale-state case).
+19. `errorPayload.remediation` falsy (payload that never got one attached) falls back to the canonical table's remediation for that code, never shows `null`/`undefined` as text (another malformed-input case).
+
+**merge_failover.test.js**
+20. The existing test "a refusal is recorded as refused (not retried) and thrown to the card as before" (`test/merge_failover.test.js:354-359`) is **intentionally left unchanged** — `createApproveFlow` keeps throwing; only the new `runApprove` wrapper one layer up (in `approve_guard.js`/`index.js`) converts that throw into a resolved value. No change needed here, confirmed by inspection.
+
+## Decisions
+
+None. Every open question was a content-correctness judgment I was equipped to make from the existing remediation text (see north-star-fit above), not a design option that changes behavior the owner would want to pick between.
+
+## Task List
+
+1. **failure.js**: replace the currently-unused `REMEDIATION_BY_CODE` export with a single canonical `CODE_INFO` table (`{ label, remediation, needsYou }` per code, covering the full enumerated list, with `UNKNOWN` doubling as the generic-fallback entry); export `plainLabel(code)`, `remediationFor(code)`, `needsYouFor(code)` helpers, each falling back to `UNKNOWN`'s entry; keep a derived `REMEDIATION_BY_CODE` export for backward compatibility. Do **not** touch `refusal()`'s signature or any of its ~19 call sites (their literal per-instance `remediation` strings are tested verbatim elsewhere).
+2. **stage_strip.js**: delete the local hardcoded `REMEDIATION_BY_CODE`; re-export the one from `failure.js`; keep `remediationFor`'s null-for-truly-unknown contract.
+3. **mr_history.js**: delete the local `REASONS`; `plainReason(code)` sources from `failure.js`'s `plainLabel`, falling back to the generic entry instead of the bare code.
+4. **approve_guard.js**: add `runApprove(url, opts, { assertMergeable, loadPrs, record, approveFlow })` — runs `guardApprove` then `approveFlow`, and on any thrown error (coded or not) resolves `{merged:false, code, message, remediation, stage, cancelled:false}` using `.payload` when present, else the canonical table's `UNKNOWN` fallback. `guardApprove` itself is unchanged.
+5. **index.js**: change the `ipcMain.handle('mr:approve', …)` body to call `runApprove(...)` instead of awaiting `guardApprove` then returning `approveFlow` directly.
+6. **prState.js**: add `errorPayload` alongside the existing `errorMessage` param (used only when `status === 'error'`); replace the `GITHUB_OUTAGE`/`IMAGES_STALE`/`MIRRORED_REFUSALS` regex-on-formatted-string branches with exact `errorPayload.code` comparisons; generic error branch builds `detail` from `message` + `remediation` (+ a "— needs you" suffix only when `needsYouFor(code)` is true) and returns a new `technicalDetails: code` field; import `remediationFor`/`needsYouFor` from `failure.js` as fallbacks for a stale/incomplete payload.
+7. **MrReview.jsx**: add `errorPayload` state; in `handleApprove`, branch on `result.merged === false && result.code` (the new resolved-failure shape) to set it, instead of relying on the `catch` block; keep the `catch` block as a last-resort fallback that also produces a `{code:'UNKNOWN', ...}`-shaped payload (never a raw string) for consistency; pass `errorPayload` into `describePrState`.
+8. **MrReview.jsx (PrCard render)**: below the existing `view.detail` paragraph, render `view.technicalDetails` inside a `<details><summary>Technical details</summary><pre>{view.technicalDetails}</pre></details>`, reusing the exact `SupportTab.jsx` disclosure markup/classes.
+9. **MrDetail.jsx**: add the same small `<details>`/`<summary>Technical details</summary>` block under the existing refusal box, showing `pr.refusal.code`, for consistency across all three surfaces.
+10. **CONTEXT.md**: update the stage-strip decision note (~line 967-968) to describe the single shared table and the Technical-details convention, replacing the "missing codes degrade to raw detail" language.
+11. Update tests per the test list above: `test/mr_history.test.js` (replace the `WHATEVER → WHATEVER` case), `test/pr_state.test.js` (migrate `errorMessage` strings to `errorPayload` objects for the `status:'error'` cases, add the needsYou-true/false pair), `test/stage_strip.test.js` (extend code coverage), new `describe('runApprove', …)` block in `test/approve_guard.test.js`, new tests in `test/failure.test.js` for the canonical table.
+12. Run the full dashboard test suite; fix any other test I missed that stringifies an `errorMessage` built from `describeApproveFailure`-style text for a PR-card `status:'error'` case.
+13. Take screenshots of a refused-PR card (showing message + remediation + collapsed Technical details) and of it expanded, at 900px and 1440px, and pin them on the PR per the acceptance criteria.

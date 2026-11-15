@@ -964,8 +964,10 @@ like "most PRs stall at the gate" couldn't be spotted.
 - **Stall detection**: a `status: "started"` event older than its per-stage threshold (10 min default,
   35 min for gate) renders stalled. Detection never uses `isLiveNow === false` as proof (could be
   running elsewhere); only `isLiveNow === true` positively overrides a stale timestamp.
-- **Remediation lookup**: failed stages show the error code and human-readable remediation on hover,
-  extracted tolerantly from `"CODE: message"` format — missing codes degrade to raw detail, never throw.
+- **Remediation lookup**: error codes are sourced from a canonical `CODE_INFO` table (`dashboard/electron/main/failure.js`),
+  ensuring consistent labels, remediation text, and `needsYou` flags across the main process, webhook, and dashboard.
+  Failed stages show the code on hover; when a code is unknown, it falls back to the `UNKNOWN` entry. The dashboard
+  renders technical details in a collapsed `<details>` section on error cards, showing the code for inspection.
 - **Draft → ready**: when `readyIfDraft` marks a draft PR ready, a new `merging: passed` stage event
   records the milestone for visibility.
 - **Pure derivation + presentational component** — `dashboard/src/lib/stage_strip.js` (pure function,

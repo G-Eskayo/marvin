@@ -22,15 +22,17 @@ describe('stage_strip', () => {
     it('looks up known codes', () => {
       const rem = remediationFor('OUT_OF_ORDER')
       expect(rem).toBeTruthy()
-      expect(rem).toContain('must merge first')
+      expect(rem).toContain('merge first')
     })
 
-    it('returns null for unknown code', () => {
-      expect(remediationFor('UNKNOWN_CODE')).toBe(null)
+    it('falls back to UNKNOWN remediation for unknown codes', () => {
+      expect(remediationFor('UNKNOWN_CODE')).toBeTruthy()
+      expect(remediationFor('UNKNOWN_CODE')).toContain('Unclassified failure')
     })
 
-    it('returns null for null input', () => {
-      expect(remediationFor(null)).toBe(null)
+    it('falls back to UNKNOWN remediation for null input', () => {
+      expect(remediationFor(null)).toBeTruthy()
+      expect(remediationFor(null)).toContain('Unclassified failure')
     })
   })
 

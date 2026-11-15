@@ -277,6 +277,12 @@ export default function MrDetail({ pr, onBack, onApproved, onDenied, onOpenDocs,
         <div data-refusal="1" className="rounded-lg border border-red-800 bg-red-950/40 px-4 py-3 text-sm text-red-200">
           Approve refused {new Date(pr.refusal.at).toLocaleString([], { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' })}: <strong>{pr.refusal.reason}</strong>
           {pr.refusal.message && <p className="mt-1 whitespace-pre-wrap font-mono text-xs text-red-300/80">{pr.refusal.message}</p>}
+          {pr.refusal.code && (
+            <details className="mt-2">
+              <summary className="cursor-pointer text-neutral-400 hover:text-neutral-300 text-xs">Technical details</summary>
+              <pre className="mt-1 overflow-auto rounded bg-neutral-950 px-2 py-1 text-neutral-400 text-xs" style={{ maxHeight: '200px', maxWidth: '100%' }}>{pr.refusal.code}</pre>
+            </details>
+          )}
         </div>
       )}
 

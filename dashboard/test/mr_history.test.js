@@ -85,8 +85,8 @@ describe('mergedPrArgs: incremental merged list', () => {
 
 describe('plainReason', () => {
   it.each([
-    ['MAIN_RED', 'main was failing'], ['GATE_TESTS_FAILED', 'tests failed'], ['OUT_OF_ORDER', 'merge another PR first'],
-    ['CI_PENDING', 'checks still running'], ['NO_UI_EVIDENCE', 'needed screenshots'], ['SENT_BACK', 'sent back for rework'], ['WHATEVER', 'WHATEVER']
+    ['MAIN_RED', 'main failing'], ['GATE_TESTS_FAILED', 'Tests failed'], ['OUT_OF_ORDER', 'Out of order'],
+    ['CI_PENDING', 'CI pending'], ['SENT_BACK', 'Sent back'], ['WHATEVER', 'Unknown error']
   ])('%s → %s', (code, text) => expect(plainReason(code)).toBe(text))
 })
 
@@ -110,7 +110,7 @@ describe('buildRows', () => {
   })
   it('a refused PR carries its title (from the open list) and a plain reason, never a bare number', () => {
     const r = rows.find((x) => x.kind === 'refused' && x.number === 400)
-    expect(r).toMatchObject({ title: 'Implement #218', repo: 'G-Eskayo/marvin', reason: 'main was failing' })
+    expect(r).toMatchObject({ title: 'Implement #218', repo: 'G-Eskayo/marvin', reason: 'main failing' })
   })
   it('a refusal for a PR we know nothing else about still gets a readable title', () => {
     const r = buildRows([], { merges: [], refusals: [{ pr_url: PR(9), t: '2026-10-13T00:00:00Z', code: 'X' }] }, [])[0]

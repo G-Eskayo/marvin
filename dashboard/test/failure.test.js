@@ -171,6 +171,68 @@ describe('failureResponse', () => {
   })
 })
 
+import { plainLabel, remediationFor, needsYouFor, CODE_INFO } from '../electron/main/failure.js'
+
+describe('Canonical CODE_INFO table', () => {
+  it('contains label, remediation, and needsYou for every code', () => {
+    for (const [code, info] of Object.entries(CODE_INFO)) {
+      expect(info.label).toBeTruthy()
+      expect(typeof info.label).toBe('string')
+      expect(info.remediation).toBeTruthy()
+      expect(typeof info.remediation).toBe('string')
+      expect(typeof info.needsYou).toBe('boolean')
+    }
+  })
+
+  it('has an UNKNOWN fallback entry', () => {
+    expect(CODE_INFO.UNKNOWN).toBeTruthy()
+    expect(CODE_INFO.UNKNOWN.label).toBe('Unknown error')
+  })
+
+  it('plainLabel returns the label for a known code', () => {
+    expect(plainLabel('GH_AUTH_INVALID')).toBe('GitHub auth invalid')
+    expect(plainLabel('NOT_MERGEABLE')).toBe('Not mergeable')
+  })
+
+  it('plainLabel falls back to UNKNOWN label for unknown codes', () => {
+    expect(plainLabel('MADE_UP_CODE')).toBe('Unknown error')
+    expect(plainLabel(null)).toBe('Unknown error')
+    expect(plainLabel(undefined)).toBe('Unknown error')
+  })
+
+  it('remediationFor returns the remediation for a known code', () => {
+    expect(remediationFor('GH_AUTH_INVALID')).toContain('GitHub rejected the credential')
+    expect(remediationFor('NOT_MERGEABLE')).toContain('conflicts with main')
+  })
+
+  it('remediationFor falls back to UNKNOWN remediation for unknown codes', () => {
+    expect(remediationFor('MADE_UP_CODE')).toBe(CODE_INFO.UNKNOWN.remediation)
+    expect(remediationFor(null)).toBe(CODE_INFO.UNKNOWN.remediation)
+  })
+
+  it('needsYouFor returns true only when code.needsYou is true', () => {
+    expect(needsYouFor('GH_AUTH_INVALID')).toBe(true)
+    expect(needsYouFor('BASE_MOVED')).toBe(false)
+    expect(needsYouFor('MADE_UP_CODE')).toBe(true) // UNKNOWN.needsYou is true
+    expect(needsYouFor(null)).toBe(true)
+  })
+
+  it('covers all merge/approval refusal codes', () => {
+    const required = [
+      'GH_AUTH_INVALID', 'NOT_MERGEABLE', 'PR_DRAFT', 'BRANCH_PROTECTION',
+      'BASE_MOVED', 'RATE_LIMITED', 'GITHUB_OUTAGE', 'TRANSIENT_NETWORK',
+      'TOOL_MISSING', 'PR_NOT_FOUND', 'INVALID_REQUEST',
+      'OUT_OF_ORDER', 'WRONG_BASE', 'SENT_BACK', 'CI_PENDING', 'NO_MERGE_PROFILE',
+      'MERGE_REFUSED', 'CI_FAILED', 'GATE_INFRA', 'MEMORY_PRESSURE',
+      'MAIN_RED', 'GATE_TESTS_FAILED', 'VERSION_BUMP_FAILED', 'REBASE_CONFLICT',
+      'IMAGES_STALE', 'UNKNOWN'
+    ]
+    for (const code of required) {
+      expect(CODE_INFO[code]).toBeTruthy(`CODE_INFO missing entry for ${code}`)
+    }
+  })
+})
+
 import { summarizeGateFailure as summarize, refusal } from '../webhook-server/failure.js'
 
 describe('Swift gate failures and refusals', () => {

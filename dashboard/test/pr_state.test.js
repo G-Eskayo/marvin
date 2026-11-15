@@ -290,3 +290,67 @@ describe('describePrState: drafts (marvin#848)', () => {
     expect(state({ isDraft: false })).toMatchObject({ kind: 'ready', approve: 'enabled' })
   })
 })
+
+describe('describePrState: errorPayload (structured failure info)', () => {
+  it('shows error detail from errorPayload instead of raw errorMessage', () => {
+    const payload = { code: 'MERGE_REFUSED', message: 'GitHub refused the merge', remediation: 'Check branch protection rules', stage: 'merging' }
+    const s = state({}, { status: 'error', errorPayload: payload })
+    expect(s).toMatchObject({ kind: 'error', approve: 'enabled' })
+    expect(s.detail).toContain('GitHub refused the merge')
+    expect(s.detail).toContain('Check branch protection rules')
+    expect(s.technicalDetails).toBe('MERGE_REFUSED')
+  })
+
+  it('includes needsYou suffix in detail when needsYouFor(code) is true', () => {
+    const payload = { code: 'GH_AUTH_INVALID', message: 'Bad credentials', remediation: 'Fix ~/.claude/.gh-token', stage: 'request' }
+    const s = state({}, { status: 'error', errorPayload: payload })
+    expect(s.detail).toContain('— needs you')
+  })
+
+  it('omits needsYou suffix when needsYouFor(code) is false', () => {
+    const payload = { code: 'BASE_MOVED', message: 'Base moved while merging', remediation: 'Retry once main settles', stage: 'merging' }
+    const s = state({}, { status: 'error', errorPayload: payload })
+    expect(s.detail).not.toContain('— needs you')
+  })
+
+  it('GITHUB_OUTAGE is recognized from errorPayload.code and shows the right state', () => {
+    const payload = { code: 'GITHUB_OUTAGE', message: 'GitHub 503', remediation: 'Wait for GitHub', stage: 'merging' }
+    const s = state({}, { status: 'error', errorPayload: payload })
+    expect(s.kind).toBe('github-outage')
+    expect(s.headline).toMatch(/GitHub is having an outage/)
+  })
+
+  it('IMAGES_STALE is recognized from errorPayload.code and shows the right state', () => {
+    const payload = { code: 'IMAGES_STALE', message: 'Screenshots older than code', remediation: 'Re-pin images', stage: 'request' }
+    const s = state({}, { status: 'error', errorPayload: payload })
+    expect(s.kind).toBe('images-stale')
+    expect(s.detail).toContain('Screenshots older than code')
+  })
+
+  it('mirrored refusal codes (SENT_BACK, CI_FAILED, etc.) from errorPayload are filtered out', () => {
+    for (const code of ['SENT_BACK', 'CI_PENDING', 'CI_FAILED', 'WRONG_BASE']) {
+      const payload = { code, message: 'x', remediation: 'y', stage: 'request' }
+      const s = state({}, { status: 'error', errorPayload: payload })
+      expect(s.kind).toBe('ready')
+    }
+  })
+
+  it('falls back to errorMessage when errorPayload is not provided', () => {
+    const s = state({}, { status: 'error', errorMessage: 'Something went wrong' })
+    expect(s.kind).toBe('error')
+    expect(s.detail).toBe('Something went wrong')
+  })
+
+  it('errorPayload takes precedence over errorMessage when both are provided', () => {
+    const payload = { code: 'GH_AUTH_INVALID', message: 'New message from payload', remediation: 'Fix it', stage: 'merging' }
+    const s = state({}, { status: 'error', errorMessage: 'Old message', errorPayload: payload })
+    expect(s.detail).toContain('New message from payload')
+    expect(s.detail).not.toContain('Old message')
+  })
+
+  it('includes technicalDetails code when errorPayload has a code', () => {
+    const payload = { code: 'BRANCH_PROTECTION', message: 'Protected', remediation: 'Adjust', stage: 'merging' }
+    const s = state({}, { status: 'error', errorPayload: payload })
+    expect(s.technicalDetails).toBe('BRANCH_PROTECTION')
+  })
+})

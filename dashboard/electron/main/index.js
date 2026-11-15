@@ -34,7 +34,7 @@ import { createApprovalRetry } from './approval_retry.js'
 import { createApproveFlow } from './approve_flow.js'
 import { mergeMachines, askReady, askForget } from './merge_failover.js'
 import { readPrefs } from './prefs.js'
-import { guardApprove } from './approve_guard.js'
+import { guardApprove, runApprove } from './approve_guard.js'
 import { recordRefusal } from '../../webhook-server/refusal_log.js'
 import { sendBackForOptions } from './decisions_submit.js'
 import { createLocalFirst, coalesce, createIssueReader, createRepoHeadCheck } from './local_first.js'
@@ -1202,18 +1202,21 @@ function registerMrReviewHandlers() {
   // the renderer -- a native OS-level confirm dialog can't be spoofed by a
   // fast double-click the way a custom in-page confirm affordance could.
   ipcMain.handle('mr:approve', async (_event, { number, url, head = null }) => {
-    // Checked here, not just greyed out in the UI, so a stale screen can't skip it. Sent-back PRs are marked the same way
-    // the list marks them, or a newer PR waits forever on one that can't merge (marvin #209). A refusal is recorded (#215).
-    // P5: the order check runs on the remembered list after one conditional check of this repo's open PRs (heads,
-    // bases), not a fresh re-list of all 13 repos (10.4 s for PR #569). Stale re-reads that one repo.
-    await guardApprove(url, {
+    // runApprove wraps guardApprove and approveFlow to catch any errors (coded or not) and resolve
+    // to a consistent shape for the renderer. Checked here, not just greyed out in the UI, so a stale
+    // screen can't skip it. Sent-back PRs are marked the same way the list marks them, or a newer PR
+    // waits forever on one that can't merge (marvin #209). A refusal is recorded (#215).
+    // P5: the order check runs on the remembered list after one conditional check of this repo's open
+    // PRs (heads, bases), not a fresh re-list of all 13 repos (10.4 s for PR #569). Stale re-reads
+    // that one repo. marvin#762: the click is recorded, sent to the Mini, and run on this Mac instead
+    // when the Mini can't be reached (approve_flow.js). Neither reachable: saved, said plainly, and
+    // retried when a Mac comes back.
+    return runApprove(url, { number, head }, {
       assertMergeable,
       loadPrs: async () => prsForOrderCheck(await mrActions.approvePrs(url), sentBackTickets),
-      record: recordRefusal
+      record: recordRefusal,
+      approveFlow
     })
-    // marvin#762: the click is recorded, sent to the Mini, and run on this Mac instead when the Mini can't be reached
-    // (approve_flow.js). Neither reachable: saved, said plainly, and retried when a Mac comes back.
-    return approveFlow(url, { number, head })
   })
 
   // The one read a card makes when it mounts (a merge already running, or how the last one ended); after that,

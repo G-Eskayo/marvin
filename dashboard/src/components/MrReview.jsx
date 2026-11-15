@@ -222,6 +222,7 @@ const MERGE_STATUSES = new Set(['approving', 'error', 'reengaged', 'interrupted'
 export function ApproveDenyActions({ pr, onApproved, onDenied, inDetail = false }) {
   const [status, setStatus] = useState('idle') // idle | approving | error | reengaged | interrupted | merged | queued | waiting-memory
   const [errorMessage, setErrorMessage] = useState(null)
+  const [errorPayload, setErrorPayload] = useState(null)
   const [showDenyModal, setShowDenyModal] = useState(false)
   const [clearing, setClearing] = useState(null) // null | 'confirm' | 'working' | 'done' | { failed }
   const [optionsAsk, setOptionsAsk] = useState(null) // null | 'working' | 'done' | { failed }
@@ -263,6 +264,7 @@ export function ApproveDenyActions({ pr, onApproved, onDenied, inDetail = false 
   async function handleApprove() {
     setStatus('approving')
     setErrorMessage(null)
+    setErrorPayload(null)
     try {
       const result = await window.api.mr.approve({ number: pr.number, url: pr.url, head: pr.headRefOid })
       if (result.cancelled) {
@@ -304,12 +306,20 @@ export function ApproveDenyActions({ pr, onApproved, onDenied, inDetail = false 
         setErrorMessage(result.reason)
         return
       }
+      // New resolved-failure shape from runApprove: merged===false && code present
+      if (result.merged === false && result.code) {
+        setStatus('error')
+        setErrorPayload({ code: result.code, message: result.message, remediation: result.remediation, stage: result.stage })
+        return
+      }
       setStatus('merged')
       setMergedAt((t) => t ?? Date.now())
       onApproved(pr.number)
     } catch (err) {
       setStatus('error')
-      setErrorMessage(cleanIpcError(err))
+      const errStr = cleanIpcError(err)
+      // Last-resort fallback: catch block creates a UNKNOWN payload
+      setErrorPayload({ code: 'UNKNOWN', message: errStr, remediation: 'Unclassified failure. See the evidence; this needs triage.', stage: 'request' })
     }
   }
 
@@ -325,7 +335,7 @@ export function ApproveDenyActions({ pr, onApproved, onDenied, inDetail = false 
     )
   }
 
-  const view = describePrState(pr, { status, errorMessage, progress: !!progress, machine })
+  const view = describePrState(pr, { status, errorMessage, errorPayload, progress: !!progress, machine })
   const TONE = { ready: 'text-emerald-400', wait: 'text-amber-400', blocked: 'text-red-400', working: 'text-blue-400' }
 
   // "Too vague: needs options" (2026-10-09): one click asks the author to restate the questions as a Decisions section.
@@ -376,6 +386,12 @@ export function ApproveDenyActions({ pr, onApproved, onDenied, inDetail = false 
       ) : null}
       <p className={`max-w-xs text-right text-sm font-medium ${TONE[view.tone] || ''}`}>{view.headline}</p>
       {view.detail && <p className="max-w-xs text-right text-xs text-neutral-400">{view.detail}</p>}
+      {view.technicalDetails && (
+        <details className="max-w-xs text-right text-xs">
+          <summary className="cursor-pointer text-neutral-500 hover:text-neutral-400">Technical details</summary>
+          <pre className="mt-1 overflow-auto rounded bg-neutral-950 px-2 py-1 text-neutral-400" style={{ maxHeight: '200px', maxWidth: '100%' }}>{view.technicalDetails}</pre>
+        </details>
+      )}
       {view.checkProgress && <CheckProgress checks={pr.checks} tone={view.tone} />}
       {progress && MERGE_STATUSES.has(status) && <MergeProgress progress={progress} />}
       {view.note && <p className="text-right text-xs text-emerald-400">{view.note}</p>}

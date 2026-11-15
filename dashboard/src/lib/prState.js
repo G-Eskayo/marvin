@@ -7,6 +7,8 @@
 // exception is a PR that is only WAITING (checks running, decisions to answer), where a disabled Approve tells
 // you it is coming. Order is the merge queue's (marvin#231): a stacked PR can be approved, and waits in the queue.
 
+import { remediationFor, needsYouFor } from '../../electron/main/failure.js'
+
 // Codes the function re-derives live above this point. If one of these is left over from an earlier click,
 // it is stale as soon as the state changes, so it is never shown as an error.
 const MIRRORED_REFUSALS = /^(SENT_BACK|CI_PENDING|CI_FAILED|WRONG_BASE|NO_UI_EVIDENCE|IMAGES_UNPINNED|DECISIONS_PENDING|DECISIONS_UNSTRUCTURED)\b/
@@ -24,7 +26,7 @@ export function describePrState(pr, opts = {}) {
   return view.approve === 'hidden' ? view : { ...view, approve: 'hidden' }
 }
 
-function describeState(pr, { status = 'idle', errorMessage = null, progress = false, machine = null } = {}) {
+function describeState(pr, { status = 'idle', errorMessage = null, errorPayload = null, progress = false, machine = null } = {}) {
   const ci = pr.checks || { state: 'none', failing: [], pending: [] }
   const base = (kind, tone, headline, detail, approve, deny, extra = {}) => ({ kind, tone, headline, detail, approve, deny, actions: [], note: null, rework: null, checkProgress: false, ...extra })
   const main = pr.baseProblem?.expected || 'main'
@@ -35,9 +37,12 @@ function describeState(pr, { status = 'idle', errorMessage = null, progress = fa
     // With the stage-by-stage view (marvin#568) the bar shows what is happening; the sentence only says it carries on.
     // marvin#762: a merge that failed over to this Mac says so first, in the owner's words ("The Mac mini is offline…").
     const said = errorMessage ? `${errorMessage} ` : ''
-    return base('merging', 'working', 'Merging…', said + (progress
+    const detail = said + (progress
       ? 'You can leave this screen; it carries on.'
-      : 'Merging. It is rebased and retested first only if main changed files this PR also changes. You can leave this screen; it carries on.'), 'hidden', 'hidden')
+      : 'Merging. It is rebased and retested first only if main changed files this PR also changes. You can leave this screen; it carries on.')
+    const view = base('merging', 'working', 'Merging…', detail, 'hidden', 'hidden')
+    if (errorPayload?.code) view.technicalDetails = errorPayload.code
+    return view
   }
 
   // marvin#762: no Mac could take the approval. It is saved and merges by itself when one comes back, so Approve is
@@ -171,7 +176,7 @@ function describeState(pr, { status = 'idle', errorMessage = null, progress = fa
       { checkProgress: hasRuns })
   }
 
-  if (status === 'error' && /^GITHUB_OUTAGE\b/.test(errorMessage || '')) {
+  if (status === 'error' && (errorPayload?.code === 'GITHUB_OUTAGE' || /^GITHUB_OUTAGE\b/.test(errorMessage || ''))) {
     return base('github-outage', 'wait', 'GitHub is having an outage',
       'The last merge attempt hit a GitHub server error (githubstatus.com). Nothing is wrong with this PR and it was not sent back. Approve again once GitHub recovers.', 'enabled', 'enabled')
   }
@@ -179,12 +184,30 @@ function describeState(pr, { status = 'idle', errorMessage = null, progress = fa
   // IMAGES_STALE cannot be re-verified live: it needs the gate's `gh api compare` to check whether
   // UI files changed after the pinned commit. The user can re-pin images in the PR body without pushing,
   // so Approve stays enabled to allow a retry (like GITHUB_OUTAGE above).
-  if (status === 'error' && /^IMAGES_STALE\b/.test(errorMessage || '')) {
-    return base('images-stale', 'blocked', 'Images are older than the latest change', errorMessage, 'enabled', 'enabled')
+  if (status === 'error' && (errorPayload?.code === 'IMAGES_STALE' || /^IMAGES_STALE\b/.test(errorMessage || ''))) {
+    const detail = errorPayload?.message || errorMessage
+    return base('images-stale', 'blocked', 'Images are older than the latest change', detail, 'enabled', 'enabled')
   }
 
-  if (status === 'error' && errorMessage && !MIRRORED_REFUSALS.test(errorMessage)) {
-    return base('error', 'blocked', 'The last merge attempt failed', errorMessage, 'enabled', 'enabled')
+  if (status === 'error' && (errorPayload?.code || errorMessage)) {
+    // Check if this is a mirrored refusal that's already handled by other logic above.
+    // Mirrored codes can come from errorPayload or be at the start of errorMessage string.
+    const code = errorPayload?.code
+    if ((code && MIRRORED_REFUSALS.test(code)) || (!code && MIRRORED_REFUSALS.test(errorMessage || ''))) {
+      return base('ready', 'ready', 'Ready to merge', null, 'enabled', 'enabled')
+    }
+
+    // Build the detail from message + remediation. Add "— needs you" suffix only when needsYou is true.
+    const detail = errorPayload ? (() => {
+      const parts = [errorPayload.message]
+      if (errorPayload.remediation) parts.push(errorPayload.remediation)
+      if (errorPayload.code && needsYouFor(errorPayload.code)) parts.push('— needs you')
+      return parts.join(' ')
+    })() : errorMessage
+
+    const view = base('error', 'blocked', 'The last merge attempt failed', detail, 'enabled', 'enabled')
+    if (errorPayload?.code) view.technicalDetails = errorPayload.code
+    return view
   }
 
   if (rb?.state === 'tests_failed') {
