@@ -27,3 +27,15 @@ export function windowOpenHandler(open) {
     return { action: 'deny' }
   }
 }
+
+// will-navigate fires before navigation starts. Support both event shapes: new Electron sends
+// (event) where event has { url, isInPlace }, older versions send (event, url) with url as second param.
+export function willNavigateHandler(open) {
+  return (event, url) => {
+    event.preventDefault()
+    const navigationUrl = event?.url ?? url
+    try {
+      Promise.resolve(open(navigationUrl)).catch(() => {})
+    } catch {}
+  }
+}

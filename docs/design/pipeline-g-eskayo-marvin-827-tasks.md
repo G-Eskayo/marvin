@@ -1,0 +1,6 @@
+1. Add `willNavigateHandler(open)` to `dashboard/electron/main/external_links.js`, paired with the existing `windowOpenHandler`: always `preventDefault()`, then pass the resolved URL (supporting both event shapes) to `open()`, swallowing throws/rejections.
+2. Write the tests in `dashboard/test/external_links.test.js` (items 1–5 above) against that new function.
+3. Wire it in `dashboard/electron/main/index.js`'s `createWindow()`: `mainWindow.webContents.on('will-navigate', willNavigateHandler((url) => openLink(url, { openExternal: shell.openExternal })))`, next to the existing `setWindowOpenHandler` line.
+4. Add `target="_blank" rel="noreferrer"` to the repo#number anchor in `Thread` (`dashboard/src/components/SupportTab.jsx:208-210`).
+5. Write the tests in `dashboard/test/support_view.test.jsx` (items 6–8 above) against the updated `Thread`.
+6. Run the dashboard test suite in full (not just the touched files) per the "full suites before a hand-merge" rule, and confirm no visible rendering changed (the `target`/`rel` attributes are invisible), so the screenshot acceptance criterion needs no screenshots — note that explicitly in the PR rather than omitting it silently.

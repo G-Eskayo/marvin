@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { openLink, windowOpenHandler } from '../electron/main/external_links.js'
+import { openLink, windowOpenHandler, willNavigateHandler } from '../electron/main/external_links.js'
 
 // A fake execFile: answers each call from a queue of errors and records what was asked.
 function fakeRun(errors = []) {
@@ -69,5 +69,53 @@ describe('A link that would open a new window', () => {
   it('still denies the window when opening the link throws', () => {
     const handler = windowOpenHandler(() => { throw new Error('boom') })
     expect(handler({ url: PR })).toEqual({ action: 'deny' })
+  })
+})
+
+describe('A direct navigation (will-navigate event)', () => {
+  it('prevents default and routes the URL to open()', () => {
+    const asked = []
+    const prevented = []
+    const handler = willNavigateHandler((u) => { asked.push(u) })
+    const event = { url: PR, preventDefault: () => { prevented.push(true) } }
+    handler(event)
+    expect(prevented).toEqual([true])
+    expect(asked).toEqual([PR])
+  })
+
+  it('handles the old event shape where url is the second parameter', () => {
+    const asked = []
+    const prevented = []
+    const handler = willNavigateHandler((u) => { asked.push(u) })
+    const event = { preventDefault: () => { prevented.push(true) } }
+    handler(event, PR)
+    expect(prevented).toEqual([true])
+    expect(asked).toEqual([PR])
+  })
+
+  it('still prevents default when opening the link throws', () => {
+    const prevented = []
+    const handler = willNavigateHandler(() => { throw new Error('boom') })
+    const event = { url: PR, preventDefault: () => { prevented.push(true) } }
+    handler(event)
+    expect(prevented).toEqual([true])
+  })
+
+  it('handles async open() that rejects', () => {
+    const prevented = []
+    const handler = willNavigateHandler(() => Promise.reject(new Error('boom')))
+    const event = { url: PR, preventDefault: () => { prevented.push(true) } }
+    handler(event)
+    expect(prevented).toEqual([true])
+  })
+
+  it('passes mail links through', () => {
+    const asked = []
+    const prevented = []
+    const handler = willNavigateHandler((u) => { asked.push(u) })
+    const event = { url: 'mailto:a@example.com', preventDefault: () => { prevented.push(true) } }
+    handler(event)
+    expect(prevented).toEqual([true])
+    expect(asked).toEqual(['mailto:a@example.com'])
   })
 })
