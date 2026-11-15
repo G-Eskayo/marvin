@@ -11,6 +11,16 @@
 // it is stale as soon as the state changes, so it is never shown as an error.
 const MIRRORED_REFUSALS = /^(SENT_BACK|CI_PENDING|CI_FAILED|WRONG_BASE|NO_UI_EVIDENCE|IMAGES_UNPINNED|DECISIONS_PENDING|DECISIONS_UNSTRUCTURED)\b/
 
+// Splits a failure message that may contain <details><summary>Technical details</summary>...</details>.
+// Returns { plain, technical } where technical is the extracted code or null if not found.
+function splitTechnicalDetails(message) {
+  if (!message) return { plain: '', technical: null }
+  const match = String(message).match(/<details><summary>Technical details<\/summary>([^<]+)<\/details>/)
+  if (!match) return { plain: message, technical: null }
+  const plain = String(message).replace(/<details>.*<\/details>/, '').trim()
+  return { plain, technical: match[1] }
+}
+
 // The owner's answer on #767 (marvin#848): a draft offers no Approve until it's marked ready for review. A merge
 // already under way (merging, saved, merged) is shown as it is.
 const DRAFT_KEEPS = new Set(['merging', 'queued', 'merged'])
@@ -26,7 +36,11 @@ export function describePrState(pr, opts = {}) {
 
 function describeState(pr, { status = 'idle', errorMessage = null, progress = false, machine = null } = {}) {
   const ci = pr.checks || { state: 'none', failing: [], pending: [] }
-  const base = (kind, tone, headline, detail, approve, deny, extra = {}) => ({ kind, tone, headline, detail, approve, deny, actions: [], note: null, rework: null, checkProgress: false, ...extra })
+  const base = (kind, tone, headline, detail, approve, deny, extra = {}) => {
+    const result = { kind, tone, headline, detail, approve, deny, actions: [], note: null, rework: null, checkProgress: false, ...extra }
+    if (extra.technical) result.technical = extra.technical
+    return result
+  }
   const main = pr.baseProblem?.expected || 'main'
   // Each check's own row is known (marvin#555): the card can show the progress bar and per-check drill-down.
   const hasRuns = Array.isArray(ci.runs) && ci.runs.length > 0
@@ -171,20 +185,27 @@ function describeState(pr, { status = 'idle', errorMessage = null, progress = fa
       { checkProgress: hasRuns })
   }
 
-  if (status === 'error' && /^GITHUB_OUTAGE\b/.test(errorMessage || '')) {
-    return base('github-outage', 'wait', 'GitHub is having an outage',
-      'The last merge attempt hit a GitHub server error (githubstatus.com). Nothing is wrong with this PR and it was not sent back. Approve again once GitHub recovers.', 'enabled', 'enabled')
-  }
+  if (status === 'error' && errorMessage) {
+    const { plain, technical } = splitTechnicalDetails(errorMessage)
+    const code = technical?.split(' at ')[0] || errorMessage?.split(/[\s:]/)[0]
 
-  // IMAGES_STALE cannot be re-verified live: it needs the gate's `gh api compare` to check whether
-  // UI files changed after the pinned commit. The user can re-pin images in the PR body without pushing,
-  // so Approve stays enabled to allow a retry (like GITHUB_OUTAGE above).
-  if (status === 'error' && /^IMAGES_STALE\b/.test(errorMessage || '')) {
-    return base('images-stale', 'blocked', 'Images are older than the latest change', errorMessage, 'enabled', 'enabled')
-  }
+    // Stale refusals: codes that are mirrored as PR state should not show as errors
+    if (MIRRORED_REFUSALS.test(code || '')) return base('ready', 'ready', 'Ready to merge', null, 'enabled', 'enabled')
 
-  if (status === 'error' && errorMessage && !MIRRORED_REFUSALS.test(errorMessage)) {
-    return base('error', 'blocked', 'The last merge attempt failed', errorMessage, 'enabled', 'enabled')
+    if (/^GITHUB_OUTAGE\b/.test(code || '')) {
+      return base('github-outage', 'wait', 'GitHub is having an outage',
+        plain || 'Nothing is wrong with this PR and it was not sent back; approve again once GitHub recovers.',
+        'enabled', 'enabled', { technical })
+    }
+
+    // IMAGES_STALE cannot be re-verified live: it needs the gate's `gh api compare` to check whether
+    // UI files changed after the pinned commit. The user can re-pin images in the PR body without pushing,
+    // so Approve stays enabled to allow a retry (like GITHUB_OUTAGE above).
+    if (/^IMAGES_STALE\b/.test(code || '')) {
+      return base('images-stale', 'blocked', 'Images are older than the latest change', plain || errorMessage, 'enabled', 'enabled', { technical })
+    }
+
+    return base('error', 'blocked', 'The last merge attempt failed', plain || errorMessage, 'enabled', 'enabled', { technical })
   }
 
   if (rb?.state === 'tests_failed') {

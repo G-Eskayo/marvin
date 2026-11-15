@@ -3,6 +3,7 @@ import os from 'os'
 import path from 'path'
 import { execFileSync } from 'child_process'
 import { emptyProgress, applyMergeEvent, MERGE_STAGES, machineLabel } from '../src/lib/merge_progress.js'
+import { FAILURE_TABLE } from './failure.js'
 
 // The merge gate's side of marvin#568: what each merge is doing, told as it happens.
 //   - createMergeTracker: one per Approve. Numbers each stage event, folds it with the same reducer the dashboard
@@ -339,5 +340,6 @@ export function createMergeLatch() {
 
 export function alreadyMergingBody(machineId) {
   const where = machineId ? `the ${machineLabel(machineId)}` : 'this Mac'
-  return { merged: false, code: 'ALREADY_MERGING', stage: 'queued', action: 'wait', message: `This PR is already being merged on ${where}. Its result shows when that merge finishes` }
+  const entry = FAILURE_TABLE.ALREADY_MERGING
+  return { merged: false, code: 'ALREADY_MERGING', stage: 'queued', action: 'wait', message: `This PR is already being merged on ${where}. Its result shows when that merge finishes`, remediation: entry?.remediation, needsYou: entry?.needsYou }
 }

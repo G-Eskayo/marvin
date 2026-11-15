@@ -441,15 +441,15 @@ export async function listPipelinePrs(listOpenPrs, { canMerge = canMergeFromDash
 // and what happens next -- "Webhook call failed: 500" hid the real reason (2026-10-02).
 export function describeApproveFailure(status, body) {
   if (!body || !body.code) return `Webhook call failed: ${status}`
-  const next =
-    body.action === 'wait'
-      ? ''
-      : body.action === 'escalate'
-      ? ' -- needs you'
-      : body.action === 'retry'
-        ? ` -- already retried ${body.attempts ?? '?'} times; try again shortly`
-        : ' -- sent back to its ticket'
-  return `${body.code} at ${body.stage}: ${body.message}${next}. ${body.remediation ?? ''}`.trim()
+  const message = body.message || ''
+  const remediation = body.remediation || ''
+  const parts = []
+  if (message) parts.push(message)
+  if (remediation) parts.push(remediation)
+  const plain = parts.join(' ')
+  const needsYou = body.needsYou ? ' (This needs you.)' : ''
+  const technical = `<details><summary>Technical details</summary>${body.code} at ${body.stage}</details>`
+  return `${plain}${needsYou} ${technical}`.trim()
 }
 
 export async function approveMr(prUrl, webhookUrl, post) {

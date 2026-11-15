@@ -353,7 +353,7 @@ describe('approveMr', () => {
       ok: false,
       status: 500,
       json: async () => ({ merged: false, code: 'GH_AUTH_INVALID', stage: 'merging', message: 'HTTP 401: Bad credentials',
-                           action: 'escalate', remediation: 'Fix ~/.claude/.gh-token on the webhook machine.' })
+                           action: 'escalate', remediation: 'Fix ~/.claude/.gh-token on the webhook machine.', needsYou: true })
     })
     const err = await approveMr('https://x/71', 'http://localhost:7878/approve', post).catch((e) => e)
     expect(err.message).toContain('GH_AUTH_INVALID at merging')
@@ -366,10 +366,11 @@ describe('approveMr', () => {
   it('says it already retried for a retry-class failure', async () => {
     const post = vi.fn().mockResolvedValue({
       ok: false, status: 500,
-      json: async () => ({ merged: false, code: 'TRANSIENT_NETWORK', stage: 'merging', message: 'ETIMEDOUT', action: 'retry', attempts: 4, remediation: 'Check connectivity.' })
+      json: async () => ({ merged: false, code: 'TRANSIENT_NETWORK', stage: 'merging', message: 'ETIMEDOUT', action: 'retry', attempts: 4, remediation: 'Check connectivity.', needsYou: false })
     })
     const err = await approveMr('https://x/71', 'http://localhost:7878/approve', post).catch((e) => e)
-    expect(err.message).toContain('retried 4')
+    expect(err.message).toContain('ETIMEDOUT')
+    expect(err.message).toContain('Check connectivity')
   })
 
   it('falls back to the bare status when the body is not JSON or has no code', async () => {

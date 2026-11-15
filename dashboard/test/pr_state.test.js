@@ -37,8 +37,8 @@ describe('describePrState: one headline, only the buttons that make sense', () =
   })
 
   it('IMAGES_STALE is shown as its own blocked state because it cannot be re-verified live', () => {
-    const s = state({}, { status: 'error', errorMessage: 'IMAGES_STALE at request: screenshots pinned to abc123 but SettingsView.swift changed in def456' })
-    expect(s).toMatchObject({ kind: 'images-stale', tone: 'blocked', approve: 'enabled', deny: 'enabled' })
+    const s = state({}, { status: 'error', errorMessage: 'Screenshots pinned to abc123 but SettingsView.swift changed in def456. <details><summary>Technical details</summary>IMAGES_STALE at request</details>' })
+    expect(s).toMatchObject({ kind: 'images-stale', tone: 'blocked', approve: 'enabled', deny: 'enabled', technical: 'IMAGES_STALE at request' })
     expect(s.headline).toMatch(/Images are older than the latest change/i)
     expect(s.detail).toMatch(/SettingsView.swift changed/)
   })
@@ -107,10 +107,10 @@ describe('describePrState: one headline, only the buttons that make sense', () =
   })
 
   it('a GitHub outage says so, keeps Approve available, and does not blame the PR', () => {
-    const s = state({}, { status: 'error', errorMessage: 'GITHUB_OUTAGE at merging: remote: Internal Server Error' })
-    expect(s).toMatchObject({ kind: 'github-outage', approve: 'enabled', deny: 'enabled' })
+    const s = state({}, { status: 'error', errorMessage: 'GitHub server error. Approve again once it recovers. <details><summary>Technical details</summary>GITHUB_OUTAGE at merging</details>' })
+    expect(s).toMatchObject({ kind: 'github-outage', approve: 'enabled', deny: 'enabled', technical: 'GITHUB_OUTAGE at merging' })
     expect(s.headline).toMatch(/GitHub is having an outage/)
-    expect(s.detail).toMatch(/nothing is wrong with this PR/i)
+    expect(s.detail).toMatch(/Approve again once it recovers/i)
   })
 
   it('a previous "sent back for rework" result is shown once, as the PR\'s state, not as an error', () => {

@@ -42,10 +42,10 @@ describe('approveMrStream', () => {
     const url = await serve((req, res) => {
       const reply = approveResponder(res, { streaming: true })
       reply.event(ev(1, 'queued', 'running'))
-      reply.result(503, { code: 'GATE_INFRA', stage: 'gate', action: 'escalate', message: 'the check did not finish in time', remediation: 'Approve it again.' })
+      reply.result(503, { code: 'GATE_INFRA', stage: 'gate', action: 'escalate', message: 'the check did not finish in time', remediation: 'Approve it again.', needsYou: false })
     })
     const err = await approveMrStream(PR, url).catch((e) => e)
-    expect(err.message).toBe('GATE_INFRA at gate: the check did not finish in time -- needs you. Approve it again.')
+    expect(err.message).toBe('the check did not finish in time Approve it again. <details><summary>Technical details</summary>GATE_INFRA at gate</details>')
     expect(err.payload.code).toBe('GATE_INFRA')
   })
 
@@ -86,7 +86,7 @@ describe('approveMrStream', () => {
       else res.writeHead(409, { 'Content-Type': 'application/json' }).end(JSON.stringify({ code: 'WRONG_BASE', stage: 'request', action: 'escalate', message: 'targets side' }))
     })
     expect(await approveMrStream(PR, url)).toEqual({ merged: true })
-    await expect(approveMrStream(PR, url)).rejects.toThrow(/WRONG_BASE at request: targets side/)
+    await expect(approveMrStream(PR, url)).rejects.toThrow(/targets side.*<details>.*WRONG_BASE at request/)
   })
 
   it('garbled, unknown and oversized lines are skipped; duplicates are passed on (the reducer drops them)', async () => {

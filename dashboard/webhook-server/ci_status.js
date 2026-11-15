@@ -87,7 +87,7 @@ export async function assertChecksGreen(prUrl, exec, { ignore = null } = {}) {
   }
   if (state === 'pending') {
     throw new MergeFailure(refusal('CI_PENDING', 'request', `GitHub's checks are still running: ${pending.join(', ')}`,
-      'Wait for them to finish, then approve again. The PR was not sent back.'))
+      'Wait for them to finish, then approve again. The PR was not sent back.', 'escalate', false))
   }
 }
 

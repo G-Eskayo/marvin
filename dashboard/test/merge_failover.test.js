@@ -539,6 +539,6 @@ describe('createMergeLatch: one merge of a PR at a time on a webhook', () => {
   it('the refusal names the Mac in plain words and reads cleanly on the card', () => {
     const body = alreadyMergingBody('mac-mini-1')
     expect(body).toMatchObject({ merged: false, code: 'ALREADY_MERGING' })
-    expect(describeApproveFailure(409, body)).toBe('ALREADY_MERGING at queued: This PR is already being merged on the Mac mini. Its result shows when that merge finishes.')
+    expect(describeApproveFailure(409, body)).toBe('This PR is already being merged on the Mac mini. Its result shows when that merge finishes Nothing to do; its result shows when that merge finishes. <details><summary>Technical details</summary>ALREADY_MERGING at queued</details>')
   })
 })

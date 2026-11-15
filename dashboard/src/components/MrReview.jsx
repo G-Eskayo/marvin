@@ -376,6 +376,12 @@ export function ApproveDenyActions({ pr, onApproved, onDenied, inDetail = false 
       ) : null}
       <p className={`max-w-xs text-right text-sm font-medium ${TONE[view.tone] || ''}`}>{view.headline}</p>
       {view.detail && <p className="max-w-xs text-right text-xs text-neutral-400">{view.detail}</p>}
+      {view.technical && (
+        <details className="max-w-xs text-right">
+          <summary className="cursor-pointer text-xs text-neutral-500 hover:text-neutral-400">Technical details</summary>
+          <p className="mt-1 text-xs text-neutral-600">{view.technical}</p>
+        </details>
+      )}
       {view.checkProgress && <CheckProgress checks={pr.checks} tone={view.tone} />}
       {progress && MERGE_STATUSES.has(status) && <MergeProgress progress={progress} />}
       {view.note && <p className="text-right text-xs text-emerald-400">{view.note}</p>}

@@ -972,7 +972,9 @@ async function mergePrUnqueued(
         stage('gate', 'failed', `GATE_INFRA: ${timedOut ? 'the check did not finish in time' : summary.cause || 'the build machine or test setup failed, not the code'}`)
         throw new MergeFailure(refusal('GATE_INFRA', 'gate', message,
           // A named cause says it all; only an unnamed one keeps the raw output for a person to read.
-          `${summary.next || 'Approve it again.'} The PR was not sent back for rework.${summary.cause ? '' : ` What failed: ${summary.comment.slice(0, 300)}`}`))
+          `${summary.next || 'Approve it again.'} The PR was not sent back for rework.${summary.cause ? '' : ` What failed: ${summary.comment.slice(0, 300)}`}`,
+          'escalate',
+          summary.needsYou ?? false))
       }
       if (summary.code === 'GATE_TESTS_FAILED' && summary.failingTests.length && baselineFails) {
         // Did the PR break these, or was the base branch already red? Only a test that passes on the base is the PR's fault.
