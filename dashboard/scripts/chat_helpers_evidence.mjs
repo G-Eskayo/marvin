@@ -40,6 +40,13 @@ try {
   await page.setViewportSize({ width: 860, height: 1000 })
   await sleep(1200)
   await page.screenshot({ path: `${OUT}/pr-612-activity-helpers-narrow.png` })
+  // marvin#818: crashed cards with dismiss buttons at 900px and 1440px
+  await page.setViewportSize({ width: 900, height: 1000 })
+  await sleep(800)
+  await page.screenshot({ path: `${OUT}/pr-818-activity-helpers-900px.png` })
+  await page.setViewportSize({ width: 1440, height: 900 })
+  await sleep(800)
+  await page.screenshot({ path: `${OUT}/pr-818-activity-helpers-1440px.png` })
   console.log('shots in', OUT)
 } finally {
   await b?.close().catch(() => {})

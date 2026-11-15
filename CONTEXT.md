@@ -1511,6 +1511,12 @@ except a "Done" state and the ticket chip Markdown uses; they are not counted am
 its webhook server's `GET /helpers` (the `/sessions` channel, #331), read through a 10 s cache with a 30 s backstop, since that
 Mac has no push channel. Gil applies the hooks on each Mac with `marvin_hooks.py install`.
 
+**Home list filtering (#818, 2026-11-15):** The Activity tab's chat helpers list is auto-filtered on the home view: dismissed
+helpers are dropped (local-only state, per-viewer like mr_seen.js #74), crashed cards auto-expire after 24 hours (to hide old
+stuck jobs without deleting them), and non-running helpers are capped at 10 to keep the page readable (running jobs are never
+capped). Each crashed helper card shows a "Dismiss" button; dismissed status is persisted in `helpers-dismissed.json` and does not
+sync across machines. Cap and age thresholds are hardcoded and unaffected by #625's helpers decision once made.
+
 ## Project goals on the boards and in Activity (2026-10-26, #625's progress strip)
 
 - Every project profile (`instance/config/projects/<repo>.json`, ADR 0071) carries `goal`, `signals` ([{name, better:

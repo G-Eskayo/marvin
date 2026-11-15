@@ -251,6 +251,7 @@ contextBridge.exposeInMainWorld('api', {
     list: () => ipcRenderer.invoke('activity:list'),
     timeline: (number, repo) => ipcRenderer.invoke('activity:timeline', number, repo),
     helpers: () => ipcRenderer.invoke('activity:helpers'),
+    dismissHelper: (key) => ipcRenderer.invoke('activity:dismissHelper', key),
     overview: () => ipcRenderer.invoke('activity:overview'),
     needsYou: () => ipcRenderer.invoke('activity:needsYou'),
     openTickets: () => ipcRenderer.invoke('activity:openTickets'),

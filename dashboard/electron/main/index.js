@@ -175,6 +175,7 @@ import { readFileForView, fileFromBuffer } from './outbox.js'
 import { resolveLocalClone } from './docs_local.js'
 import { resolveServiceDefaults, resolveDeviceId, peerHosts, primaryDeviceId } from './device_identity.js'
 import { createHelpersReader } from './chat_helpers.js'
+import { readDismissed, dismissHelper } from './helpers_dismissed.js'
 import { createChatsReader, createChatSender } from './chat_tabs.js'
 import { isPullOnlyNode, createFeedSource, feedOnlyGh, readNetworkRegistry, assertActsHere as assertPullOnlyActs, canMergeHere, withReadOnlyReason } from './github_feed.js'
 import { createAccounts } from './accounts.js'
@@ -586,8 +587,13 @@ function registerActivityHandlers() {
   ipcMain.handle('activity:list', () => listTicketActivity())
   // Chat helpers, this Mac's and the other's (#612). This Mac's arrive by the 'agents' trigger (same jobs folder).
   let peers = null // the registry changes rarely and the app is relaunched on every rebuild
-  const readHelpers = createHelpersReader({ peers: () => (peers ||= peerHosts()) })
+  const dismissedPath = join(app.getPath('userData'), 'helpers-dismissed.json')
+  const readHelpers = createHelpersReader({ peers: () => (peers ||= peerHosts()), dismissed: () => readDismissed(dismissedPath) })
   ipcMain.handle('activity:helpers', () => readHelpers())
+  ipcMain.handle('activity:dismissHelper', (_event, key) => {
+    dismissHelper(dismissedPath, key)
+    return readHelpers()
+  })
   ipcMain.handle('activity:timeline', (_event, number, repo) => getTicketTimeline(number, undefined, repo || null))
 
   // Project boards: only repos in the registry are fetchable, so the renderer

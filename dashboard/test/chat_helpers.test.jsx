@@ -1,11 +1,11 @@
-import { describe, it, expect, beforeEach, afterEach } from 'vitest'
+import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest'
 import { renderToStaticMarkup } from 'react-dom/server'
 import { mkdtempSync, mkdirSync, writeFileSync, rmSync } from 'fs'
 import { tmpdir } from 'os'
 import path from 'path'
 import http from 'http'
 import { describeHelper, listHelpers, helperStatus, STALE_MS } from '../webhook-server/chat_helpers.js'
-import { createHelpersReader, fetchHelpersFrom, REMOTE_TTL_MS } from '../electron/main/chat_helpers.js'
+import { createHelpersReader, fetchHelpersFrom, REMOTE_TTL_MS, filterForHome } from '../electron/main/chat_helpers.js'
 import { listJobs } from '../electron/main/jobs.js'
 import { ChatHelpersView } from '../src/components/ChatHelpers.jsx'
 
@@ -189,5 +189,172 @@ describe('Activity rows (rendered from a fixture)', () => {
   it('nothing to show is nothing at all, not an empty section', () => {
     expect(renderToStaticMarkup(<ChatHelpersView data={null} now={now} />)).toBe('')
     expect(renderToStaticMarkup(<ChatHelpersView data={{ helpers: [] }} now={now} />)).toBe('')
+  })
+
+  it('a crashed helper shows a dismiss button when onDismiss is provided', () => {
+    const crashedNow = T0 + STALE_MS + 1000 // old enough to be considered crashed
+    const helpers = [
+      describeHelper(helperDoc('crash'), { now: crashedNow }) // running but quiet long enough to be crashed
+    ]
+    const data = { helpers, unreachable: [] }
+    const onDismiss = vi.fn()
+    const html = renderToStaticMarkup(<ChatHelpersView data={data} now={crashedNow} onDismiss={onDismiss} />)
+    expect(html).toContain('>Dismiss</button>')
+  })
+
+  it('does not show a dismiss button when onDismiss is not provided', () => {
+    const crashedNow = T0 + STALE_MS + 1000
+    const helpers = [
+      describeHelper(helperDoc('crash'), { now: crashedNow })
+    ]
+    const data = { helpers, unreachable: [] }
+    const html = renderToStaticMarkup(<ChatHelpersView data={data} now={crashedNow} />)
+    expect(html).not.toContain('>Dismiss</button>')
+  })
+
+  it('does not show a dismiss button for running or done helpers', () => {
+    const helpers = [
+      describeHelper(helperDoc('run', { started: T0 + 5 * 60_000 }), { now }),
+      describeHelper(helperDoc('done', { status: 'passed', finished: T0 + 7 * 60_000, summary: 'ok' }), { now })
+    ]
+    const data = { helpers, unreachable: [] }
+    const onDismiss = vi.fn()
+    const html = renderToStaticMarkup(<ChatHelpersView data={data} now={now} onDismiss={onDismiss} />)
+    expect(html.match(/>Dismiss</g)).toBeNull()
+  })
+
+  it('does not nest buttons inside buttons when showing dismiss', () => {
+    const crashedNow = T0 + STALE_MS + 1000
+    const helpers = [
+      describeHelper(helperDoc('crash'), { now: crashedNow })
+    ]
+    const data = { helpers, unreachable: [] }
+    const onDismiss = vi.fn()
+    const html = renderToStaticMarkup(<ChatHelpersView data={data} now={crashedNow} onDismiss={onDismiss} />)
+    // Verify buttons are siblings: check that dismiss button closes before the history button appears
+    expect(html).toMatch(/<\/button>\s*<button[^>]*>Dismiss<\/button>/)
+  })
+})
+
+describe('filterForHome', () => {
+  const makeHelper = (id, { status = 'running', finishedAt = null, startedAt = iso(T0) } = {}) => ({
+    id,
+    machine: 'test-mac',
+    status,
+    kind: 'helper',
+    job: {
+      current: status === 'running' ? { startedAt } : null,
+      last: status !== 'running' ? { finishedAt: finishedAt || iso(T0), startedAt, durationS: 60, summary: '' } : null
+    }
+  })
+
+  it('drops dismissed helpers', () => {
+    const helpers = [
+      makeHelper('h1', { status: 'done', finishedAt: iso(T0) }),
+      makeHelper('h2', { status: 'done', finishedAt: iso(T0) })
+    ]
+    const dismissed = new Map([['test-mac:h1', Date.now()]])
+    const result = filterForHome(helpers, { dismissed, now: T0 })
+    expect(result.map((h) => h.id)).toEqual(['h2'])
+  })
+
+  it('drops crashed helpers older than maxAgeMs', () => {
+    const now = T0 + 25 * 60 * 60 * 1000 // 25 hours later
+    const helpers = [
+      makeHelper('old', { status: 'crashed', finishedAt: iso(T0) }),
+      makeHelper('new', { status: 'crashed', finishedAt: iso(now - 1 * 60 * 60 * 1000) }) // 1 hour ago
+    ]
+    const result = filterForHome(helpers, { dismissed: new Map(), now, maxAgeMs: 24 * 60 * 60 * 1000 })
+    expect(result.map((h) => h.id)).toEqual(['new'])
+  })
+
+  it('handles malformed timestamps gracefully', () => {
+    const helpers = [
+      makeHelper('h1', { status: 'crashed', finishedAt: 'garbage' }),
+      makeHelper('h2', { status: 'crashed', finishedAt: iso(Date.now() - 1000) })
+    ]
+    const result = filterForHome(helpers, { dismissed: new Map(), now: Date.now(), maxAgeMs: 24 * 60 * 60 * 1000 })
+    expect(result.map((h) => h.id)).toEqual(['h2'])
+  })
+
+  it('never caps running helpers', () => {
+    const helpers = Array.from({ length: 15 }, (_, i) => makeHelper(`h${i}`, { status: 'running' }))
+    const result = filterForHome(helpers, { dismissed: new Map(), now: Date.now(), cap: 10 })
+    expect(result).toHaveLength(15)
+  })
+
+  it('caps non-running helpers to the remainder after running helpers are kept', () => {
+    const helpers = [
+      makeHelper('r1', { status: 'running' }),
+      makeHelper('r2', { status: 'running' }),
+      makeHelper('d1', { status: 'done', finishedAt: iso(T0) }),
+      makeHelper('d2', { status: 'done', finishedAt: iso(T0) }),
+      makeHelper('d3', { status: 'done', finishedAt: iso(T0) }),
+      makeHelper('d4', { status: 'done', finishedAt: iso(T0) }),
+      makeHelper('d5', { status: 'done', finishedAt: iso(T0) })
+    ]
+    const result = filterForHome(helpers, { dismissed: new Map(), now: T0, cap: 5 })
+    expect(result).toHaveLength(5)
+    expect(result.slice(0, 2).map((h) => h.id)).toEqual(['r1', 'r2'])
+    expect(result.slice(2).map((h) => h.id)).toEqual(['d1', 'd2', 'd3'])
+  })
+
+  it('when running helpers outnumber cap, all running helpers are kept and no others are included', () => {
+    const helpers = [
+      makeHelper('r1', { status: 'running' }),
+      makeHelper('r2', { status: 'running' }),
+      makeHelper('r3', { status: 'running' }),
+      makeHelper('r4', { status: 'running' }),
+      makeHelper('r5', { status: 'running' }),
+      makeHelper('r6', { status: 'running' }),
+      makeHelper('r7', { status: 'running' }),
+      makeHelper('r8', { status: 'running' }),
+      makeHelper('r9', { status: 'running' }),
+      makeHelper('r10', { status: 'running' }),
+      makeHelper('r11', { status: 'running' }),
+      makeHelper('r12', { status: 'running' }),
+      makeHelper('d1', { status: 'done', finishedAt: iso(T0) }),
+      makeHelper('d2', { status: 'done', finishedAt: iso(T0) }),
+      makeHelper('d3', { status: 'done', finishedAt: iso(T0) })
+    ]
+    const result = filterForHome(helpers, { dismissed: new Map(), now: T0, cap: 10 })
+    expect(result).toHaveLength(12)
+    expect(result.every((h) => h.status === 'running')).toBe(true)
+  })
+
+  it("uses the most recent run's age, not a previous run's", () => {
+    // A helper that crashed but had an older run over 24h ago should not be hidden
+    // if the crash happened within the window. This tests that we check job.current
+    // before job.last (which might be from an older run in a multi-run helper).
+    const now = T0 + 25 * 60 * 60 * 1000 // 25 hours later
+    const helpers = [
+      {
+        id: 'h1',
+        machine: 'test-mac',
+        status: 'crashed',
+        kind: 'helper',
+        job: {
+          current: null,
+          last: {
+            finishedAt: iso(now - 10 * 60 * 1000) // crashed 10 minutes ago
+          }
+        }
+      },
+      {
+        id: 'h2',
+        machine: 'test-mac',
+        status: 'running',
+        kind: 'helper',
+        job: {
+          current: { startedAt: iso(now - 2 * 60 * 1000) }, // started 2 minutes ago
+          last: {
+            finishedAt: iso(T0) // previous run finished over 24h ago
+          }
+        }
+      }
+    ]
+    const result = filterForHome(helpers, { dismissed: new Map(), now, maxAgeMs: 24 * 60 * 60 * 1000 })
+    // Both should be kept: h1 crashed recently, h2 is currently running
+    expect(result.map((h) => h.id)).toEqual(['h2', 'h1'])
   })
 })
