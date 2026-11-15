@@ -37,7 +37,21 @@ try:
 except ImportError:
     _SAFETY_MONITOR_AVAILABLE = False
 
-TODAY = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+
+def _today_local(now: datetime | None = None) -> str:
+	"""Return today's date in local timezone as YYYY-MM-DD.
+
+	If a timezone-aware datetime is provided, convert it to local time.
+	If no datetime is provided, use the current time in local timezone.
+	"""
+	if now is None:
+		now = datetime.now()
+	elif now.tzinfo is not None:
+		now = now.astimezone()
+	return now.strftime("%Y-%m-%d")
+
+
+TODAY = _today_local()
 OUT_FILE = DIGEST_DIR / f"{TODAY}.md"
 
 

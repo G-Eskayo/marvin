@@ -366,6 +366,8 @@ def test_missing_helper_format():
 from datetime import datetime, timezone
 from pathlib import Path
 import sys
+import os
+import time
 import pytest
 
 # Add paths for imports
@@ -373,6 +375,31 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 sys.path.insert(0, str(Path(__file__).resolve().parents[3] / "lib"))
 
 import brief_fallback
+
+
+@pytest.fixture
+def tz(monkeypatch):
+	"""Fixture to set and restore TZ environment variable with time.tzset()."""
+	original_tz = os.environ.get("TZ")
+
+	class TZHelper:
+		def set_tz(self, zone: str):
+			monkeypatch.setenv("TZ", zone)
+			time.tzset()
+
+		def clear_tz(self):
+			monkeypatch.delenv("TZ", raising=False)
+			time.tzset()
+
+	helper = TZHelper()
+	yield helper
+
+	# Teardown: restore original
+	if original_tz is not None:
+		monkeypatch.setenv("TZ", original_tz)
+	else:
+		monkeypatch.delenv("TZ", raising=False)
+	time.tzset()
 
 
 class TestDailyDigestGate:
@@ -482,3 +509,89 @@ def test_queue_summary_of_an_empty_pile(tmp_path, monkeypatch):
     (tmp_path / "inbox" / "improvement-queue").mkdir(parents=True)
     monkeypatch.setattr(dd, "CLAUDE_DIR", tmp_path)
     assert dd.improvement_queue_summary() == "(improvement queue is empty)"
+
+
+# ── _today_local tests (ticket #526) ───────────────────────────────────────────
+
+def test_today_local_with_utc_datetime(tz):
+    """_today_local() converts UTC datetime to local timezone."""
+    # Use an instant where UTC and local dates differ: 07:30 UTC on Nov 13, 2026
+    # In UTC-8 (PST), this is Nov 12 23:30 (previous day)
+    utc_instant = datetime(2026, 11, 13, 7, 30, 0, tzinfo=timezone.utc)
+
+    # Set timezone to PST (UTC-8) to make the test zone-independent
+    tz.set_tz("PST8PDT")
+    result = dd._today_local(utc_instant)
+
+    # In PST, 07:30 UTC Nov 13 becomes 23:30 PST Nov 12
+    assert result == "2026-11-12", f"Expected 2026-11-12 but got {result}"
+
+
+def test_today_local_west_of_utc(tz):
+    """_today_local() handles dates west of UTC correctly — UTC and local dates differ."""
+    # Use 07:30 UTC on Nov 13, 2026: in UTC-8 becomes Nov 12 23:30 (previous day)
+    utc_instant = datetime(2026, 11, 13, 7, 30, 0, tzinfo=timezone.utc)
+
+    # Set to PST (UTC-8) — a zone west of UTC
+    tz.set_tz("PST8PDT")
+    result = dd._today_local(utc_instant)
+
+    # Verify UTC-to-local conversion: Nov 13 UTC → Nov 12 PST
+    assert result == "2026-11-12", f"Expected 2026-11-12 (UTC-8 west zone) but got {result}"
+
+
+def test_today_local_east_of_utc(tz):
+    """_today_local() handles dates east of UTC correctly — local date is ahead."""
+    # Use 20:00 UTC on Nov 12, 2026: in UTC+9 becomes 05:00 on Nov 13 (next day)
+    # This tests the opposite case: UTC date < local date
+    utc_instant = datetime(2026, 11, 12, 20, 0, 0, tzinfo=timezone.utc)
+
+    # Set to JST (UTC+9) — a zone east of UTC
+    # Using JST-9 in POSIX format for UTC+9
+    tz.set_tz("JST-9")
+    result = dd._today_local(utc_instant)
+
+    # Verify UTC-to-local conversion: Nov 12 UTC 20:00 → Nov 13 JST 05:00
+    assert result == "2026-11-13", f"Expected 2026-11-13 (UTC+9 east zone) but got {result}"
+
+
+def test_today_local_naive_datetime():
+    """_today_local() works with naive datetimes (assumed to be local)."""
+    naive_dt = datetime(2026, 10, 15, 12, 0, 0)
+    result = dd._today_local(naive_dt)
+    assert result == "2026-10-15"
+
+
+def test_today_local_no_argument():
+    """_today_local() with no argument returns a valid date string."""
+    result = dd._today_local()
+
+    assert isinstance(result, str)
+    assert len(result) == 10
+    assert result.count("-") == 2
+    parts = result.split("-")
+    assert all(p.isdigit() for p in parts)
+    year = int(parts[0])
+    assert 2020 <= year <= 2030
+
+
+def test_today_local_unset_tz_env(tz):
+    """_today_local() respects system timezone when TZ is unset."""
+    # Capture the system's local date once, at a fixed instant, to avoid midnight races
+    # This is the reference: what the system's local timezone should produce
+    now_utc = datetime.now(timezone.utc)
+    expected = now_utc.astimezone().strftime("%Y-%m-%d")
+
+    # First set to a specific zone (PST), then clear TZ to reset to system zone
+    tz.set_tz("PST8PDT")
+    pst_result = dd._today_local()
+
+    # Now clear TZ and verify it reverts to system behavior (no exception)
+    tz.clear_tz()
+    result = dd._today_local(now_utc)
+
+    # The result with TZ unset should match the system's local date
+    # This catches the bug where _today_local would return UTC instead of local time
+    assert result == expected, f"Expected {expected} (system local date) but got {result} when TZ is unset"
+    assert isinstance(result, str)
+    assert len(result) == 10
