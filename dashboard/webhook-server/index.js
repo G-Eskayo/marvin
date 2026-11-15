@@ -7,7 +7,7 @@ import { createMergeQueue, createQueueStore } from './merge_queue.js'
 import { createUnbuiltCache, createFixTicketsCache, createQueueLoader, createBaseLookup, createFollowUpRequester, readMainHealth, readRepairFailures } from './merge_facts.js'
 import { pendingCheckHeads } from '../electron/main/mr_repos.js'
 import { snapshotExec } from './pr_snapshot.js'
-import { createMergeTracker, createInflightStore, takeInterruptedMerges, recordMergeDuration, estimateMergeMs, machineLoad, approveResponder, wantsStream, createMergeLatch, alreadyMergingBody } from './merge_progress.js'
+import { createMergeTracker, createInflightStore, takeInterruptedMerges, recordMergeDuration, estimateMergeMs, machineLoad, approveResponder, wantsStream, createMergeLatch, alreadyMergingBody, inflightBody, PING_INTERVAL_MS } from './merge_progress.js'
 import { resolveDeviceId, peerHosts, isPrimaryHost } from '../electron/main/device_identity.js'
 import { sendFeedback, dropEntirely, handleDenyRequest } from './deny.js'
 import { forwardRefreshPing } from './refresh_relay.js'
@@ -229,6 +229,12 @@ const server = createServer(async (req, res) => {
   if (req.method === 'GET' && req.url.split('?')[0] === '/merge-progress') {
     const want = new URL(req.url, 'http://localhost').searchParams.get('url')
     res.writeHead(200, { 'Content-Type': 'application/json' }).end(JSON.stringify(want ? { merge: liveMerges.get(want) } : { merges: liveMerges.running() }))
+    return
+  }
+
+  // What this webhook is merging right now (for a dashboard to catch up when it reconnects): the list of PR urls.
+  if (req.method === 'GET' && req.url === '/inflight') {
+    res.writeHead(200, { 'Content-Type': 'application/json' }).end(JSON.stringify(inflightBody(inflight)))
     return
   }
 

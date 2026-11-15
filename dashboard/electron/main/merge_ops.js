@@ -105,7 +105,7 @@ export function createMergeOps({ maxMergingMs = 45 * 60_000 } = {}) {
     notice(url, text, now = Date.now()) {
       const o = live(url, now)
       if (!o || o.state !== 'merging') return null
-      ops.set(url, { ...o, notice: text })
+      ops.set(url, { ...o, notice: text, lastEventAt: now })
       return ops.get(url)
     },
     // No machine could take the approval: it is saved (approval_ledger.js) and retried when one comes back. Nothing

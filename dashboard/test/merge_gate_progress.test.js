@@ -14,7 +14,7 @@ import path from 'path'
 import { mergePr, withGateTimeout, execWithGroupTimeout, gateExec, _defaultRunTests, countTestFiles, pytestParallelArgs } from '../webhook-server/merge.js'
 import {
   createMergeTracker, createInflightStore, takeInterruptedMerges, recordMergeDuration, estimateMergeMs,
-  createCountParser, machineLoad, gateExtension, inflightPath, durationsPath, topProcess
+  createCountParser, machineLoad, gateExtension, inflightPath, durationsPath, topProcess, inflightBody, approveResponder, PING_INTERVAL_MS
 } from '../webhook-server/merge_progress.js'
 import { applyMergeEvent, emptyProgress } from '../src/lib/merge_progress.js'
 
@@ -495,6 +495,89 @@ describe('the gate runs the Python suite in parallel when it can', () => {
       // #826: lib/affected_tests.py adds -n auto itself; PYTEST_ADDOPTS would leak into pytest runs that tests start.
       expect(calls.every(([, env]) => (env?.PYTEST_ADDOPTS ?? process.env.PYTEST_ADDOPTS) === process.env.PYTEST_ADDOPTS)).toBe(true)
       expect(events.some(([s, st, d]) => s === 'tests' && st === 'running' && d === detail)).toBe(true)
+    }
+  })
+})
+
+describe('inflightBody and keepalive pings (marvin#1228)', () => {
+  it('inflightBody lists all URLs of in-flight merges', () => {
+    const store = createInflightStore()
+    store.set(PR, { id: 'a1', seq: 1, stage: 'fetching' })
+    store.set('https://github.com/G-Eskayo/marvin/pull/560', { id: 'a2', seq: 2, stage: 'tests' })
+    const body = inflightBody(store)
+    expect(body.urls).toHaveLength(2)
+    expect(body.urls).toContain(PR)
+    expect(body.urls).toContain('https://github.com/G-Eskayo/marvin/pull/560')
+    expect(body.at).toBeDefined()
+  })
+
+  it('inflightBody with null store or no read function returns empty list', () => {
+    expect(inflightBody(null).urls).toEqual([])
+    expect(inflightBody({}).urls).toEqual([])
+  })
+
+  it('approveResponder sends keepalive pings every PING_INTERVAL_MS when streaming', () => {
+    vi.useFakeTimers()
+    try {
+      const res = new EventTarget()
+      res.writeHead = vi.fn()
+      res.write = vi.fn()
+      res.end = vi.fn()
+      res.writableEnded = false
+      res.destroyed = false
+      res.on = vi.fn((event, handler) => {
+        if (event === 'end') res._endHandler = handler
+      })
+      const responder = approveResponder(res, { streaming: true })
+      expect(res.writeHead).toHaveBeenCalledWith(200, expect.objectContaining({ 'Content-Type': 'application/x-ndjson' }))
+      vi.advanceTimersByTime(PING_INTERVAL_MS + 50)
+      expect(res.write).toHaveBeenCalled()
+      const lastCall = res.write.mock.calls[res.write.mock.calls.length - 1][0]
+      expect(lastCall).toMatch(/keepalive/)
+      if (res._endHandler) res._endHandler()
+      expect(res.end).not.toHaveBeenCalled() // cleanup doesn't call end
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it('approveResponder cleans up on close/error/end when streaming', () => {
+    vi.useFakeTimers()
+    try {
+      const res = new EventTarget()
+      res.writeHead = vi.fn()
+      res.write = vi.fn()
+      res.end = vi.fn()
+      res.writableEnded = false
+      res.destroyed = false
+      let closeHandler
+      res.on = vi.fn((event, handler) => {
+        if (event === 'close') closeHandler = handler
+      })
+      const responder = approveResponder(res, { streaming: true })
+      vi.advanceTimersByTime(PING_INTERVAL_MS + 50)
+      const writeCountBefore = res.write.mock.calls.length
+      if (closeHandler) closeHandler()
+      vi.advanceTimersByTime(PING_INTERVAL_MS + 50)
+      const writeCountAfter = res.write.mock.calls.length
+      expect(writeCountAfter).toBe(writeCountBefore) // no more pings after close
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it('approveResponder does not send keepalive pings when not streaming', () => {
+    vi.useFakeTimers()
+    try {
+      const res = new EventTarget()
+      res.writeHead = vi.fn()
+      res.end = vi.fn()
+      res.on = vi.fn()
+      const responder = approveResponder(res, { streaming: false })
+      vi.advanceTimersByTime(PING_INTERVAL_MS + 50)
+      expect(res.writeHead).not.toHaveBeenCalled() // writeHead only on streaming
+    } finally {
+      vi.useRealTimers()
     }
   })
 })

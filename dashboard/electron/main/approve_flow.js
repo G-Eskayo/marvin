@@ -21,8 +21,8 @@ import { approveOnAnyMachine, backupForMemory } from './merge_failover.js'
 // first has dropped its queued copy (merge_failover.js backupForMemory). The ledger and the card say which Mac merged,
 // and flag a test run on another OS (#826 item 5). ready(machine, repo) and forget(machine, prUrl) ask the webhooks.
 //
-// send(prUrl, url, { onEvent }) is approveMrStream's shape; push(url, op) forwards an op change to the card.
-export function createApproveFlow({ mergeOps, ledger, machines, send, push = () => {}, confirm = async () => true, after = () => {}, ready = null, forget = null }) {
+// send(prUrl, url, { onEvent, onNotice }) is approveMrStream's shape; push(url, op) forwards an op change to the card.
+export function createApproveFlow({ mergeOps, ledger, machines, send, push = () => {}, confirm = async () => true, after = () => {}, ready = null, forget = null, catchUp = null }) {
   return async function approve(url, { number = null, head = null, retry = false, machine: pinned } = {}) {
     const pin = pinned !== undefined
     const targets = pin ? machines().filter((m) => m.id === pinned) : machines()
@@ -46,6 +46,14 @@ export function createApproveFlow({ mergeOps, ledger, machines, send, push = () 
 
     // A machine answered: merged or sent back (or its webhook went away mid-merge).
     const answered = ({ result, machine, note = null }) => {
+      if (result?.stillRunning) {
+        // marvin#1228: the stream stalled but /inflight shows it's still running. Try to catch up from that webhook.
+        push(url, mergeOps.notice(url, 'Lost contact with the merge, but it is still running. Reconnecting…'))
+        if (catchUp) {
+          try { catchUp(url, { webhookUrl: machine.url }) } catch { /* catch-up is best-effort */ }
+        }
+        return { ...result, cancelled: false }
+      }
       if (result?.interrupted) {
         ledger.conclude(url, 'interrupted', { machine: machine.id, reason: result.reason })
         push(url, mergeOps.interrupt(url))
@@ -90,14 +98,19 @@ export function createApproveFlow({ mergeOps, ledger, machines, send, push = () 
     }
 
     let outcome
+    const checkInflight = async (webhookUrl) => {
+      const res = await fetch(`${webhookUrl.replace(/\/approve$/, '')}/inflight`)
+      if (!res.ok) throw new Error(`${res.status}`)
+      return res.json()
+    }
     try {
-      outcome = await approveOnAnyMachine(url, targets, { send: (prUrl, target) => send(prUrl, target, { onEvent }), onSwitch })
+      outcome = await approveOnAnyMachine(url, targets, { send: (prUrl, target) => send(prUrl, target, { onEvent, onNotice: onSwitch, checkInflight }), onSwitch })
     } catch (err) {
       const busy = err?.machine
       const later = busy && !pin && ready && forget ? targets.slice(targets.indexOf(busy) + 1) : []
       if (err?.payload?.code === 'MEMORY_PRESSURE' && err.payload.action === 'retry' && later.length) {
         try {
-          outcome = await backupForMemory(url, busy, later, { ready, forget, send: (prUrl, m) => send(prUrl, m.url, { onEvent }), onSwitch })
+          outcome = await backupForMemory(url, busy, later, { ready, forget, send: (prUrl, m) => send(prUrl, m.url, { onEvent, onNotice: onSwitch }), onSwitch })
         } catch (err2) {
           return refused(err2)
         }

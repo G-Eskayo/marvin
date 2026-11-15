@@ -151,3 +151,77 @@ describe('approveResponder (the webhook side)', () => {
     expect(wrote).toBe('ok')
   })
 })
+
+describe('stall detection and reconciliation (marvin#1228)', () => {
+  it('keepalive lines reset the stall timeout', async () => {
+    let stallFired = false
+    const url = await serve(async (req, res) => {
+      const reply = approveResponder(res, { streaming: true })
+      reply.event(ev(1, 'queued', 'running')); await tick(10)
+      res.write(JSON.stringify({ type: 'keepalive' }) + '\n'); await tick(10)
+      res.write(JSON.stringify({ type: 'keepalive' }) + '\n'); await tick(10)
+      res.write(JSON.stringify({ type: 'keepalive' }) + '\n'); await tick(10)
+      reply.result(200, { merged: true })
+    })
+    const checkInflight = async () => { stallFired = true; return { urls: [PR] } }
+    const seen = []
+    const r = await approveMrStream(PR, url, { onEvent: (e) => seen.push(e.seq), checkInflight, stallMs: 25 })
+    expect(r.merged).toBe(true)
+    expect(stallFired).toBe(false) // keepalives kept it from firing
+  })
+
+  it('when stall timeout fires, checkInflight is called; if the PR is still in /inflight, onNotice is called', async () => {
+    let called = false
+    const url = await serve(async (req, res) => {
+      const reply = approveResponder(res, { streaming: true })
+      reply.event(ev(1, 'queued', 'running')); await tick()
+      // No more events; let the stall timeout fire
+      await new Promise((r) => setTimeout(r, 100))
+      reply.result(200, { merged: true })
+    })
+    const checkInflight = async () => { called = true; return { urls: [PR] } }
+    const notices = []
+    const r = await approveMrStream(PR, url, { checkInflight, onNotice: (n) => notices.push(n), stallMs: 50 })
+    expect(r.merged).toBe(true)
+    expect(called).toBe(true)
+    expect(notices).toContain('Merge still running on the webhook')
+  })
+
+  it('if checkInflight shows the PR is gone, onNotice is not called', async () => {
+    const url = await serve(async (req, res) => {
+      const reply = approveResponder(res, { streaming: true })
+      reply.event(ev(1, 'queued', 'running')); await tick()
+      await new Promise((r) => setTimeout(r, 100))
+      reply.result(200, { merged: true })
+    })
+    const checkInflight = async () => ({ urls: [] }) // PR is not in flight anymore
+    const notices = []
+    const r = await approveMrStream(PR, url, { checkInflight, onNotice: (n) => notices.push(n), stallMs: 50 })
+    expect(r.merged).toBe(true)
+    expect(notices).toEqual([])
+  })
+
+  it('checkInflight throwing does not break the stream', async () => {
+    const url = await serve(async (req, res) => {
+      const reply = approveResponder(res, { streaming: true })
+      reply.event(ev(1, 'queued', 'running')); await tick()
+      await new Promise((r) => setTimeout(r, 100))
+      reply.result(200, { merged: true })
+    })
+    const checkInflight = async () => { throw new Error('unreachable') }
+    const r = await approveMrStream(PR, url, { checkInflight, stallMs: 50 })
+    expect(r.merged).toBe(true)
+  })
+
+  it('onNotice that throws does not break the stream', async () => {
+    const url = await serve(async (req, res) => {
+      const reply = approveResponder(res, { streaming: true })
+      reply.event(ev(1, 'queued', 'running')); await tick()
+      await new Promise((r) => setTimeout(r, 100))
+      reply.result(200, { merged: true })
+    })
+    const checkInflight = async () => ({ urls: [PR] })
+    const r = await approveMrStream(PR, url, { checkInflight, onNotice: () => { throw new Error('boom') }, stallMs: 50 })
+    expect(r.merged).toBe(true)
+  })
+})

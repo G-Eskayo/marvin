@@ -4,6 +4,8 @@ import path from 'path'
 import { execFileSync } from 'child_process'
 import { emptyProgress, applyMergeEvent, MERGE_STAGES, machineLabel } from '../src/lib/merge_progress.js'
 
+export const PING_INTERVAL_MS = 10_000
+
 // The merge gate's side of marvin#568: what each merge is doing, told as it happens.
 //   - createMergeTracker: one per Approve. Numbers each stage event, folds it with the same reducer the dashboard
 //     uses, sends it on (the approve response's stream and the local refresh ping), logs each change to
@@ -57,6 +59,15 @@ export function createInflightStore(file = inflightPath()) {
       try { writeJsonAtomic(file, all) } catch { /* as above */ }
     },
     read
+  }
+}
+
+// Pure helper: build the response body for /inflight, listing all PRs merging now.
+export function inflightBody(inflight) {
+  const all = inflight?.read?.() ?? {}
+  return {
+    urls: Object.keys(all).filter((u) => typeof u === 'string' && u.startsWith('https://github.com/')),
+    at: new Date().toISOString()
   }
 }
 
@@ -307,11 +318,24 @@ export function approveResponder(res, { streaming }) {
     res.on?.('error', () => {}) // the reader went away: the merge carries on
   }
   const line = (v) => JSON.stringify(v) + '\n'
+  let pingTimer = null
+  if (streaming) {
+    pingTimer = setInterval(() => {
+      if (!res.writableEnded && !res.destroyed) res.write(line({ type: 'keepalive' }))
+    }, PING_INTERVAL_MS)
+  }
+  const cleanup = () => { if (pingTimer) clearInterval(pingTimer) }
+  if (streaming) {
+    res.on?.('end', cleanup)
+    res.on?.('close', cleanup)
+    res.on?.('error', cleanup)
+  }
   return {
     event(ev) {
       if (streaming && !res.writableEnded && !res.destroyed) res.write(line({ type: 'progress', event: ev }))
     },
     result(status, body) {
+      cleanup()
       if (streaming) {
         if (!res.writableEnded) res.end(line({ type: 'result', status, body }))
       } else {

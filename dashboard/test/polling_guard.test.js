@@ -42,11 +42,18 @@ export const ALLOWLIST = {
   'electron/main/usage_report.js': { ttl: [1, 'read-through cache bound (60 s) on a local scan + ssh; no GitHub, no timer'] },
   // Servers.
   'webhook-server/gh_watch.js': { interval: [2, 'THE change-detector (one ETag request per repo per ~20 s, 304 is free) and the check watch beside it (#557)'] },
-  'webhook-server/index.js': { interval: [3, `starts the one gh_watch change-detector tick, (marvin#231) ${CHECK_WATCH} for queued PRs only: nothing queued, no requests, and (marvin#954, primary only) ${CHECK_WATCH} over the box feed's pending PRs`] },
+  'webhook-server/index.js': { interval: [4, `starts the one gh_watch change-detector tick, (marvin#231) ${CHECK_WATCH} for queued PRs only: nothing queued, no requests, (marvin#954, primary only) ${CHECK_WATCH} over the box feed's pending PRs, and when streaming, the keepalive ping via approveResponder (marvin#1228)`] },
+  'webhook-server/merge_progress.js': { interval: [1, 'keepalive ping in approveResponder when streaming to dashboard (marvin#1228)'] },
   'webhook-server/failure.js': { 'timeout-loop': [1, 'withRetry: bounded exponential backoff on a failed call, not a poll for change'] },
   'webhook-server/merge.js': { 'timeout-loop': [1, 'mergeableNow: GitHub computes mergeable lazily with no event; bounded 6 x 5 s'] },
   'mobile-backend/dashboard_gh_api.js': { interval: [1, `starts ${CHECK_WATCH}`] },
-  'mobile-backend/pending_actions.js': { 'timeout-loop': [1, 'waits on its own local store for an approval, bounded by the hook timeout; no network'] }
+  'mobile-backend/pending_actions.js': { 'timeout-loop': [1, 'waits on its own local store for an approval, bounded by the hook timeout; no network'] },
+  // Evidence scripts: test harnesses calling approveResponder which starts the keepalive ping (marvin#1228).
+  'scripts/gate_low_disk_evidence.mjs': { interval: [1, 'test harness: calls approveResponder for merge evidence'] },
+  'scripts/local_first_evidence.mjs': { interval: [1, 'test harness: calls approveResponder for merge evidence'] },
+  'scripts/merge_failover_evidence.mjs': { interval: [1, 'test harness: calls approveResponder for merge evidence'] },
+  'scripts/merge_memory_evidence.mjs': { interval: [2, 'test harness: calls approveResponder twice for merge evidence'] },
+  'scripts/merge_progress_evidence.mjs': { interval: [1, 'test harness: calls approveResponder for merge evidence'] }
 }
 
 const ROOT = path.resolve(__dirname, '..')

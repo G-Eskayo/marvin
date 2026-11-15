@@ -33,6 +33,7 @@ import { createApprovalLedger } from './approval_ledger.js'
 import { createApprovalRetry } from './approval_retry.js'
 import { createApproveFlow } from './approve_flow.js'
 import { mergeMachines, askReady, askForget } from './merge_failover.js'
+import { catchUpOne } from './merge_catchup.js'
 import { readPrefs } from './prefs.js'
 import { guardApprove } from './approve_guard.js'
 import { recordRefusal } from '../../webhook-server/refusal_log.js'
@@ -93,7 +94,9 @@ const approveFlow = createApproveFlow({
     if (result?.merged) mrActions.merged(url)
     else mrActions.reengaged(url)
     clearReworkCache()
-  }
+  },
+  // marvin#1228: when a stream stalls but /inflight shows it's still merging, catch up on its progress from the webhook.
+  catchUp: (url, { webhookUrl }) => catchUpOne(url, { webhookUrl, mergeOps, push: (u, op) => pushMergeOp(u, op) })
 })
 const approvalRetry = createApprovalRetry({
   ledger: approvalLedger,

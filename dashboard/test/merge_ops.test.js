@@ -305,3 +305,20 @@ describe('failover notice and queued approvals', () => {
     expect(ops.get(URL).state).toBe('merging')
   })
 })
+
+describe('notice() refreshes lastEventAt to keep the timeout from firing (marvin#1228)', () => {
+  it('notice() updates lastEventAt so a long merge that keeps noticing is not given up on', () => {
+    const ops = createMergeOps({ maxMergingMs: 1000 })
+    ops.start(URL, 0)
+    ops.notice(URL, 'switching machines', 900)
+    ops.notice(URL, 'still running', 1800)
+    expect(ops.get(URL, 2500).state).toBe('merging')
+    expect(ops.get(URL, 2900).state).toBe('error')
+  })
+
+  it('notice() on a PR that is not merging changes nothing and does not crash', () => {
+    const ops = createMergeOps()
+    expect(ops.notice(URL, 'x')).toBe(null)
+    expect(ops.get(URL)).toEqual({ state: 'idle' })
+  })
+})
