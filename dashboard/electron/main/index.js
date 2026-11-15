@@ -390,7 +390,7 @@ function createWindow() {
   })
 
   mainWindow.on('ready-to-show', () => {
-    mainWindow.show()
+    mainWindow?.show()
   })
   // Closed while the app keeps running (macOS; a `marvin show` window still open, #715): every later
   // `mainWindow?.webContents.send` must find no window, not a destroyed one ("Object has been destroyed").

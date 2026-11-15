@@ -1,0 +1,4 @@
+1. Add `dashboard/test/main_window_lifecycle.test.js` with the 5 source-text assertions above, following the `polling_guard.test.js` / `github_feed.test.js` pattern (`readFileSync` the real `electron/main/index.js`, regex/`indexOf` assertions — no Electron mocking, no new abstraction).
+2. Run the full test suite (dashboard + Python) per the "full suites before a hand-merge" rule, confirm green.
+3. Open a PR that states plainly in its description: the fix in #831 was already shipped by PR #1029 (#715 slice 1); this PR only adds the missing regression test and closes #831 ("Closes #831"), with the file/line evidence above so the owner can verify without re-deriving it.
+4. No screenshots needed — no visible/UI change.
