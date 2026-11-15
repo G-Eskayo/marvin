@@ -301,3 +301,22 @@ def test_status_file_is_written_private_and_atomic(tmp_path):
     p = tmp_path / "logs" / "accounts-status.json"
     ac.write_status({"accounts": []}, p)
     assert oct(p.stat().st_mode & 0o777) == "0o600" and sorted(x.name for x in p.parent.iterdir()) == ["accounts-status.json"]
+
+
+def test_status_file_is_stamped_with_tolerance(tmp_path):
+    import stamped
+    p = tmp_path / "logs" / "accounts-status.json"
+    status = {"accounts": [{"id": "github-token", "state": "works"}]}
+    ac.write_status(status, p)
+    written = json.loads(p.read_text())
+    assert "tolerance_s" in written and written["tolerance_s"] == ac.ACCOUNTS_TOLERANCE_S
+    assert "generated_at" in written and "alive_at" in written
+    # Verify it's readable by stamped.read() — use the stamped generated_at time as "now" to avoid test time-dependency
+    generated_at = datetime.fromisoformat(written["generated_at"].replace('Z', '+00:00'))
+    c = stamped.read(p, now=generated_at)
+    assert not c.missing and not c.stale and c.value == written
+
+
+def test_accounts_tolerance_matches_health_checks(tmp_path):
+    import health_checks
+    assert ac.ACCOUNTS_TOLERANCE_S == health_checks.STATUS_TOLERANCE_S

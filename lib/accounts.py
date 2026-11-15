@@ -39,6 +39,7 @@ WARN_DAYS_ESTIMATED = 30          # a setup-token's expiry is estimated from the
 SETUP_TOKEN_LIFE_DAYS = 365       # `claude setup-token` tokens last about a year
 CLOCK_SKEW_NOTE = timedelta(minutes=5)
 HTTP_TIMEOUT = 10
+ACCOUNTS_TOLERANCE_S = 20 * 60    # matching health_checks.py's STATUS_TOLERANCE_S (marvin#1308)
 STATES = ("works", "expiring", "failed", "unreachable", "not_set_up", "not_needed")
 ALERTABLE = ("expiring", "failed")
 
@@ -475,6 +476,9 @@ def sweep(ctx: Ctx | None = None, run=_run) -> dict:
 
 
 def write_status(status: dict, path: Path = STATUS_PATH) -> None:
+    import stamped
+    # Add the stamp (which Mac made it, how old it may get) — marvin#1308
+    status = stamped.stamp(status, tolerance_s=ACCOUNTS_TOLERANCE_S)
     path.parent.mkdir(parents=True, exist_ok=True)
     tmp = path.with_name(path.name + f".{os.getpid()}.tmp")
     fd = os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)

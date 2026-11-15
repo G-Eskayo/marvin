@@ -10,6 +10,32 @@ describe('readAccountsStatus: the saved view, never a crash', () => {
     for (const bad of ['{trunc', 'null', '{"accounts": "x"}', '[]']) expect(readAccountsStatus('/x', () => bad).problem).toBe('unreadable')
     expect(readAccountsStatus('/x', () => statusText([row('tailscale'), null, { id: 5 }])).accounts).toHaveLength(1)
   })
+  it('computes ageS and stale from generated_at and tolerance_s, not hardcoded null/false', () => {
+    const now = Date.now()
+    const secondsAgo = 30
+    const isoTime = new Date(now - secondsAgo * 1000).toISOString()
+    const stamped = JSON.stringify({ generated_at: isoTime, by: 'test', accounts: [row('test')], tolerance_s: 60 })
+    const result = readAccountsStatus('/x', () => stamped)
+    expect(result.copy.ageS).toBe(secondsAgo)
+    expect(result.copy.stale).toBe(false)  // 30 sec < 60 sec tolerance
+    const staleText = JSON.stringify({ generated_at: new Date(now - 100 * 1000).toISOString(), by: 'test', accounts: [row('test')], tolerance_s: 60 })
+    const staleResult = readAccountsStatus('/x', () => staleText)
+    expect(staleResult.copy.ageS).toBe(100)
+    expect(staleResult.copy.stale).toBe(true)  // 100 sec > 60 sec tolerance
+  })
+  it('legacy files without tolerance_s use ACCOUNTS_TOLERANCE_S (1200), not hardcoded 600', () => {
+    const now = Date.now()
+    // 700 sec old: stale with old hardcoded 600 tolerance, fresh with ACCOUNTS_TOLERANCE_S (1200)
+    const isoTime = new Date(now - 700 * 1000).toISOString()
+    const legacyText = JSON.stringify({ generated_at: isoTime, by: 'test', accounts: [row('test')] })
+    const result = readAccountsStatus('/x', () => legacyText)
+    expect(result.copy.ageS).toBe(700)
+    expect(result.copy.stale).toBe(false)  // 700 sec < 1200 sec tolerance (with ACCOUNTS_TOLERANCE_S)
+    // Very old file (1500 sec) is stale with the new tolerance
+    const veryOldText = JSON.stringify({ generated_at: new Date(now - 1500 * 1000).toISOString(), by: 'test', accounts: [row('test')] })
+    const oldResult = readAccountsStatus('/x', () => veryOldText)
+    expect(oldResult.copy.stale).toBe(true)  // 1500 sec > 1200 sec tolerance
+  })
 })
 
 describe('mergeLocal: a fresh check of this machine replaces only its rows', () => {
@@ -73,5 +99,31 @@ describe('createAccounts', () => {
     const v = await bad.list({ fresh: true })
     expect(v.accounts).toHaveLength(2)
     expect(v.freshProblem).toBe('timeout')
+  })
+  it('list with fresh=false and peers reads the producer copy instead of the stale local file', async () => {
+    const freshResult = { value: { generated_at: '2026-10-30T12:00:00+00:00', by: 'mac-mini-1', accounts: [row('claude-setup-token', 'mac-mini-1')] }, ageS: 0, stale: false, from: 'mac-mini-1' }
+    const peers = { read: async (name, path, opts) => { return { ...freshResult, value: { ...freshResult.value, accounts: [{ ...freshResult.value.accounts[0], state: 'expiring' }] } } } }
+    const a = createAccounts({ machine: () => 'mac-mini-1', read: () => saved, peers, execFile: async () => ({ stdout: '{}' }) })
+    const result = await a.list({ fresh: false })
+    // Should have fetched from peers, showing 'expiring' state, not the saved 'works' state
+    expect(result.accounts[0].state).toBe('expiring')
+    expect(result.copy.from).toBe('mac-mini-1')
+  })
+  it('list with fresh=true and peers uses readAccountsStatusFresh for the saved view, not stale local read', async () => {
+    // This ensures fresh=true doesn't ignore peers and read a stale local file
+    const producerSavedView = { value: { generated_at: '2026-10-30T12:00:00+00:00', by: 'mac-mini-1', accounts: [row('tailscale', 'mac-mini-2012', { state: 'failed' })] }, ageS: 5, stale: false, from: 'mac-mini-1' }
+    const freshCheckResult = { accounts: [row('tailscale', 'whatever', { state: 'works' })] }
+    const peers = { read: async (name, path, opts) => producerSavedView }
+    const a = createAccounts({
+      machine: () => 'mac-mini-1',
+      read: () => saved,
+      peers,
+      execFile: async () => ({ stdout: JSON.stringify(freshCheckResult) })
+    })
+    const result = await a.list({ fresh: true })
+    // Should have merged fresh check into producer's saved view (which had mac-mini-2012), not just the local file
+    expect(result.accounts).toHaveLength(2)  // both machines: fresh mac-mini-1 and producer's mac-mini-2012
+    expect(result.accounts.find((r) => r.machine === 'mac-mini-1').state).toBe('works')
+    expect(result.accounts.find((r) => r.machine === 'mac-mini-2012').state).toBe('failed')
   })
 })

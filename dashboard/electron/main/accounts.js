@@ -1,6 +1,7 @@
 import { readFileSync } from 'fs'
 import { homedir } from 'os'
 import path from 'path'
+import { readStamped } from './stamped.js'
 
 // Vitals > Accounts (marvin#974, the card is #640): every credential MARVIN depends on, per machine, from
 // lib/accounts.py. The Mini's health sweep (every 15 min) writes accounts-status.json for every machine; on open the
@@ -10,6 +11,7 @@ import path from 'path'
 
 const HOME = homedir()
 export const ACCOUNTS_STATUS_PATH = path.join(HOME, '.claude', 'logs', 'accounts-status.json')
+export const ACCOUNTS_TOLERANCE_S = 20 * 60  // matching lib/accounts.py's ACCOUNTS_TOLERANCE_S (marvin#1308)
 const PY = path.join(HOME, '.agents', 'venv', 'bin', 'python')
 const ACCOUNTS_PY = path.join(HOME, '.agents', 'lib', 'accounts.py')
 const HELPER_TAB = path.join(HOME, '.agents', 'bin', 'helper-tab')
@@ -35,12 +37,35 @@ const TITLES = {
 export function readAccountsStatus(file = ACCOUNTS_STATUS_PATH, read = (p) => readFileSync(p, 'utf-8')) {
   try {
     const d = JSON.parse(read(file))
-    if (!d || !Array.isArray(d.accounts)) return { generatedAt: null, by: null, accounts: [], problem: 'unreadable' }
-    return { generatedAt: d.generated_at || null, by: d.by || null, accounts: d.accounts.filter((r) => r && typeof r.id === 'string'), problem: null }
+    if (!d || !Array.isArray(d.accounts)) return { generatedAt: null, by: null, accounts: [], problem: 'unreadable', copy: null }
+    const now = Date.now()
+    const tol = (typeof d.tolerance_s === 'number' && d.tolerance_s > 0) ? d.tolerance_s : ACCOUNTS_TOLERANCE_S
+    let generatedMs = null
+    if (typeof d.generated_at === 'string') {
+      const iso = /[zZ]|[+-]\d\d:?\d\d$/.test(d.generated_at) ? d.generated_at : `${d.generated_at}Z`
+      const t = Date.parse(iso)
+      generatedMs = Number.isNaN(t) ? null : t
+    }
+    let ageS = null
+    let stale = false
+    if (generatedMs != null) {
+      ageS = Math.max(0, Math.round((now - generatedMs) / 1000))
+      stale = ageS > tol
+    }
+    return { generatedAt: d.generated_at || null, by: d.by || null, accounts: d.accounts.filter((r) => r && typeof r.id === 'string'), problem: null, copy: copyMeta({ host: d.host, ageS, stale, legacy: !d.host, toleranceS: d.tolerance_s }) }
   } catch (err) {
-    return { generatedAt: null, by: null, accounts: [], problem: err?.code === 'ENOENT' ? 'missing' : 'unreadable' }
+    return { generatedAt: null, by: null, accounts: [], problem: err?.code === 'ENOENT' ? 'missing' : 'unreadable', copy: null }
   }
 }
+
+// The producer's read (marvin#1223): when this Mac's own copy has gone stale, fetch the producer's live copy via peer_copy.js
+export async function readAccountsStatusFresh(peers, statusPath = ACCOUNTS_STATUS_PATH) {
+  const c = await peers.read('accounts-status', statusPath, { defaultToleranceS: ACCOUNTS_TOLERANCE_S })
+  if (!c || !Array.isArray(c.value?.accounts)) return { generatedAt: null, by: null, accounts: [], problem: c?.missing ? 'missing' : 'unreadable', copy: null }
+  return { generatedAt: c.value.generated_at || null, by: c.value.by || null, accounts: c.value.accounts.filter((r) => r && typeof r.id === 'string'), problem: null, copy: { ...copyMeta(c), from: c.from, producerUnreachable: !!c.producerUnreachable } }
+}
+
+const copyMeta = (c) => ({ host: c.host || null, ageS: c.ageS, stale: !!c.stale, legacy: !!c.legacy, toleranceS: c.toleranceS ?? null })
 
 // The saved view with this machine's rows replaced by a fresh local check (rows of other machines are kept).
 export function mergeLocal(saved, fresh, machine) {
@@ -66,11 +91,17 @@ export function renewPlan(row, thisMachine) {
   }
 }
 
-export function createAccounts({ machine = () => null, execFile, statusPath = ACCOUNTS_STATUS_PATH, read } = {}) {
+export function createAccounts({ machine = () => null, execFile, peers, statusPath = ACCOUNTS_STATUS_PATH, read } = {}) {
   return {
     // fresh=false: the saved view at once. fresh=true: this machine checked now (a few seconds), merged in.
     async list({ fresh = false } = {}) {
-      const saved = { ...readAccountsStatus(statusPath, read), thisMachine: machine() }   // the card marks "this machine"
+      let saved
+      if (peers) {
+        saved = await readAccountsStatusFresh(peers, statusPath)
+      } else {
+        saved = readAccountsStatus(statusPath, read)
+      }
+      saved = { ...saved, thisMachine: machine() }   // the card marks "this machine"
       if (!fresh) return saved
       try {
         const { stdout } = await execFile(PY, [ACCOUNTS_PY, 'check', '--json'], { timeout: 90_000 })

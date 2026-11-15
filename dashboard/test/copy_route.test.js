@@ -11,6 +11,7 @@ import { copyRoute, COPY_NAMES } from '../webhook-server/copy_route.js'
 const dir = mkdtempSync(join(tmpdir(), 'copy-'))
 const paths = Object.fromEntries(COPY_NAMES.map((n) => [n, join(dir, `${n}.json`)]))
 writeFileSync(paths['health-status'], JSON.stringify({ host: 'mac-mini-1', generated_at: '2026-11-10T12:00:00Z', tolerance_s: 1200, checks: [] }))
+writeFileSync(paths['accounts-status'], JSON.stringify({ host: 'mac-mini-1', generated_at: '2026-11-10T12:00:00Z', tolerance_s: 1200, accounts: [] }))
 
 function call({ method = 'GET', url, ip = '100.101.1.2', maxBytes } = {}) {
   const res = { status: null, headers: null, body: null, writeHead(s, h) { this.status = s; this.headers = h; return this }, end(b) { this.body = b; return this } }
