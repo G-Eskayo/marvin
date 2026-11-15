@@ -1856,3 +1856,42 @@ def test_the_box_takes_one_ticket_per_scan_when_parallel_dispatch_is_off(monkeyp
     monkeypatch.setattr(tp, "_local_busy", lambda: False)
     tp.main()
     assert len(starts) <= 1
+
+
+# ── evidence lookup should work correctly across multi-project scenarios ──
+
+def test_a_pr_that_closes_multiple_tickets_excludes_all_of_them(monkeypatch):
+    """One PR closing multiple tickets: PR closes #7 and #8, control #9 ready-for-agent.
+    Only #9 stays ready; #7 and #8 are excluded by the open PR."""
+    _stub_issues(monkeypatch, [
+        _issue(7, "2026-01-01T00:00:00Z", labels=["ready-for-agent"]),
+        _issue(8, "2026-01-02T00:00:00Z", labels=["ready-for-agent"]),
+        _issue(9, "2026-01-03T00:00:00Z", labels=["ready-for-agent"]),
+    ])
+    pr_facts = {
+        "prs": [{"number": 100, "body": "Closes #7\nCloses #8", "headRefName": "fix/both"}],
+        "branches": [], "rescue": [], "commits": []
+    }
+    monkeypatch.setattr(tp, "_evidence_facts", lambda repo: pr_facts)
+    result = tp._unclaimed_ready_tickets()
+    assert [i["number"] for i in result] == [9]
+
+
+def test_a_pr_closed_without_merging_makes_ticket_ready_again(monkeypatch):
+    """PR that closes a ticket is later closed without merging: ticket ready again on next read.
+    Proves no caching of old exclusion state."""
+    issues = [_issue(7, "2026-01-01T00:00:00Z", labels=["ready-for-agent"])]
+    _stub_issues(monkeypatch, issues)
+
+    pr_facts_with_open_pr = {
+        "prs": [{"number": 100, "body": "Closes #7", "headRefName": "fix/7"}],
+        "branches": [], "rescue": [], "commits": []
+    }
+    monkeypatch.setattr(tp, "_evidence_facts", lambda repo: pr_facts_with_open_pr)
+    result_first = tp._unclaimed_ready_tickets()
+    assert [i["number"] for i in result_first] == []
+
+    pr_facts_without_pr = {"prs": [], "branches": [], "rescue": [], "commits": []}
+    monkeypatch.setattr(tp, "_evidence_facts", lambda repo: pr_facts_without_pr)
+    result_second = tp._unclaimed_ready_tickets()
+    assert [i["number"] for i in result_second] == [7]
