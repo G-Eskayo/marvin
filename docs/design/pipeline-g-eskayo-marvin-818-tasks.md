@@ -1,0 +1,12 @@
+1. In `dashboard/webhook-server/chat_helpers.js`: add `export const CRASH_EXPIRE_MS = 24 * 60 * 60 * 1000` and `export function crashExpired(h, now)`; filter it into `listHelpers()` (skip pushing an expired-crashed `h`). Covers Tests 1-5.
+2. Write/run Tests 1-5 against the unmodified file first (confirm they fail), then make them pass with step 1.
+3. In `dashboard/src/components/ChatHelpers.jsx`: add `export const HOME_CAP = 10`, `export const DISMISSED_KEY = 'chatHelpers.dismissed.v1'`, and pure exports `dismissKey(h)`, `visibleHelpers(helpers, dismissed, cap)`, `pruneDismissed(dismissed, helpers)`.
+4. Write/run Tests 6-10 against step 3's pure functions.
+5. Update `ChatHelpersView` to accept `dismissed`/`onDismiss` props, render `visibleHelpers(data?.helpers, dismissed)` instead of the raw array, and pass `onDismiss={h.status === 'crashed' && onDismiss ? () => onDismiss(dismissKey(h)) : undefined}` to each `AgentCard`. Adjust the early-return guard to check the post-filter list, not the raw one.
+6. Write/run Tests 11, 13 (and re-run the existing chat_helpers.test.jsx suite) against step 5.
+7. In `dashboard/src/components/AgentsPanel.jsx`: restructure `AgentCard`'s top-level `<button>` into a flex row with a sibling optional `Dismiss` `<button>` (no nested interactive elements), gated on `onDismiss` being passed, with `e.stopPropagation()` so it never toggles run-history or fires `onOpenTicket`/`onOpenMr`.
+8. Run Test 12 (`render_smoke.test.jsx`) to confirm no regression on the Health tab's unrelated `AgentsPanel` usage.
+9. In the default-exported `ChatHelpers`: read `dismissed` from `readSaved(window.localStorage, DISMISSED_KEY)` on mount; on each `data` refresh, run `pruneDismissed` and persist via `writeSaved` if it changed; add a `dismiss(key)` handler that merges the key in and persists; pass `dismissed`/`dismiss` down to `ChatHelpersView`.
+10. Run the full `dashboard` test suite (`npm test` in `dashboard/`) to confirm no regressions elsewhere.
+11. Manually exercise the dashboard (fixture/dev-mode path, as `#807`'s plan did) with a seeded 24h+-old crashed helper doc and a fresh one, confirm the old one is gone and the fresh one shows a working Dismiss button, then take and pin screenshots at 900px and 1440px per acceptance criterion 3, via `marvin-show`.
+12. Open the PR with `Closes G-Eskayo/marvin#818`.

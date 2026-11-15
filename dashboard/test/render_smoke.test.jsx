@@ -70,6 +70,33 @@ describe('AgentsPanel', () => {
   })
 })
 
+import { AgentCard } from '../src/components/AgentsPanel.jsx'
+
+describe('AgentCard with dismiss button (Test 12)', () => {
+  const now = Date.now()
+  const agent = {
+    id: 'helper-1',
+    label: 'Test Helper',
+    kind: 'helper',
+    status: 'crashed',
+    schedule: 'from chat',
+    machine: 'macbook-pro',
+    job: { label: 'Test', status: 'failed', current: null, last: { status: 'failed', finishedAt: new Date(now - 3600000).toISOString(), durationS: 10, summary: '', error: 'error' }, runs: [] }
+  }
+
+  it('renders dismiss button when onDismiss is provided', () => {
+    const onDismiss = () => {}
+
+    // With onDismiss, button renders
+    let html = renderToStaticMarkup(<AgentCard agent={agent} now={now} onDismiss={onDismiss} />)
+    expect(html).toContain('Dismiss')
+
+    // Without onDismiss, no button
+    html = renderToStaticMarkup(<AgentCard agent={agent} now={now} />)
+    expect(html).not.toContain('Dismiss')
+  })
+})
+
 import CompletedView from '../src/components/CompletedView.jsx'
 
 describe('CompletedView', () => {

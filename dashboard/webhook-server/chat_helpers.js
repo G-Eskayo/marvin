@@ -9,6 +9,7 @@ import path from 'path'
 // mid-run sends no stop event and only that Mac can see its transcript go quiet.
 export const HELPERS_DIR = path.join(os.homedir(), '.claude', 'logs', 'jobs')
 export const STALE_MS = 15 * 60 * 1000 // must match chat_helpers.STALE_S
+export const CRASH_EXPIRE_MS = 24 * 60 * 60 * 1000 // 24 hours
 const PREFIX = 'helper-'
 
 const ms = (iso) => {
@@ -28,6 +29,17 @@ const cleanLinks = (links) =>
   (Array.isArray(links) ? links : [])
     .filter((l) => l && (l.kind === 'ticket' || l.kind === 'pr') && /^[\w.-]+\/[\w.-]+$/.test(l.repo || '') && Number.isInteger(l.number))
     .map((l) => ({ kind: l.kind, repo: l.repo, number: l.number }))
+
+// Check if a crashed helper is old enough to be expired (> 24 hours since it crashed).
+export function crashExpired(h, now) {
+  if (h.status !== 'crashed') return false
+  // Use crash time (finishedAt) instead of start time. For crashed helpers, job.last.finishedAt
+  // is the time it stopped responding, not when it started.
+  const crashTimeStr = h.job?.last?.finishedAt || h.startedAt
+  const crashMs = ms(crashTimeStr)
+  if (!Number.isFinite(crashMs)) return false
+  return now - crashMs > CRASH_EXPIRE_MS
+}
 
 // One helper as the agent rows render it (AgentsPanel's AgentCard: label, status, current, last, runs).
 export function describeHelper(doc, { now = Date.now(), mtime = () => null } = {}) {
@@ -103,7 +115,7 @@ export function listHelpers({ dir = HELPERS_DIR, now = Date.now() } = {}) {
   for (const n of names) {
     try {
       const h = describeHelper(JSON.parse(readFileSync(path.join(dir, n), 'utf-8')), { now, mtime })
-      if (h) out.push(h)
+      if (h && !crashExpired(h, now)) out.push(h)
     } catch {
       // a half-written or corrupt log is skipped, not fatal
     }

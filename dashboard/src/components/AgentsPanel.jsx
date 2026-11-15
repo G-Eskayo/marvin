@@ -69,45 +69,56 @@ function RunHistory({ runs, now }) {
   )
 }
 
-export function AgentCard({ agent, now, onOpenTicket, onOpenMr }) {
+export function AgentCard({ agent, now, onOpenTicket, onOpenMr, onDismiss }) {
   const [open, setOpen] = useState(false)
   const job = agent.job
   const bad = agent.status === 'failed' || agent.status === 'crashed' || agent.status === 'stopped'
   return (
     <div className={`rounded-lg border bg-neutral-900 p-4 ${bad ? 'border-red-900' : 'border-neutral-800'}`}>
-      <button onClick={() => job && setOpen(!open)} className={`flex w-full items-start gap-3 text-left ${job ? '' : 'cursor-default'}`}>
-        <span className={`mt-1.5 h-2.5 w-2.5 shrink-0 rounded-full ${DOT[agent.status] || DOT.never}`} />
-        <div className="min-w-0 flex-1">
-          <p className="text-sm font-medium text-white">
-            {agent.label}
-            <span className={`ml-2 text-xs font-normal ${bad ? 'text-red-400' : 'text-neutral-500'}`}>{STATUS_TEXT[agent.status]}</span>
-            <span className="ml-2 text-[11px] font-normal text-neutral-600">
-              {KIND_TEXT[agent.kind]} · {agent.schedule}
-              {agent.pid ? ` · pid ${agent.pid}` : ''}
-            </span>
-          </p>
-          {job?.current && (
-            <p className="mt-0.5 text-sm text-blue-300">
-              {job.current.step}
-              {job.current.detail ? <span className="text-neutral-400"> — {job.current.detail}</span> : null}
-              <span className="ml-2 text-xs text-neutral-500">{dur(Math.max(0, Math.round((now - Date.parse(job.current.startedAt)) / 1000)))} so far</span>
+      <div className="flex items-start gap-2">
+        <button onClick={() => job && setOpen(!open)} className={`flex flex-1 items-start gap-3 text-left ${job ? '' : 'cursor-default'}`}>
+          <span className={`mt-1.5 h-2.5 w-2.5 shrink-0 rounded-full ${DOT[agent.status] || DOT.never}`} />
+          <div className="min-w-0 flex-1">
+            <p className="text-sm font-medium text-white">
+              {agent.label}
+              <span className={`ml-2 text-xs font-normal ${bad ? 'text-red-400' : 'text-neutral-500'}`}>{STATUS_TEXT[agent.status]}</span>
+              <span className="ml-2 text-[11px] font-normal text-neutral-600">
+                {KIND_TEXT[agent.kind]} · {agent.schedule}
+                {agent.pid ? ` · pid ${agent.pid}` : ''}
+              </span>
             </p>
-          )}
-          {job?.last && (
-            <p className={`mt-0.5 text-xs ${job.last.status === 'failed' ? 'text-red-400' : 'text-neutral-500'}`}>
-              Last run {ago(job.last.finishedAt, now)}, took {dur(job.last.durationS)}
-              {job.last.summary ? ` — ${job.last.summary}` : ''}
-              {job.last.error ? ` — ${job.last.error}` : ''}
-            </p>
-          )}
-          {!agent.reporting && (
-            <p className="mt-0.5 text-xs text-neutral-600">
-              Not reporting steps yet: all we know is launchd's last exit code ({agent.lastExit ?? 'unknown'}). It starts reporting on its next run.
-            </p>
-          )}
-        </div>
-        {job && <span className="text-xs text-neutral-600">{open ? 'hide' : 'history'}</span>}
-      </button>
+            {job?.current && (
+              <p className="mt-0.5 text-sm text-blue-300">
+                {job.current.step}
+                {job.current.detail ? <span className="text-neutral-400"> — {job.current.detail}</span> : null}
+                <span className="ml-2 text-xs text-neutral-500">{dur(Math.max(0, Math.round((now - Date.parse(job.current.startedAt)) / 1000)))} so far</span>
+              </p>
+            )}
+            {job?.last && (
+              <p className={`mt-0.5 text-xs ${job.last.status === 'failed' ? 'text-red-400' : 'text-neutral-500'}`}>
+                Last run {ago(job.last.finishedAt, now)}, took {dur(job.last.durationS)}
+                {job.last.summary ? ` — ${job.last.summary}` : ''}
+                {job.last.error ? ` — ${job.last.error}` : ''}
+              </p>
+            )}
+            {!agent.reporting && (
+              <p className="mt-0.5 text-xs text-neutral-600">
+                Not reporting steps yet: all we know is launchd's last exit code ({agent.lastExit ?? 'unknown'}). It starts reporting on its next run.
+              </p>
+            )}
+          </div>
+          {job && <span className="text-xs text-neutral-600">{open ? 'hide' : 'history'}</span>}
+        </button>
+        {onDismiss && (
+          <button
+            onClick={(e) => { e.stopPropagation(); onDismiss() }}
+            className="mt-1 shrink-0 text-xs text-neutral-500 hover:text-neutral-300"
+            title="Dismiss this helper"
+          >
+            Dismiss
+          </button>
+        )}
+      </div>
       {agent.links?.length > 0 && <Links links={agent.links} onOpenTicket={onOpenTicket} onOpenMr={onOpenMr} />}
       {open && job && <RunHistory runs={job.runs} now={now} />}
     </div>
