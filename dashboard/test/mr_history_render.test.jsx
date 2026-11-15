@@ -84,4 +84,16 @@ describe('MrDetail read-only', () => {
   it('does not offer to answer decisions on a merged PR', () => {
     expect(html).not.toContain('Submit')
   })
+  it('uses backLabel when provided, otherwise falls back to read-only state default', () => {
+    const withLabel = renderToStaticMarkup(<MrDetail pr={pr} backLabel="custom history" onBack={noop} />)
+    expect(withLabel).toContain('← Back to custom history')
+    const withoutLabel = renderToStaticMarkup(<MrDetail pr={pr} onBack={noop} />)
+    expect(withoutLabel).toContain('← Back to merged history')
+  })
+  it('shows backLabel "MR Review" for a vanished open PR detected as merged', () => {
+    const vanishedOpenPr = { ...pr, readOnly: true, state: 'MERGED', backLabel: 'MR Review' }
+    const html = renderToStaticMarkup(<MrDetail pr={vanishedOpenPr} backLabel="MR Review" onBack={noop} />)
+    expect(html).toContain('← Back to MR Review')
+    expect(html).toContain('data-readonly="1"')
+  })
 })

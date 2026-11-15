@@ -187,7 +187,7 @@ export const DECISIONS_ANCHOR = 'mr-decisions'
 export const GALLERY = 'pr-image'
 export const GALLERY_LIMIT = 6
 
-export default function MrDetail({ pr, onBack, onApproved, onDenied, onOpenDocs, onOpenBoard, onOpenTicket, onChanged, notice = null }) {
+export default function MrDetail({ pr, backLabel = null, onBack, onApproved, onDenied, onOpenDocs, onOpenBoard, onOpenTicket, onChanged, notice = null }) {
   const rel = useRelated(() => window.api.relations.pr(pr.repo, pr.number), [pr.repo, pr.number])
   const [context, setContext] = useState(null)
   const [error, setError] = useState(null)
@@ -223,7 +223,7 @@ export default function MrDetail({ pr, onBack, onApproved, onDenied, onOpenDocs,
   return (
     <div className="flex flex-col gap-4 p-6">
       <button onClick={onBack} className="text-sm text-neutral-400 hover:text-neutral-200">
-        ← Back to {pr.readOnly ? 'merged history' : 'MR Review'}
+        ← Back to {backLabel ?? (pr.readOnly ? 'merged history' : 'MR Review')}
       </button>
 
       <div className="flex flex-wrap items-start justify-between gap-3">

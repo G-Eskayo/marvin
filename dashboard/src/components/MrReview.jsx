@@ -18,6 +18,7 @@ import { groupPrs, allView, projectOfPr, openLede, helperNames, helperFor, isCol
 import { readSaved, writeSaved } from '../lib/saved_state.js'
 import { GroupingToggle, ProjectGroup, HelperChip } from './MrGroups.jsx'
 import { nameOf } from '../lib/project_names.js'
+import { stillInList, recheckVanished, applyRecheck } from '../lib/selected_pr.js'
 
 const MR_LIST_REFRESH_MS = 120000
 // By project's collapse choices (marvin#848): kept in saved state; before you choose, groups with nothing for you start
@@ -619,7 +620,7 @@ export default function MrReview(props) {
   // Open, Merged and Proposals each keep their place; a merged PR opens at its top and Back returns to it (#755).
   useScrollPlace('mr-view', historyPr ? `merged:${historyPr.url}` : view)
   if (historyPr) {
-    return <MrDetail pr={historyPr} onBack={() => setHistoryPr(null)} onOpenDocs={props.onOpenDocs} onOpenBoard={props.onOpenBoard} onOpenTicket={props.onOpenTicket} />
+    return <MrDetail pr={historyPr} backLabel="merged history" onBack={() => setHistoryPr(null)} onOpenDocs={props.onOpenDocs} onOpenBoard={props.onOpenBoard} onOpenTicket={props.onOpenTicket} />
   }
   const openRow = (row) => {
     setHistoryError(null)
@@ -725,6 +726,23 @@ function OpenPrs({ nav, onOpenDocs, onOpenBoard, onOpenTicket, onCount }) {
     }
   }, [])
 
+  // When a selected open PR is closed/merged while viewing its detail, mark it read-only
+  useEffect(() => {
+    let cancelled = false
+    if (selected && !selected.readOnly && !stillInList(selected, prs)) {
+      recheckVanished(selected.url, window.api.mr.historyDetail)
+        .then((fresh) => {
+          if (!cancelled && fresh) {
+            setSelected((cur) => applyRecheck(cur, selected, fresh))
+          }
+        })
+        .catch(() => {})
+    }
+    return () => {
+      cancelled = true
+    }
+  }, [selected, prs])
+
   // Deep link from an Activity board card: open that PR's detail once the list has it.
   const handledNav = useRef(null)
   useEffect(() => {
@@ -784,6 +802,7 @@ function OpenPrs({ nav, onOpenDocs, onOpenBoard, onOpenTicket, onCount }) {
     return (
       <MrDetail
         pr={selected}
+        backLabel="MR Review"
         notice={notice && notice.url === selected.url ? notice : null}
         onChanged={reloadKeepSelected}
         onOpenDocs={onOpenDocs}
