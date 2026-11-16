@@ -45,7 +45,7 @@ Always active for dev work (writing or modifying code): `tdd` + `grill-with-docs
 
 ## Session Start
 
-1. Check `~/.claude/handoffs/` — if ≤7 days old, read silently and restore context
+1. Session start already surfaces the newest handoff (`session_start_report.py`'s `check_handoff()`). Use what is in context; don't re-read it.
 2. Check `~/.claude/suggestions.md` — mention count if pending
 3. Load `~/.claude/lexicon.md`
 4. Check `~/.claude/improvement-queue.md` — mention count of queued items if file exists ("N improvements queued")
