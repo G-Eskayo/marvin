@@ -393,7 +393,8 @@ def ignore_in_clone(clone: Path, patterns: list[str]) -> None:
 def build_env(profile: dict, base_env: dict | None = None) -> dict:
     """The environment verification runs in. DEVELOPER_DIR points at an installed Xcode for this one
     process tree, so `swift test` finds XCTest without anyone running `sudo xcode-select` (which would
-    change the whole machine)."""
+    change the whole machine). MARVIN_SWIFT_PACKAGE_CACHE points to a shared Swift package cache."""
+    import evidence_capture
     env = dict(base_env if base_env is not None else os.environ)
     spec = (profile.get("env") or {}).get("DEVELOPER_DIR")
     if isinstance(spec, dict):
@@ -406,6 +407,7 @@ def build_env(profile: dict, base_env: dict | None = None) -> dict:
         if extra not in parts:
             parts.insert(0, extra)
     env["PATH"] = ":".join(p for p in parts if p)
+    env["MARVIN_SWIFT_PACKAGE_CACHE"] = str(evidence_capture.SWIFT_PACKAGE_CACHE)
     return env
 
 
@@ -464,11 +466,12 @@ class Measurer:
 
     def __init__(self, profile: dict, runner=_default_runner, have=None, env: dict | None = None):
         self.profile = _validate(copy.deepcopy(profile), "profile")  # same defaults as a loaded profile
-        self.runner = runner
         self.env = env if env is not None else build_env(self.profile)
         self.have = have or (lambda cap, e: globals()["have"](cap, e))
         self.report: dict = {"tiers": [], "notes": []}
         self.last_output = ""
+        self._base_runner = runner
+        self.runner = self._inject_cache_runner
 
     def __call__(self, worktree: Path) -> dict:
         metrics: dict = {}
@@ -562,6 +565,15 @@ class Measurer:
 
     def pr_note(self) -> str:
         return "\n".join(self.report["notes"])
+
+    def _inject_cache_runner(self, cmd: list, cwd: Path, env: dict, timeout: int) -> tuple[int, str]:
+        """Wrapper that injects --cache-path for swift build/test commands."""
+        if isinstance(cmd, list) and cmd and cmd[0] == "swift" and cmd[1:2] and cmd[1] in ("build", "test"):
+            cmd = list(cmd)
+            import evidence_capture
+            cache_dir = evidence_capture.ensure_shared_cache_dir()
+            cmd.extend(["--cache-path", str(cache_dir)])
+        return self._base_runner(cmd, cwd, env, timeout)
 
 
 # ── what the merge gate asks of a profile ───────────────────────────────────

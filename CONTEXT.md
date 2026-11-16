@@ -1167,7 +1167,11 @@ untouched (it is the "legacy profile"); only repos with a profile file use the p
   catalog's newest local path first), `machines` (eligible device ids), `dispatch` (`"off"` | `"on"`; **starts
   off**: a profile does nothing until a person turns it on), `env` (e.g. `DEVELOPER_DIR` = the first existing
   Xcode, so `swift test` works without `sudo xcode-select`), `executor` (extra allowed tools and context notes
-  for the headless model), `verify` (tiers), `evidence`.
+  for the headless model), `verify` (tiers), `evidence`. **Automatic swift cache**: every `swift build` and
+  `swift test` command automatically receives `--cache-path ~/.Library/Caches/marvin/swift-packages`, and every
+  Xcode build receives `-clonedSourcePackagesDirPath` pointing to the same shared cache. No profile change needed;
+  all projects get the shared cache and reuse downloaded packages. iOS simulator setup also runs automatically
+  before evidence capture.
 - **Verify tiers**: each has `command`, `cwd`, `requires` (capabilities such as `swift`, `xcode`, `xcodegen`),
   a `parser` (`swift-test`, `xcodebuild`, `exit-code`), and `required`. A required tier whose tools are missing
   on the executing machine is an **environment problem, not a ticket failure**: the claim is released, no

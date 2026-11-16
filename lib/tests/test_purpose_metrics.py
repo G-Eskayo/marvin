@@ -1,9 +1,16 @@
 """Purpose metrics and outcome checks (marvin#304): a ticket that promises a measurable effect gets measured."""
-from datetime import datetime, timezone
+from __future__ import annotations
+import json
+import sys
+from datetime import datetime, timedelta, timezone
+from pathlib import Path
 
 import pytest
 
-import purpose_metrics as pm
+LIB = Path(__file__).resolve().parents[1]
+sys.path.insert(0, str(LIB))
+
+import purpose_metrics as pm  # noqa: E402
 
 NOW = datetime(2026, 10, 16, 12, tzinfo=timezone.utc)
 BODY = """## What to build
@@ -631,3 +638,82 @@ def test_ci_onnx_download_failures_is_registered():
     assert "ci-onnx-download-failures" in pm.PROBES
     fn, limit, what = pm.PROBES["ci-onnx-download-failures"]
     assert limit == 6.0 and "#1098" in what and "#1156" in what and "#1163" in what
+
+
+# ── mini-disk-under-floor probe ──────────────────────────────────────────────
+
+def test_mini_disk_under_floor_counts_days_under_minimum(tmp_path):
+    """Days when mac-mini-1 free disk was under the minimum are counted."""
+    log = tmp_path / "disk-ledger.jsonl"
+    now = datetime(2026, 11, 18, 12, tzinfo=timezone.utc)
+
+    with open(log, "w") as f:
+        # Day 1: under floor
+        f.write(json.dumps({
+            "at": (now - timedelta(days=5)).isoformat(),
+            "device": "mac-mini-1",
+            "free_kb": 30 * 1024 * 1024  # 30 GB, under default 50 GB
+        }) + "\n")
+
+        # Day 2: above floor
+        f.write(json.dumps({
+            "at": (now - timedelta(days=4)).isoformat(),
+            "device": "mac-mini-1",
+            "free_kb": 60 * 1024 * 1024  # 60 GB, above floor
+        }) + "\n")
+
+        # Day 3: under floor again
+        f.write(json.dumps({
+            "at": (now - timedelta(days=3)).isoformat(),
+            "device": "mac-mini-1",
+            "free_kb": 20 * 1024 * 1024  # 20 GB, under floor
+        }) + "\n")
+
+    result = pm._mini_disk_under_floor(days=7, path=log, now=now)
+    assert result == 2.0  # Two days under floor
+
+
+def test_mini_disk_under_floor_ignores_other_devices(tmp_path):
+    """Only mac-mini-1 entries are counted."""
+    log = tmp_path / "disk-ledger.jsonl"
+    now = datetime(2026, 11, 18, 12, tzinfo=timezone.utc)
+
+    log.write_text(json.dumps({
+        "at": now.isoformat(),
+        "device": "macbook-pro",  # Different device
+        "free_kb": 30 * 1024 * 1024
+    }) + "\n")
+
+    result = pm._mini_disk_under_floor(days=7, path=log, now=now)
+    assert result == 0.0
+
+
+def test_mini_disk_under_floor_respects_window(tmp_path):
+    """Only entries within the window are counted."""
+    log = tmp_path / "disk-ledger.jsonl"
+    now = datetime(2026, 11, 18, 12, tzinfo=timezone.utc)
+
+    # Outside window (8 days old)
+    log.write_text(json.dumps({
+        "at": (now - timedelta(days=8)).isoformat(),
+        "device": "mac-mini-1",
+        "free_kb": 30 * 1024 * 1024
+    }) + "\n")
+
+    # Inside window
+    with log.open(mode="a") as f:
+        f.write(json.dumps({
+            "at": (now - timedelta(days=6)).isoformat(),
+            "device": "mac-mini-1",
+            "free_kb": 30 * 1024 * 1024
+        }) + "\n")
+
+    result = pm._mini_disk_under_floor(days=7, path=log, now=now)
+    assert result == 1.0
+
+
+def test_mini_disk_under_floor_is_registered():
+    """The probe is registered in PROBES."""
+    assert "mini-disk-under-floor" in pm.PROBES
+    fn, limit, what = pm.PROBES["mini-disk-under-floor"]
+    assert limit == 0.0 and "disk" in what.lower()

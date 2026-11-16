@@ -51,7 +51,7 @@ import subprocess
 import sys
 import time
 import uuid
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Callable
 
@@ -551,6 +551,7 @@ def sweep_worktrees(
 
 SIM_TICKET_RE = re.compile(r"[-_ #](\d+)$")  # "Seal-118", "clarity_140", "build #7"
 CAPTURE_SIM_RE = re.compile(r"^marvin-[0-9a-f]{8}$")  # simulator_capture._device_name
+SIM_MARVIN_RE = re.compile(r"^sim-")  # MARVIN-reused simulators: kept while booted or used within 14 days
 
 
 def _simctl_json(*args: str) -> dict:
@@ -562,7 +563,9 @@ def _simctl_json(*args: str) -> dict:
 
 def _default_list_simulators() -> list[dict]:
     devices = _simctl_json("devices").get("devices", {})
-    return [{"name": d["name"], "udid": d["udid"], "state": d.get("state", "")} for ds in devices.values() for d in ds]
+    return [{"name": d["name"], "udid": d["udid"], "state": d.get("state", ""),
+             "lastBootedAt": d.get("lastBootedAt"), "dataPath": d.get("dataPath")}
+            for ds in devices.values() for d in ds]
 
 
 def _default_stock_names() -> set[str]:
@@ -597,7 +600,7 @@ def _ticket_open_anywhere(number: int, repos: list[str] | None = None,
     return "OPEN" in states or not any(states)
 
 
-def decide_simulator(sim: dict, stock: set[str], ticket_open: Callable[[int], bool]) -> tuple[str, str]:
+def decide_simulator(sim: dict, stock: set[str], ticket_open: Callable[[int], bool], now: datetime | None = None) -> tuple[str, str]:
     """("remove" | "keep" | "review", reason)."""
     name = sim["name"]
     if name in stock:
@@ -606,6 +609,18 @@ def decide_simulator(sim: dict, stock: set[str], ticket_open: Callable[[int], bo
         if sim.get("state") == "Booted":
             return "keep", "a screenshot capture may be using it"
         return "remove", "leftover screenshot-capture simulator"
+    if SIM_MARVIN_RE.match(name):
+        if sim.get("state") == "Booted":
+            return "keep", "MARVIN-reused simulator is currently booted"
+        if sim.get("lastBootedAt"):
+            try:
+                last_booted = datetime.fromisoformat(sim["lastBootedAt"].replace("Z", "+00:00"))
+                cutoff = (now or datetime.now(timezone.utc)) - timedelta(days=14)
+                if last_booted >= cutoff:
+                    return "keep", "MARVIN-reused simulator used within 14 days"
+            except (ValueError, AttributeError):
+                return "keep", "MARVIN-reused simulator: couldn't parse boot time"
+        return "remove", "MARVIN-reused simulator unused for over 14 days"
     match = SIM_TICKET_RE.search(name)
     if not match:
         return "review", "can't tie it to a ticket"
@@ -620,6 +635,7 @@ def sweep_simulators(
     stock_names: Callable[[], set[str]] | None = None,
     ticket_open: Callable[[int], bool] | None = None,
     delete_simulator: Callable[[dict], bool] | None = None,
+    now: datetime | None = None,
 ) -> dict:
     if list_simulators is None and shutil.which("xcrun") is None:
         return {"removed": [], "review": []}   # no Xcode on this machine (mac-mini-2012): no simulators exist
@@ -631,11 +647,12 @@ def sweep_simulators(
     known: dict[int, bool] = {}
     ticket_open = lambda n: known[n] if n in known else known.setdefault(n, lookup(n))  # noqa: E731
     delete_simulator = delete_simulator or _default_delete_simulator
+    now = now or datetime.now(timezone.utc)
 
     removed, review = [], []
     for sim in sims:
         try:
-            action, reason = decide_simulator(sim, stock, ticket_open)
+            action, reason = decide_simulator(sim, stock, ticket_open, now)
         except Exception as exc:  # a GitHub failure must never read as "ticket closed"
             review.append({**sim, "reason": f"could not check GitHub: {str(exc)[:120]}"})
             continue

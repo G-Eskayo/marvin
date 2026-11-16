@@ -400,11 +400,13 @@ def test_setup_runs_when_its_result_is_missing_and_is_skipped_when_present(tmp_p
     have = lambda c, e: c != "xcodegen"  # the optional app-build tier stays out of this
     m = pp.Measurer(prof, runner=runner_returning([(0, "installed"), (0, XCTEST_OK)]), have=have)
     m(tmp_path)
-    assert m.runner.calls[0]["cmd"] == ["npm", "ci"]
+    assert m._base_runner.calls[0]["cmd"] == ["npm", "ci"]
     (tmp_path / "node_modules").mkdir()
     m2 = pp.Measurer(prof, runner=runner_returning([(0, XCTEST_OK)]), have=have)
     m2(tmp_path)
-    assert [c["cmd"] for c in m2.runner.calls] == [["swift", "test"]]  # node_modules already there: no reinstall
+    # Only the test runs when node_modules exists (no setup); wrapper injects --cache-path for swift test
+    calls = [c["cmd"] for c in m2._base_runner.calls]
+    assert len(calls) == 1 and calls[0][:2] == ["swift", "test"] and "--cache-path" in calls[0]
 
 
 def test_a_failing_setup_is_an_error_naming_the_step_not_a_zero_test_result(tmp_path):
@@ -554,3 +556,63 @@ def test_a_profile_with_dispatch_on_but_no_machines_is_not_runnable(tmp_path):
     assert pp.runnable_repos(directory=d2) == ["G-Eskayo/proj"] and pp.unrunnable_repos(directory=d2) == []
     d3 = write_profile(tmp_path, dispatch="off", machines=[])
     assert pp.runnable_repos(directory=d3) == [] and pp.unrunnable_repos(directory=d3) == []
+
+
+# ── cache injection for swift build/test ────────────────────────────────────
+
+def test_build_env_exports_marvin_swift_package_cache():
+    env = pp.build_env({})
+    assert "MARVIN_SWIFT_PACKAGE_CACHE" in env
+    assert env["MARVIN_SWIFT_PACKAGE_CACHE"].endswith("swift-packages")
+
+
+def test_measurer_injects_cache_path_into_swift_build():
+    import evidence_capture
+    prof = pp._validate(
+        {"repo": "o/r", "verify": [{"id": "build", "label": "Build", "cwd": ".",
+                                    "command": ["swift", "build"], "parser": "exit-code", "required": False}]},
+        "p"
+    )
+    m = pp.Measurer(prof, have=lambda c, e: True)
+
+    captured_cmd = None
+    def capturing_runner(cmd, cwd, env, timeout):
+        nonlocal captured_cmd
+        captured_cmd = cmd
+        return 0, "build ok"
+
+    m._base_runner = capturing_runner
+    try:
+        m(Path("/tmp"))
+    except pp.EnvMissing:
+        pass
+
+    if captured_cmd and len(captured_cmd) >= 2 and captured_cmd[0:2] == ["swift", "build"]:
+        assert "--cache-path" in captured_cmd
+        idx = captured_cmd.index("--cache-path")
+        assert idx + 1 < len(captured_cmd)
+        assert "swift-packages" in captured_cmd[idx + 1]
+
+
+def test_measurer_injects_cache_path_into_swift_test():
+    prof = pp._validate(
+        {"repo": "o/r", "verify": [{"id": "test", "label": "Test", "cwd": ".",
+                                    "command": ["swift", "test"], "parser": "exit-code", "required": False}]},
+        "p"
+    )
+    m = pp.Measurer(prof, have=lambda c, e: True)
+
+    captured_cmd = None
+    def capturing_runner(cmd, cwd, env, timeout):
+        nonlocal captured_cmd
+        captured_cmd = cmd
+        return 0, ""
+
+    m._base_runner = capturing_runner
+    try:
+        m(Path("/tmp"))
+    except pp.EnvMissing:
+        pass
+
+    if captured_cmd and len(captured_cmd) >= 2 and captured_cmd[0:2] == ["swift", "test"]:
+        assert "--cache-path" in captured_cmd

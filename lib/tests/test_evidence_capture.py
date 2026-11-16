@@ -320,3 +320,41 @@ def test_an_uncommitted_change_outside_the_ui_paths_is_not_ui(tmp_path):
     (tmp_path / "lib" / "x.py").write_text("b\n")
     (tmp_path / "lib" / "y.py").write_text("n\n")
     assert _touches(tmp_path) is False
+
+
+# ── ensure_shared_cache_dir (idempotent mkdir) ───────────────────────────────
+
+def test_ensure_shared_cache_dir_creates_directory(tmp_path, monkeypatch):
+    import evidence_capture
+    original_cache = evidence_capture.SWIFT_PACKAGE_CACHE
+    try:
+        monkeypatch.setattr(evidence_capture, "SWIFT_PACKAGE_CACHE", tmp_path / "cache")
+        result = evidence_capture.ensure_shared_cache_dir()
+        assert result.exists()
+        assert result.is_dir()
+        assert result == tmp_path / "cache"
+    finally:
+        monkeypatch.setattr(evidence_capture, "SWIFT_PACKAGE_CACHE", original_cache)
+
+
+def test_ensure_shared_cache_dir_is_idempotent(tmp_path, monkeypatch):
+    import evidence_capture
+    original_cache = evidence_capture.SWIFT_PACKAGE_CACHE
+    try:
+        cache_path = tmp_path / "cache"
+        monkeypatch.setattr(evidence_capture, "SWIFT_PACKAGE_CACHE", cache_path)
+        ec.ensure_shared_cache_dir()
+        ec.ensure_shared_cache_dir()
+        assert cache_path.exists()
+    finally:
+        monkeypatch.setattr(evidence_capture, "SWIFT_PACKAGE_CACHE", original_cache)
+
+
+# ── ensure_simulator (idempotent simctl create) ───────────────────────────────
+
+def test_ensure_simulator_raises_on_failure(tmp_path):
+    def failing_run(cmd, **kw):
+        raise subprocess.CalledProcessError(1, cmd)
+
+    with pytest.raises(RuntimeError):
+        ec.ensure_simulator("test-sim", "com.apple.CoreSimulator.SimDeviceType.iPhone-15", run=failing_run)

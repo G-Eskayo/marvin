@@ -389,6 +389,44 @@ def _model_run_timeouts(days: float = PROBE_WINDOW_DAYS, path: Path | None = Non
     return float(count)
 
 
+def _mini_disk_under_floor(days: float = PROBE_WINDOW_DAYS, path: Path | None = None,
+                           now: datetime | None = None) -> float:
+	"""Counts days when the Mac mini's free disk was under the configured minimum, over the window.
+	Reads from disk-ledger.jsonl and checks each unique date against config/dispatch.json's guards.min_disk_gb."""
+	now = now or datetime.now(timezone.utc)
+	cut = _cut(now, days)
+	path = path or Path.home() / ".claude" / "logs" / "disk-ledger.jsonl"
+
+	try:
+		import instance
+		config = instance.load("config/dispatch.json")
+		min_kb = config.get("guards", {}).get("min_disk_gb", 50) * 1024 * 1024
+	except Exception:
+		min_kb = 50 * 1024 * 1024
+
+	under_days = set()
+	try:
+		lines = Path(path).read_text(encoding="utf-8", errors="replace").splitlines()
+	except OSError:
+		return 0.0
+
+	for line in lines:
+		try:
+			e = json.loads(line)
+		except ValueError:
+			continue
+		if not isinstance(e, dict) or e.get("device") != "mac-mini-1":
+			continue
+		when = _when(e.get("at"))
+		if not when or when < cut:
+			continue
+		free_kb = e.get("free_kb")
+		if isinstance(free_kb, (int, float)) and free_kb < min_kb:
+			under_days.add(when.date())
+
+	return float(len(under_days))
+
+
 def _ci_onnx_download_failures(fetch=None, repo: str = "G-Eskayo/marvin", runs: int = 20,
                                days: float = PROBE_WINDOW_DAYS, now: datetime | None = None) -> float:
     """#1098/#1156 (2026-11-09): GitHub's 'Python tests' job failures in the 7-day window. Option B: counts the job's
@@ -472,6 +510,8 @@ PROBES: dict[str, tuple[Callable[..., float], float, str]] = {
     "stale-relay-leaked": (lambda days=PROBE_WINDOW_DAYS: _stale_relay("leaked", days), 0.0,
                            "stale claims that reached the owner over 7 days (question log kind=stale + their own 'that's "
                            "already fixed' replies), per Mac, summed (#1224)"),
+    "mini-disk-under-floor": (lambda days=PROBE_WINDOW_DAYS: _mini_disk_under_floor(days=days), 0.0,
+                              "days when the Mac mini's free disk was under the minimum over 7 days"),
 }
 MEASURES.update({name: fn for name, (fn, _limit, _what) in PROBES.items()})
 MEASURES["stale-relay-caught"] = lambda: _stale_relay("caught")

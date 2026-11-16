@@ -1103,3 +1103,67 @@ def test_the_daily_run_trims_pytest_temps_and_logs_it(log_path, monkeypatch):
     cs.run_daily_sweep(list_claimed_open_issues=lambda: [], list_worktrees=lambda: [], now=NOW)
     assert not old.exists()
     assert "pytest" in log_path.read_text() and "3 MiB" in log_path.read_text()
+
+
+# ── simulator management: MARVIN-reused simulators ─────────────────────────────
+
+def _sim(name, state="Shutdown", last_booted=None):
+    """A simulator dict for testing."""
+    return {
+        "name": name, "udid": "uuid-" + name, "state": state,
+        "lastBootedAt": last_booted, "dataPath": f"/path/to/{name}"
+    }
+
+
+def test_marvin_reused_simulator_kept_when_booted():
+    stock = {"iPhone 17 Pro"}
+    tick_open = lambda n: False
+    action, reason = cs.decide_simulator(_sim("sim-test", state="Booted"), stock, tick_open, now=NOW)
+    assert action == "keep" and "booted" in reason.lower()
+
+
+def test_marvin_reused_simulator_kept_within_14_days():
+    stock = {"iPhone 17 Pro"}
+    tick_open = lambda n: False
+    last_booted = (NOW - timedelta(days=7)).isoformat().replace("+00:00", "Z")
+    action, reason = cs.decide_simulator(_sim("sim-test", last_booted=last_booted), stock, tick_open, now=NOW)
+    assert action == "keep" and "14 days" in reason.lower()
+
+
+def test_marvin_reused_simulator_removed_after_14_days():
+    stock = {"iPhone 17 Pro"}
+    tick_open = lambda n: False
+    last_booted = (NOW - timedelta(days=15)).isoformat().replace("+00:00", "Z")
+    action, reason = cs.decide_simulator(_sim("sim-test", last_booted=last_booted), stock, tick_open, now=NOW)
+    assert action == "remove" and "14 days" in reason.lower()
+
+
+def test_list_simulators_includes_last_booted_and_data_path(monkeypatch):
+    """The enhanced _default_list_simulators includes lastBootedAt and dataPath."""
+    def mock_simctl(*args):
+        return {
+            "devices": {
+                "iOS 17.0": [
+                    {
+                        "name": "iPhone 17 Pro",
+                        "udid": "uuid-1",
+                        "state": "Shutdown",
+                        "lastBootedAt": "2026-11-13T10:00:00Z",
+                        "dataPath": "/path/to/sim"
+                    }
+                ]
+            }
+        }
+
+    def real_list_simulators():
+        devices = cs._simctl_json("devices").get("devices", {})
+        return [{"name": d["name"], "udid": d["udid"], "state": d.get("state", ""),
+                 "lastBootedAt": d.get("lastBootedAt"), "dataPath": d.get("dataPath")}
+                for ds in devices.values() for d in ds]
+
+    monkeypatch.setattr(cs, "_simctl_json", mock_simctl)
+    monkeypatch.setattr(cs, "_default_list_simulators", real_list_simulators)
+    sims = cs._default_list_simulators()
+    assert len(sims) == 1
+    assert sims[0]["lastBootedAt"] == "2026-11-13T10:00:00Z"
+    assert sims[0]["dataPath"] == "/path/to/sim"

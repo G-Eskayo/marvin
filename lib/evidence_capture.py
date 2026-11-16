@@ -18,6 +18,7 @@ has no reason to know about.
 independently testable without a real subprocess run.
 """
 from __future__ import annotations
+import json
 import os
 import re
 import resource
@@ -32,6 +33,14 @@ from typing import Callable
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import test_slot  # noqa: E402  (stdlib only: the slot's own waiting/took lines, marvin#1113)
+
+SWIFT_PACKAGE_CACHE = Path.home() / "Library" / "Caches" / "marvin" / "swift-packages"
+
+
+def ensure_shared_cache_dir() -> Path:
+	"""Idempotent mkdir(parents=True, exist_ok=True) for the shared cache directory."""
+	SWIFT_PACKAGE_CACHE.mkdir(parents=True, exist_ok=True)
+	return SWIFT_PACKAGE_CACHE
 
 
 def parse_test_output(suite: str, output: str) -> dict:
@@ -327,6 +336,23 @@ def _with_build_folder(prefix: str, capture):
         shutil.rmtree(derived, ignore_errors=True)
 
 
+def ensure_simulator(name: str, device_type: str, runtime: str | None = None, run=subprocess.run) -> None:
+	"""Create simulator if missing via simctl create. Idempotent: raises RuntimeError on failure."""
+	try:
+		result = _run_checked(run, ["xcrun", "simctl", "list", "devices", "--json"])
+		data = json.loads(result.stdout) if result.stdout.strip() else {}
+		devices = data.get("devices", {})
+		for ds in devices.values():
+			if any(d.get("name") == name for d in ds):
+				return
+	except (subprocess.CalledProcessError, json.JSONDecodeError):
+		pass
+	cmd = ["xcrun", "simctl", "create", name, device_type]
+	if runtime:
+		cmd.append(runtime)
+	_run_checked(run, cmd)
+
+
 def capture_ios_simulator(worktree_path: Path, cfg: dict, run=subprocess.run, sleep=None) -> list[dict]:
     """Builds an iOS app for the simulator (signing off), launches each configured scene (launch arguments, e.g. a
     debug-only demo mode) in light and dark, and screenshots it into the worktree, so the images ride along in the
@@ -341,17 +367,25 @@ def capture_ios_simulator(worktree_path: Path, cfg: dict, run=subprocess.run, sl
     project_dir = Path(worktree_path) / cfg["project_dir"]
     for cmd in cfg.get("prepare", []):
         _run_checked(run, list(cmd), cwd=project_dir)
+    try:
+        import cleanup_sweep
+        cleanup_sweep.sweep_simulators()
+    except Exception:
+        pass
     return _with_build_folder("ios-evidence-", lambda derived: _capture_ios(worktree_path, cfg, project_dir, derived, run, sleep))
 
 
 def _capture_ios(worktree_path: Path, cfg: dict, project_dir: Path, derived: Path, run, sleep) -> list[dict]:
     configuration = cfg.get("configuration", "Debug")
+    cache_dir = ensure_shared_cache_dir()
     _run_checked(run, ["xcodebuild", "-project", cfg["project"], "-scheme", cfg["scheme"],
                        "-destination", f"platform=iOS Simulator,name={cfg['simulator']}", "-configuration", configuration,
-                       "CODE_SIGNING_ALLOWED=NO", "-derivedDataPath", str(derived), "build"], cwd=project_dir)
+                       "CODE_SIGNING_ALLOWED=NO", "-derivedDataPath", str(derived),
+                       "-clonedSourcePackagesDirPath", str(cache_dir), "build"], cwd=project_dir)
     apps = sorted((derived / "Build" / "Products" / f"{configuration}-iphonesimulator").glob("*.app"))
     if not apps:
         raise RuntimeError("xcodebuild failed: no .app was built for the simulator")
+    ensure_simulator(cfg["simulator"], "com.apple.CoreSimulator.SimDeviceType.iPhone-15", run=run)
     try:
         run(["xcrun", "simctl", "boot", cfg["simulator"]], check=True, capture_output=True, text=True)
     except subprocess.CalledProcessError as e:
@@ -401,6 +435,11 @@ def capture_macos_app(worktree_path: Path, cfg: dict, run=subprocess.run) -> lis
     project_dir = Path(worktree_path) / cfg.get("project_dir", ".")
     for cmd in cfg.get("prepare", []):
         _run_checked(run, list(cmd), cwd=project_dir)
+    try:
+        import cleanup_sweep
+        cleanup_sweep.sweep_simulators()
+    except Exception:
+        pass
     if xcode:
         return _with_build_folder("macos-evidence-", lambda derived: _capture_macos(worktree_path, cfg, project_dir, run, derived))
     return _capture_macos(worktree_path, cfg, project_dir, run, None)
@@ -408,18 +447,20 @@ def capture_macos_app(worktree_path: Path, cfg: dict, run=subprocess.run) -> lis
 
 def _capture_macos(worktree_path: Path, cfg: dict, project_dir: Path, run, derived: Path | None) -> list[dict]:
     configuration = cfg.get("configuration", "Debug")
+    cache_dir = ensure_shared_cache_dir()
     if derived is not None:
         # Ad-hoc signed: pipeline machines have no signing identity, and an arm64 Mac won't run an unsigned binary.
         _run_checked(run, ["xcodebuild", "-project", cfg["project"], "-scheme", cfg["scheme"], "-destination", "platform=macOS",
                            "-configuration", configuration, "CODE_SIGN_IDENTITY=-", "DEVELOPMENT_TEAM=",
-                           "-derivedDataPath", str(derived), "build"], cwd=project_dir)
+                           "-derivedDataPath", str(derived), "-clonedSourcePackagesDirPath", str(cache_dir), "build"], cwd=project_dir)
         apps = sorted((derived / "Build" / "Products" / configuration).glob("*.app"))
         exes = sorted(p for p in (apps[0] / "Contents" / "MacOS").iterdir()) if apps else []
         if not exes:
             raise RuntimeError("xcodebuild failed: no .app was built for macOS")
         exe = exes[0]
     else:
-        _run_checked(run, ["swift", "build", "--product", cfg["swiftpm_product"]], cwd=project_dir)
+        _run_checked(run, ["swift", "build", "--product", cfg["swiftpm_product"],
+                          "-clonedSourcePackagesDirPath", str(cache_dir)], cwd=project_dir)
         exe = project_dir / ".build" / "debug" / cfg["swiftpm_product"]
     out_dir = Path("docs") / "evidence" / Path(worktree_path).name
     (Path(worktree_path) / out_dir).mkdir(parents=True, exist_ok=True)
