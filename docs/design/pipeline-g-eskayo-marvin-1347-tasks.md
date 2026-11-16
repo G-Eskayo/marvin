@@ -1,0 +1,9 @@
+1. Add `test_logged_row_outside_week_is_excluded` (or extend the existing test) to `lib/tests/test_stale_relay.py` asserting a `ts=ts(9)` stale-log row is not counted in `logged`.
+2. Add a test asserting `add()`'s default `ts` (omitted) still stamps real wall-clock time, in `lib/tests/test_question_log.py`.
+3. Add a test for malformed `ts` input per the Decision above (write it to match whichever option gets picked; default to the "raise ValueError" branch if the PR ships before an answer, and flag it as provisional).
+4. Update `test_a_week_counts_caught_and_both_kinds_of_leaked` in `lib/tests/test_stale_relay.py:98` to pass `ts=ts(1)` to the `kind="stale"` call — the regression test; confirm it fails against current `lib/question_log.py`.
+5. Add a keyword-only `ts: str | None = None` parameter to `question_log.add()` (`lib/question_log.py:42`): when given, use it (validated per the Decision) instead of `datetime.now(timezone.utc).isoformat(...)` for the row's `"ts"` field; default preserves current behavior exactly. Do not expose it via the CLI (`main()`/argparse) — it's a testability hook, not a user-facing flag.
+6. Run the full `lib/tests/test_stale_relay.py` and `lib/tests/test_question_log.py` suites locally; confirm all pass.
+7. Run the complete Python test suite (per the "Full suites before a hand-merge" rule) before opening the PR.
+8. Open the PR referencing this ticket ("Closes #1347"), noting in the description that this was a forward fix (not a revert) because the change was one optional kwarg plus one call-site update.
+9. After merge, confirm the CI run on main is green and the ticket self-closes.
