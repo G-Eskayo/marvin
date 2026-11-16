@@ -116,20 +116,22 @@ def _font_for(out: str, ch: str) -> str:
     return out
 
 
-# Characters MARVIN Term hasn't drawn yet (#1054 step 2) come from IBM 3270, its CRT parent, not a smooth system
-# font: Menlo's strokes next to the pixel letters were what made $ @ { } ✓ … look broken in Claude Code.
-@pytest.mark.parametrize("ch", ["@", "$", "{", "~", "✓", "…", "é", "⌘"])
+# Claude Code's characters are drawn in MARVIN Term itself since draft 0.3 (#1054 step 2): they used to fall back to
+# Menlo, whose smooth strokes beside the pixel letters made $ @ { } ✓ … ⏺ look broken.
+@pytest.mark.parametrize("ch", ["a", "@", "$", "{", "~", "✓", "…", "é", "⌘", "⏺", "⎿", "✻", "ß", "Ø", "æ"])
+def test_claude_codes_characters_come_from_marvin_term(tmp_path, ch):
+    assert "MarvinTermMono-Beam.ttf" in _font_for(_fonts_used(tmp_path, REPO, ch), ch)
+
+
+# What MARVIN Term still hasn't drawn comes from IBM 3270, its CRT parent, before any smooth system font.
+@pytest.mark.parametrize("ch", ["½", "¶", "Æ", "Œ", "¤"])
 def test_undrawn_characters_come_from_ibm_3270_not_menlo(tmp_path, ch):
     line = _font_for(_fonts_used(tmp_path, REPO, ch), ch)
     assert "IBM3270" in line and "Menlo" not in line
 
 
-def test_letters_marvin_term_has_still_come_from_marvin_term(tmp_path):
-    assert "MarvinTermMono-Beam.ttf" in _font_for(_fonts_used(tmp_path, REPO, "a"), "a")
-
-
 def test_a_character_no_bundled_font_has_still_renders_from_the_system(tmp_path):
-    out = _font_for(_fonts_used(tmp_path, REPO, "⏺"), "⏺")   # Claude Code's bullet: in neither font yet
+    out = _font_for(_fonts_used(tmp_path, REPO, "☂"), "☂")   # in neither bundled font
     assert ".notdef" not in out and "IBM3270" not in out and "MarvinTermMono" not in out
 
 
