@@ -26,6 +26,7 @@ from mr_raiser import raise_mr  # noqa: E402
 from sandbox_orchestration import execute_ticket, _default_executor, TaskListTooVague, ModelRunFailed  # noqa: E402
 from cleanup_sweep import drop_build_output  # noqa: E402
 from ticket_pipeline import _label_for_device, _release  # noqa: E402
+import disk_triggers  # noqa: E402
 import failure_breaker  # noqa: E402
 import ticket_stages as ts  # noqa: E402
 import redispatch_trigger  # noqa: E402
@@ -268,6 +269,11 @@ def _feed_breaker(issue_number: int, reason: str, repo: str = REPO) -> None:
 
 def run(issue_number: int, repo: str = REPO) -> dict:
     """Build the ticket here, then settle the outcome here: the whole run on a Mac."""
+    preflight = disk_triggers.preflight(f"ticket {repo}#{issue_number}")
+    if not preflight["ok"]:
+        reason = f"no space left on device: {preflight['message']}"
+        outcome = {"raised": False, "pr_url": None, "reason": reason, "disk_full": True}
+        return settle(issue_number, outcome, [], repo=repo, run_id=os.environ.get("MARVIN_RUN_ID"))
     outcome, findings = build(issue_number, repo) if repo != REPO else build(issue_number)
     return settle(issue_number, outcome, findings, repo=repo, run_id=os.environ.get("MARVIN_RUN_ID"))
 
@@ -349,7 +355,10 @@ def build(issue_number: int, repo: str = REPO) -> tuple[dict, list[str]]:
         # crashed the whole process before it ever reached
         # raise_mr/_comment_failure/_release_claim/_trigger_redispatch,
         # leaving both permanently claimed with no way to retry.
-        outcome = {"raised": False, "pr_url": None, "reason": f"Unhandled exception: {exc}"}
+        reason = f"Unhandled exception: {exc}"
+        outcome = {"raised": False, "pr_url": None, "reason": reason}
+        if failure_breaker.signature(reason) == "disk-full":
+            outcome["disk_full"] = True
 
     _drop_build_output(worktree_path, profile)
     return outcome, findings
@@ -366,6 +375,18 @@ def settle(issue_number: int, outcome: dict, findings: list[str] | tuple = (), r
     findings = list(findings or [])
 
     if not outcome["raised"]:
+        if outcome.get("disk_full"):
+            _release_claim(issue_number, **kw, **lab, run_id=run_id)
+            _feed_breaker(issue_number, outcome["reason"], repo)
+            ts.record_stage(issue_number, "done", "failed", outcome["reason"][:300], **kw)
+            when, marker = _retry_line(0)
+            subprocess.run(
+                ["gh", "issue", "comment", str(issue_number), "--repo", repo, "--body",
+                 f"{FAILURE_MARKER}: {outcome['reason'][:300]}\n\nIt goes back to the queue, not before {when}.\n{marker}"],
+                check=False,
+            )
+            _trigger_redispatch()
+            return outcome
         if outcome.get("env_missing"):
             _release_claim(issue_number, **kw, **lab, run_id=run_id)
             ts.record_stage(issue_number, "done", "failed", outcome["reason"][:300], **kw)
@@ -437,7 +458,7 @@ BUILD_OUTCOME_PREFIX = "MARVIN_BUILD_OUTCOME "
 def build_only_line(outcome: dict, findings: list[str]) -> str:
     """The one line `--build-only` prints for box_build to read: the outcome's own keys, JSON-safe."""
     keep = {k: outcome.get(k) for k in ("raised", "pr_url", "reason", "env_missing", "timed_out", "model_unavailable",
-                                       "too_vague") if k in outcome}
+                                       "too_vague", "disk_full") if k in outcome}
     reason = None if keep.get("reason") is None else str(keep["reason"])
     # Head and tail: an exception's cause is at its end (a 900 s prompt in a command line hid it, marvin #951).
     keep["reason"] = reason if reason is None or len(reason) <= 2000 else f"{reason[:600]} [...] {reason[-1390:]}"

@@ -44,6 +44,8 @@ VITEST = "Unhandled exception: vitest produced no test summary (crashed or never
     ("Unhandled exception: Command '['npm', 'run', 'build']' returned non-zero exit status 1.", "npm-build-failed"),
     ("Unhandled exception: [Errno 2] No such file or directory: 'claude'", "claude-not-found"),
     ("Unhandled exception: Command '['git', 'worktree', 'add', '-b', 'x']' returned non-zero exit status 128.", "git-worktree-add-failed"),
+    ("Unhandled exception: [Errno 28] No space left on device", "disk-full"),
+    ("Unhandled exception: OSError: [Errno 28] ENOSPC: no space left on device", "disk-full"),
 ])
 def test_signature_collapses_known_failures(reason, expected):
     assert fb.signature(reason) == expected
@@ -223,3 +225,9 @@ def test_every_verify_timeout_has_one_signature(reason):
 
 def test_a_claude_timeout_is_still_its_own_signature():
     assert fb.signature("Unhandled exception: Command '['/x/claude', '-p']' timed out after 300 seconds") == "claude-timeout"
+
+
+def test_preflight_disk_full_message_matches_disk_full_signature():
+    """The disk-full message from preflight (passed through run_ticket) includes text matching the signature."""
+    reason = "no space left on device: Not starting ticket G-Eskayo/marvin#99: the disk has 0.5 GB free and work needs 5 GB"
+    assert fb.signature(reason) == "disk-full"

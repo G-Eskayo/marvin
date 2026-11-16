@@ -47,6 +47,8 @@ def signature(reason: str) -> str:
     """Collapse the many spellings of one failure into a stable key."""
     r = reason or ""
     low = r.lower()
+    if re.search(r"no space left on device|enospc", low):
+        return "disk-full"
     m = re.search(r"(vitest|pytest) produced no test summary", low)
     if m:
         return f"measure:{m.group(1)}-no-summary"

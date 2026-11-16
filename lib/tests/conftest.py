@@ -367,3 +367,23 @@ def _no_real_alerts(tmp_path_factory, monkeypatch):
     monkeypatch.setattr(mr_notification, "desktop_notify", lambda *a, **k: None)
     monkeypatch.setattr(mr_notification, "dashboard_refresh_ping", lambda: None)
     monkeypatch.setattr(mr_notification, "phone_notify", None)
+
+
+@pytest.fixture(autouse=True)
+def _reset_remote_state_cache(monkeypatch):
+    # marvin#765: task_dispatch caches remote machine state; each test starts with a clean cache.
+    import task_dispatch
+    task_dispatch._remote_state_cache.clear()
+
+
+@pytest.fixture(autouse=True)
+def _default_disk_preflight_pass(request, monkeypatch):
+    # marvin#765: disk_triggers.preflight blocks work when the disk is full; tests pass by default unless
+    # they specifically test the disk-full path and set their own preflight. test_run_ticket and test_disk_triggers
+    # may override this for specific test cases, but the default is to pass so tests don't hit the real machine's disk.
+    module = request.module.__name__.rsplit(".", 1)[-1]
+    if module == "test_disk_triggers":
+        return  # test_disk_triggers tests the preflight logic itself; use real preflight
+    import disk_triggers
+    monkeypatch.setattr(disk_triggers, "preflight",
+                       lambda what, **k: {"ok": True, "free_before": 100 * 2**30, "free_after": 100 * 2**30, "reclaimed": None, "message": ""})

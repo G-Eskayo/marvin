@@ -484,6 +484,13 @@ def test_a_remote_machine_is_not_blocked_by_this_machines_busy_flag(monkeypatch)
     assert tp._select_for_profile({"machines": ["macbook-pro-1"]})[0] == "macbook-pro-1"  # select_machine already checked it
 
 
+def test_remote_disk_free_gb_is_imported_in_ticket_pipeline():
+    """Verify that remote_disk_free_gb is imported and available in ticket_pipeline."""
+    # This verifies that the import statement was added correctly
+    assert hasattr(tp, "remote_disk_free_gb")
+    assert callable(tp.remote_disk_free_gb)
+
+
 # ── "busy" must mean a ticket is actually running, not merely that a flag file says so ─
 
 def test_local_busy_is_true_when_a_ticket_process_is_alive_even_if_the_flag_was_cleared(monkeypatch):

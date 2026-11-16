@@ -46,7 +46,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
-from task_dispatch import select_machine, dispatch  # noqa: E402
+from task_dispatch import select_machine, dispatch, remote_disk_free_gb  # noqa: E402
 import failure_breaker  # noqa: E402
 import ticket_stages as ts  # noqa: E402
 import board_registry  # noqa: E402
@@ -822,8 +822,8 @@ def _credit_readiness(settings: dict) -> dict[str, bool]:
 def _select_for_profile(profile: dict, settings: dict | None = None, taken: dict | None = None,
                         local_base: int = 0, refusals: list | None = None):
     """A machine the profile allows, that is free, and (if it is this one) has the tools its required
-    checks need. Other machines are trusted to be what the profile says they are; a ticket that proves
-    otherwise is released without blame (run_ticket's EnvMissing path).
+    checks need. Other machines have disk space checked live via remote_disk_free_gb (marvin#765); a ticket that proves
+    otherwise (env missing, out of disk) is released without blame (run_ticket's EnvMissing/disk-full path).
 
     With parallel dispatch on (`settings["parallel"]`), "free" means a slot under the machine's effective limit, counting
     what this scan already started (`taken`) on top of `local_base` running here, and the guard rails must pass; a guard's
@@ -848,7 +848,7 @@ def _select_for_profile(profile: dict, settings: dict | None = None, taken: dict
             ok, why = dispatch_concurrency.can_start_another(
                 device, settings, slots_in_use=lambda m, used=used: used,
                 credit_ready=lambda m: settings.get("credit_ready", {}).get(m, False),
-                disk_free_gb=lambda m, s=is_self: _free_disk_gb() if s else None,
+                disk_free_gb=lambda m, s=is_self, info=selected[1]: _free_disk_gb() if s else remote_disk_free_gb(info.get("tailscale_hostname")),
                 github_budget_pct=_github_budget_pct,
                 breaker_tripped=lambda: [],   # a tripped breaker already removed that project from this scan
                 missing_tools=lambda m: [])

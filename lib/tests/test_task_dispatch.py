@@ -249,7 +249,9 @@ def test_read_remote_json_decode_exception_is_logged(hook_errors_log, monkeypatc
 	"""When JSON parsing fails, it's logged."""
 	import subprocess as sp
 	import task_dispatch as td
-	with patch.object(td.subprocess, "run", return_value=sp.CompletedProcess(["cmd"], 0, "not valid json", "")):
+	output = "not valid json\n___DISK_MARKER___\n/dev/disk1s5s1 234567890 123456789 111111101 53% /Users/user\n"
+	td._remote_state_cache.clear()
+	with patch.object(td.subprocess, "run", return_value=sp.CompletedProcess(["cmd"], 0, output, "")):
 		result = td._read_remote_dispatch_state("box.ts")
 	assert result == {"busy": False}
 	assert hook_errors_log.exists()
@@ -261,9 +263,12 @@ def test_read_remote_success_path_no_logging(hook_errors_log, monkeypatch):
 	"""When subprocess and JSON parsing succeed, no logging."""
 	import subprocess as sp
 	import task_dispatch as td
-	with patch.object(td.subprocess, "run", return_value=sp.CompletedProcess(["cmd"], 0, '{"busy": true}', "")):
+	output = '{"busy": true}\n___DISK_MARKER___\n/dev/disk1s5s1 234567890 123456789 111111101 53% /Users/user\n'
+	td._remote_state_cache.clear()
+	with patch.object(td.subprocess, "run", return_value=sp.CompletedProcess(["cmd"], 0, output, "")):
 		result = td._read_remote_dispatch_state("box.ts")
-	assert result == {"busy": True}
+	assert result["busy"] is True
+	assert result.get("disk_free_gb") is not None and result["disk_free_gb"] > 100  # disk should also be parsed
 	logs = hook_errors_log.read_text() if hook_errors_log.exists() else ""
 	assert "_read_remote_dispatch_state" not in logs
 
@@ -340,3 +345,117 @@ def test_machine_load_local_oserror_no_logging(hook_errors_log, monkeypatch):
 	assert result is None
 	logs = hook_errors_log.read_text() if hook_errors_log.exists() else ""
 	assert "machine_load" not in logs
+
+
+def test_parse_remote_disk_gb_valid_line(monkeypatch):
+	"""Parse a valid df -Pk line into GB."""
+	import task_dispatch as td
+	line = "/dev/disk1s5s1 234567890 123456789 111111101 53% /Users/user"
+	gb = td._parse_remote_disk_gb(line)
+	assert isinstance(gb, float)
+	assert gb > 100  # 111111101 KB ≈ 106 GB
+
+
+def test_parse_remote_disk_gb_invalid_line(monkeypatch):
+	"""Return None for invalid or short lines."""
+	import task_dispatch as td
+	assert td._parse_remote_disk_gb("invalid") is None
+	assert td._parse_remote_disk_gb("") is None
+	assert td._parse_remote_disk_gb("a b c") is None
+
+
+def test_read_remote_dispatch_state_includes_disk_free(monkeypatch):
+	"""_read_remote_dispatch_state parses disk info from df output."""
+	import subprocess
+	import task_dispatch as td
+	output = '{"busy": false}\n___DISK_MARKER___\n/dev/disk1s5s1 234567890 123456789 111111101 53% /Users/user\n'
+
+	def fake_run(cmd, **kw):
+		return subprocess.CompletedProcess(cmd, 0, output, "")
+
+	monkeypatch.setattr(td.subprocess, "run", fake_run)
+	result = td._read_remote_dispatch_state("box.tailscale")
+	assert result.get("busy") is False
+	assert result.get("disk_free_gb") is not None
+	assert result["disk_free_gb"] > 100
+
+
+def test_remote_disk_free_gb_returns_cached_value(monkeypatch):
+	"""remote_disk_free_gb returns values from the cache."""
+	import task_dispatch as td
+	td._remote_state_cache.clear()
+	td._remote_state_cache["box.ts"] = {"disk_free_gb": 42.5}
+	assert td.remote_disk_free_gb("box.ts") == 42.5
+
+
+def test_remote_disk_free_gb_returns_none_when_missing(monkeypatch):
+	"""remote_disk_free_gb returns None when not cached."""
+	import task_dispatch as td
+	td._remote_state_cache.clear()
+	assert td.remote_disk_free_gb("unknown.ts") is None
+
+
+def test_read_remote_dispatch_state_handles_multiline_json(monkeypatch):
+	"""_read_remote_dispatch_state correctly parses multi-line pretty-printed JSON."""
+	import subprocess
+	import task_dispatch as td
+	output = '''{
+  "busy": true,
+  "task": "building ticket"
+}
+___DISK_MARKER___
+/dev/disk1s5s1 234567890 123456789 111111101 53% /Users/user
+'''
+
+	def fake_run(cmd, **kw):
+		return subprocess.CompletedProcess(cmd, 0, output, "")
+
+	td._remote_state_cache.clear()
+	monkeypatch.setattr(td.subprocess, "run", fake_run)
+	result = td._read_remote_dispatch_state("box.tailscale")
+	assert result.get("busy") is True
+	assert result.get("task") == "building ticket"
+	assert result.get("disk_free_gb") is not None
+
+
+def test_read_remote_dispatch_state_handles_empty_state_file(monkeypatch):
+	"""_read_remote_dispatch_state handles missing state file (cat fails but marker is printed)."""
+	import subprocess
+	import task_dispatch as td
+	# When cat fails (file missing), ssh exits non-zero and the fix checks for that early.
+	# But if for some reason the marker is there with nothing before it, we should handle it.
+	output = '''___DISK_MARKER___
+/dev/disk1s5s1 234567890 123456789 111111101 53% /Users/user
+'''
+
+	def fake_run(cmd, **kw):
+		return subprocess.CompletedProcess(cmd, 0, output, "")
+
+	td._remote_state_cache.clear()
+	monkeypatch.setattr(td.subprocess, "run", fake_run)
+	result = td._read_remote_dispatch_state("box.tailscale")
+	assert result.get("busy") is False  # default when no state file
+	assert result.get("disk_free_gb") is not None
+
+
+def test_read_remote_dispatch_state_missing_marker(monkeypatch):
+	"""_read_remote_dispatch_state handles output with no marker."""
+	import subprocess
+	import task_dispatch as td
+	output = '{"busy": false}'
+
+	def fake_run(cmd, **kw):
+		return subprocess.CompletedProcess(cmd, 0, output, "")
+
+	td._remote_state_cache.clear()
+	monkeypatch.setattr(td.subprocess, "run", fake_run)
+	result = td._read_remote_dispatch_state("box.tailscale")
+	# No marker means the df command didn't run, so we get the default
+	assert result.get("busy") is False
+
+
+def test_remote_state_cache_reset_fixture():
+	"""The conftest fixture resets the remote state cache for each test."""
+	import task_dispatch as td
+	# This test verifies the fixture works by checking the cache is clean
+	assert len(td._remote_state_cache) == 0

@@ -105,26 +105,75 @@ def _tailscale_online_hosts() -> set[str]:
     return tailscale_online_hosts_or_none() or set()
 
 
+_remote_state_cache: dict = {}
+
+
 def _read_local_dispatch_state() -> dict:
     import stamped
     return stamped.read(DISPATCH_STATE_PATH).value or {"busy": False}
 
 
+def _parse_remote_disk_gb(line: str) -> float | None:
+    """Parse a df -Pk line (10-column format) and return free space in GB."""
+    try:
+        parts = line.split()
+        if len(parts) >= 4:
+            free_kb = int(parts[3])
+            return free_kb / (1024 * 1024)
+    except (ValueError, IndexError):
+        pass
+    return None
+
+
 def _read_remote_dispatch_state(host: str) -> dict:
     try:
         proc = subprocess.run(
-            ["ssh", *SSH_OPTS, host, f"cat {SHELL_STATE_PATH}"],
+            ["ssh", *SSH_OPTS, host, f"cat {SHELL_STATE_PATH} ; echo '___DISK_MARKER___' ; df -Pk \"$HOME\" | tail -1"],
             capture_output=True, text=True, timeout=10,
         )
+        # cat exits non-zero if the state file is missing/unreadable; echo and tail exit 0. So exit code 0
+        # only when at least echo succeeded, meaning the marker line is present. Non-zero means cat failed.
         if proc.returncode != 0:
             _log_hook_error_safe("_read_remote_dispatch_state", RuntimeError(f"ssh to {host} exited {proc.returncode}: {proc.stderr[:300]}"))
-            return {"busy": False}
-        if not proc.stdout.strip():
-            return {"busy": False}
-        return json.loads(proc.stdout)
+            result = {"busy": False}
+            _remote_state_cache[host] = result
+            return result
+        # Split on the marker: everything before it is the state file (possibly empty if the file didn't exist),
+        # everything after is the df line.
+        parts = proc.stdout.split("___DISK_MARKER___", 1)
+        if len(parts) < 2:
+            # Marker is missing, which shouldn't happen if exit code was 0, but handle it.
+            result = {"busy": False}
+            _remote_state_cache[host] = result
+            return result
+        state_text = parts[0].strip()
+        df_text = parts[1].strip()
+        state = {"busy": False}
+        disk_free_gb = None
+
+        # Parse the state file (the part before the marker). If it's empty, the state file didn't exist on the
+        # remote machine, so stay with {"busy": False}. If it's non-empty, parse it as JSON.
+        if state_text:
+            state = json.loads(state_text)
+        # Parse the df line (the part after the marker).
+        if df_text:
+            df_lines = df_text.split("\n")
+            if df_lines:
+                disk_free_gb = _parse_remote_disk_gb(df_lines[0])
+        if disk_free_gb is not None:
+            state["disk_free_gb"] = disk_free_gb
+        _remote_state_cache[host] = state
+        return state
     except Exception as exc:
         _log_hook_error_safe("_read_remote_dispatch_state", exc)
-        return {"busy": False}
+        result = {"busy": False}
+        _remote_state_cache[host] = result
+        return result
+
+
+def remote_disk_free_gb(host: str) -> float | None:
+    """Get the cached remote disk free space in GB."""
+    return _remote_state_cache.get(host, {}).get("disk_free_gb")
 
 
 def _candidates() -> dict:

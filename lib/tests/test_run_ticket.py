@@ -1300,6 +1300,66 @@ def test_a_breaker_log_that_cannot_be_written_never_stops_the_run_from_releasing
     assert out["raised"] is False and released == [20]
 
 
+def test_disk_preflight_refusal_returns_disk_full_outcome(monkeypatch):
+    """When disk_triggers.preflight returns ok=False, run() returns a disk_full outcome without calling build()."""
+    build_called = []
+    monkeypatch.setattr(rt.disk_triggers, "preflight",
+                       lambda what: {"ok": False, "free_before": 1 * 2**30, "free_after": 1 * 2**30,
+                                    "reclaimed": "some cleanup", "message": "not enough space"})
+    monkeypatch.setattr(rt, "build", lambda *a, **k: build_called.append(True) or ({}, []))
+    monkeypatch.setattr(rt, "_release_claim", lambda *a, **k: None)
+    monkeypatch.setattr(rt, "_trigger_redispatch", lambda: None)
+    monkeypatch.setattr(rt.ts, "record_stage", lambda *a, **k: None)
+    monkeypatch.setattr(rt.failure_breaker, "record_failure", lambda *a, **k: None)
+
+    out = rt.run(20)
+    assert out["raised"] is False
+    assert out.get("disk_full") is True
+    assert "not enough space" in out["reason"]
+    assert build_called == []
+
+
+def test_disk_full_exception_in_build_sets_disk_full_flag(monkeypatch):
+    """When an exception with 'no space left on device' is raised during build, the outcome has disk_full=True."""
+    def fake_execute(*a, **k):
+        raise OSError(28, "No space left on device")
+
+    monkeypatch.setattr(rt.disk_triggers, "preflight",
+                       lambda what: {"ok": True, "free_before": 100 * 2**30, "free_after": 100 * 2**30,
+                                    "reclaimed": None, "message": ""})
+    monkeypatch.setattr(rt, "execute_ticket", fake_execute)
+    monkeypatch.setattr(rt, "_release_claim", lambda *a, **k: None)
+    monkeypatch.setattr(rt, "_trigger_redispatch", lambda: None)
+    monkeypatch.setattr(rt.subprocess, "run", lambda *a, **k: None)
+    monkeypatch.setattr(rt, "drop_build_output", lambda *a, **k: None)
+
+    out = rt.run(20)
+    assert out["raised"] is False
+    assert out.get("disk_full") is True
+
+
+def test_settle_handles_disk_full_by_releasing_and_redispatching(monkeypatch):
+    """When disk_full=True, settle() releases the claim, feeds the breaker, records stage, and redispatches."""
+    released = []
+    fed_breaker = []
+    recorded = []
+    redispatched = []
+
+    monkeypatch.setattr(rt, "_release_claim", lambda n, **k: released.append(n))
+    monkeypatch.setattr(rt.failure_breaker, "record_failure", lambda n, r, **k: fed_breaker.append((n, r)))
+    monkeypatch.setattr(rt.ts, "record_stage", lambda n, *a, **k: recorded.append(n))
+    monkeypatch.setattr(rt, "_trigger_redispatch", lambda: redispatched.append(True))
+
+    outcome = {"raised": False, "disk_full": True, "reason": "No space left on device"}
+    result = rt.settle(20, outcome)
+
+    assert released == [20]
+    assert len(fed_breaker) == 1 and fed_breaker[0][0] == 20
+    assert recorded == [20]
+    assert redispatched == [True]
+    assert result == outcome
+
+
 def test_a_profile_projects_verify_is_untouched_by_the_paired_measure(monkeypatch):
     """marvin#1152 changes marvin's measure only: a project with its own profile verify keeps pp.Measurer, which keeps
     execute_ticket's single up-front baseline (no paired_baseline) and never gets a MARVIN_BASE."""
@@ -1313,3 +1373,79 @@ def test_a_profile_projects_verify_is_untouched_by_the_paired_measure(monkeypatc
     assert not hasattr(pp.Measurer, "paired_baseline")
     monkeypatch.delenv("MARVIN_BASE", raising=False)
     assert "MARVIN_BASE" not in pp.build_env({"verify": []})
+
+
+def test_run_calls_settle_immediately_when_preflight_fails_with_disk_full(monkeypatch):
+    """When preflight fails (disk full), run() calls settle directly without calling build()."""
+    import disk_triggers
+    preflight_calls = []
+    build_calls = []
+    settle_calls = []
+
+    def fake_preflight(what, **k):
+        preflight_calls.append(what)
+        return {"ok": False, "free_before": 1 * 2**30, "free_after": 0.5 * 2**30,
+                "reclaimed": "cleared 0.5 GB", "message": "Not starting: the disk has 0.5 GB free, work needs 5 GB"}
+
+    def fake_build(*a, **k):
+        build_calls.append(a)
+        return _passing_result(), []
+
+    def fake_settle(*a, **k):
+        settle_calls.append(a)
+        return a[1]  # return outcome
+
+    monkeypatch.setattr(disk_triggers, "preflight", fake_preflight)
+    monkeypatch.setattr(rt, "build", fake_build)
+    monkeypatch.setattr(rt, "settle", fake_settle)
+
+    result = rt.run(99)
+
+    assert preflight_calls == ["ticket G-Eskayo/marvin#99"]
+    assert build_calls == []  # build was never called
+    assert len(settle_calls) == 1
+    assert settle_calls[0][1]["disk_full"] is True  # outcome has disk_full flag
+    assert "no space left on device" in settle_calls[0][1]["reason"]  # reason includes magic text
+
+
+def test_disk_full_reason_includes_text_matching_failure_breaker_signature(monkeypatch):
+    """When preflight fails, the reason passed to settle includes 'no space left on device' so signature() matches it."""
+    import disk_triggers
+    import failure_breaker
+
+    def fake_preflight(what, **k):
+        return {"ok": False, "free_before": 1 * 2**30, "free_after": 0.5 * 2**30,
+                "reclaimed": "cleared 0.5 GB", "message": "Not starting: disk full"}
+
+    monkeypatch.setattr(disk_triggers, "preflight", fake_preflight)
+    monkeypatch.setattr(rt, "settle", lambda i, o, f, **k: o)
+
+    result = rt.run(100)
+
+    # The signature function should recognize this as disk-full
+    assert failure_breaker.signature(result["reason"]) == "disk-full"
+
+
+def test_settle_adds_retry_marker_for_disk_full_before_redispatch(monkeypatch):
+    """When settling a disk-full outcome, a retry marker is posted to hold the ticket in queue."""
+    import subprocess
+    released = []
+    fed_breaker = []
+    recorded = []
+    redispatched = []
+    gh_calls = []
+
+    monkeypatch.setattr(rt, "_release_claim", lambda *a, **k: released.append(a[0]))
+    monkeypatch.setattr(rt, "_feed_breaker", lambda *a, **k: fed_breaker.append(a))
+    monkeypatch.setattr(rt.ts, "record_stage", lambda n, *a, **k: recorded.append(n))
+    monkeypatch.setattr(rt, "_trigger_redispatch", lambda: redispatched.append(True))
+    monkeypatch.setattr(rt.subprocess, "run", lambda cmd, **k: gh_calls.append(cmd))
+
+    outcome = {"raised": False, "disk_full": True, "reason": "no space left on device: disk full"}
+    result = rt.settle(20, outcome)
+
+    # Verify the retry marker was posted (gh issue comment call)
+    comment_calls = [c for c in gh_calls if "comment" in c]
+    assert len(comment_calls) > 0
+    comment_body = comment_calls[0][-1]  # the --body argument
+    assert "not before" in comment_body  # retry marker text
