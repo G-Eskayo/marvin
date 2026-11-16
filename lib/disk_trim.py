@@ -61,13 +61,13 @@ def _build_never_trim_worktrees() -> set[Path]:
         repo, number = wt.get("repo"), cs._extract_issue_number(wt["branch"])
         try:
             state = cs._default_pr_state(repo, wt["branch"]) if repo else None
-            claimed = bool(repo and number is not None and cs._default_is_claimed(repo, number))
+            has_live_task = bool(repo and number is not None and cs._default_has_live_task(repo, number))
         except Exception:
             # GitHub failure: be conservative, don't trim
             worktrees.add(wt_path)
             continue
 
-        action, _ = cs.decide_worktree(wt, state, claimed)
+        action, _ = cs.decide_worktree(wt, state, has_live_task)
         if action in ("keep", "review"):
             worktrees.add(wt_path)
 

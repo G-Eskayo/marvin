@@ -435,6 +435,37 @@ def _ci_onnx_download_failures(fetch=None, repo: str = "G-Eskayo/marvin", runs: 
     return float(count)
 
 
+def _orphan_pipeline_worktrees(list_worktrees: Callable[[], list[dict]] | None = None,
+                               pr_state: Callable[[str, str], str | None] | None = None,
+                               has_live_task: Callable[[str, int], bool] | None = None) -> float:
+    """Empty pipeline worktrees older than EMPTY_MIN_AGE_HOURS with no PR, no commits, no changes, and no live task.
+    These are attempted tickets (worktrees created but the ticket never ran or ran once and was closed) that the sweep
+    cannot remove because they are either too young or their cleanup got blocked by GitHub failures. A high count means
+    the sweep is not catching up, or is blocked. Per Mac, summed."""
+    import cleanup_sweep as cs
+    list_worktrees = list_worktrees or cs._default_list_worktrees
+    pr_state = pr_state or cs._default_pr_state
+    has_live_task = has_live_task or cs._default_has_live_task
+
+    count = 0
+    for wt in list_worktrees():
+        if wt.get("broken") or wt.get("in_use") or wt.get("dirty") or wt.get("ahead"):
+            continue
+        if wt.get("age_hours", 0) < cs.EMPTY_MIN_AGE_HOURS:
+            continue
+        repo, number = wt.get("repo"), cs._extract_issue_number(wt.get("branch", ""))
+        if not repo or number is None:
+            continue
+        try:
+            state = pr_state(repo, wt["branch"]) if repo else None
+            live = has_live_task(repo, number)
+        except Exception:
+            continue
+        if state is None and not live:
+            count += 1
+    return float(count)
+
+
 # name -> (symptom counter, the most it may read while the fix holds, what it counts). Summed across Macs like any
 # measure; the logs are per Mac (~/.claude/logs doesn't sync), so nothing is counted twice.
 # Each counter takes `days` (default the 7-day window): a watched incident is re-measured over the time since its last
@@ -468,6 +499,8 @@ PROBES: dict[str, tuple[Callable[..., float], float, str]] = {
     # code doesn't change, so any rise above this resets the fix-check (#1098, verified 2026-11-09).
     "ci-onnx-download-failures": (lambda days=PROBE_WINDOW_DAYS: _ci_onnx_download_failures(days=days), 6.0,
                                   "GitHub's 'Python tests' job failures over 7 days (#1098/#1156, fixed by #1163)"),
+    "orphan-pipeline-worktrees": (lambda days=PROBE_WINDOW_DAYS: _orphan_pipeline_worktrees(), 0.0,
+                                  "empty pipeline worktrees older than 24h with no PR or live task, per Mac, summed"),
     # Piece 4 of the data-freshness plan (marvin#1224): a stale claim that still reached the owner. Target 0 two weeks running.
     "stale-relay-leaked": (lambda days=PROBE_WINDOW_DAYS: _stale_relay("leaked", days), 0.0,
                            "stale claims that reached the owner over 7 days (question log kind=stale + their own 'that's "

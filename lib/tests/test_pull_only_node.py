@@ -83,9 +83,9 @@ def test_the_sweep_sees_a_process_inside_a_worktree_on_linux(monkeypatch, tmp_pa
         return R()
     monkeypatch.setattr(cs.host_os, "lsof_bin", lambda: "/usr/bin/lsof")
     monkeypatch.setattr(cs.subprocess, "run", fake_run)
-    cwds = cs._cwds_in_use()
+    open_paths = cs._open_paths()
     assert seen == ["/usr/bin/lsof"]
-    assert cs._in_use(tmp_path / "wt", cwds) is True
+    assert cs._in_use(tmp_path / "wt", open_paths) is True
 
 
 def test_without_lsof_the_pytest_trim_removes_nothing(monkeypatch):
@@ -114,7 +114,7 @@ def test_pull_only_sweep_never_releases_claims_pushes_backups_or_promotes(log_pa
         list_claimed_open_issues=lambda: pytest.fail("asked GitHub for claims on a pull-only node"),
         list_worktrees=lambda: [_old_dirty_wt(tmp_path)],
         pr_state=lambda repo, branch: None,
-        is_claimed=lambda repo, n: False,
+        has_live_task=lambda repo, n: False,
         release=lambda n, m: pytest.fail("released a claim from a pull-only node"),
         remove_worktree=lambda w: pytest.fail("removed a worktree whose work was never backed up"),
         backup=lambda w: pytest.fail("pushed a backup branch from a pull-only node"),
@@ -130,14 +130,14 @@ def test_pull_only_still_removes_a_merged_prs_clean_worktree(log_path, tmp_path)
     # Purely local, lossless (git refuses if anything is uncommitted): allowed on the box.
     wt = {**_old_dirty_wt(tmp_path), "dirty": False, "ahead": 0}
     removed = []
-    out = cs.run_daily_sweep(list_worktrees=lambda: [wt], pr_state=lambda r, b: "MERGED", is_claimed=lambda r, n: False,
+    out = cs.run_daily_sweep(list_worktrees=lambda: [wt], pr_state=lambda r, b: "MERGED", has_live_task=lambda r, n: False,
                              remove_worktree=lambda w: removed.append(w) or True, now=NOW, pull_only=True)
     assert removed and out["worktrees_removed"] == 1
 
 
 def test_pull_only_never_removes_a_worktree_a_process_is_inside(log_path, tmp_path):
     wt = {**_old_dirty_wt(tmp_path), "dirty": False, "ahead": 0, "in_use": True}
-    cs.run_daily_sweep(list_worktrees=lambda: [wt], pr_state=lambda r, b: "MERGED", is_claimed=lambda r, n: False,
+    cs.run_daily_sweep(list_worktrees=lambda: [wt], pr_state=lambda r, b: "MERGED", has_live_task=lambda r, n: False,
                        remove_worktree=lambda w: pytest.fail("removed a worktree a process is inside"),
                        now=NOW, pull_only=True)
 
@@ -157,7 +157,7 @@ def test_with_no_token_a_worktree_is_kept_never_removed(log_path, tmp_path, monk
     def no_token(*a):
         raise gh_env.GhError("no GitHub token for this shell")
     wt = {**_old_dirty_wt(tmp_path), "dirty": False, "ahead": 0}
-    cs.run_daily_sweep(list_worktrees=lambda: [wt], pr_state=no_token, is_claimed=no_token,
+    cs.run_daily_sweep(list_worktrees=lambda: [wt], pr_state=no_token, has_live_task=no_token,
                        remove_worktree=lambda w: pytest.fail("removed a worktree GitHub was never asked about"),
                        now=NOW, pull_only=True)
     assert "could not check GitHub" in log_path.read_text()

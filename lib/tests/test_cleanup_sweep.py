@@ -132,24 +132,24 @@ def _wt(tmp_path, name="pipeline-g-eskayo-clarity-captions-13", repo="G-Eskayo/c
 
 @pytest.mark.parametrize("pr_state", ["MERGED", "CLOSED"])
 def test_resolved_pr_is_removed(tmp_path, pr_state):
-    action, _ = cs.decide_worktree(_wt(tmp_path, ahead=1), pr_state=pr_state, claimed=False)
+    action, _ = cs.decide_worktree(_wt(tmp_path, ahead=1), pr_state=pr_state, has_live_task=False)
     assert action == "remove"
 
 
 def test_open_pr_is_kept(tmp_path):
-    action, _ = cs.decide_worktree(_wt(tmp_path, ahead=1), pr_state="OPEN", claimed=False)
+    action, _ = cs.decide_worktree(_wt(tmp_path, ahead=1), pr_state="OPEN", has_live_task=False)
     assert action == "keep"
 
 
 def test_uncommitted_work_is_backed_up_never_plainly_removed_even_when_merged(tmp_path):
     # #629: "needs a look" was never looked at (43 worktrees, 11.8 GiB). Leftover edits go to a backup branch first.
-    action, reason = cs.decide_worktree(_wt(tmp_path, dirty=True), pr_state="MERGED", claimed=False)
+    action, reason = cs.decide_worktree(_wt(tmp_path, dirty=True), pr_state="MERGED", has_live_task=False)
     assert action == "backup"
     assert "uncommitted" in reason
 
 
 def test_commits_without_a_pr_are_backed_up(tmp_path):
-    action, reason = cs.decide_worktree(_wt(tmp_path, ahead=2), pr_state=None, claimed=False)
+    action, reason = cs.decide_worktree(_wt(tmp_path, ahead=2), pr_state=None, has_live_task=False)
     assert action == "backup"
     assert "no PR" in reason
 
@@ -157,7 +157,7 @@ def test_commits_without_a_pr_are_backed_up(tmp_path):
 def test_recent_leftover_work_is_left_alone_for_now(tmp_path):
     # A helper may still be working in it: only idle worktrees are backed up.
     action, reason = cs.decide_worktree(_wt(tmp_path, dirty=True, age_hours=cs.BACKUP_MIN_AGE_HOURS - 1),
-                                        pr_state=None, claimed=False)
+                                        pr_state=None, has_live_task=False)
     assert action == "review"
     assert "uncommitted" in reason
 
@@ -167,31 +167,31 @@ def test_leftover_work_that_something_still_owns_is_never_touched(tmp_path, why)
     wt = _wt(tmp_path, dirty=True, ahead=1, age_hours=500)
     if why == "in_use":
         wt["in_use"] = True
-    action, _ = cs.decide_worktree(wt, pr_state="OPEN" if why == "open_pr" else None, claimed=why == "claimed")
+    action, _ = cs.decide_worktree(wt, pr_state="OPEN" if why == "open_pr" else None, has_live_task=why == "claimed")
     assert action in ("keep", "review")
 
 
 def test_a_process_inside_a_clean_merged_worktree_keeps_it(tmp_path):
     wt = _wt(tmp_path, age_hours=500)
     wt["in_use"] = True
-    assert cs.decide_worktree(wt, pr_state="MERGED", claimed=False)[0] == "keep"
+    assert cs.decide_worktree(wt, pr_state="MERGED", has_live_task=False)[0] == "keep"
 
 
 def test_empty_old_attempt_with_no_pr_is_removed(tmp_path):
-    action, _ = cs.decide_worktree(_wt(tmp_path, ahead=0, age_hours=48), pr_state=None, claimed=False)
+    action, _ = cs.decide_worktree(_wt(tmp_path, ahead=0, age_hours=48), pr_state=None, has_live_task=False)
     assert action == "remove"
 
 
 def test_a_ticket_that_just_started_is_not_mistaken_for_empty(tmp_path):
     # A fresh worktree has no PR, no commits, no changes -- exactly like an abandoned one.
-    young = cs.decide_worktree(_wt(tmp_path, age_hours=2), pr_state=None, claimed=False)
-    claimed = cs.decide_worktree(_wt(tmp_path, age_hours=48), pr_state=None, claimed=True)
+    young = cs.decide_worktree(_wt(tmp_path, age_hours=2), pr_state=None, has_live_task=False)
+    claimed = cs.decide_worktree(_wt(tmp_path, age_hours=48), pr_state=None, has_live_task=True)
     assert young[0] == "keep"
     assert claimed[0] == "keep"
 
 
 def test_unknown_repo_is_kept(tmp_path):
-    action, _ = cs.decide_worktree(_wt(tmp_path, repo=None), pr_state=None, claimed=False)
+    action, _ = cs.decide_worktree(_wt(tmp_path, repo=None), pr_state=None, has_live_task=False)
     assert action == "keep"
 
 
@@ -213,7 +213,7 @@ def test_sweep_looks_up_each_worktree_in_its_own_repo(tmp_path):
     result = cs.sweep_worktrees(
         list_worktrees=lambda: [a, b],
         pr_state=pr_state,
-        is_claimed=lambda repo, n: False,
+        has_live_task=lambda repo, n: False,
         remove_worktree=lambda wt: removed.append(wt["path"]) or True,
     )
     assert ("G-Eskayo/clarity-captions", "pipeline/g-eskayo/clarity-captions#13") in asked
@@ -228,7 +228,7 @@ def test_sweep_reports_items_needing_review_and_failed_removals(tmp_path):
     result = cs.sweep_worktrees(
         list_worktrees=lambda: [dirty, stuck],
         pr_state=lambda repo, branch: "MERGED",
-        is_claimed=lambda repo, n: False,
+        has_live_task=lambda repo, n: False,
         remove_worktree=lambda wt: False,  # git refused
     )
     assert [r["path"] for r in result["review"]] == [dirty["path"], stuck["path"]]
@@ -282,7 +282,7 @@ def test_lists_real_worktrees_with_repo_and_state(tmp_path, monkeypatch):
     (root / "pipeline-g-eskayo-clarity-captions-13" / "new.txt").write_text("x")
     (root / "not-a-git-dir").mkdir()
     monkeypatch.setattr(cs, "worktree_roots", lambda: [root])  # never the real ~/Developer
-    monkeypatch.setattr(cs, "_cwds_in_use", lambda: set())
+    monkeypatch.setattr(cs, "_open_paths", lambda: set())
 
     [wt] = cs._default_list_worktrees()
     assert wt["repo"] == "G-Eskayo/clarity-captions"
@@ -302,7 +302,7 @@ def test_run_daily_sweep_writes_log(log_path, tmp_path):
         list_claimed_open_issues=lambda: [_issue(7, ["claimed:mac-mini"], updated_hours_ago=48)],
         list_worktrees=lambda: [wt],
         pr_state=lambda repo, branch: None,
-        is_claimed=lambda repo, n: False,
+        has_live_task=lambda repo, n: False,
         release=lambda n, m: None,
         remove_worktree=lambda w: True,
         now=NOW,
@@ -340,7 +340,7 @@ def test_run_daily_sweep_returns_summary_dict(log_path, tmp_path):
         list_claimed_open_issues=lambda: [_issue(7, ["claimed:mac-mini"], updated_hours_ago=48)],
         list_worktrees=lambda: [_wt(tmp_path)],
         pr_state=lambda repo, branch: "MERGED",
-        is_claimed=lambda repo, n: False,
+        has_live_task=lambda repo, n: False,
         release=lambda n, m: None,
         remove_worktree=lambda w: True,
         now=NOW,
@@ -612,7 +612,7 @@ def test_a_failed_push_means_no_backup_and_nothing_removed(tmp_path):
     result = cs.sweep_worktrees(
         list_worktrees=lambda: [{**wt, "repo": "G-Eskayo/marvin", "ahead": 0, "dirty": True, "age_hours": 500}],
         pr_state=lambda repo, branch: None,
-        is_claimed=lambda repo, n: False,
+        has_live_task=lambda repo, n: False,
         remove_worktree=lambda w: removed.append(w) or True,
         backup=lambda w: cs.backup_worktree(w, today="20261024", guard=lambda *a: True),
     )
@@ -640,9 +640,9 @@ def test_sweep_backs_up_then_removes_and_a_second_run_finds_nothing_left(tmp_pat
     old = 1_000_000_000
     os.utime(wt_path, (old, old))
     monkeypatch.setattr(cs, "worktree_roots", lambda: [tmp_path / "wts"])
-    monkeypatch.setattr(cs, "_cwds_in_use", lambda: set())
+    monkeypatch.setattr(cs, "_open_paths", lambda: set())
     monkeypatch.setattr(cs, "GITHUB_REPO_RE", __import__("re").compile(r"(origin)\.git$"))
-    kw = dict(pr_state=lambda repo, branch: None, is_claimed=lambda repo, n: False,
+    kw = dict(pr_state=lambda repo, branch: None, has_live_task=lambda repo, n: False,
               backup=lambda w: cs.backup_worktree(w, today="20261024", guard=lambda *a: True))
 
     first = cs.sweep_worktrees(**kw)
@@ -676,19 +676,50 @@ def test_a_folder_with_no_git_record_is_listed_never_deleted(tmp_path, monkeypat
     (broken / ".git").write_text("gitdir: /nowhere/.git/worktrees/x")
     (broken / "work.py").write_text("maybe the only copy")
     monkeypatch.setattr(cs, "worktree_roots", lambda: [root])
-    result = cs.sweep_worktrees(pr_state=lambda r, b: None, is_claimed=lambda r, n: False)
+    result = cs.sweep_worktrees(pr_state=lambda r, b: None, has_live_task=lambda r, n: False)
     assert [r["path"] for r in result["review"]] == [broken]
     assert "no git record" in result["review"][0]["reason"]
     assert (broken / "work.py").exists()
 
 
-def test_cwds_in_use_marks_a_worktree_a_process_is_inside(tmp_path, monkeypatch):
+def test_folder_with_corrupted_git_metadata_is_reported_broken(tmp_path, monkeypatch):
+    """When git rev-parse fails (corrupted metadata) and .git exists, the folder is reported as broken."""
+    root = tmp_path / "wts"
+    broken = root / "corrupted"
+    broken.mkdir(parents=True)
+    (broken / ".git").mkdir()  # Has .git but it's corrupted
+    monkeypatch.setattr(cs, "worktree_roots", lambda: [root])
+    worktrees = cs._default_list_worktrees(open_paths=set())
+    # Should report as broken when git commands fail and .git exists
+    assert any(w.get("broken") is True and w["path"] == broken for w in worktrees)
+
+
+def test_open_paths_marks_a_worktree_a_process_has_open(tmp_path, monkeypatch):
     inside = tmp_path / "wts" / "a"
     (inside / "sub").mkdir(parents=True)
-    monkeypatch.setattr(cs, "_cwds_in_use", lambda: {str((inside / "sub").resolve())})
-    assert cs._in_use(inside, cs._cwds_in_use()) is True
-    assert cs._in_use(tmp_path / "wts" / "b", cs._cwds_in_use()) is False
-    assert cs._in_use(tmp_path / "wts" / "a-other", cs._cwds_in_use()) is False
+    monkeypatch.setattr(cs, "_open_paths", lambda: {str((inside / "sub").resolve())})
+    open_paths = cs._open_paths()
+    assert cs._in_use(inside, open_paths) is True
+    assert cs._in_use(tmp_path / "wts" / "b", open_paths) is False
+    assert cs._in_use(tmp_path / "wts" / "a-other", open_paths) is False
+
+
+def test_fail_safe_when_open_paths_returns_none(tmp_path, monkeypatch):
+    """When lsof fails and _open_paths returns None, all worktrees are marked in_use=True to prevent deletion."""
+    wt = tmp_path / "wt"
+    wt.mkdir()
+    (wt / ".git").mkdir()
+    cs._git(wt, "init")
+    cs._git(wt, "commit", "--allow-empty", "-m", "init")
+    monkeypatch.setattr(cs, "worktree_roots", lambda: [tmp_path])
+    # When _open_paths returns None (lsof failed), fail-safe uses a sentinel that marks everything in_use
+    monkeypatch.setattr(cs, "_open_paths", lambda: None)
+    worktrees = cs._default_list_worktrees()
+    assert len(worktrees) > 0
+    # Verify all worktrees are marked in_use=True (the fail-safe sentinel prevents matches)
+    for wt_dict in worktrees:
+        if not wt_dict.get("broken"):
+            assert wt_dict.get("in_use") is True, f"Worktree not marked in_use when lsof fails: {wt_dict}"
 
 
 # ── aerial screen-saver cache (macOS re-downloads a video almost daily) ─────
@@ -894,10 +925,21 @@ def test_pr_state_reaches_github_through_the_token_file(tmp_path, monkeypatch, t
     assert cs._default_pr_state("G-Eskayo/marvin", "fix/866") == "MERGED"
 
 
-def test_is_claimed_and_issue_state_reach_github_through_the_token_file(tmp_path, monkeypatch, token_file):
-    fake_gh(tmp_path, monkeypatch, stdout='{"state": "OPEN", "labels": [{"name": "claimed:mac-mini"}]}')
+def test_has_live_task_and_issue_state_reach_github_through_the_token_file(tmp_path, monkeypatch, token_file):
+    # Test that has_live_task checks dispatch_concurrency.slots_in_use() only (no GitHub fallback)
     token_file.write_text(GOOD)
-    assert cs._default_is_claimed("G-Eskayo/marvin", 866) is True
+    # When a slot exists with matching ticket, has_live_task is True
+    result = cs._default_has_live_task("G-Eskayo/marvin", 866,
+                                       slots_in_use=lambda: [{"ticket": "G-Eskayo/marvin#866"}])
+    assert result is True
+    # When a slot matches by repo+number, has_live_task is True
+    result = cs._default_has_live_task("G-Eskayo/marvin", 867,
+                                       slots_in_use=lambda: [{"ticket": "G-Eskayo/marvin#867"}])
+    assert result is True
+    # When no slot matches, has_live_task is False (no fallback to GitHub)
+    result = cs._default_has_live_task("G-Eskayo/marvin", 868, slots_in_use=lambda: [])
+    assert result is False
+    # Verify issue_state still works independently
     fake_gh(tmp_path, monkeypatch, stdout="CLOSED\n")
     assert cs._default_issue_state("G-Eskayo/marvin", 866) == "CLOSED"
 

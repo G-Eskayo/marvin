@@ -112,13 +112,105 @@ def load_config() -> dict:
 
 # ── pre-flight ──────────────────────────────────────────────────────────────────────────────────────────────────
 
-def reclaim() -> dict:
+def clean_empty_worktrees(list_worktrees: Callable[[], list[dict]] | None = None,
+                          pr_state: Callable[[str, str], str | None] | None = None,
+                          has_live_task: Callable[[str, int], bool] | None = None,
+                          remove_worktree: Callable[[dict], bool] | None = None,
+                          can_push: bool = True) -> dict:
+    """Remove truly empty orphaned pipeline worktrees under WORKTREES_ROOT only (size-limited, with locking
+    to avoid racing the daily sweep). Only removes worktrees that are:
+    - Under WORKTREES_ROOT (not helper worktrees in .claude/worktrees)
+    - Empty (no PR, no commits, no changes)
+    - Older than 2.0 hours
+    - With no live task (not claimed)
+
+    Returns {"removed": [paths], "kept": count, "freed_bytes": int, "detail": str}."""
+    import fcntl
+    import disk_ledger
+
+    LOCK_PATH.parent.mkdir(parents=True, exist_ok=True)
+    with open(LOCK_PATH, "a") as lock:
+        try:
+            fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        except OSError:
+            return {"removed": [], "kept": 0, "freed_bytes": 0, "detail": "the daily cleanup sweep is running"}
+
+    list_worktrees = list_worktrees or cs._default_list_worktrees
+    pr_state = pr_state or cs._default_pr_state
+    has_live_task = has_live_task or cs._default_has_live_task
+    remove_worktree = remove_worktree or cs._default_remove_worktree
+
+    freed = 0
+    removed_paths = []
+    kept_count = 0
+
+    for wt in list_worktrees():
+        if wt.get("broken"):
+            kept_count += 1
+            continue
+
+        # Only clean orphaned pipeline worktrees, not helper worktrees in .claude/worktrees
+        wt_path = Path(wt.get("path", ""))
+        if not any(wt_path.is_relative_to(r) for r in [cs.WORKTREES_ROOT]):
+            kept_count += 1
+            continue
+
+        # Must be empty (no PR, no commits, no changes), older than 2.0h, with no live task
+        if wt.get("in_use") or wt.get("dirty") or wt.get("ahead"):
+            kept_count += 1
+            continue
+
+        if wt.get("age_hours", 0) < 2.0:
+            kept_count += 1
+            continue
+
+        repo, number = wt.get("repo"), cs._extract_issue_number(wt["branch"])
+        try:
+            state = pr_state(repo, wt["branch"]) if repo else None
+        except Exception:
+            kept_count += 1
+            continue
+
+        # Check for live task, but let exceptions propagate (they're GitHub failures)
+        try:
+            live_task = bool(repo and number is not None and has_live_task(repo, number))
+        except Exception:
+            kept_count += 1
+            continue
+
+        if live_task:
+            kept_count += 1
+            continue
+
+        # This worktree is truly orphaned: empty, old, no live task
+        # Size it BEFORE removal so we know what we freed
+        try:
+            kb = disk_ledger.du_kb(wt_path, timeout=DU_TIMEOUT_S)
+            if isinstance(kb, int) and kb > 0:
+                freed += kb * 1024
+        except Exception:
+            pass
+
+        if remove_worktree(wt):
+            removed_paths.append(str(wt_path))
+        else:
+            kept_count += 1
+
+    return {"removed": removed_paths, "kept": kept_count, "freed_bytes": freed,
+            "detail": f"removed {len(removed_paths)} orphaned worktree(s), freed {MIB(freed)}"}
+
+
+def reclaim(pull_only: bool = False) -> dict:
     """Everything already ruled disposable, in one pass: the sweep's first aid (old aerial videos, disk_trim's
-    allowlisted caches), merged PRs' worktrees on this Mac, old unused pytest temp folders (#866), and the download
-    cache back under its cap. No rule of its own. Each part is independent: one breaking is reported and the others still run."""
+    allowlisted caches), merged PRs' worktrees on this Mac, empty pipeline worktrees, old unused pytest temp folders
+    (#866), and the download cache back under its cap. No rule of its own. Each part is independent: one breaking is
+    reported and the others still run."""
     import download_cache
+    import machine_profile
+    pull_only = pull_only or (bool(machine_profile.pull_only()) if hasattr(machine_profile, 'pull_only') else False)
     parts = [("rebuildable", cs.clear_rebuildable),
              ("merged worktrees", lambda: clean_merged_worktrees()),
+             ("empty pipeline worktrees", lambda: clean_empty_worktrees(can_push=not pull_only)),
              ("pytest temp", lambda: cs.trim_pytest_temps()),
              ("download cache", lambda: download_cache.enforce_cap())]
     freed, notes = 0, []

@@ -222,12 +222,12 @@ def re_validate_path(path: Path) -> bool:
             continue
         try:
             state = cs._default_pr_state(wt["repo"], wt["branch"]) if wt.get("repo") else None
-            claimed = bool(
+            has_live_task = bool(
                 wt.get("repo")
                 and cs._extract_issue_number(wt["branch"]) is not None
-                and cs._default_is_claimed(wt["repo"], cs._extract_issue_number(wt["branch"]))
+                and cs._default_has_live_task(wt["repo"], cs._extract_issue_number(wt["branch"]))
             )
-            action, _ = cs.decide_worktree(wt, state, claimed)
+            action, _ = cs.decide_worktree(wt, state, has_live_task)
             if action not in ("clean", "archive"):
                 return False  # Worktree should be kept
         except Exception:

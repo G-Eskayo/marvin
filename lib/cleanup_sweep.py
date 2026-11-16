@@ -135,20 +135,26 @@ def _in_use(path: Path, cwds: set[str]) -> bool:
     return any(c == p or c.startswith(p + "/") for c in cwds)
 
 
-def _default_list_worktrees() -> list[dict]:
+def _default_list_worktrees(open_paths: set[str] | None = None) -> list[dict]:
     """One dict per git worktree under worktree_roots(): path, branch, the clone
     it belongs to, that clone's GitHub repo (None if not on GitHub), commits
     ahead of origin/main, whether anything is uncommitted, age in hours, and
     whether a process is inside it. A folder git doesn't recognize comes back
-    with "broken": True."""
+    with "broken": True. open_paths injection: None = fail-safe use of _open_paths()."""
+    if open_paths is None:
+        open_paths = _open_paths()
+    # Fail-safe: if _open_paths() returns None (lsof missing/failed), mark every worktree in_use=True
+    # so nothing removable is deleted when we can't verify what's running.
+    mark_all_in_use = open_paths is None
+    if mark_all_in_use:
+        open_paths = set()
     out = []
-    cwds = _cwds_in_use()
     for root in worktree_roots():
-        out += _list_root(root, cwds)
+        out += _list_root(root, open_paths, mark_all_in_use=mark_all_in_use)
     return out
 
 
-def _list_root(root: Path, cwds: set[str]) -> list[dict]:
+def _list_root(root: Path, open_paths: set[str], mark_all_in_use: bool = False) -> list[dict]:
     out = []
     for entry in sorted(root.iterdir()):
         if not entry.is_dir():
@@ -156,10 +162,13 @@ def _list_root(root: Path, cwds: set[str]) -> list[dict]:
         branch = _git(entry, "branch", "--show-current")
         common = _git(entry, "rev-parse", "--path-format=absolute", "--git-common-dir")
         if common.returncode != 0:
+            # Worktree metadata corrupted or missing: report broken if it has .git; otherwise skip silently
             if (entry / ".git").exists():
                 out.append({"path": entry, "broken": True})
             continue
         if branch.returncode != 0 or not branch.stdout.strip():
+            # Detached HEAD: broken worktree, report it
+            out.append({"path": entry, "broken": True})
             continue
         clone = Path(common.stdout.strip()).parent
         url = _git(clone, "remote", "get-url", "origin").stdout.strip()
@@ -173,7 +182,7 @@ def _list_root(root: Path, cwds: set[str]) -> list[dict]:
             "ahead": int(ahead) if ahead.isdigit() else None,
             "dirty": bool(_git(entry, "status", "--porcelain").stdout.strip()),
             "age_hours": (time.time() - entry.stat().st_mtime) / 3600,
-            "in_use": _in_use(entry, cwds),
+            "in_use": mark_all_in_use or _in_use(entry, open_paths),
         })
     return out
 
@@ -188,12 +197,15 @@ def _default_pr_state(repo: str, branch: str) -> str | None:
     return result.stdout.strip() or None
 
 
-def _default_is_claimed(repo: str, number: int) -> bool:
-    result = gh_env.run(
-        ["gh", "issue", "view", str(number), "--repo", repo, "--json", "labels,state"],
-    )
-    issue = json.loads(result.stdout)
-    return issue.get("state") == "OPEN" and any(l["name"].startswith("claimed:") for l in issue.get("labels", []))
+def _default_has_live_task(repo: str, number: int,
+                           slots_in_use: Callable[[], list[dict]] | None = None) -> bool:
+    """A worktree's ticket has a live task when a slot is reserved for it in dispatch_concurrency.
+    Raises on any failure (GitHub outage, dispatch_concurrency unavailable) so a failure never reads as "no live task"."""
+    if slots_in_use is None:
+        import dispatch_concurrency
+        slots_in_use = dispatch_concurrency.slots_in_use
+    slots = slots_in_use()
+    return any(str(s.get("ticket")) == f"{repo}#{number}" for s in slots if isinstance(s, dict))
 
 
 def _default_remove_worktree(wt: dict) -> bool:
@@ -473,7 +485,7 @@ def sweep_stale_claims(
     return stale
 
 
-def decide_worktree(wt: dict, pr_state: str | None, claimed: bool) -> tuple[str, str]:
+def decide_worktree(wt: dict, pr_state: str | None, has_live_task: bool) -> tuple[str, str]:
     """("remove" | "backup" | "keep" | "review", reason). "backup" = push its
     leftover work to a backup branch, then remove (#629). "review" = kept for
     now and listed in the log (recent leftover work, or an open PR's)."""
@@ -481,7 +493,7 @@ def decide_worktree(wt: dict, pr_state: str | None, claimed: bool) -> tuple[str,
         return "keep", "not a GitHub clone the sweep knows how to check"
     if wt.get("in_use"):
         return "keep", "a process is working inside it"
-    if claimed:
+    if has_live_task:
         return "keep", "its ticket is claimed (running)"
     if wt.get("dirty"):
         if pr_state == "OPEN" or wt.get("age_hours", 0) < BACKUP_MIN_AGE_HOURS:
@@ -503,7 +515,7 @@ def decide_worktree(wt: dict, pr_state: str | None, claimed: bool) -> tuple[str,
 def sweep_worktrees(
     list_worktrees: Callable[[], list[dict]] | None = None,
     pr_state: Callable[[str, str], str | None] | None = None,
-    is_claimed: Callable[[str, int], bool] | None = None,
+    has_live_task: Callable[[str, int], bool] | None = None,
     remove_worktree: Callable[[dict], bool] | None = None,
     backup: Callable[[dict], str | None] | None = None,
     can_push: bool = True,
@@ -512,7 +524,7 @@ def sweep_worktrees(
     backup is a push."""
     list_worktrees = list_worktrees or _default_list_worktrees
     pr_state = pr_state or _default_pr_state
-    is_claimed = is_claimed or _default_is_claimed
+    has_live_task = has_live_task or _default_has_live_task
     remove_worktree = remove_worktree or _default_remove_worktree
     backup = backup or backup_worktree
 
@@ -524,11 +536,15 @@ def sweep_worktrees(
         repo, number = wt.get("repo"), _extract_issue_number(wt["branch"])
         try:
             state = pr_state(repo, wt["branch"]) if repo else None
-            claimed = bool(repo and number is not None and is_claimed(repo, number))
         except Exception as exc:  # a GitHub failure must never read as "no PR"
             review.append({**wt, "reason": f"could not check GitHub: {str(exc)[:120]}"})
             continue
-        action, reason = decide_worktree(wt, state, claimed)
+        try:
+            live_task = bool(repo and number is not None and has_live_task(repo, number))
+        except Exception as exc:  # a GitHub failure must never read as "no live task"
+            review.append({**wt, "reason": f"could not check GitHub: {str(exc)[:120]}"})
+            continue
+        action, reason = decide_worktree(wt, state, live_task)
         if action == "backup" and not can_push:
             review.append({**wt, "reason": f"{reason}; not backed up: this is a pull-only node (ADR 0069), kept"})
         elif action == "backup":
@@ -732,7 +748,7 @@ def run_daily_sweep(
     list_claimed_open_issues: Callable[[], list[dict]] | None = None,
     list_worktrees: Callable[[], list[dict]] | None = None,
     pr_state: Callable[[str, str], str | None] | None = None,
-    is_claimed: Callable[[str, int], bool] | None = None,
+    has_live_task: Callable[[str, int], bool] | None = None,
     release: Callable[[int, str], None] | None = None,
     remove_worktree: Callable[[dict], bool] | None = None,
     threshold_hours: float = STALE_THRESHOLD_HOURS,
@@ -753,7 +769,7 @@ def run_daily_sweep(
             stale = sweep_stale_claims(threshold_hours, list_claimed_open_issues, release, now)
         except gh_env.GhError as exc:
             notes.append(f"Stale claims not checked: {str(exc)[:200]}")
-    worktrees = sweep_worktrees(list_worktrees, pr_state, is_claimed, remove_worktree, backup, can_push=not pull_only)
+    worktrees = sweep_worktrees(list_worktrees, pr_state, has_live_task, remove_worktree, backup, can_push=not pull_only)
     try:
         simulators = sweep_simulators()
     except Exception as exc:  # noqa: BLE001 -- e.g. no Xcode on this machine; never stops the sweep
