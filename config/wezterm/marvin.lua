@@ -6,7 +6,7 @@
 --
 -- The colours come from config/palette/wezterm.json, the same file lib/contrast.py measures against the
 -- accessibility rule (#1062): the terminal can't drift from what was checked. The font is MARVIN Term Mono (#1054),
--- with Menlo behind it for every glyph the draft hasn't drawn yet.
+-- with IBM 3270 (its CRT parent, BSD licence) behind it for the glyphs the draft hasn't drawn yet, and Menlo last.
 local wezterm = require 'wezterm'
 
 local M = {}
@@ -57,7 +57,7 @@ function M.apply(config)
   local dirs = config.font_dirs or {}
   table.insert(dirs, AGENTS .. 'design/fonts')
   config.font_dirs = dirs
-  config.font = wezterm.font_with_fallback({ 'MARVIN Term Mono', 'Menlo' })
+  config.font = wezterm.font_with_fallback({ 'MARVIN Term Mono', 'IBM 3270', 'Menlo' })
   -- MARVIN Term is drawn on a pixel grid: 25 pt puts each font pixel on exactly two screen pixels on a Retina
   -- display, the size it was reviewed at. Other crisp sizes come with the readability keys (#1073).
   config.font_size = 25.0
