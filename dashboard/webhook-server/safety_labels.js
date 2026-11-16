@@ -7,8 +7,25 @@
 
 export const SAFETY_MAX_BODY = 16 * 1024
 
+// Resolve the source of a safety label submission: 'loopback' for localhost, otherwise matched against
+// registered Macs via whois + isAllowed. Returns 'loopback', a Tailscale hostname, or null if not a registered Mac.
+export async function safetyLabelSource(remoteAddress, { whois, macHosts, isAllowed }) {
+  if (!remoteAddress) return null
+  // Loopback always allowed (same machine).
+  if (remoteAddress === '127.0.0.1' || remoteAddress === '::1' || remoteAddress.startsWith('::ffff:127.0.0.1')) {
+    return 'loopback'
+  }
+  // Extract IP for IPv6-mapped addresses.
+  const ip = remoteAddress.startsWith('::ffff:') ? remoteAddress.slice(7) : remoteAddress
+  // Resolve via whois and match against registered Macs.
+  const peer = await whois(ip)
+  const hosts = macHosts()
+  if (peer && isAllowed(peer, hosts)) return peer
+  return null
+}
+
 // run(args) -> stdout of `python calibrate.py ...args` (index.js). Returns { status, json }.
-export async function handleSafetyRequest({ method, url, body }, run) {
+export async function handleSafetyRequest({ method, url, body, source } = {}, run) {
   if (method === 'GET' && url === '/safety/taus') {
     try {
       return { status: 200, json: JSON.parse(await run(['taus'])) }
@@ -24,8 +41,12 @@ export async function handleSafetyRequest({ method, url, body }, run) {
     return { status: 400, json: { ok: false, error: 'Body must be a JSON object' } }
   }
   if (!payload || typeof payload !== 'object' || Array.isArray(payload)) return { status: 400, json: { ok: false, error: 'Body must be a JSON object' } }
-  // Only the known fields travel on, as one argv item (execFile, no shell).
+  // Only the known fields travel on, as one argv item (execFile, no shell). Client-supplied source is discarded.
   const label = Object.fromEntries(['loop', 'score', 'label', 'note', 'entry_id'].filter((k) => k in payload).map((k) => [k, payload[k]]))
+  // Add the verified source if it exists.
+  if (source) {
+    label.source = source
+  }
   let stdout
   try {
     stdout = await run(['record', JSON.stringify(label)])

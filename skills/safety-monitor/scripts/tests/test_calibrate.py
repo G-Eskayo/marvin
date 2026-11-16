@@ -291,3 +291,58 @@ def test_the_primary_is_the_registrys_macos_desktop_never_a_hardcoded_name(monke
     assert s.is_primary() is False
     monkeypatch.delenv("MARVIN_SAFETY_URL", raising=False)
     assert s.base_url() == "http://desk-ts:7878"
+
+
+# --- ADR 0074: source tracking (verified labels from registered Macs) -----------------------------------------------
+
+def test_valid_label_accepts_source_parameter(state):
+    assert c.valid_label("loop", 0.5, 0, source="mac-mini-1") is None
+    assert c.valid_label("loop", 0.5, 0, source="loopback") is None
+
+
+@pytest.mark.parametrize("bad_source", ["../x", "mac mini 1", "UPPERCASE", ""])
+def test_invalid_source_is_refused(state, bad_source):
+    assert c.valid_label("loop", 0.5, 0, source=bad_source) == "source"
+
+
+def test_record_label_accepts_source_parameter(state):
+    assert c.record_label("research_colony", 0.4, 0, entry_id="a" * 16, source="mac-mini-1") is True
+    row = c._rows()[0]
+    assert row.get("source") == "mac-mini-1"
+
+
+def test_unverified_label_replaced_by_verified_one(state):
+    assert c.record_label("research_colony", 0.4, 0, entry_id="a" * 16) is True
+    assert len(c._rows()) == 1
+    assert not c._rows()[0].get("source")
+    # Re-delivery with a verified source: the old unverified row is replaced
+    assert c.record_label("research_colony", 0.45, 0, entry_id="a" * 16, source="mac-mini-1") is True
+    assert len(c._rows()) == 1
+    assert c._rows()[0].get("source") == "mac-mini-1"
+    assert c._rows()[0].get("score") == 0.45
+
+
+def test_verified_label_not_replaced_by_another(state):
+    assert c.record_label("research_colony", 0.4, 0, entry_id="a" * 16, source="mac-mini-1") is True
+    # Another verified submission for the same entry: ignored (duplicate)
+    assert c.record_label("research_colony", 0.99, 1, entry_id="a" * 16, source="mac-mini-2") is False
+    assert len(c._rows()) == 1
+    assert c._rows()[0].get("score") == 0.4
+
+
+def test_unverified_not_replaced_by_unverified(state):
+    assert c.record_label("research_colony", 0.4, 0, entry_id="a" * 16) is True
+    # Another unverified submission for the same entry: ignored (duplicate)
+    assert c.record_label("research_colony", 0.99, 1, entry_id="a" * 16) is False
+    assert len(c._rows()) == 1
+
+
+def test_primary_passes_source_in_submit(tmp_path, monkeypatch):
+    state_dir = tmp_path / "safety-monitor"
+    monkeypatch.setattr(c, "STATE_DIR", state_dir)
+    monkeypatch.setattr(c, "CALIBRATION_FILE", state_dir / "calibration.jsonl")
+    monkeypatch.setattr(c, "TAU_FILE", state_dir / "tau.json")
+    monkeypatch.setattr(s, "is_primary", lambda: True)
+    s.submit("research_colony", 0.4, 0, entry_id="a" * 16)
+    row = c._rows()[0]
+    assert row.get("source") == "local"

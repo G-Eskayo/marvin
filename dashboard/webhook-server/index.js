@@ -8,13 +8,14 @@ import { createUnbuiltCache, createFixTicketsCache, createQueueLoader, createBas
 import { pendingCheckHeads } from '../electron/main/mr_repos.js'
 import { snapshotExec } from './pr_snapshot.js'
 import { createMergeTracker, createInflightStore, takeInterruptedMerges, recordMergeDuration, estimateMergeMs, machineLoad, approveResponder, wantsStream, createMergeLatch, alreadyMergingBody } from './merge_progress.js'
-import { resolveDeviceId, peerHosts, isPrimaryHost } from '../electron/main/device_identity.js'
+import { resolveDeviceId, peerHosts, isPrimaryHost, macHostnames } from '../electron/main/device_identity.js'
 import { sendFeedback, dropEntirely, handleDenyRequest } from './deny.js'
 import { forwardRefreshPing } from './refresh_relay.js'
 import { announceMergeHost, relayMergeHostUp } from './merge_host_announce.js'
 import { createStageRelay, createLiveMerges, allowedPeerAddress, cleanStageMessage, stageFanOut } from './merge_stage_relay.js'
 import { copyRoute } from './copy_route.js'
 import { loadGhToken } from './gh_auth.js'
+import { whois, isAllowed } from '../mobile-backend/device_gate.js'
 import { useGhGate } from '../electron/main/path.js'
 import { failureResponse } from './failure.js'
 import { timeRequest } from '../electron/main/timing.js'
@@ -38,7 +39,7 @@ import { handlePortfolioRequest } from '../electron/main/portfolio_remote.js'
 import { resolveServiceDefaults } from '../electron/main/device_identity.js'
 import { createRebuildCheckTrigger } from './rebuild_check.js'
 import { supportRepos, createSupportSync } from './support_sync.js'
-import { handleSafetyRequest, SAFETY_MAX_BODY } from './safety_labels.js'
+import { handleSafetyRequest, safetyLabelSource, SAFETY_MAX_BODY } from './safety_labels.js'
 
 // Authenticate gh/git children from the pipeline's shared credential file (see gh_auth.js).
 const ghTokenSource = loadGhToken()
@@ -126,7 +127,20 @@ const server = createServer(async (req, res) => {
         res.writeHead(413, { 'Content-Type': 'application/json' }).end(JSON.stringify({ ok: false, error: err.message }))
         return
       }
+      // Verify the source for safety label submissions (only loopback or registered Macs).
+      const source = await safetyLabelSource(req.socket?.remoteAddress, { whois, macHosts: macHostnames, isAllowed })
+      if (!source) {
+        res.writeHead(403, { 'Content-Type': 'application/json' }).end(JSON.stringify({ ok: false, error: 'not a registered Mac' }))
+        return
+      }
+      const calibrateScript = path.join(os.homedir(), '.agents', 'skills', 'safety-monitor', 'scripts', 'calibrate.py')
+      const python = path.join(os.homedir(), '.agents', 'venv', 'bin', 'python')
+      const run = async (args) => (await promisify(execFile)(python, [calibrateScript, ...args], { timeout: 30_000 })).stdout
+      const { status, json } = await handleSafetyRequest({ method: req.method, url: req.url, body, source }, run)
+      res.writeHead(status, { 'Content-Type': 'application/json' }).end(JSON.stringify(json))
+      return
     }
+    // GET /safety/taus is unchanged (no source verification needed).
     const calibrateScript = path.join(os.homedir(), '.agents', 'skills', 'safety-monitor', 'scripts', 'calibrate.py')
     const python = path.join(os.homedir(), '.agents', 'venv', 'bin', 'python')
     const run = async (args) => (await promisify(execFile)(python, [calibrateScript, ...args], { timeout: 30_000 })).stdout

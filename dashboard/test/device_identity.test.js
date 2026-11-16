@@ -9,7 +9,8 @@ import {
   isPrimaryHost,
   resolveServiceDefaults,
   peerHosts,
-  primaryDeviceId
+  primaryDeviceId,
+  macHostnames
 } from '../electron/main/device_identity.js'
 
 const registryFixture = {
@@ -122,5 +123,31 @@ describe('primaryDeviceId', () => {
     withRegistry({ 'macbook-pro-1': registryFixture['macbook-pro-1'] }, (networkPath) => {
       expect(primaryDeviceId(networkPath)).toBe(null)
     })
+  })
+})
+
+// ADR 0074: safety labels come only from registered Macs
+describe('macHostnames', () => {
+  it('returns Tailscale hostnames for macOS devices (os=macos or absent)', () => {
+    const fixture = {
+      'mac-mini-1': { os: 'macos', tailscale_hostname: 'mac-mini-1.some.domain' },
+      'macbook': { tailscale_hostname: 'macbook.some.domain' },
+      'linux-box': { os: 'linux', tailscale_hostname: 'linux-box.some.domain' },
+      'bad-mac': { os: 'macos' }
+    }
+    withRegistry(fixture, (networkPath) => {
+      const result = macHostnames(networkPath)
+      expect(result.sort()).toEqual(['mac-mini-1.some.domain', 'macbook.some.domain'].sort())
+    })
+  })
+
+  it('returns empty array when no devices are macOS', () => {
+    withRegistry({ 'linux-box': { os: 'linux', tailscale_hostname: 'box' } }, (networkPath) => {
+      expect(macHostnames(networkPath)).toEqual([])
+    })
+  })
+
+  it('returns empty array when registry does not exist', () => {
+    expect(macHostnames('/nonexistent/marvin-network.json')).toEqual([])
   })
 })

@@ -631,3 +631,40 @@ def test_ci_onnx_download_failures_is_registered():
     assert "ci-onnx-download-failures" in pm.PROBES
     fn, limit, what = pm.PROBES["ci-onnx-download-failures"]
     assert limit == 6.0 and "#1098" in what and "#1156" in what and "#1163" in what
+
+
+# ADR 0074: safety labels from non-registered sources
+def test_safety_labels_from_non_mac_counts_unverified_labels(tmp_path, monkeypatch):
+    """Count labels recorded without a verified source (not from a registered Mac)."""
+    import sys
+    from pathlib import Path
+    scripts_dir = Path(__file__).resolve().parents[1].parent / "skills" / "safety-monitor" / "scripts"
+    sys.path.insert(0, str(scripts_dir))
+    import calibrate as calibrate_mod
+    monkeypatch.setattr(calibrate_mod, "STATE_DIR", tmp_path / "safety-monitor")
+    monkeypatch.setattr(calibrate_mod, "CALIBRATION_FILE", tmp_path / "safety-monitor" / "calibration.jsonl")
+    monkeypatch.setattr(calibrate_mod, "TAU_FILE", tmp_path / "safety-monitor" / "tau.json")
+
+    # Write calibration rows with and without source
+    rows = [
+        {"loop": "test", "score": 0.5, "label": 0},  # unverified (no source)
+        {"loop": "test", "score": 0.6, "label": 1, "source": "mac-mini-1"},  # verified
+        {"loop": "test", "score": 0.7, "label": 0},  # unverified
+    ]
+    (tmp_path / "safety-monitor").mkdir(parents=True)
+    (tmp_path / "safety-monitor" / "calibration.jsonl").write_text("".join(
+        __import__("json").dumps(r) + "\n" for r in rows
+    ))
+
+    # Patch calibrate import in purpose_metrics
+    monkeypatch.setattr(pm, "calibrate", calibrate_mod)
+    count = pm._safety_labels_from_non_mac()
+    assert count == 2.0  # two rows without source
+
+
+def test_safety_labels_from_non_mac_is_registered():
+    """The probe is registered as a health check for source verification."""
+    assert "safety-labels-from-non-mac" in pm.PROBES
+    fn, limit, what = pm.PROBES["safety-labels-from-non-mac"]
+    assert limit == 0.0
+    assert "verified source" in what.lower() or "non-mac" in what.lower()

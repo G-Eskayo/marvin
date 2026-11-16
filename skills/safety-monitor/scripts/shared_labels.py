@@ -93,7 +93,7 @@ def submit(loop_name: str | dict, score: float | None = None, label: int | None 
         row = {"loop": loop_name, "score": score, "label": label, "note": note, "entry_id": entry_id}
     row = {k: v for k, v in row.items() if v is not None}
     if is_primary():
-        calibrate.record_label(row["loop"], row["score"], row["label"], row.get("note"), row.get("entry_id"))
+        calibrate.record_label(row["loop"], row["score"], row["label"], row.get("note"), row.get("entry_id"), source="local")
         return
     why = calibrate.valid_label(row.get("loop"), row.get("score"), row.get("label"), row.get("note"), row.get("entry_id"))
     if why:

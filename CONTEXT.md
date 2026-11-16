@@ -1546,11 +1546,13 @@ Mac has no push channel. Gil applies the hooks on each Mac with `marvin_hooks.py
   http(s)/mailto links (opened outside the app). The excerpt is cut at a line end, never inside a code fence. A
   "modify" note is one line of data, kept with the label in `calibration.jsonl`.
 - **No polling**: read on open and on the `quarantine` file trigger (`triggerHub.watchFiles`, as for goals).
-- **One calibration, tau per loop** (decided 2026-10-26): answers from any Mac are recorded on the primary host
+- **One calibration, tau per loop** (decided 2026-10-26, extended ADR 0074 2026-11-15): answers are accepted only from
+  registered Macs (verified via Tailscale whois + device registry match, or loopback) and recorded on the primary host
   (`shared_labels.py`; the registry's macOS desktop, as the dashboard's webhook default) through its webhook
-  (`POST /safety/label`), queued in a local outbox while it is away and delivered on the next run, de-duplicated by
-  entry hash. Tau is per loop from 20 labels, else the global tau (all loops, from 20), else 0.3, never below 0.3,
-  and the whole map is recomputed on every label (#599). Other Macs cache the primary's map (`GET /safety/taus`).
+  (`POST /safety/label`). A verified label overrides an earlier unverified one for the same entry. Queued in a local outbox
+  while the primary is away and delivered on the next run, de-duplicated by entry hash. Tau is per loop from 20 labels,
+  else the global tau (all loops, from 20), else 0.3, never below 0.3, and the whole map is recomputed on every label (#599).
+  Other Macs cache the primary's map (`GET /safety/taus`).
 
 ## Box memory review (proposed 2026-10-30, ADR 0082, marvin#912)
 

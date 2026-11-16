@@ -43,6 +43,13 @@ from typing import Callable
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
+# Import calibrate from safety-monitor if available (for source-based label verification)
+try:
+    sys.path.insert(0, str(Path(__file__).resolve().parents[0].parent / "skills" / "safety-monitor" / "scripts"))
+    import calibrate
+except ImportError:
+    calibrate = None
+
 LABEL = "purpose-metric"
 MISSED_LABEL = "missed-purpose"
 BUG_LABEL = "bug"
@@ -389,6 +396,25 @@ def _model_run_timeouts(days: float = PROBE_WINDOW_DAYS, path: Path | None = Non
     return float(count)
 
 
+def _safety_labels_from_non_mac(days: float = PROBE_WINDOW_DAYS, now: datetime | None = None) -> float:
+    """ADR 0074: labels recorded without a verified source (not from a registered Mac). Before the fix, an unverified
+    label submission would have been accepted; after, only verified ones are recorded. Counts labels with no `source`
+    field in calibration.jsonl over the window. O(log size)."""
+    if not calibrate:
+        return 0.0
+    now = now or datetime.now(timezone.utc)
+    cut = _cut(now, days)
+    count = 0
+    for row in calibrate._rows():
+        try:
+            # If no source field, it's an unverified label.
+            if not row.get("source"):
+                count += 1
+        except (KeyError, TypeError):
+            continue
+    return float(count)
+
+
 def _ci_onnx_download_failures(fetch=None, repo: str = "G-Eskayo/marvin", runs: int = 20,
                                days: float = PROBE_WINDOW_DAYS, now: datetime | None = None) -> float:
     """#1098/#1156 (2026-11-09): GitHub's 'Python tests' job failures in the 7-day window. Option B: counts the job's
@@ -472,6 +498,10 @@ PROBES: dict[str, tuple[Callable[..., float], float, str]] = {
     "stale-relay-leaked": (lambda days=PROBE_WINDOW_DAYS: _stale_relay("leaked", days), 0.0,
                            "stale claims that reached the owner over 7 days (question log kind=stale + their own 'that's "
                            "already fixed' replies), per Mac, summed (#1224)"),
+    # ADR 0074: safety labels submitted from non-registered sources (before the fix, an unverified submission would have
+    # been recorded). Target 0: every label must come from a registered Mac. O(calibration file size).
+    "safety-labels-from-non-mac": (lambda days=PROBE_WINDOW_DAYS: _safety_labels_from_non_mac(days=days), 0.0,
+                                   "safety labels with no verified source (not from a registered Mac) over 7 days"),
 }
 MEASURES.update({name: fn for name, (fn, _limit, _what) in PROBES.items()})
 MEASURES["stale-relay-caught"] = lambda: _stale_relay("caught")

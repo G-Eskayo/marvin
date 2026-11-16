@@ -86,3 +86,12 @@ export function peerHosts(readHardwareUuid = defaultReadHardwareUuid, networkPat
     .filter(([id, info]) => id !== me && info && info.tailscale_hostname)
     .map(([id, info]) => ({ id, host: info.tailscale_hostname }))
 }
+
+// Registered macOS devices (os is 'macos' or absent, defaulting to macOS), mapped to Tailscale hostname.
+// Used to verify safety label submissions come from a known Mac (ADR 0074).
+export function macHostnames(networkPath = NETWORK_PATH) {
+  const registry = loadRegistry(networkPath)
+  return Object.entries(registry)
+    .filter(([id, info]) => info && (info.os === 'macos' || !info.os) && info.tailscale_hostname)
+    .map(([id, info]) => info.tailscale_hostname)
+}
