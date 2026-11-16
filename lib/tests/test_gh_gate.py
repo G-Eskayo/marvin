@@ -191,6 +191,9 @@ def _asker(files, body="", compare_since=None):
             return {"files": [{"filename": f} for f in (compare_since or [])]}
         if args[0] == "api" and args[1].startswith("repos/o/r/compare/"):
             return {"files": [{"filename": f} for f in files]}
+        if args[0] == "api" and "compare/" in args[1]:
+            # Handle comparisons for any repo (cross-repo images)
+            return {"files": [{"filename": f} for f in files]}
         raise AssertionError(args)
     return ask
 
@@ -217,7 +220,7 @@ def test_a_non_ui_pr_and_other_gh_calls_pass(tmp_path):
 
 def test_merging_with_images_older_than_a_later_look_change_is_refused(tmp_path):
     ask = _asker(["site/page.html"], body=f"![a]({RAW735})", compare_since=["site/page.html"])
-    assert gg.ui_evidence_refusal(["pr", "merge", "9", "-R", "o/r"], ask, profiles_dir=tmp_path).startswith("STALE_UI_EVIDENCE")
+    assert gg.ui_evidence_refusal(["pr", "merge", "9", "-R", "o/r"], ask, profiles_dir=tmp_path).startswith("IMAGES_STALE")
     ok = _asker(["site/page.html"], body=f"![a]({RAW735})", compare_since=["docs/images/pr/a.png"])
     assert gg.ui_evidence_refusal(["pr", "merge", "9", "-R", "o/r"], ok, profiles_dir=tmp_path) is None
 

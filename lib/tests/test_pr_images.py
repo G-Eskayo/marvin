@@ -80,25 +80,36 @@ def test_the_projects_own_ui_paths_count():
 def test_a_ui_change_with_a_broken_link_is_refused_naming_the_link():
     body = f"![x](https://github.com/o/r/blob/{SHA}/a.png?raw=true)"
     problems = pi.verdict(["a/View.swift", "a/MainView.swift"], body)
-    assert codes(problems) == ["BAD_IMAGE_LINK"]
+    assert codes(problems) == ["IMAGES_UNPINNED"]
     assert "?raw=true" in problems[0][1]
 
 
 def test_images_older_than_a_later_ui_change_are_stale():
-    changed_since = {SHA: ["site/index.html"]}.get
+    def changed_since(repo, sha):
+        if sha == SHA:
+            return ["site/index.html"]
+        return None
     problems = pi.verdict(["site/index.html"], f"![x]({RAW})", changed_since=changed_since)
-    assert codes(problems) == ["STALE_UI_EVIDENCE"]
+    assert codes(problems) == ["IMAGES_STALE"]
     assert "site/index.html" in problems[0][1]
 
 
 def test_images_are_current_when_only_non_ui_files_or_the_images_changed_since():
-    changed_since = {SHA: ["lib/x.py", "docs/images/pr/a.png"]}.get
+    def changed_since(repo, sha):
+        if sha == SHA:
+            return ["lib/x.py", "docs/images/pr/a.png"]
+        return None
     assert pi.verdict(["site/index.html"], f"![x]({RAW})", changed_since=changed_since) == []
 
 
 def test_with_several_pinned_commits_the_newest_one_decides():
     body = f"![x]({RAW})\n![y](https://raw.githubusercontent.com/o/r/{OLD}/b.png)"
-    changed_since = {SHA: [], OLD: ["site/index.html"]}.get
+    def changed_since(repo, sha):
+        if sha == SHA:
+            return []
+        elif sha == OLD:
+            return ["site/index.html"]
+        return None
     assert pi.verdict(["site/index.html"], body, changed_since=changed_since) == []
 
 
@@ -108,7 +119,7 @@ def test_staleness_cant_be_judged_without_pinned_commits_so_dragged_images_pass(
 
 
 def test_when_github_cant_say_what_changed_since_the_images_it_isnt_called_stale():
-    assert pi.verdict(["site/index.html"], f"![x]({RAW})", changed_since=lambda s: None) == []
+    assert pi.verdict(["site/index.html"], f"![x]({RAW})", changed_since=lambda repo, sha: None) == []
 
 
 # ── which gh calls are checked ──────────────────────────────────────────────
@@ -149,3 +160,18 @@ def test_the_shots_section_is_replaced_not_duplicated():
 
 def test_the_shots_section_goes_at_the_end_when_there_are_no_decisions():
     assert pi.with_shots_section("Intro.", "![a](u)").startswith("Intro.\n\n" + pi.SHOTS_START)
+
+
+# ── image pins and facts ────────────────────────────────────────────────────
+
+def test_image_pins_finds_raw_and_blob_links_with_full_shas():
+    body = f"![a]({RAW})\n![b](https://github.com/o/r/blob/{SHA}/x.png?raw=true)"
+    pins = pi.image_pins(body)
+    assert len(pins) == 2
+    assert {"repo": "G-Eskayo/marvin-voice", "sha": SHA} in pins
+    assert {"repo": "o/r", "sha": SHA} in pins
+
+
+def test_image_pins_ignores_branch_links_github_uploads_and_relatives():
+    body = f"![a](https://raw.githubusercontent.com/o/r/main/x.png)\n![b](https://github.com/user-attachments/assets/abc)\n![c](docs/x.png)"
+    assert pi.image_pins(body) == []

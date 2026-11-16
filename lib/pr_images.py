@@ -60,9 +60,24 @@ def _list(paths, n=3) -> str:
     return ", ".join(paths[:n]) + (f" and {len(paths) - n} more" if len(paths) > n else "")
 
 
+def image_pins(body: str) -> list[dict]:
+    """Image pin facts: repo and commit SHA for each pinned image (raw.githubusercontent.com or github.com blob links with full SHAs).
+    Each dict has 'repo' (owner/repo) and 'sha' (commit)."""
+    seen = {}
+    for u in image_urls(body):
+        m = re.match(r"^https://(?:raw\.githubusercontent\.com/([^/]+)/([^/]+)/|github\.com/([^/]+)/([^/]+)/(?:blob|raw)/)([0-9a-f]{40})/", u)
+        if not m:
+            continue
+        repo = f"{m.group(1) or m.group(3)}/{m.group(2) or m.group(4)}"
+        key = f"{repo}@{m.group(5)}"
+        if key not in seen:
+            seen[key] = {"repo": repo, "sha": m.group(5)}
+    return list(seen.values())
+
+
 def verdict(files, body, extra_patterns=(), changed_since=None) -> list[tuple[str, str]]:
     """Problems that keep a PR from opening or merging, as (code, plain message); [] when it may go ahead.
-    `changed_since(sha)` lists files changed between that commit and the PR head, or None when it can't be told;
+    `changed_since(repo, sha)` lists files changed between that commit and the PR head, or None when it can't be told;
     without it, staleness isn't judged."""
     ui = ui_files(files, extra_patterns)
     if not ui:
@@ -73,11 +88,11 @@ def verdict(files, body, extra_patterns=(), changed_since=None) -> list[tuple[st
     bad = [(u, p) for u in urls if (p := link_problem(u))]
     if bad:
         lines = "; ".join(f"{u} is {_WHY[p]}" for u, p in bad[:3])
-        return [("BAD_IMAGE_LINK", f"Some images won't show or will go stale: {lines}. {_FIX}")]
+        return [("IMAGES_UNPINNED", f"Some images won't show or will go stale: {lines}. {_FIX}")]
     if changed_since:
         later = []
-        for sha in pinned_shas(urls):
-            since = changed_since(sha)
+        for pin in image_pins(body):
+            since = changed_since(pin["repo"], pin["sha"])
             if since is None:
                 return []
             newer_ui = [f for f in ui_files(since, extra_patterns) if not _IMAGE_FILE.search(f)]
@@ -85,7 +100,7 @@ def verdict(files, body, extra_patterns=(), changed_since=None) -> list[tuple[st
                 return []  # the newest pinned commit already shows the current look
             later.append(newer_ui)
         if later:
-            return [("STALE_UI_EVIDENCE", f"The images are older than later changes to how it looks ({_list(min(later, key=len))}). "
+            return [("IMAGES_STALE", f"The images are older than later changes to how it looks ({_list(min(later, key=len))}). "
                      f"Retake them and re-pin: {_FIX}")]
     return []
 
@@ -138,6 +153,34 @@ def with_shots_section(body: str, section: str) -> str:
     return (body.rstrip() + "\n\n" + block).lstrip() if body.strip() else block
 
 
+def facts(pr_url: str, ask) -> dict:
+    """Gather image and commit facts from GitHub for a PR URL.
+    `ask(args)` runs gh and returns parsed JSON. Returns a dict with 'files', 'body', 'head_ref',
+    'pr_repo', 'pr_number', and 'image_pins' (list of {repo, sha}). Raises on GitHub errors."""
+    import re as re_mod
+    m = re_mod.match(r"^https://github\.com/([^/]+)/([^/]+)/pull/(\d+)", pr_url)
+    if not m:
+        raise ValueError(f"Invalid PR URL: {pr_url}")
+    owner, repo, number = m.groups()
+    pr_repo = f"{owner}/{repo}"
+
+    pr_data = ask(["pr", "view", pr_url, "--json", "files,body,headRefOid"])
+    files = [f["path"] for f in (pr_data.get("files") or [])]
+    body = pr_data.get("body") or ""
+    head_ref = pr_data.get("headRefOid")
+
+    pins = image_pins(body)
+
+    return {
+        "files": files,
+        "body": body,
+        "head_ref": head_ref,
+        "pr_repo": pr_repo,
+        "pr_number": int(number),
+        "image_pins": pins,
+    }
+
+
 def ui_paths_for(repo: str | None, profiles_dir) -> list[str]:
     """The project's own UI paths (`evidence.ui_paths` in its profile), so an app whose views aren't named *View counts."""
     import json
@@ -154,3 +197,57 @@ def ui_paths_for(repo: str | None, profiles_dir) -> list[str]:
             paths = (data.get("evidence") or {}).get("ui_paths") or []
             return [p for p in paths if isinstance(p, str) and p]
     return []
+
+
+# ── CLI entrypoint ─────────────────────────────────────────────────────────
+
+if __name__ == "__main__":
+    import argparse
+    import json as json_mod
+    import os
+    import subprocess
+    import sys
+    from pathlib import Path
+
+    parser = argparse.ArgumentParser(description="Check PR images and return verdict as JSON.")
+    parser.add_argument("pr_url", help="GitHub PR URL (https://github.com/owner/repo/pull/N)")
+    parser.add_argument("--profiles-dir", help="Directory containing project profiles (config/projects/)")
+
+    args = parser.parse_args()
+
+    try:
+        def _gh_json(gh_args):
+            env = {**os.environ, "MARVIN_GH_GATE_INSIDE": "1"}
+            p = subprocess.run(["gh", *gh_args], capture_output=True, text=True, env=env, timeout=60)
+            if p.returncode != 0:
+                raise RuntimeError((p.stderr or p.stdout).strip().splitlines()[-1:] or ["gh failed"])
+            return json_mod.loads(p.stdout)
+
+        pr_facts = facts(args.pr_url, _gh_json)
+        profiles = args.profiles_dir or (Path.home() / ".agents" / "instance" / "config" / "projects")
+        extra = ui_paths_for(pr_facts["pr_repo"], profiles)
+
+        def changed_since_fn(repo, sha):
+            try:
+                result = _gh_json(["api", f"repos/{repo}/compare/{sha}...{pr_facts['head_ref']}"])
+                return [f["filename"] for f in (result.get("files") or [])]
+            except Exception:  # noqa: BLE001
+                return None
+
+        problems = verdict(pr_facts["files"], pr_facts["body"], extra,
+                          changed_since_fn if pr_facts["head_ref"] else None)
+
+        if problems:
+            code, message = problems[0]
+            output = {"code": code, "message": message}
+        else:
+            output = {"code": None, "message": None}
+
+        print(json_mod.dumps(output))
+        sys.exit(0 if not problems else 1)
+
+    except Exception as e:  # noqa: BLE001
+        error_msg = str(e)[:200]
+        output = {"code": "UI_EVIDENCE_UNCHECKED", "message": f"Couldn't check images: {error_msg}"}
+        print(json_mod.dumps(output))
+        sys.exit(2)

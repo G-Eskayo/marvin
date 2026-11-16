@@ -288,9 +288,9 @@ def ui_evidence_refusal(argv: list[str], ask, read_file=None, current_branch=Non
         pr = ask(["pr", "view", *target, "--repo", repo, "--json", "files,body,headRefOid"])
         files, body, head_ref = [f["path"] for f in pr.get("files", [])], pr.get("body") or "", pr.get("headRefOid")
 
-    def changed_since(sha):
+    def changed_since(img_repo, sha):
         try:
-            return [f["filename"] for f in ask(["api", f"repos/{repo}/compare/{sha}...{head_ref}"]).get("files", [])]
+            return [f["filename"] for f in ask(["api", f"repos/{img_repo}/compare/{sha}...{head_ref}"]).get("files", [])]
         except Exception:  # noqa: BLE001
             return None
 

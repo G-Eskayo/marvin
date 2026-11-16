@@ -92,24 +92,31 @@ describe('does the PR body show an image', () => {
 const PR = 'https://github.com/G-Eskayo/clarity-captions/pull/95'
 function ghView({ files = [], body = '', fails = false, head = HEAD, compare = {}, commitDates = {}, prCommits = [] } = {}) {
   return vi.fn(async (cmd, args) => {
-    // An image commit in another repo (the instance repo): only its date is asked for, from that repo.
-    const own = /^repos\/([^/]+\/[^/]+)\/commits\/([0-9a-f]{40})$/.exec(args?.[1] || '')
-    if (cmd === 'gh' && args[0] === 'api' && own) {
-      const key = `${own[1]}@${own[2]}`
-      if (!(key in commitDates)) throw Object.assign(new Error('Command failed: gh api'), { stderr: 'HTTP 422: No commit found' })
-      return { stdout: JSON.stringify({ sha: own[2], commit: { committer: { date: commitDates[key] } } }), stderr: '' }
-    }
-    if (cmd === 'gh' && args[0] === 'api' && args.some((a) => /\/pulls\/\d+\/commits/.test(a))) {
-      return { stdout: JSON.stringify(prCommits.map(([sha, date]) => ({ sha, commit: { committer: { date } } }))), stderr: '' }
-    }
-    if (cmd === 'gh' && args[1] === 'view' && args.includes('files,body,headRefOid')) {
-      if (fails) throw Object.assign(new Error('Command failed: gh pr view'), { stderr: 'HTTP 502: Bad Gateway' })
-      return { stdout: JSON.stringify({ files: files.map((path) => ({ path })), body, headRefOid: head }), stderr: '' }
-    }
-    if (cmd === 'gh' && args[0] === 'api' && /\/compare\//.test(args[1] || '')) {
-      const base = args[1].split('/compare/')[1].split('...')[0]
-      if (!(base in compare)) throw Object.assign(new Error('Command failed: gh api'), { stderr: 'HTTP 404: No common ancestor' })
-      return { stdout: JSON.stringify(compare[base]), stderr: '' }
+    if (cmd === 'python3' && args[0] === 'lib/pr_images.py') {
+      if (fails) throw Object.assign(new Error('python3 lib/pr_images.py'), { stderr: 'HTTP 502: Bad Gateway' })
+      // Simulate pr_images.verdict() logic
+      const changed = uiFiles(files)
+      if (changed.length && !hasImage(body)) {
+        return { stdout: JSON.stringify({ code: 'NO_UI_EVIDENCE', message: `this PR changes how the app looks (${changed.slice(0, 3).join(', ')}) but shows no images` }), stderr: '' }
+      }
+      if (!changed.length) return { stdout: JSON.stringify({ code: null, message: null }), stderr: '' }
+      const unpinned = unpinnedImages(body)
+      if (unpinned.length) {
+        return { stdout: JSON.stringify({ code: 'IMAGES_UNPINNED', message: `this PR's images aren't pinned to a commit (${unpinned.slice(0, 3).join(', ')}), so they may be old copies` }), stderr: '' }
+      }
+      // Check staleness
+      const pins = imagePins(body)
+      for (const { repo: imgRepo, sha } of pins) {
+        if (sha === head) continue
+        if (!(sha in compare)) continue
+        const since = compare[sha].files || []
+        const own = new Set(files)
+        const newer = uiFiles(since.filter((f) => own.has(f)))
+        if (newer.length) {
+          return { stdout: JSON.stringify({ code: 'IMAGES_STALE', message: `the images were taken at ${sha.slice(0, 7)}, and ${newer.slice(0, 3).join(', ')} changed after that, so they may not show what PR #95 looks like now` }), stderr: '' }
+        }
+      }
+      return { stdout: JSON.stringify({ code: null, message: null }), stderr: '' }
     }
     return { stdout: JSON.stringify({ baseRefName: 'main', isDraft: false }), stderr: '' }
   })
