@@ -1,5 +1,7 @@
 # Changelog
 
+- background_architecture_review tests leak into real ~/.claude once the suggestions pile exists ([#1335](https://github.com/G-Eskayo/marvin/pull/1335))
+
 - Fix check_remote_session.py handoff selection: exclude non-handoff .md files and skip entries with no resume prompt ([#1334](https://github.com/G-Eskayo/marvin/pull/1334))
 
 - Session banner counts command files, not skills: says 36, the repo has 33 ([#1333](https://github.com/G-Eskayo/marvin/pull/1333))
