@@ -168,13 +168,65 @@ def test_the_surfaced_handoff_is_chosen_by_as_of(remote, monkeypatch, tmp_path):
     mod, _ = remote
     d = tmp_path / ".claude" / "handoffs"
     d.mkdir(parents=True)
-    (d / "handoff-b.md").write_text("---\nas_of: 2026-11-01T00:00:00Z\n---\n")
-    (d / "handoff-a.md").write_text("---\nas_of: 2026-11-08T00:00:00Z\n---\n")
+    (d / "handoff-b.md").write_text("---\nas_of: 2026-11-01T00:00:00Z\n---\n## Resume prompt\n---\nDo B\n---\n")
+    (d / "handoff-a.md").write_text("---\nas_of: 2026-11-08T00:00:00Z\n---\n## Resume prompt\n---\nDo A\n---\n")
     os.utime(d / "handoff-a.md", (1, 1))
     picked = []
     monkeypatch.setattr(mod, "_surface_resume_prompt", lambda p: picked.append(p.name))
     mod.main()
     assert picked == ["handoff-a.md"]
+
+
+def test_when_no_handoff_has_a_resume_prompt_the_labeled_line_is_printed(remote, monkeypatch, tmp_path, capsys):
+    mod, _ = remote
+    d = tmp_path / ".claude" / "handoffs"
+    d.mkdir(parents=True)
+    (d / "handoff-a.md").write_text("---\nas_of: 2026-11-08T00:00:00Z\n---\n# No resume prompt here")
+    mod.main()
+    out = capsys.readouterr().out
+    assert "rebuilt a handoff on mini but found no resume prompt in handoffs/" in out
+
+
+def test_when_reading_a_handoff_raises_oserror_the_next_is_checked(remote, monkeypatch, tmp_path):
+    mod, _ = remote
+    d = tmp_path / ".claude" / "handoffs"
+    d.mkdir(parents=True)
+    bad = d / "handoff-z.md"
+    good = d / "handoff-a.md"
+    bad.write_text("---\nas_of: 2026-11-09T00:00:00Z\n---\n## Resume prompt\n---\nBad\n---\n")
+    good_text = "---\nas_of: 2026-11-08T00:00:00Z\n---\n## Resume prompt\n---\nGood\n---\n"
+    good.write_text(good_text)
+    picked = []
+    monkeypatch.setattr(mod, "_surface_resume_prompt", lambda p: picked.append(p.name))
+    original_read = Path.read_text
+    def read_with_error(self, *a, **k):
+        if self == bad:
+            raise OSError("permission denied")
+        return original_read(self, *a, **k)
+    monkeypatch.setattr(Path, "read_text", read_with_error)
+    mod.main()
+    assert picked == ["handoff-a.md"]
+
+
+def test_when_a_handoff_has_an_empty_resume_prompt_the_next_is_checked(remote, monkeypatch, tmp_path):
+    mod, _ = remote
+    d = tmp_path / ".claude" / "handoffs"
+    d.mkdir(parents=True)
+    (d / "handoff-b.md").write_text("---\nas_of: 2026-11-09T00:00:00Z\n---\n## Resume prompt\n---\n---\n")
+    (d / "handoff-a.md").write_text("---\nas_of: 2026-11-08T00:00:00Z\n---\n## Resume prompt\n---\nGood\n---\n")
+    picked = []
+    monkeypatch.setattr(mod, "_surface_resume_prompt", lambda p: picked.append(p.name))
+    mod.main()
+    assert picked == ["handoff-a.md"]
+
+
+def test_when_ranked_is_empty_the_labeled_line_is_printed(remote, monkeypatch, tmp_path, capsys):
+    mod, _ = remote
+    (tmp_path / ".claude").mkdir(exist_ok=True)
+    (tmp_path / ".claude" / "handoffs").mkdir(exist_ok=True)
+    mod.main()
+    out = capsys.readouterr().out
+    assert "rebuilt a handoff on mini but found no resume prompt in handoffs/" in out
 
 
 # ── where handoffs are written ───────────────────────────────────────────────
