@@ -71,10 +71,12 @@ describe('rebaseAndRetest: first aid before refusing on a nearly full disk', () 
     expect(firstAid).not.toHaveBeenCalled()
   })
 
-  it('never runs first aid when the free space cannot be read (fails open, as before)', async () => {
+  it('refuses and records guard reading when the free space cannot be read', async () => {
     const firstAid = vi.fn()
-    await expect(rebaseAndRetest('feature', gitFails(), '/nowhere', vi.fn(), 'main', null, null, undefined, async () => { throw new Error('statfs') }, firstAid)).rejects.toThrow()
+    const record = vi.fn()
+    await expect(rebaseAndRetest('feature', gitFails(), '/nowhere', vi.fn(), 'main', null, null, undefined, async () => { throw new Error('statfs') }, firstAid, record)).rejects.toThrow()
     expect(firstAid).not.toHaveBeenCalled()
+    expect(record).toHaveBeenCalledWith('merge:disk-floor', false)
   })
 
   it('without a first-aid step (direct callers, older wiring) refuses exactly as before', async () => {

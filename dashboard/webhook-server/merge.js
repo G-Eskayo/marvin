@@ -28,6 +28,7 @@ const TICKET_PIPELINE_SCRIPT = path.resolve(__dirname, '..', '..', 'lib', 'ticke
 const MERGE_BACKUP_SCRIPT = path.resolve(__dirname, '..', '..', 'lib', 'merge_backup.py')
 const DISK_TRIGGERS_SCRIPT = path.resolve(__dirname, '..', '..', 'lib', 'disk_triggers.py')
 const MEMORY_GUARD_SCRIPT = path.resolve(__dirname, '..', '..', 'lib', 'memory_guard.py')
+const GUARD_READING_SCRIPT = path.resolve(__dirname, '..', '..', 'lib', 'guard_reading.py')
 const VENV_PYTHON = path.resolve(__dirname, '..', '..', 'venv', 'bin', 'python')
 const PROFILE_SCRIPT = path.resolve(__dirname, '..', '..', 'lib', 'project_profile.py')
 const GENERATED_SCRIPT = path.resolve(__dirname, '..', '..', 'lib', 'generated_paths.py')
@@ -42,6 +43,14 @@ export const nodeModulesCache = {
   seed: (dir) => execFileAsync(VENV_PYTHON, [NODE_MODULES_SEED_SCRIPT, 'seed', dir], { timeout: 120_000 }).catch(() => {}),
   store: (dir) => execFileAsync(VENV_PYTHON, [NODE_MODULES_SEED_SCRIPT, 'store', dir], { timeout: 120_000 }).catch(() => {})
 }
+
+// Wrapper to record a guard reading via subprocess (fire-and-forget, doesn't break the merge if it fails).
+export function recordGuardReading(name, ok) {
+  try {
+    execFileAsync(VENV_PYTHON, [GUARD_READING_SCRIPT, 'record', '--name', name, '--ok', ok ? '1' : '0'], { timeout: 10_000 }).catch(() => {})
+  } catch { /* recording failure doesn't stop the merge */ }
+}
+
 // The per-command limit for commands run OUTSIDE the merge gate (gh reads, post-merge checks). Inside the gate the gate
 // owns the clock (pipeline review 2026-10-21, F3): this 20-minute kill used to fire first, so #568's load-aware
 // extension of the 40-minute gate limit could never apply, and a hung test was a silent 20-minute GATE_INFRA. Now a
@@ -524,8 +533,15 @@ export async function mergeInstead(exec, dir, headRef, base) {
   }
 }
 
-export async function rebaseAndRetest(headRef, exec = execFileAsync, repoPath = REPO_PATH, runTests = _defaultRunTests, base = 'main', resolveConflicts = null, sleep = null, progress = noProgress, freeBytes = freeDiskBytes, firstAid = null, rerun = null) {
-  let free = await freeBytes(tmpdir()).catch(() => null) // unreadable: carry on, as before this check
+export async function rebaseAndRetest(headRef, exec = execFileAsync, repoPath = REPO_PATH, runTests = _defaultRunTests, base = 'main', resolveConflicts = null, sleep = null, progress = noProgress, freeBytes = freeDiskBytes, firstAid = null, record = null, rerun = null) {
+  let free
+  try {
+    free = await freeBytes(tmpdir())
+    if (record) record('merge:disk-floor', true)
+  } catch (err) {
+    if (record) record('merge:disk-floor', false)
+    throw err
+  }
   const gb = (n) => `${(n / 1024 ** 3).toFixed(1)} GB`
   let aidNote = ''
   if (free !== null && free < MIN_GATE_FREE_BYTES && firstAid) {
@@ -536,11 +552,19 @@ export async function rebaseAndRetest(headRef, exec = execFileAsync, repoPath = 
     if (!aid || typeof aid !== 'object') aid = { ok: false, detail: 'first aid gave no answer' }
     const detail = String(aid.detail || (aid.ok ? 'nothing to clear' : 'first aid failed')).replace(/\s+/g, ' ').slice(0, 300)
     const before = free
-    free = await freeBytes(tmpdir()).catch(() => null)
-    progress('rebasing', 'running', { detail: `first aid: ${detail}; ${free === null ? 'free space unreadable' : `${gb(free)} free now`} (was ${gb(before)})`, logDetail: true })
+    free = await freeBytes(tmpdir()).catch(() => {
+      if (record) record('merge:disk-floor', false)
+      return null
+    })
+    if (free !== null && record) record('merge:disk-floor', true)
+    if (free === null) progress('rebasing', 'running', { detail: `first aid: ${detail}; free space unreadable (was ${gb(before)})`, logDetail: true })
+    else progress('rebasing', 'running', { detail: `first aid: ${detail}; ${gb(free)} free now (was ${gb(before)})`, logDetail: true })
     aidNote = `\n\nFirst aid ran first: ${detail}; ${free === null ? 'free space unreadable' : `${gb(free)} free`} after.`
   }
-  if (free !== null && free < MIN_GATE_FREE_BYTES) {
+  if (free === null) {
+    return { ok: false, reason: `Disk check before rebasing onto ${base}:\n\nCouldn't read free space (the gate cannot proceed without knowing the disk state). Try again?${aidNote}` }
+  }
+  if (free < MIN_GATE_FREE_BYTES) {
     // Worded so summarizeGateFailure files it as GATE_INFRA (the machine, not the PR, and nothing is sent back) and
     // infraCause can name the disk and both numbers.
     return { ok: false, reason: `Disk check before rebasing onto ${base}:\n\nNo space left on device for the check: ${gb(free)} free, the gate needs ${gb(MIN_GATE_FREE_BYTES)}. Free up space on this Mac, then approve again.${aidNote}` }
@@ -946,8 +970,8 @@ async function mergePrUnqueued(
     const run = gateExec(exec, gateAbort.signal)
     const result = await withGateTimeout(
       Promise.resolve(ctx
-        ? rebaseAndRetestFn(headRefName, run, ctx.clone, ctx.runTests, ctx.base, ctx.resolveConflicts, sleep ?? null, progress, undefined, diskFirstAid)
-        : rebaseAndRetestFn(headRefName, run, REPO_PATH, marvinRunTests, 'main', generatedResolver(MARVIN_REPO, run), sleep ?? null, progress, undefined, diskFirstAid, rerunFailingTests)),
+        ? rebaseAndRetestFn(headRefName, run, ctx.clone, ctx.runTests, ctx.base, ctx.resolveConflicts, sleep ?? null, progress, undefined, diskFirstAid, recordGuardReading)
+        : rebaseAndRetestFn(headRefName, run, REPO_PATH, marvinRunTests, 'main', generatedResolver(MARVIN_REPO, run), sleep ?? null, progress, undefined, diskFirstAid, recordGuardReading, rerunFailingTests)),
       gateTimeoutMs,
       () => gateExtension({ baseMs: gateTimeoutMs, load: loadNow(), lastOutputAt, now: now() }),
       (reason) => progress('tests', 'running', { detail: reason, logDetail: true }),

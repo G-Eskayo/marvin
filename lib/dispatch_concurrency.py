@@ -17,6 +17,8 @@ import tempfile
 from datetime import datetime, timezone
 from pathlib import Path
 
+import guard_reading
+
 PATH = Path(__file__).resolve().parents[1] / "config" / "dispatch.json"
 TASKS_DIR = Path.home() / ".claude" / "dispatch" / "tasks"
 DISPATCH_STATE_PATH = Path.home() / ".claude" / "dispatch-state.json"
@@ -39,6 +41,12 @@ DEFAULTS = {
 BOX_MAX_SLOTS = 1
 # (low, high) for each box_builds number; slots is checked against BOX_MAX_SLOTS.
 _BOX_RANGES = {"memory_mb": (1024, 12288), "vcpus": (1, 8), "timeout_s": (600, 4 * 3600), "reserve_mb": (0, 8192)}
+
+guard_reading.GUARD_POLICY["dispatch:disk_free_gb"] = "closed"
+guard_reading.GUARD_POLICY["dispatch:github_budget_pct"] = "closed"
+guard_reading.GUARD_POLICY["dispatch:breaker_tripped"] = "closed"
+guard_reading.GUARD_POLICY["dispatch:missing_tools"] = "closed"
+guard_reading.GUARD_POLICY["dispatch:task_records"] = "closed"
 
 
 def _whole(v) -> bool:
@@ -149,10 +157,15 @@ def can_start_box_build(settings: dict, in_flight: int) -> tuple[bool, str | Non
     return True, None
 
 
-def _safe(reader, *args):
+def _safe(reader, *args, name=None):
     try:
-        return reader(*args)
-    except Exception:  # noqa: BLE001 -- an unreadable guard must not stall dispatch
+        result = reader(*args)
+        if name:
+            guard_reading.record(name, ok=True)
+        return result
+    except Exception as exc:  # noqa: BLE001 -- an unreadable guard must not stall dispatch
+        if name:
+            guard_reading.record(name, ok=False, detail=str(exc)[:200])
         return None
 
 
@@ -166,17 +179,17 @@ def can_start_another(machine: str, settings: dict, *, slots_in_use, disk_free_g
     if not settings.get("parallel"):
         return True, None  # off: exactly today's behaviour, no extra guards
     g = settings["guards"]
-    disk = _safe(disk_free_gb, machine)
+    disk = _safe(disk_free_gb, machine, name="dispatch:disk_free_gb")
     if disk is not None and disk < g["min_disk_gb"]:
         return False, f"disk {disk:g} GB free on {machine}, minimum {g['min_disk_gb']:g}"
-    pct = _safe(github_budget_pct)
+    pct = _safe(github_budget_pct, name="dispatch:github_budget_pct")
     if pct is not None and pct < g["min_github_budget_pct"]:
         return False, f"GitHub request budget {pct:g}% left, minimum {g['min_github_budget_pct']:g}%"
-    trips = _safe(breaker_tripped) or []
+    trips = _safe(breaker_tripped, name="dispatch:breaker_tripped") or []
     if trips:
         t = trips[0]
         return False, f"circuit breaker tripped for {str(t.get('project', '?')).split('/')[-1]}: {t.get('signature', '?')}"
-    missing = _safe(missing_tools, machine) or []
+    missing = _safe(missing_tools, machine, name="dispatch:missing_tools") or []
     if missing:
         return False, f"{machine} lacks tools the project needs: {', '.join(missing)}"
     return True, None
@@ -312,11 +325,16 @@ def _read_task_records(tasks_dir: Path | None = None) -> list[dict]:
     records = []
     if not tasks_dir.exists():
         return records
+    any_error = False
     for f in tasks_dir.glob("*.json"):
         try:
             records.append(json.loads(f.read_text()))
-        except (OSError, ValueError):
-            pass
+        except (OSError, ValueError) as exc:
+            any_error = True
+    if any_error:
+        guard_reading.record("dispatch:task_records", ok=False, detail="some task records could not be read")
+    else:
+        guard_reading.record("dispatch:task_records", ok=True)
     return records
 
 

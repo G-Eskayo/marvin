@@ -68,6 +68,10 @@ QUEUE_CHANGED = "queue-changed"   # the watcher's other event: the queue directo
 O_EVTONLY = 0x8000                # <sys/fcntl.h>: open a directory only to watch it
 DISPATCH_VNODE_WRITE = 0x2
 
+sys.path.insert(0, str(HERE.parent))
+import guard_reading  # noqa: E402
+guard_reading.GUARD_POLICY["memory:pressure"] = "closed"
+
 GB = lambda n: f"{n / 2**30:.1f} GB"  # noqa: E731
 
 
@@ -130,8 +134,13 @@ def record(event: str, **fields) -> None:
 # ── the check ───────────────────────────────────────────────────────────────────────────────────────────────────
 
 def check(what: str, level=_READ, swap=_READ) -> dict:
-    """{"ok", "level", "swap_used", "message"}. Refuses only at warn or critical."""
+    """{"ok", "level", "swap_used", "message"}. Refuses at warn or critical, or when the level can't be read."""
     level = read_level() if level is _READ else level
+    if level is None:
+        guard_reading.record("memory:pressure", ok=False, detail="couldn't read memory pressure level")
+        message = f"Couldn't read the {machine_name()}'s memory pressure. {what} waits. Try again; this may be transient."
+        return {"ok": False, "level": level, "swap_used": None, "message": message}
+    guard_reading.record("memory:pressure", ok=True)
     if level not in HIGH:
         return {"ok": True, "level": level, "swap_used": None, "message": ""}
     swap = read_swap_used() if swap is _READ else swap

@@ -1693,3 +1693,47 @@ def test_react_to_accounts_summarises_and_never_raises():
 def test_the_health_sweep_entry_point_runs_the_accounts_check():
     import inspect
     assert "react_to_accounts()" in inspect.getsource(hc._cli)
+
+
+# ── guard readings ──────────────────────────────────────────────────────────
+
+def test_check_guard_readings_returns_empty_when_all_green(tmp_path, monkeypatch):
+    import guard_reading
+    monkeypatch.setattr(guard_reading, "LOG_PATH", tmp_path / "guard-readings.json")
+    guard_reading.record("test:guard", ok=True)
+    rows = hc.check_guard_readings()
+    assert rows == []
+
+
+def test_check_guard_readings_surfaces_yellow_at_30m(tmp_path, monkeypatch):
+    import guard_reading
+    monkeypatch.setattr(guard_reading, "LOG_PATH", tmp_path / "guard-readings.json")
+    now = datetime(2026, 11, 16, 12, 0, 0, tzinfo=timezone.utc)
+    monkeypatch.setattr(guard_reading, "_now", lambda: now)
+    guard_reading.record("test:guard", ok=False)
+    guard_reading.record("test:guard", ok=False)
+    # Advance 31 minutes to cross yellow threshold
+    monkeypatch.setattr(guard_reading, "_now", lambda: now + timedelta(minutes=31))
+    rows = hc.check_guard_readings()
+    assert len(rows) == 1
+    assert rows[0]["severity"] == "yellow"
+
+
+def test_check_guard_readings_surfaces_red_at_2h(tmp_path, monkeypatch):
+    import guard_reading
+    monkeypatch.setattr(guard_reading, "LOG_PATH", tmp_path / "guard-readings.json")
+    now = datetime(2026, 11, 16, 12, 0, 0, tzinfo=timezone.utc)
+    monkeypatch.setattr(guard_reading, "_now", lambda: now)
+    guard_reading.record("test:guard", ok=False)
+    guard_reading.record("test:guard", ok=False)
+    # Advance past 2 hours
+    monkeypatch.setattr(guard_reading, "_now", lambda: now + timedelta(hours=2, minutes=1))
+    rows = hc.check_guard_readings()
+    assert len(rows) == 1
+    assert rows[0]["severity"] == "red"
+
+
+def test_default_checks_includes_guard_readings():
+    checks = hc.default_checks()
+    check_ids = [c[0] for c in checks]
+    assert "guard:readings" in check_ids

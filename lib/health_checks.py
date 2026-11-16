@@ -31,6 +31,7 @@ import cron_health as ch  # noqa: E402
 import machine_profile  # noqa: E402
 from machine_profile import machine_label  # noqa: E402
 from task_dispatch import TAILSCALE_BIN, TAILSCALE_ENV  # noqa: E402  (absolute path -- launchd's PATH omits the shell's additions)
+import guard_reading  # noqa: E402
 
 HOME = Path.home()
 STATUS_PATH = HOME / ".claude" / "logs" / "health-status.json"
@@ -1793,6 +1794,15 @@ def _mirror_health():
     return mirror_health
 
 
+def check_guard_readings() -> list[dict]:
+    """Guard reading health for machine-protecting guards (disk, memory, etc.) that report unreadable state.
+    Returns one row per guard that is not green."""
+    rows = []
+    for entry in guard_reading.status():
+        rows.append(_result(f"guard:{entry['name']}", entry['name'], entry['severity'], entry['detail'], value=entry['age_s']))
+    return rows
+
+
 def default_checks(reach: dict[str, str] | None = None, reach_results: list[dict] | None = None) -> list[tuple]:
     """Every check the sweep runs, in the order the Health tab shows them. `reach` maps machine:<id> -> severity from
     the reachability check, which runs first; `reach_results` are its rows, listed where they always appeared."""
@@ -1832,6 +1842,7 @@ def default_checks(reach: dict[str, str] | None = None, reach_results: list[dict
         ("mirror:sync", "Mirror sync on pull-only nodes", lambda: _mirror_health().check_mirror_sync_everywhere(reach),
          CROSS_MACHINE_BUDGET_S),
         ("machine-state", "Machine state", lambda: check_machine_state_everywhere(reach), CROSS_MACHINE_BUDGET_S),
+        ("guard:readings", "Machine-protecting guard readings", check_guard_readings, CHECK_BUDGET_S),
     ]
 
 

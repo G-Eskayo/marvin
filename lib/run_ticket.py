@@ -30,7 +30,10 @@ import failure_breaker  # noqa: E402
 import ticket_stages as ts  # noqa: E402
 import redispatch_trigger  # noqa: E402
 import ticket_policy  # noqa: E402
+import guard_reading  # noqa: E402
 from datetime import datetime, timedelta, timezone  # noqa: E402
+
+guard_reading.GUARD_POLICY["failure_breaker:record_failure"] = "closed"
 
 REPO = "G-Eskayo/marvin"
 FAILURE_MARKER = "Automated implementation did not pass verification"
@@ -262,8 +265,10 @@ def _feed_breaker(issue_number: int, reason: str, repo: str = REPO) -> None:
     run from releasing its claim (the breaker then reads as before, and Health shows its own state)."""
     try:
         failure_breaker.record_failure(issue_number, reason, **({"project": repo} if repo != REPO else {}))
+        guard_reading.record("failure_breaker:record_failure", ok=True)
     except Exception as exc:
         print(f"[run_ticket] could not record #{issue_number} for the breaker: {exc}", file=sys.stderr)
+        guard_reading.record("failure_breaker:record_failure", ok=False, detail=str(exc)[:200])
 
 
 def run(issue_number: int, repo: str = REPO) -> dict:

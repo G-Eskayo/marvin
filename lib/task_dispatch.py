@@ -30,6 +30,11 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 from machine_profile import registry_id, remote_devices, _load_registry  # noqa: E402
 import host_os  # noqa: E402
 from hook_errors import log_hook_error  # noqa: E402
+import guard_reading  # noqa: E402
+
+guard_reading.GUARD_POLICY["task_dispatch:tailscale"] = "closed"
+guard_reading.GUARD_POLICY["task_dispatch:local_dispatch_state"] = "closed"
+guard_reading.GUARD_POLICY["task_dispatch:remote_dispatch_state"] = "closed"
 
 
 def _log_hook_error_safe(context: str, exc: BaseException) -> None:
@@ -86,9 +91,12 @@ def tailscale_online_hosts_or_none() -> set[str] | None:
         proc = subprocess.run([TAILSCALE_BIN, "status"], capture_output=True, text=True, timeout=10, env=TAILSCALE_ENV)
     except Exception as exc:
         _log_hook_error_safe("tailscale_online_hosts_or_none", exc)
+        guard_reading.record("task_dispatch:tailscale", ok=False, detail=str(exc)[:200])
         return None
     if proc.returncode != 0:
+        guard_reading.record("task_dispatch:tailscale", ok=False, detail=f"non-zero exit: {proc.returncode}")
         return None
+    guard_reading.record("task_dispatch:tailscale", ok=True)
     online = set()
     for line in proc.stdout.splitlines():
         parts = line.split()
@@ -106,8 +114,14 @@ def _tailscale_online_hosts() -> set[str]:
 
 
 def _read_local_dispatch_state() -> dict:
-    import stamped
-    return stamped.read(DISPATCH_STATE_PATH).value or {"busy": False}
+    try:
+        import stamped
+        result = stamped.read(DISPATCH_STATE_PATH).value or {"busy": False}
+        guard_reading.record("task_dispatch:local_dispatch_state", ok=True)
+        return result
+    except Exception as exc:
+        guard_reading.record("task_dispatch:local_dispatch_state", ok=False, detail=str(exc)[:200])
+        return {"busy": False}
 
 
 def _read_remote_dispatch_state(host: str) -> dict:
@@ -117,13 +131,18 @@ def _read_remote_dispatch_state(host: str) -> dict:
             capture_output=True, text=True, timeout=10,
         )
         if proc.returncode != 0:
-            _log_hook_error_safe("_read_remote_dispatch_state", RuntimeError(f"ssh to {host} exited {proc.returncode}: {proc.stderr[:300]}"))
+            err_msg = f"ssh to {host} exited {proc.returncode}: {proc.stderr[:300]}"
+            _log_hook_error_safe("_read_remote_dispatch_state", RuntimeError(err_msg))
+            guard_reading.record("task_dispatch:remote_dispatch_state", ok=False, detail=err_msg)
             return {"busy": False}
         if not proc.stdout.strip():
+            guard_reading.record("task_dispatch:remote_dispatch_state", ok=True)
             return {"busy": False}
+        guard_reading.record("task_dispatch:remote_dispatch_state", ok=True)
         return json.loads(proc.stdout)
     except Exception as exc:
         _log_hook_error_safe("_read_remote_dispatch_state", exc)
+        guard_reading.record("task_dispatch:remote_dispatch_state", ok=False, detail=str(exc)[:200])
         return {"busy": False}
 
 

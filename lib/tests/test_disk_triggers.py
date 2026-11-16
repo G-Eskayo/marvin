@@ -62,9 +62,10 @@ def test_preflight_uses_the_merge_gates_floor():
     assert dt.FLOOR_BYTES == 5 * GiB
 
 
-def test_preflight_fails_open_when_free_space_cannot_be_read():
+def test_preflight_fails_closed_when_free_space_cannot_be_read():
     r = dt.preflight("helper: x", free=lambda: None, reclaim=lambda: pytest.fail("no reading, no reclaim"))
-    assert r["ok"] is True
+    assert r["ok"] is False
+    assert "couldn't read" in r["message"]
 
 
 def test_preflight_still_answers_when_the_reclaim_breaks():

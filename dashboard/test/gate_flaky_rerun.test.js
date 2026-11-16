@@ -55,7 +55,7 @@ const failingWith = (err) => async () => { throw err }
 
 describe('rebaseAndRetest: one rerun of a failing test the PR did not touch', () => {
   const run = (repo, runTests, rerun) =>
-    rebaseAndRetest('feature', realExec, repo, runTests, 'main', null, null, undefined, PLENTY, null, rerun)
+    rebaseAndRetest('feature', realExec, repo, runTests, 'main', null, null, undefined, PLENTY, null, undefined, rerun)
 
   it('passes on the rerun: the gate passes, names the flaky test, and still pushes the rebased branch', async () => {
     const { root, repo } = fixture()

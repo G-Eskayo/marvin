@@ -71,10 +71,11 @@ def test_reads_the_kernel_pressure_level(raw, level):
     assert mg.read_level(run=run) == level
 
 
-def test_an_unreadable_level_is_none_so_it_never_blocks():
+def test_an_unreadable_level_refuses():
     run = lambda cmd, **k: subprocess.CompletedProcess(cmd, 1, stdout="")  # noqa: E731
     assert mg.read_level(run=run) is None
-    assert mg.check("#1", level=None)["ok"] is True
+    assert mg.check("#1", level=None)["ok"] is False
+    assert "couldn't read" in mg.check("#1", level=None)["message"].lower()
 
 
 def test_the_level_override_wins_over_the_kernel(monkeypatch):

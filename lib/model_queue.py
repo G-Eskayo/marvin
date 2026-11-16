@@ -12,6 +12,9 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 import model_registry
+import guard_reading
+
+guard_reading.GUARD_POLICY["model_queue:task_records"] = "closed"
 
 HOME = Path.home()
 QUEUE_DIR = HOME / ".claude" / "model-queue"
@@ -48,11 +51,16 @@ def _read_task_records(tasks_dir: Path | None = None) -> list[dict]:
     records = []
     if not tasks_dir.exists():
         return records
+    any_error = False
     for f in tasks_dir.glob("*.json"):
         try:
             records.append(json.loads(f.read_text()))
-        except (OSError, ValueError):
-            pass
+        except (OSError, ValueError) as exc:
+            any_error = True
+    if any_error:
+        guard_reading.record("model_queue:task_records", ok=False, detail="some task records could not be read")
+    else:
+        guard_reading.record("model_queue:task_records", ok=True)
     return records
 
 

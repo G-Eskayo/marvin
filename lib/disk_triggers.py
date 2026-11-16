@@ -40,6 +40,7 @@ from typing import Callable
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import cleanup_sweep as cs  # noqa: E402
 import gh_env  # noqa: E402
+import guard_reading  # noqa: E402
 
 MARVIN_ROOT = Path(__file__).resolve().parent.parent
 CONFIG_PATH = MARVIN_ROOT / "config" / "disk_triggers.json"
@@ -48,6 +49,7 @@ LOG_MAX_BYTES = 2 * 2**20
 # The merge gate's floor (#690, dashboard/webhook-server/merge.js MIN_GATE_FREE_BYTES): one number for "too full to
 # start", so a helper never starts work the gate would then refuse to merge.
 FLOOR_BYTES = 5 * 2**30
+guard_reading.GUARD_POLICY["disk:preflight"] = "closed"
 STEP_MERGED_WORKTREES = "disk-clean-merged-worktrees"
 MERGED_PR_LIMIT = 200
 DERIVED_DATA_GRACE_S = 600   # a DerivedData folder written in the last 10 minutes may belong to a build still running
@@ -137,12 +139,17 @@ def reclaim() -> dict:
 def preflight(what: str, floor: int = FLOOR_BYTES, free: Callable[[], int | None] | None = None,
               reclaim: Callable[[], dict] | None = None) -> dict:
     """Before heavy work starts. Above the floor: go, touching nothing. Below it: reclaim once (no retry loop), then
-    go if that was enough, else refuse with a message a person can act on. Free space that can't be read never blocks
-    (as #690). Returns {"ok", "free_before", "free_after", "reclaimed", "message"}."""
+    go if that was enough, else refuse with a message a person can act on. Free space that can't be read is now
+    recorded as unreadable (fail-closed, was #690 fail-open). Returns {"ok", "free_before", "free_after", "reclaimed", "message"}."""
     free = free or free_bytes
     reclaim = reclaim or globals()["reclaim"]
     before = free()
-    if before is None or before >= floor:
+    if before is None:
+        guard_reading.record("disk:preflight", ok=False, detail="couldn't read free space")
+        return {"ok": False, "free_before": before, "free_after": before, "reclaimed": None,
+                "message": f"Not starting {what}: couldn't read the disk free space. Try again; this may be transient."}
+    guard_reading.record("disk:preflight", ok=True)
+    if before >= floor:
         return {"ok": True, "free_before": before, "free_after": before, "reclaimed": None, "message": ""}
     try:
         r = reclaim() or {}
@@ -150,10 +157,16 @@ def preflight(what: str, floor: int = FLOOR_BYTES, free: Callable[[], int | None
     except Exception as exc:  # noqa: BLE001 -- a broken reclaim is a refusal with the reason, never a crash
         detail, freed = f"cleanup failed: {type(exc).__name__}: {str(exc)[:120]}", 0
     after = free()
-    ok = after is None or after >= floor
-    message = "" if ok else (
-        f"Not starting {what}: the disk has {GB(after)} free and work needs {GB(floor)}. "
-        f"Cleanup already ran ({detail}). Free up space on this Mac (Health shows what is using it), then start it again.")
+    if after is None:
+        guard_reading.record("disk:preflight", ok=False, detail="couldn't read free space after reclaim")
+        ok = False
+        message = f"Not starting {what}: couldn't read the disk free space after cleanup. Try again; this may be transient."
+    else:
+        guard_reading.record("disk:preflight", ok=True)
+        ok = after >= floor
+        message = "" if ok else (
+            f"Not starting {what}: the disk has {GB(after)} free and work needs {GB(floor)}. "
+            f"Cleanup already ran ({detail}). Free up space on this Mac (Health shows what is using it), then start it again.")
     record("preflight", freed, detail, what=what, ok=ok, free_before=before)
     return {"ok": ok, "free_before": before, "free_after": after, "reclaimed": detail, "message": message}
 
