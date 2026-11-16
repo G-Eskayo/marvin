@@ -396,10 +396,25 @@ def _check_digest(label: str, dirpath: Path) -> str | None:
     today = _now().astimezone().strftime("%Y-%m-%d")
     f = dirpath / f"{today}.md"
     if not f.exists():
+        # Log if adjacent-date files exist (symptom of the bug that was fixed in #526)
+        from datetime import timedelta
+        yesterday = (_now().astimezone() - timedelta(days=1)).strftime("%Y-%m-%d")
+        tomorrow = (_now().astimezone() + timedelta(days=1)).strftime("%Y-%m-%d")
+        adjacent_exists = (dirpath / f"{yesterday}.md").exists() or (dirpath / f"{tomorrow}.md").exists()
+        if adjacent_exists:
+            _log_missing_digest(today, dirpath)
         return None
     m = re.search(r"^\*(.+?)\*\s*$", f.read_text(), re.MULTILINE)
     extra = f" — {m.group(1)}" if m else ""
     return f"{label} ready ({f.name}){extra}"
+
+
+def _log_missing_digest(today: str, dirpath: Path) -> None:
+    """Log the symptom that daily_digest.py wrote a file with the wrong date."""
+    log_path = CLAUDE_DIR / "logs" / "daily-digest-mismatch.log"
+    log_path.parent.mkdir(parents=True, exist_ok=True)
+    now_str = _now().isoformat()
+    log_path.append_text(f"{now_str} missing {today}\n")
 
 
 def check_morning_brief() -> str | None:

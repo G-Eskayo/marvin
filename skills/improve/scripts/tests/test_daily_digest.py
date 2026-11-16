@@ -3,9 +3,13 @@
 """
 from __future__ import annotations
 import sys
+import os
+import time
+import importlib
+import zoneinfo
 from pathlib import Path
-from datetime import datetime, timezone, timedelta
-from unittest.mock import patch
+from datetime import datetime, timezone, timedelta, date
+from unittest.mock import patch, MagicMock
 
 SCRIPTS = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(SCRIPTS))
@@ -28,6 +32,85 @@ def _pinned_machine_role(monkeypatch):
     def _real_role(*_a, **_k):
         raise AssertionError("a test asked this machine's real role (scanner_role.is_primary): pin it instead")
     monkeypatch.setattr(brief_fallback, "is_primary", _real_role)
+
+
+@pytest.fixture
+def frozen_time_tz(monkeypatch):
+    """Fixture that freezes time and allows simulating different timezones.
+
+    Usage:
+        frozen_time_tz(epoch_timestamp, tz_name)
+
+    where:
+        epoch_timestamp: seconds since epoch (e.g., 1731450600 for 2026-11-12 23:30 UTC-8)
+        tz_name: POSIX timezone name (e.g., "Etc/GMT+8" for UTC-8)
+
+    The fixture:
+    1. Sets TZ environment variable to the given timezone
+    2. Calls time.tzset() to apply it
+    3. Patches dd.date.today() to return a fixed date computed from the epoch
+    4. Reloads dd module so TODAY and OUT_FILE recompute
+    5. Restores TZ and reloads dd in cleanup
+
+    Note: date.today() is in the C _datetime module and reads the system clock directly,
+    not through time.time(). This fixture patches dd.date directly.
+    """
+    original_tz = os.environ.get("TZ")
+
+    def _set_time_and_tz(epoch_timestamp, tz_name):
+        # Set timezone
+        monkeypatch.setenv("TZ", tz_name)
+        time.tzset()
+
+        # Compute the frozen datetimes BEFORE patching (using the real datetime class)
+        # Use fromtimestamp with UTC to get the correct datetime, then convert to target timezone
+        tz_info = zoneinfo.ZoneInfo(tz_name)
+        frozen_utc_dt = datetime.fromtimestamp(epoch_timestamp, tz=timezone.utc)
+        frozen_local_dt = frozen_utc_dt.astimezone(tz_info)
+        frozen_date = frozen_local_dt.date()
+
+        # Create a custom date class that returns the frozen date
+        class FrozenDate(date):
+            @classmethod
+            def today(cls):
+                return frozen_date
+
+        # Create a custom datetime class that returns the frozen datetime for now()
+        # Store the frozen datetimes in the class to avoid closure issues
+        class FrozenDatetime(datetime):
+            _frozen_utc = frozen_utc_dt
+            _frozen_local = frozen_local_dt
+
+            @classmethod
+            def now(cls, tz=None):
+                if tz is None:
+                    return cls._frozen_local.replace(tzinfo=None)
+                elif tz == timezone.utc:
+                    return cls._frozen_utc
+                else:
+                    return cls._frozen_utc.astimezone(tz)
+
+        # Patch the date and datetime classes in the datetime module BEFORE reload
+        # This way, when dd is reloaded and does "from datetime import date", it gets our patched classes
+        import datetime as dt_module
+        monkeypatch.setattr(dt_module, "date", FrozenDate)
+        monkeypatch.setattr(dt_module, "datetime", FrozenDatetime)
+
+        # Also patch time.time() to return the frozen epoch for any code that uses it
+        monkeypatch.setattr("time.time", lambda: epoch_timestamp)
+
+        # Reload module so TODAY and OUT_FILE recompute under new TZ/date
+        importlib.reload(dd)
+
+    yield _set_time_and_tz
+
+    # Cleanup: restore TZ and reload module
+    if original_tz is None:
+        monkeypatch.delenv("TZ", raising=False)
+    else:
+        monkeypatch.setenv("TZ", original_tz)
+    time.tzset()
+    importlib.reload(dd)
 
 
 def test_no_test_here_reads_the_real_machine_role():
@@ -482,3 +565,171 @@ def test_queue_summary_of_an_empty_pile(tmp_path, monkeypatch):
     (tmp_path / "inbox" / "improvement-queue").mkdir(parents=True)
     monkeypatch.setattr(dd, "CLAUDE_DIR", tmp_path)
     assert dd.improvement_queue_summary() == "(improvement queue is empty)"
+
+
+# ── timezone tests ────────────────────────────────────────────────────────────
+
+def _epoch_for_local_time(year, month, day, hour, minute, tz_name):
+    """Calculate epoch timestamp for a given local time in a given timezone."""
+    # Create a naive datetime in the target timezone, then get its epoch
+    tz_info = zoneinfo.ZoneInfo(tz_name)
+    local_dt = datetime(year, month, day, hour, minute, 0, tzinfo=tz_info)
+    return int(local_dt.timestamp())
+
+
+def test_daily_digest_local_date_ac1(tmp_path, monkeypatch, frozen_time_tz):
+    """AC1: 2026-11-12 23:30 local UTC-8 → TODAY='2026-11-12'"""
+    # Set DIGEST_DIR to temp path so we test in isolation
+    monkeypatch.setattr(dd, "DIGEST_DIR", tmp_path)
+
+    # Calculate epoch for 2026-11-12 23:30 UTC-8
+    epoch = _epoch_for_local_time(2026, 11, 12, 23, 30, "Etc/GMT+8")
+
+    # Freeze time at this instant in this timezone
+    frozen_time_tz(epoch, "Etc/GMT+8")
+
+    # TODAY should be 2026-11-12, not 2026-11-13 (which would be UTC)
+    assert dd.TODAY == "2026-11-12"
+    assert dd.OUT_FILE.name == "2026-11-12.md"
+
+
+def test_daily_digest_writer_reader_agreement(tmp_path, monkeypatch):
+    """AC2: writer (TODAY) and reader (session_start_report._check_digest) agree on local date."""
+    monkeypatch.setattr(dd, "DIGEST_DIR", tmp_path)
+
+    sys.path.insert(0, str(Path(__file__).resolve().parents[4] / "lib"))
+    import session_start_report  # noqa: E402
+
+    # Store original TZ
+    original_tz = os.environ.get("TZ")
+
+    try:
+        # Test both UTC-8 (west) and UTC+9 (east) with real system time
+        # The key is that .astimezone() respects TZ, and so does date.today()
+        for tz_name in ["Etc/GMT+8", "Etc/GMT-9"]:
+            monkeypatch.setenv("TZ", tz_name)
+            time.tzset()
+
+            # Reload dd so TODAY recomputes with new TZ
+            importlib.reload(dd)
+
+            # Get date as computed by dd
+            writer_date = dd.TODAY
+
+            # Get date as computed by session_start_report (should match)
+            # This calls datetime.now(timezone.utc).astimezone() which respects TZ
+            reader_date = session_start_report._now().astimezone().strftime("%Y-%m-%d")
+
+            assert writer_date == reader_date, f"Mismatch in {tz_name}: writer={writer_date}, reader={reader_date}"
+    finally:
+        # Restore original TZ
+        if original_tz is None:
+            monkeypatch.delenv("TZ", raising=False)
+        else:
+            monkeypatch.setenv("TZ", original_tz)
+        time.tzset()
+        importlib.reload(dd)
+
+
+@pytest.mark.parametrize("hour,minute,tz_name", [
+    (23, 59, "Etc/GMT+8"),   # 23:59 UTC-8
+    (0, 1, "Etc/GMT+8"),      # 00:01 UTC-8
+    (23, 59, "Etc/GMT-9"),    # 23:59 UTC+9
+    (0, 1, "Etc/GMT-9"),      # 00:01 UTC+9
+])
+def test_daily_digest_midnight_boundary(tmp_path, monkeypatch, frozen_time_tz, hour, minute, tz_name):
+    """Test 4: midnight-boundary ×2-zones — test writer/reader agreement at midnight boundaries."""
+    monkeypatch.setattr(dd, "DIGEST_DIR", tmp_path)
+
+    # Use 2026-11-12 as a reference date, then set the time
+    epoch = _epoch_for_local_time(2026, 11, 12, hour, minute, tz_name)
+    frozen_time_tz(epoch, tz_name)
+
+    # Import session_start_report and patch its _now() to return the frozen UTC datetime
+    sys.path.insert(0, str(Path(__file__).resolve().parents[4] / "lib"))
+    import session_start_report  # noqa: E402
+
+    # Compute the frozen UTC datetime that matches what frozen_time_tz set up
+    tz_info = zoneinfo.ZoneInfo(tz_name)
+    frozen_utc_dt = datetime.fromtimestamp(epoch, tz=timezone.utc)
+
+    # Patch _now to return the frozen UTC datetime
+    monkeypatch.setattr(session_start_report, "_now", lambda: frozen_utc_dt)
+
+    writer_date = dd.TODAY
+    reader_date = session_start_report._now().astimezone().strftime("%Y-%m-%d")
+
+    assert writer_date == reader_date, f"Mismatch at {hour:02d}:{minute:02d} in {tz_name}: writer={writer_date}, reader={reader_date}"
+
+
+def test_daily_digest_stale_old_utc_file(tmp_path, monkeypatch):
+    """Test 5: stale old-UTC-named leftover file present → no crash, new file written."""
+    # Create a fake ~/.claude directory for the test to avoid reading real user state
+    fake_claude_dir = tmp_path / "claude"
+    fake_claude_dir.mkdir()
+
+    monkeypatch.setattr(dd, "CLAUDE_DIR", fake_claude_dir)
+    monkeypatch.setattr(dd, "DIGEST_DIR", fake_claude_dir / "daily-digest")
+    monkeypatch.setattr(dd, "ROADMAP", fake_claude_dir / "marvin-roadmap.md")
+    monkeypatch.setattr(dd, "HANDOFFS_DIR", fake_claude_dir / "handoffs")
+
+    # Create the DIGEST_DIR
+    (fake_claude_dir / "daily-digest").mkdir()
+
+    # Explicitly compute today's date to avoid issues with frozen_time_tz from previous tests
+    from datetime import date as real_date
+    today_str = real_date.today().isoformat()
+
+    # Also monkeypatch OUT_FILE to use the new DIGEST_DIR with the computed date
+    expected_out_file = (fake_claude_dir / "daily-digest") / f"{today_str}.md"
+    monkeypatch.setattr(dd, "OUT_FILE", expected_out_file)
+
+    # Create a stale file with a different date to simulate a leftover from before the fix
+    # Use yesterday's date as the old file
+    stale_date = (real_date.today() - timedelta(days=1)).isoformat()
+    old_file = (fake_claude_dir / "daily-digest") / f"{stale_date}.md"
+    old_file.write_text("old content from yesterday")
+
+    # Mock should_run and call_claude
+    monkeypatch.setattr(brief_fallback, "should_run",
+                       lambda *a, **k: brief_fallback.Decision(True, "primary (pinned)"))
+    monkeypatch.setattr(dd, "call_claude", lambda p: "# New digest\n\nContent")
+
+    # Run main
+    dd.main()
+
+    # Verify new file was created with today's date
+    assert expected_out_file.exists(), f"New file should be created at {expected_out_file}"
+    content = expected_out_file.read_text()
+    assert "New digest" in content, f"New file should contain digest content, got: {content[:100]}"
+
+    # Old file should still exist (we didn't delete it)
+    assert old_file.exists(), f"Old file should still exist at {old_file}"
+
+
+def test_daily_digest_tz_unset_uses_system_zone(tmp_path, monkeypatch):
+    """Test 6: TZ unset → falls back to system zone, writer/reader still agree."""
+    monkeypatch.setattr(dd, "DIGEST_DIR", tmp_path)
+
+    sys.path.insert(0, str(Path(__file__).resolve().parents[4] / "lib"))
+    import session_start_report  # noqa: E402
+
+    original_tz = os.environ.get("TZ")
+    try:
+        # Unset TZ — both should fall back to system zone
+        monkeypatch.delenv("TZ", raising=False)
+        time.tzset()
+        importlib.reload(dd)
+
+        writer_date = dd.TODAY
+        reader_date = session_start_report._now().astimezone().strftime("%Y-%m-%d")
+
+        assert writer_date == reader_date, "Should agree even when TZ is unset"
+    finally:
+        # Restore original TZ
+        if original_tz is None:
+            monkeypatch.delenv("TZ", raising=False)
+        else:
+            monkeypatch.setenv("TZ", original_tz)
+        time.tzset()
+        importlib.reload(dd)

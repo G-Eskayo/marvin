@@ -435,6 +435,32 @@ def _ci_onnx_download_failures(fetch=None, repo: str = "G-Eskayo/marvin", runs: 
     return float(count)
 
 
+def _daily_digest_mismatch(log: Path | None = None, days: float = PROBE_WINDOW_DAYS, now: datetime | None = None) -> float:
+    """#526: days when session_start_report found no digest file while an adjacent-date file existed.
+    Symptom of the original bug where daily_digest.py wrote files with the UTC date instead of local date."""
+    log = log or Path.home() / ".claude" / "logs" / "daily-digest-mismatch.log"
+    try:
+        text = log.read_text(errors="ignore")
+    except OSError:
+        return 0.0
+    cut = _cut(now, days)
+    # Count unique days (YYYY-MM-DD) in the window
+    dates_found = set()
+    for line in text.splitlines():
+        if not line.strip():
+            continue
+        try:
+            ts_str = line.split(" missing ")[0]
+            ts = datetime.fromisoformat(ts_str)
+            if ts >= cut:
+                # Extract the date when the event was logged (in the local timezone on that Mac)
+                local_dt = ts.astimezone()
+                dates_found.add(local_dt.strftime("%Y-%m-%d"))
+        except (ValueError, IndexError):
+            continue
+    return float(len(dates_found))
+
+
 # name -> (symptom counter, the most it may read while the fix holds, what it counts). Summed across Macs like any
 # measure; the logs are per Mac (~/.claude/logs doesn't sync), so nothing is counted twice.
 # Each counter takes `days` (default the 7-day window): a watched incident is re-measured over the time since its last
@@ -444,6 +470,8 @@ PROBES: dict[str, tuple[Callable[..., float], float, str]] = {
                               "the busiest hour's gh-watch 'change detected' lines over 7 days, all Macs (#604)"),
     "prd-dispatched": (lambda days=PROBE_WINDOW_DAYS: _prd_dispatches(days=days), 0.0,
                        "parent PRDs claimed (attempted dispatch) over 7 days, all Macs (#448)"),
+    "daily-digest-mismatch": (lambda days=PROBE_WINDOW_DAYS: _daily_digest_mismatch(days=days), 0.0,
+                              "days when session-start found no digest while an adjacent-date file existed, all Macs (#526)"),
     "ticket-planned-3x-in-24h": (lambda days=PROBE_WINDOW_DAYS: _replanned_tickets(days=days), 0.0,
                                  "tickets planned 3+ times inside 24 h over 7 days, all Macs (#606)"),
     "code-sync-stuck": (lambda days=PROBE_WINDOW_DAYS: _sync_stuck_episodes(days=days), 0.0,

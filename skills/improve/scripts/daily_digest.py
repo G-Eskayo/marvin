@@ -11,7 +11,7 @@ from __future__ import annotations
 import re
 import subprocess
 import sys
-from datetime import datetime, timedelta, timezone
+from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
 
 # ── paths ──────────────────────────────────────────────────────────────────────
@@ -37,7 +37,7 @@ try:
 except ImportError:
     _SAFETY_MONITOR_AVAILABLE = False
 
-TODAY = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+TODAY = date.today().isoformat()
 OUT_FILE = DIGEST_DIR / f"{TODAY}.md"
 
 
