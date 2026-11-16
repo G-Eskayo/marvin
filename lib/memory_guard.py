@@ -130,8 +130,19 @@ def record(event: str, **fields) -> None:
 # ── the check ───────────────────────────────────────────────────────────────────────────────────────────────────
 
 def check(what: str, level=_READ, swap=_READ) -> dict:
-    """{"ok", "level", "swap_used", "message"}. Refuses only at warn or critical."""
-    level = read_level() if level is _READ else level
+    """{"ok", "level", "swap_used", "message"}. Refuses at warn or critical, and when level can't be read
+    (memory guard is closed: unreadable is treated as "warn")."""
+    import sys
+    sys.path.insert(0, str(Path(__file__).resolve().parent))
+    import guard_reading
+
+    level = guard_reading.guard_reading("memory", read_level) if level is _READ else level
+    if level is None:
+        # Memory unreadable: fail closed, treat as warn.
+        detail = "Pressure: unreadable"
+        message = (f"The {machine_name()}'s memory pressure cannot be read, so {what} waits. "
+                   f"Nothing was stopped to make room. {detail}")
+        return {"ok": False, "level": None, "swap_used": None, "message": message}
     if level not in HIGH:
         return {"ok": True, "level": level, "swap_used": None, "message": ""}
     swap = read_swap_used() if swap is _READ else swap

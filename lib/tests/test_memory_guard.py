@@ -12,11 +12,24 @@ import subprocess
 import sys
 import time
 from pathlib import Path
+from unittest import mock
 
 import pytest
 
 LIB = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(LIB))
+import guard_reading  # noqa: E402
+
+
+@pytest.fixture(autouse=True)
+def patch_guard_reading_state(tmp_path, monkeypatch):
+    """Patch guard_reading.STATE_PATH to avoid writing to real state files."""
+    monkeypatch.setattr(guard_reading, "STATE_PATH", tmp_path / "guard-unreadable.json")
+    # Stub notify.notify so tests don't send real alerts.
+    notify_mock = mock.MagicMock()
+    monkeypatch.setattr("lib.notify.notify", notify_mock, raising=False)
+    monkeypatch.setitem(sys.modules, "notify", notify_mock)
+    yield notify_mock
 
 import memory_guard as mg  # noqa: E402
 
@@ -71,10 +84,11 @@ def test_reads_the_kernel_pressure_level(raw, level):
     assert mg.read_level(run=run) == level
 
 
-def test_an_unreadable_level_is_none_so_it_never_blocks():
+def test_an_unreadable_level_now_blocks_closed_guard():
     run = lambda cmd, **k: subprocess.CompletedProcess(cmd, 1, stdout="")  # noqa: E731
     assert mg.read_level(run=run) is None
-    assert mg.check("#1", level=None)["ok"] is True
+    # memory is now a closed guard: unreadable level is treated as "warn"
+    assert mg.check("#1", level=None)["ok"] is False
 
 
 def test_the_level_override_wins_over_the_kernel(monkeypatch):

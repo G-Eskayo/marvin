@@ -137,12 +137,20 @@ def reclaim() -> dict:
 def preflight(what: str, floor: int = FLOOR_BYTES, free: Callable[[], int | None] | None = None,
               reclaim: Callable[[], dict] | None = None) -> dict:
     """Before heavy work starts. Above the floor: go, touching nothing. Below it: reclaim once (no retry loop), then
-    go if that was enough, else refuse with a message a person can act on. Free space that can't be read never blocks
-    (as #690). Returns {"ok", "free_before", "free_after", "reclaimed", "message"}."""
+    go if that was enough, else refuse with a message a person can act on. Free space that can't be read is now
+    treated as fail-closed (disk guard is closed): refuse work until it recovers.
+    Returns {"ok", "free_before", "free_after", "reclaimed", "message"}."""
+    import sys
+    sys.path.insert(0, str(Path(__file__).resolve().parent))
+    import guard_reading
+
     free = free or free_bytes
     reclaim = reclaim or globals()["reclaim"]
-    before = free()
-    if before is None or before >= floor:
+    before = guard_reading.guard_reading("disk", free)
+    if before is None:
+        return {"ok": False, "free_before": None, "free_after": None, "reclaimed": None,
+                "message": f"Not starting {what}: disk space cannot be read. Check Health for details and retry when it recovers."}
+    if before >= floor:
         return {"ok": True, "free_before": before, "free_after": before, "reclaimed": None, "message": ""}
     try:
         r = reclaim() or {}

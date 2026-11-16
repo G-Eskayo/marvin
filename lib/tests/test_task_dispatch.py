@@ -1,6 +1,23 @@
+import sys
+from pathlib import Path
+from unittest import mock
+
 import pytest
 
-import task_dispatch as td
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+import task_dispatch as td  # noqa: E402
+import guard_reading  # noqa: E402
+
+
+@pytest.fixture(autouse=True)
+def patch_guard_reading_state(tmp_path, monkeypatch):
+    """Patch guard_reading.STATE_PATH to avoid writing to real state files."""
+    monkeypatch.setattr(guard_reading, "STATE_PATH", tmp_path / "guard-unreadable.json")
+    # Stub notify.notify so tests don't send real alerts.
+    notify_mock = mock.MagicMock()
+    monkeypatch.setattr("lib.notify.notify", notify_mock, raising=False)
+    monkeypatch.setitem(sys.modules, "notify", notify_mock)
+    yield notify_mock
 
 
 def test_tailscale_status_gets_a_term_and_ignores_error_text(monkeypatch):
@@ -193,7 +210,7 @@ def test_tailscale_success_path_no_logging(hook_errors_log, monkeypatch):
 
 
 def test_read_remote_ssh_non_zero_is_logged(hook_errors_log, monkeypatch):
-	"""When ssh exits non-zero, a RuntimeError is logged."""
+	"""When ssh exits non-zero, a RuntimeError is logged (via guard_reading)."""
 	import subprocess as sp
 	import task_dispatch as td
 	with patch.object(td.subprocess, "run", return_value=sp.CompletedProcess(["cmd"], 255, "", "ssh: could not resolve hostname")):
@@ -201,8 +218,9 @@ def test_read_remote_ssh_non_zero_is_logged(hook_errors_log, monkeypatch):
 	assert result == {"busy": False}
 	assert hook_errors_log.exists()
 	logs = hook_errors_log.read_text()
-	assert "[task_dispatch]" in logs
-	assert "_read_remote_dispatch_state" in logs
+	# Errors are now logged through guard_reading, not task_dispatch
+	assert "[guard_reading]" in logs
+	assert "dispatch_state@box.ts" in logs
 	assert "RuntimeError" in logs
 	assert "exited 255" in logs
 
@@ -233,7 +251,7 @@ def test_read_remote_empty_stdout_not_logged(hook_errors_log, monkeypatch):
 
 
 def test_read_remote_subprocess_exception_is_logged(hook_errors_log, monkeypatch):
-	"""When subprocess raises an exception, it's logged."""
+	"""When subprocess raises an exception, it's logged (via guard_reading)."""
 	import subprocess as sp
 	import task_dispatch as td
 	with patch.object(td.subprocess, "run", side_effect=TimeoutError("ssh timed out")):
@@ -242,11 +260,11 @@ def test_read_remote_subprocess_exception_is_logged(hook_errors_log, monkeypatch
 	assert hook_errors_log.exists()
 	logs = hook_errors_log.read_text()
 	assert "TimeoutError" in logs
-	assert "_read_remote_dispatch_state" in logs
+	assert "dispatch_state@box.ts" in logs
 
 
 def test_read_remote_json_decode_exception_is_logged(hook_errors_log, monkeypatch):
-	"""When JSON parsing fails, it's logged."""
+	"""When JSON parsing fails, it's logged (via guard_reading)."""
 	import subprocess as sp
 	import task_dispatch as td
 	with patch.object(td.subprocess, "run", return_value=sp.CompletedProcess(["cmd"], 0, "not valid json", "")):
@@ -254,7 +272,7 @@ def test_read_remote_json_decode_exception_is_logged(hook_errors_log, monkeypatc
 	assert result == {"busy": False}
 	assert hook_errors_log.exists()
 	logs = hook_errors_log.read_text()
-	assert "_read_remote_dispatch_state" in logs
+	assert "dispatch_state@box.ts" in logs
 
 
 def test_read_remote_success_path_no_logging(hook_errors_log, monkeypatch):

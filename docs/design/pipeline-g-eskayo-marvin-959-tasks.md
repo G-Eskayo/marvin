@@ -1,0 +1,8 @@
+1. Add `lib/guard_reading.py`: `FAIL_MODE` table, `guard_reading()`, atomic state read/write, episode/threshold/debounce logic, `flagged_guards()`, 2h-alert call into `lib/notify.notify()`.
+2. `lib/tests/test_guard_reading.py` covering tests 1–3, 6, 9, 10, 12, 13, 16, 17 above.
+3. Wire `disk` (closed) at its 3 call sites: `dispatch_concurrency.can_start_another` (replace `_safe(disk_free_gb, machine)`), `ticket_pipeline._free_disk_gb` (add a real remote ssh reader reusing `cold_store`'s `df -Pk ~ | tail -1` pattern instead of the hardcoded `None`), `disk_triggers.preflight`. Update `test_dispatch_concurrency.py`, `test_ticket_pipeline.py`, `test_disk_triggers.py` for fail-closed behavior (tests 8, 15).
+4. Wire `memory` (closed) in `memory_guard.check()`/`read_level()`. Update `test_memory_guard.py` (test 14).
+5. Wire the 7 open guards (`github_budget`, `breaker`, `missing_tools`, `task_records`, `tailscale`, `dispatch_state`, `failure_log`) through `guard_reading`, removing `dispatch_concurrency._safe` once nothing calls it. Update `test_dispatch_concurrency.py`, `test_task_dispatch.py`, `test_failure_breaker.py` (tests 4, 5).
+6. `health_checks.py`: add `check_guard_readings()`, one `guard:<name>@<device>` row per flagged guard, wired into the sweep. Extend `test_health_checks.py`.
+7. Completeness test (test 7) — can live in `test_guard_reading.py`.
+8. Run the full touched-module test set locally (`guard_reading`, `dispatch_concurrency`, `ticket_pipeline`, `memory_guard`, `disk_triggers`, `task_dispatch`, `failure_breaker`, `health_checks`) before marking ready, per the full-suite-before-hand-merge rule.

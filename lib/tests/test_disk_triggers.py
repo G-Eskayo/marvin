@@ -12,11 +12,24 @@ import subprocess
 import sys
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
+from unittest import mock
 
 import pytest
 
 LIB = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(LIB))
+import guard_reading  # noqa: E402
+
+
+@pytest.fixture(autouse=True)
+def patch_guard_reading_state(tmp_path, monkeypatch):
+    """Patch guard_reading.STATE_PATH to avoid writing to real state files."""
+    monkeypatch.setattr(guard_reading, "STATE_PATH", tmp_path / "guard-unreadable.json")
+    # Stub notify.notify so tests don't send real alerts.
+    notify_mock = mock.MagicMock()
+    monkeypatch.setattr("lib.notify.notify", notify_mock, raising=False)
+    monkeypatch.setitem(sys.modules, "notify", notify_mock)
+    yield notify_mock
 
 import cleanup_sweep as cs  # noqa: E402
 import disk_triggers as dt  # noqa: E402
@@ -62,9 +75,10 @@ def test_preflight_uses_the_merge_gates_floor():
     assert dt.FLOOR_BYTES == 5 * GiB
 
 
-def test_preflight_fails_open_when_free_space_cannot_be_read():
+def test_preflight_now_fails_closed_when_free_space_cannot_be_read():
+    # disk is now a closed guard: unreadable free space is treated as a refusal
     r = dt.preflight("helper: x", free=lambda: None, reclaim=lambda: pytest.fail("no reading, no reclaim"))
-    assert r["ok"] is True
+    assert r["ok"] is False and "cannot be read" in r["message"]
 
 
 def test_preflight_still_answers_when_the_reclaim_breaks():

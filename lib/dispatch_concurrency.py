@@ -149,34 +149,31 @@ def can_start_box_build(settings: dict, in_flight: int) -> tuple[bool, str | Non
     return True, None
 
 
-def _safe(reader, *args):
-    try:
-        return reader(*args)
-    except Exception:  # noqa: BLE001 -- an unreadable guard must not stall dispatch
-        return None
-
-
 def can_start_another(machine: str, settings: dict, *, slots_in_use, disk_free_gb, github_budget_pct,
                       breaker_tripped, missing_tools, credit_ready=None) -> tuple[bool, str | None]:
     # An unreadable credit state means the plan's slots only: never a block, never extra builds on a guess.
-    limit = effective_limit(settings, machine, credit_ready=bool(credit_ready and _safe(credit_ready, machine)))
+    import guard_reading
+    credit_val = guard_reading.guard_reading("credit", credit_ready, machine) if credit_ready else None
+    limit = effective_limit(settings, machine, credit_ready=bool(credit_val))
     used = slots_in_use(machine)
     if used >= limit:
         return False, f"{machine} is full: {used} of {limit} slots in use"
     if not settings.get("parallel"):
         return True, None  # off: exactly today's behaviour, no extra guards
     g = settings["guards"]
-    disk = _safe(disk_free_gb, machine)
-    if disk is not None and disk < g["min_disk_gb"]:
+    disk = guard_reading.guard_reading("disk", disk_free_gb, machine, device=machine)
+    if disk is None:
+        return False, f"disk space unreadable on {machine}; refusing work until it recovers"
+    if disk < g["min_disk_gb"]:
         return False, f"disk {disk:g} GB free on {machine}, minimum {g['min_disk_gb']:g}"
-    pct = _safe(github_budget_pct)
+    pct = guard_reading.guard_reading("github_budget", github_budget_pct)
     if pct is not None and pct < g["min_github_budget_pct"]:
         return False, f"GitHub request budget {pct:g}% left, minimum {g['min_github_budget_pct']:g}%"
-    trips = _safe(breaker_tripped) or []
+    trips = guard_reading.guard_reading("breaker", breaker_tripped) or []
     if trips:
         t = trips[0]
         return False, f"circuit breaker tripped for {str(t.get('project', '?')).split('/')[-1]}: {t.get('signature', '?')}"
-    missing = _safe(missing_tools, machine) or []
+    missing = guard_reading.guard_reading("missing_tools", missing_tools, machine) or []
     if missing:
         return False, f"{machine} lacks tools the project needs: {', '.join(missing)}"
     return True, None
@@ -307,17 +304,28 @@ def _pid_alive(pid: int) -> bool:
 
 
 def _read_task_records(tasks_dir: Path | None = None) -> list[dict]:
-    """Glob *.json files in tasks_dir, skip unreadable/malformed files. Returns list of task records."""
-    tasks_dir = tasks_dir or TASKS_DIR
-    records = []
-    if not tasks_dir.exists():
+    """Glob *.json files in tasks_dir, skip unreadable/malformed files. Returns list of task records.
+    If the directory is inaccessible, guard_reading records an error."""
+    import guard_reading
+
+    def read_inner():
+        tasks_dir_to_use = tasks_dir or TASKS_DIR
+        records = []
+        if not tasks_dir_to_use.exists():
+            return records
+        had_error = False
+        for f in tasks_dir_to_use.glob("*.json"):
+            try:
+                records.append(json.loads(f.read_text()))
+            except (OSError, ValueError):
+                had_error = True
+        # Raise if ANY file was corrupt or inaccessible, even if we got some good records.
+        # This makes corruption visible via guard_reading (for #891-shape issues).
+        if had_error:
+            raise ValueError("some task record files unreadable or malformed")
         return records
-    for f in tasks_dir.glob("*.json"):
-        try:
-            records.append(json.loads(f.read_text()))
-        except (OSError, ValueError):
-            pass
-    return records
+
+    return guard_reading.guard_reading("task_records", read_inner) or []
 
 
 def _reap(dead: list[dict], tasks_dir: Path | None = None) -> None:

@@ -102,29 +102,33 @@ def tailscale_online_hosts_or_none() -> set[str] | None:
 
 def _tailscale_online_hosts() -> set[str]:
     """For dispatch: an unanswerable Tailscale means no remote machine to send work to (stay local)."""
-    return tailscale_online_hosts_or_none() or set()
+    import guard_reading
+    result = guard_reading.guard_reading("tailscale", tailscale_online_hosts_or_none)
+    return result or set()
 
 
 def _read_local_dispatch_state() -> dict:
     import stamped
-    return stamped.read(DISPATCH_STATE_PATH).value or {"busy": False}
+    import guard_reading
+    result = guard_reading.guard_reading("dispatch_state", lambda: stamped.read(DISPATCH_STATE_PATH).value or {"busy": False})
+    return result or {"busy": False}
 
 
 def _read_remote_dispatch_state(host: str) -> dict:
-    try:
+    import guard_reading
+    def read_remote():
         proc = subprocess.run(
             ["ssh", *SSH_OPTS, host, f"cat {SHELL_STATE_PATH}"],
             capture_output=True, text=True, timeout=10,
         )
         if proc.returncode != 0:
-            _log_hook_error_safe("_read_remote_dispatch_state", RuntimeError(f"ssh to {host} exited {proc.returncode}: {proc.stderr[:300]}"))
-            return {"busy": False}
+            raise RuntimeError(f"ssh to {host} exited {proc.returncode}: {proc.stderr[:300]}")
         if not proc.stdout.strip():
             return {"busy": False}
         return json.loads(proc.stdout)
-    except Exception as exc:
-        _log_hook_error_safe("_read_remote_dispatch_state", exc)
-        return {"busy": False}
+
+    result = guard_reading.guard_reading("dispatch_state", read_remote, device=host)
+    return result or {"busy": False}
 
 
 def _candidates() -> dict:

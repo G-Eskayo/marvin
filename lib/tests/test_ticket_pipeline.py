@@ -6,6 +6,7 @@ import json
 import sys
 from pathlib import Path
 from types import SimpleNamespace
+from unittest import mock
 
 import threading
 import time
@@ -16,6 +17,18 @@ sys.path.insert(0, str(LIB))
 
 import ticket_pipeline as tp  # noqa: E402
 import ticket_stages as ts  # noqa: E402
+import guard_reading  # noqa: E402
+
+
+@pytest.fixture(autouse=True)
+def patch_guard_reading_state(tmp_path, monkeypatch):
+    """Patch guard_reading.STATE_PATH to avoid writing to real state files."""
+    monkeypatch.setattr(guard_reading, "STATE_PATH", tmp_path / "guard-unreadable.json")
+    # Stub notify.notify so tests don't send real alerts.
+    notify_mock = mock.MagicMock()
+    monkeypatch.setattr("lib.notify.notify", notify_mock, raising=False)
+    monkeypatch.setitem(sys.modules, "notify", notify_mock)
+    yield notify_mock
 
 
 # The memory guard reads this Mac's real pressure. During a merge gate's full suite that is often "warn", so every
@@ -873,9 +886,10 @@ def _parallel(monkeypatch, marvin=(), cc=(), total=2, per_project=1, local_used=
     monkeypatch.setattr(tp, "_local_slots_used", lambda: local_used)
     monkeypatch.setattr(tp, "_inflight_by_repo", lambda repos: dict(inflight or {}))
     monkeypatch.setattr(tp, "_free_disk_gb", lambda: disk)
+    monkeypatch.setattr(tp, "_free_disk_gb_remote", lambda host: disk)
     monkeypatch.setattr(tp, "_github_budget_pct", lambda: budget)
     monkeypatch.setattr(tp, "MARVIN_MACHINES", tuple(BOTH))
-    return _capture(monkeypatch, select=lambda target=None: (target, {"is_self": target == "mac-mini-1"}))
+    return _capture(monkeypatch, select=lambda target=None: (target, {"is_self": target == "mac-mini-1", "tailscale_hostname": target}))
 
 
 def _targets(got):

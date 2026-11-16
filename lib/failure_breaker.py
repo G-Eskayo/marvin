@@ -95,17 +95,29 @@ def clear(now: datetime | None = None) -> None:
 
 
 def _read() -> list[dict]:
-    if not LOG_PATH.exists():
-        return []
-    out = []
-    for line in LOG_PATH.read_text().splitlines():
-        try:
-            rec = json.loads(line)
-            rec["_t"] = datetime.fromisoformat(rec["t"])
-            out.append(rec)
-        except (ValueError, KeyError, TypeError):
-            continue  # a corrupt line must never take the breaker down
-    return out
+    import sys
+    sys.path.insert(0, str(Path(__file__).resolve().parent))
+    import guard_reading
+
+    def read_log():
+        if not LOG_PATH.exists():
+            return []
+        out = []
+        had_error = False
+        for line in LOG_PATH.read_text().splitlines():
+            try:
+                rec = json.loads(line)
+                rec["_t"] = datetime.fromisoformat(rec["t"])
+                out.append(rec)
+            except (ValueError, KeyError, TypeError):
+                had_error = True
+        # Raise if ANY line was corrupt or malformed, even if we got some good records.
+        # This makes corruption visible via guard_reading (for #891-shape issues).
+        if had_error:
+            raise ValueError("some failure log lines unreadable or malformed")
+        return out
+
+    return guard_reading.guard_reading("failure_log", read_log) or []
 
 
 def tripped(now: datetime | None = None, project: str | None = None) -> list[dict]:

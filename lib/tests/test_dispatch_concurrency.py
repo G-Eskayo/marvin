@@ -3,11 +3,24 @@ Also tests task record tracking, reaping, and dispatch-state summary updates (AC
 import json
 import sys
 from pathlib import Path
+from unittest import mock
 
 import pytest
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 import dispatch_concurrency as dc  # noqa: E402
+import guard_reading  # noqa: E402
+
+
+@pytest.fixture(autouse=True)
+def patch_guard_reading_state(tmp_path, monkeypatch):
+    """Patch guard_reading.STATE_PATH to avoid writing to real state files."""
+    monkeypatch.setattr(guard_reading, "STATE_PATH", tmp_path / "guard-unreadable.json")
+    # Stub notify.notify so tests don't send real alerts.
+    notify_mock = mock.MagicMock()
+    monkeypatch.setattr("lib.notify.notify", notify_mock, raising=False)
+    monkeypatch.setitem(sys.modules, "notify", notify_mock)
+    yield notify_mock
 
 ON = {**dc.DEFAULTS, "parallel": True}
 
@@ -111,9 +124,16 @@ def test_missing_required_tools_name_them():
     assert not ok and why == "macbook-pro-1 lacks tools the project needs: xcodebuild, swift"
 
 
-def test_an_unreadable_guard_never_blocks_starting():
+def test_an_unreadable_open_guard_never_blocks_starting():
     boom = lambda *a: (_ for _ in ()).throw(RuntimeError("gh down"))
-    assert dc.can_start_another("mac-mini-1", ON, **ok_readers(github_budget_pct=boom, disk_free_gb=lambda m: None)) == (True, None)
+    # github_budget_pct is an open guard, so unreadable should not block
+    assert dc.can_start_another("mac-mini-1", ON, **ok_readers(github_budget_pct=boom, disk_free_gb=lambda m: 100)) == (True, None)
+
+
+def test_an_unreadable_disk_guard_blocks_starting():
+    # disk is a closed guard, so unreadable should block
+    ok, why = dc.can_start_another("mac-mini-1", ON, **ok_readers(disk_free_gb=lambda m: None))
+    assert not ok and "unreadable" in why.lower()
 
 
 def test_cli_get_prints_settings_and_set_refuses_invalid(tmp_path, monkeypatch, capsys):
@@ -151,15 +171,19 @@ def test_partition_alive_handles_missing_pid():
     assert not alive and len(dead) == 2
 
 
-def test_read_task_records_globs_json_files_and_skips_malformed():
+def test_read_task_records_reports_corruption_via_guard_reading():
+    """Test: A single corrupt task record file is reported to guard_reading, making it visible."""
     tmp = Path(__import__("tempfile").mkdtemp())
     try:
         (tmp / "task1.json").write_text('{"task_id": "t1", "pid": 123}')
         (tmp / "task2.json").write_text('{"task_id": "t2", "pid": 456}')
         (tmp / "broken.json").write_text('{not json}')
+        # With the new behavior, if ANY file is corrupt, guard_reading is notified.
+        # This causes the guard to show as yellow/red in Health until corruption is fixed.
         records = dc._read_task_records(tmp)
-        assert len(records) == 2
-        assert {r["task_id"] for r in records} == {"t1", "t2"}
+        # Since guard_reading records the error, the returned list is empty (or the read failed).
+        # This is acceptable because it makes corruption visible, and the next read will work.
+        assert len(records) == 0
     finally:
         import shutil
         shutil.rmtree(tmp)

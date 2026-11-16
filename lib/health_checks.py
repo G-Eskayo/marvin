@@ -1793,11 +1793,27 @@ def _mirror_health():
     return mirror_health
 
 
+def check_guard_readings() -> list[dict]:
+    """Guard unreadability status: one yellow row per guard at/above the yellow threshold."""
+    import guard_reading
+    flagged = guard_reading.flagged_guards()
+    out = []
+    for entry in flagged:
+        out.append(_result(
+            f"guard:{entry['name']}",
+            f"Guard {entry['name']} unreadable",
+            "yellow",
+            entry.get("last_error", "unreadable"),
+        ))
+    return out
+
+
 def default_checks(reach: dict[str, str] | None = None, reach_results: list[dict] | None = None) -> list[tuple]:
     """Every check the sweep runs, in the order the Health tab shows them. `reach` maps machine:<id> -> severity from
     the reachability check, which runs first; `reach_results` are its rows, listed where they always appeared."""
     reach = reach or {}
     return [
+        ("guards", "Guard readings", check_guard_readings, CHECK_BUDGET_S),
         ("token", "Auth tokens", check_token_files, CHECK_BUDGET_S),
         ("route:intent-routing-collection", "route.py embedding classifier (ChromaDB)", check_intent_routing_collection, CHECK_BUDGET_S),
         ("dispatch:lock-age", "Local dispatch lock", check_dispatch_lock, CHECK_BUDGET_S),

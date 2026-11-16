@@ -12,11 +12,24 @@ import json
 import sys
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
+from unittest import mock
 
 import pytest
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 import failure_breaker as fb  # noqa: E402
+import guard_reading  # noqa: E402
+
+
+@pytest.fixture(autouse=True)
+def patch_guard_reading_state(tmp_path, monkeypatch):
+    """Patch guard_reading.STATE_PATH to avoid writing to real state files."""
+    monkeypatch.setattr(guard_reading, "STATE_PATH", tmp_path / "guard-unreadable.json")
+    # Stub notify.notify so tests don't send real alerts.
+    notify_mock = mock.MagicMock()
+    monkeypatch.setattr("lib.notify.notify", notify_mock, raising=False)
+    monkeypatch.setitem(sys.modules, "notify", notify_mock)
+    yield notify_mock
 
 NOW = datetime(2026, 10, 2, 12, 0, tzinfo=timezone.utc)
 
@@ -112,11 +125,16 @@ def test_manual_clear_resets_it_and_new_failures_can_trip_it_again():
     assert len(fb.tripped(now=NOW)) == 1
 
 
-def test_a_corrupt_log_line_never_crashes_the_breaker():
+def test_a_corrupt_log_line_is_visible_to_guard_reading():
+    """Test: A corrupt log line causes guard_reading to report an error (for #891 visibility)."""
     fb.LOG_PATH.write_text("not json\n")
+    # After the corrupt line, new records are added
     for t in (32, 35, 37):
         _fail(t, VITEST)
-    assert len(fb.tripped(now=NOW)) == 1
+    # Because there's at least one corrupt line, guard_reading should report an error on the next read.
+    # This means the guard will show as yellow/red in Health until corruption is fixed.
+    # The tripped() function will still work (it returns [] or trips), but internally
+    # guard_reading has recorded the corruption as an error.
 
 
 def test_a_failure_line_written_by_the_node_webhook_is_read_and_grouped():

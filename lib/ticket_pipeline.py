@@ -767,6 +767,28 @@ def _free_disk_gb() -> float | None:
         return None
 
 
+def _free_disk_gb_remote(host: str) -> float | None:
+    """Get free disk on a remote machine over ssh using df -Pk pattern from cold_store."""
+    try:
+        import subprocess
+        proc = subprocess.run(
+            ["ssh", "-o", "ConnectTimeout=5", "-o", "BatchMode=yes", "-o", "StrictHostKeyChecking=accept-new",
+             host, "df -Pk ~ | tail -1"],
+            capture_output=True, text=True, timeout=10
+        )
+        if proc.returncode != 0:
+            raise RuntimeError(f"ssh returned {proc.returncode}")
+        # df -Pk output: Filesystem 1024-blocks Used Available Capacity Mounted
+        # We want column 3 (Available, in 1K blocks), convert to GB
+        parts = proc.stdout.split()
+        if len(parts) < 4:
+            raise ValueError(f"unexpected df output: {proc.stdout[:100]}")
+        available_1k = int(parts[3])
+        return available_1k * 1024 / 1e9
+    except (OSError, subprocess.SubprocessError, ValueError, IndexError) as exc:
+        raise RuntimeError(f"remote disk read failed: {exc}")
+
+
 def _github_budget_pct() -> float | None:
     """Percent of this hour's GitHub allowance left; None when it cannot be read (an unreadable guard never blocks)."""
     try:
@@ -845,10 +867,20 @@ def _select_for_profile(profile: dict, settings: dict | None = None, taken: dict
                 continue
         if parallel:
             used = (local_base if is_self else 0) + taken.get(device, 0)
+
+            def disk_free_gb_for_device(m, selected=selected):
+                if selected[1].get("is_self"):
+                    return _free_disk_gb()
+                else:
+                    host = selected[1].get("tailscale_hostname")
+                    if not host:
+                        raise RuntimeError("no tailscale_hostname for remote device")
+                    return _free_disk_gb_remote(host)
+
             ok, why = dispatch_concurrency.can_start_another(
                 device, settings, slots_in_use=lambda m, used=used: used,
                 credit_ready=lambda m: settings.get("credit_ready", {}).get(m, False),
-                disk_free_gb=lambda m, s=is_self: _free_disk_gb() if s else None,
+                disk_free_gb=disk_free_gb_for_device,
                 github_budget_pct=_github_budget_pct,
                 breaker_tripped=lambda: [],   # a tripped breaker already removed that project from this scan
                 missing_tools=lambda m: [])
