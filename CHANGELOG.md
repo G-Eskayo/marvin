@@ -1,5 +1,7 @@
 # Changelog
 
+- Purpose probe pipeline-verify-timeouts: count timed-out verify runs per machine ([#1337](https://github.com/G-Eskayo/marvin/pull/1337))
+
 - Ticket queue lists some tickets twice, and lists ready tickets that already have an open PR ([#1338](https://github.com/G-Eskayo/marvin/pull/1338))
 
 - background_architecture_review tests leak into real ~/.claude once the suggestions pile exists ([#1335](https://github.com/G-Eskayo/marvin/pull/1335))
