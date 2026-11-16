@@ -631,3 +631,94 @@ def test_ci_onnx_download_failures_is_registered():
     assert "ci-onnx-download-failures" in pm.PROBES
     fn, limit, what = pm.PROBES["ci-onnx-download-failures"]
     assert limit == 6.0 and "#1098" in what and "#1156" in what and "#1163" in what
+
+
+# ── banner-skill-count-drift (marvin#997, tests 15-19) ──────────────────────────
+
+def test_banner_skill_count_drift_returns_0_on_missing_repo(tmp_path):
+    """When the repo doesn't exist or isn't a git repo, returns 0.0."""
+    result = pm._banner_skill_count_drift(repo=tmp_path / "nonexistent")
+    assert result == 0.0
+
+
+def test_banner_skill_count_drift_returns_0_on_git_failure(tmp_path, monkeypatch):
+    """When git command fails, returns 0.0 (dependency-failing-reads-zero)."""
+    import subprocess
+    import session_start_report as ssr
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    (repo / ".git").mkdir()
+    skills = tmp_path / "skills"
+    skills.mkdir()
+    # Add a local skill so live_skills is non-empty
+    (skills / "local1").mkdir()
+    (skills / "local1" / "SKILL.md").write_text("# Local 1")
+    monkeypatch.setattr(ssr, "SKILLS_DIR", skills)
+
+    def mock_run_failure(cmd, **kw):
+        """Mock run that returns failure for git ls-tree."""
+        result = subprocess.CompletedProcess(cmd, 1)  # returncode 1 = failure
+        result.stdout = ""
+        return result
+
+    result = pm._banner_skill_count_drift(repo=repo, run=mock_run_failure)
+    assert result == 0.0
+
+
+def test_banner_skill_count_drift_counts_local_only_skills(tmp_path, monkeypatch):
+    """Counts skills on live ~/.agents/skills that aren't in origin/main."""
+    import subprocess
+    import session_start_report as ssr
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    (repo / ".git").mkdir()
+    skills = tmp_path / "skills"
+    skills.mkdir()
+    # Local skills
+    (skills / "local1").mkdir()
+    (skills / "local1" / "SKILL.md").write_text("# Local 1")
+    (skills / "upstream1").mkdir()
+    (skills / "upstream1" / "SKILL.md").write_text("# Upstream 1")
+
+    def mock_run(cmd, **kw):
+        result = subprocess.CompletedProcess(cmd, 0)
+        if "ls-tree" in cmd and "origin/main" in cmd:
+            # Remote has only upstream1
+            result.stdout = "skills/upstream1/SKILL.md\nsome/other/path\n"
+        return result
+
+    monkeypatch.setattr(ssr, "SKILLS_DIR", skills)
+    result = pm._banner_skill_count_drift(repo=repo, run=mock_run)
+    assert result == 1.0  # local1 is local-only
+
+
+def test_banner_skill_count_drift_ignores_remote_only_skills(tmp_path, monkeypatch):
+    """Doesn't count skills that are in origin/main but not locally (they'll sync down)."""
+    import subprocess
+    import session_start_report as ssr
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    (repo / ".git").mkdir()
+    skills = tmp_path / "skills"
+    skills.mkdir()
+    # Local has only upstream1
+    (skills / "upstream1").mkdir()
+    (skills / "upstream1" / "SKILL.md").write_text("# Upstream 1")
+
+    def mock_run(cmd, **kw):
+        result = subprocess.CompletedProcess(cmd, 0)
+        if "ls-tree" in cmd and "origin/main" in cmd:
+            # Remote has both upstream1 and remote-only
+            result.stdout = "skills/upstream1/SKILL.md\nskills/remote_only/SKILL.md\n"
+        return result
+
+    monkeypatch.setattr(ssr, "SKILLS_DIR", skills)
+    result = pm._banner_skill_count_drift(repo=repo, run=mock_run)
+    assert result == 0.0  # no local-only skills
+
+
+def test_banner_skill_count_drift_is_registered():
+    """The probe is registered with target 0 and marvin#997 reference."""
+    assert "banner-skill-count-drift" in pm.PROBES
+    fn, limit, what = pm.PROBES["banner-skill-count-drift"]
+    assert limit == 0.0 and "#997" in what
