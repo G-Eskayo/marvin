@@ -1,0 +1,6 @@
+1. `lib/tests/test_ticket_queue.py`: add the three new dedup tests (items 1-3 above) against the current (unfixed) `build_queue` — they should fail, proving the bug.
+2. `lib/tests/test_ticket_pipeline.py`: add the two new evidence tests (items 5-6 above) against current code — they should already pass, proving criterion 2 needs no fix.
+3. `lib/ticket_queue.py`: in `current_queue()`, dedup `repos` (`list(dict.fromkeys([tp.REPO, *pp.dispatchable_repos()]))`) before fetching, so a repo registered twice (e.g. marvin's own profile alongside the hardcoded `tp.REPO`) is read once.
+4. `lib/ticket_queue.py`: in `build_queue()`, after `pairs.sort(key=...)`, drop later duplicates keyed by `(repo, t["number"])` before building the position-numbered output list, keeping each ticket's first (best-sorted) occurrence.
+5. Run the full `lib/tests/test_ticket_queue.py` and `lib/tests/test_ticket_pipeline.py` suites; confirm the new tests from steps 1-2 now pass and nothing else regresses.
+6. Update `lib/ticket_queue.py`'s module docstring if needed to note the dedup guarantee (one line, only if the existing docstring would otherwise read as inaccurate).
