@@ -105,6 +105,12 @@ the primary's map (`GET /safety/taus`).
 
 Calibration labels come from Giles's own approve/deny actions on `quarantine.md` — closing the loop the paper's offline calibration set can't: real, current, growing labeled data instead of a fixed benchmark.
 
+## Mac-only gate and person-overrides-unknown dedup (ticket #927)
+
+POST `/safety/label` is gated at the webhook to registered macOS peers only: the remote peer's IP is resolved via Tailscale `whois`, then matched against the device registry for macOS devices. Non-Mac peers receive 403. This prevents auto-labelers or scripts on uncontrolled nodes from polluting the calibration.
+
+Manual reviews from humans carry `source="person"` and override any prior auto-generated label for the same entry (identified by `entry_id`); otherwise first-wins (a duplicate entry from the same or different source is ignored). This allows a person to correct an auto-label without re-triggering verification, and ensures human labels always have the final say in the calibration set.
+
 ## Dual-channel drift audit (`otr_log.py`)
 
 For decision-type loops only (self-improve, architecture-review, route), after the normal artifact is produced:

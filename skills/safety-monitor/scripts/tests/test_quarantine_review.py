@@ -58,8 +58,9 @@ def qfile(tmp_path, monkeypatch):
 def labels(qfile: Path) -> list[dict]:
     f = qfile.parent / "safety-monitor" / "calibration.jsonl"
     # entry_id (the entry's hash, for de-duplication across Macs) is checked in test_calibrate.py; left out here.
+    # source (person vs unknown) is implementation detail of the dedup logic; left out here.
     rows = [json.loads(line) for line in f.read_text().splitlines()] if f.exists() else []
-    return [{k: v for k, v in r.items() if k != "entry_id"} for r in rows]
+    return [{k: v for k, v in r.items() if k not in ("entry_id", "source")} for r in rows]
 
 
 # --- reading -------------------------------------------------------------------------------------------------------
@@ -394,5 +395,5 @@ def test_on_another_mac_with_the_primary_offline_the_answer_is_kept_in_the_outbo
     assert q.answer(alpha["id"], "modify", "fix the date")["status"] == "answered"
     assert [e["body"] for e in q.list_pending()["entries"]] == ["beta"]
     queued = [json.loads(x) for x in (qfile.parent / "safety-monitor" / "outbox.jsonl").read_text().splitlines()]
-    assert queued == [{"loop": "research_colony", "score": 0.35, "label": 0, "note": "fix the date", "entry_id": alpha["id"]}]
+    assert queued == [{"loop": "research_colony", "score": 0.35, "label": 0, "note": "fix the date", "entry_id": alpha["id"], "source": "person"}]
     assert labels(qfile) == []  # nothing recorded on this Mac: the one calibration is the primary's

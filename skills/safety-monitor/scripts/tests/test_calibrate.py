@@ -291,3 +291,54 @@ def test_the_primary_is_the_registrys_macos_desktop_never_a_hardcoded_name(monke
     assert s.is_primary() is False
     monkeypatch.delenv("MARVIN_SAFETY_URL", raising=False)
     assert s.base_url() == "http://desk-ts:7878"
+
+
+# --- Ticket #927: source field for person-overrides-unknown dedup ---
+
+def test_record_label_with_source_person(state):
+    rec = c.record_label("daily_digest", 0.5, 1, entry_id="a" * 16, source="person")
+    assert rec is True
+    rows = c._rows()
+    assert len(rows) == 1
+    assert rows[0]["source"] == "person"
+
+
+def test_record_label_with_source_none_stays_none(state):
+    rec = c.record_label("daily_digest", 0.5, 1, entry_id="b" * 16, source=None)
+    assert rec is True
+    rows = c._rows()
+    assert len(rows) == 1
+    assert "source" not in rows[0]
+
+
+def test_person_overrides_unknown_on_duplicate_entry_id(state):
+    c.record_label("daily_digest", 0.4, 0, entry_id="c" * 16)
+    assert len(c._rows()) == 1
+    assert "source" not in c._rows()[0]
+    rec = c.record_label("daily_digest", 0.5, 1, entry_id="c" * 16, source="person")
+    assert rec is True
+    rows = c._rows()
+    assert len(rows) == 1
+    assert rows[0]["score"] == 0.5
+    assert rows[0]["label"] == 1
+    assert rows[0]["source"] == "person"
+
+
+def test_duplicate_entry_id_without_person_keeps_first(state):
+    c.record_label("daily_digest", 0.4, 0, entry_id="d" * 16, source="person")
+    assert c._rows()[0]["source"] == "person"
+    rec = c.record_label("daily_digest", 0.5, 1, entry_id="d" * 16)
+    assert rec is False
+    rows = c._rows()
+    assert len(rows) == 1
+    assert rows[0]["score"] == 0.4
+    assert rows[0]["label"] == 0
+    assert rows[0]["source"] == "person"
+
+
+def test_cli_threads_source_through_record_command(state, capsys):
+    result = c._cli(["record", json.dumps({"loop": "daily_digest", "score": 0.4, "label": 1, "entry_id": "e" * 16, "source": "person"})])
+    assert result == 0
+    out = json.loads(capsys.readouterr().out)
+    assert out["ok"] and out["recorded"]
+    assert c._rows()[0]["source"] == "person"

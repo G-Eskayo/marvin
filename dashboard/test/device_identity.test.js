@@ -9,7 +9,8 @@ import {
   isPrimaryHost,
   resolveServiceDefaults,
   peerHosts,
-  primaryDeviceId
+  primaryDeviceId,
+  macHostnames
 } from '../electron/main/device_identity.js'
 
 const registryFixture = {
@@ -122,5 +123,59 @@ describe('primaryDeviceId', () => {
     withRegistry({ 'macbook-pro-1': registryFixture['macbook-pro-1'] }, (networkPath) => {
       expect(primaryDeviceId(networkPath)).toBe(null)
     })
+  })
+})
+
+// Ticket #927: macOS peer detection for safety-labels gate
+describe('macHostnames', () => {
+  it('returns lowercased tailscale_hostname for macos devices', () => {
+    withRegistry(registryFixture, (networkPath) => {
+      const hostnames = macHostnames(networkPath)
+      expect(hostnames).toBeInstanceOf(Set)
+      expect(hostnames).toContain('gils-mac-mini')
+      expect(hostnames).toContain('some-macbook')
+    })
+  })
+
+  it('includes devices with os missing (defaults to macos)', () => {
+    withRegistry(registryFixture, (networkPath) => {
+      const hostnames = macHostnames(networkPath)
+      expect(hostnames).toContain('gils-mac-mini')
+      expect(hostnames).toContain('some-macbook')
+    })
+  })
+
+  it('lowercases tailscale hostnames', () => {
+    withRegistry({
+      'uppercase-mac': { hardware_uuid: 'U', kind: 'desktop', tailscale_hostname: 'UPPERCASE-MAC', os: 'macos' }
+    }, (networkPath) => {
+      const hostnames = macHostnames(networkPath)
+      expect(hostnames).toContain('uppercase-mac')
+      expect(hostnames).not.toContain('UPPERCASE-MAC')
+    })
+  })
+
+  it('excludes non-macos devices', () => {
+    withRegistry({
+      'linux-box': { hardware_uuid: 'L', kind: 'desktop', tailscale_hostname: 'linux-box', os: 'linux' }
+    }, (networkPath) => {
+      const hostnames = macHostnames(networkPath)
+      expect(hostnames).not.toContain('linux-box')
+    })
+  })
+
+  it('skips devices without tailscale_hostname', () => {
+    withRegistry({
+      'no-hostname': { hardware_uuid: 'N', kind: 'desktop', os: 'macos' }
+    }, (networkPath) => {
+      const hostnames = macHostnames(networkPath)
+      expect(hostnames.size).toBe(0)
+    })
+  })
+
+  it('returns empty set when registry is missing', () => {
+    const hostnames = macHostnames('/nonexistent/marvin-network.json')
+    expect(hostnames).toBeInstanceOf(Set)
+    expect(hostnames.size).toBe(0)
   })
 })

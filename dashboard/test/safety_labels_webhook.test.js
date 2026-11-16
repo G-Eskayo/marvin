@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { handleSafetyRequest } from '../webhook-server/safety_labels.js'
+import { handleSafetyRequest, isMacPeer } from '../webhook-server/safety_labels.js'
 
 // The primary host's end of the shared safety calibration. Labels arrive from other Macs over the network, so the
 // route is attacked: bad JSON, arrays, extra fields, shell text, an invalid label, a failing script.
@@ -44,5 +44,81 @@ describe('GET /safety/taus', () => {
   })
   it('a failing script is a 500', async () => {
     expect((await handleSafetyRequest({ method: 'GET', url: '/safety/taus' }, async () => { throw new Error('x') })).status).toBe(500)
+  })
+})
+
+// Ticket #927: gate POST /safety/label to Mac peers only
+describe('isMacPeer', () => {
+  it('accepts loopback addresses without calling whois', async () => {
+    let whoisCalled = false
+    const result = await isMacPeer('127.0.0.1', {
+      whoisFn: async () => { whoisCalled = true; return 'host' },
+      macHostnamesFn: () => new Set(['host'])
+    })
+    expect(result).toBe(true)
+    expect(whoisCalled).toBe(false)
+  })
+
+  it('accepts ::1 loopback', async () => {
+    let whoisCalled = false
+    const result = await isMacPeer('::1', {
+      whoisFn: async () => { whoisCalled = true; return 'host' },
+      macHostnamesFn: () => new Set(['host'])
+    })
+    expect(result).toBe(true)
+    expect(whoisCalled).toBe(false)
+  })
+
+  it('resolves non-loopback IPs via whois and matches against macHostnames', async () => {
+    const result = await isMacPeer('192.168.1.100', {
+      whoisFn: async () => 'gils-mac-mini',
+      macHostnamesFn: () => new Set(['gils-mac-mini', 'some-macbook'])
+    })
+    expect(result).toBe(true)
+  })
+
+  it('rejects IPs whose whois result is not in macHostnames', async () => {
+    const result = await isMacPeer('192.168.1.100', {
+      whoisFn: async () => 'linux-box',
+      macHostnamesFn: () => new Set(['gils-mac-mini', 'some-macbook'])
+    })
+    expect(result).toBe(false)
+  })
+
+  it('rejects IPs when whois returns null', async () => {
+    const result = await isMacPeer('192.168.1.100', {
+      whoisFn: async () => null,
+      macHostnamesFn: () => new Set(['gils-mac-mini', 'some-macbook'])
+    })
+    expect(result).toBe(false)
+  })
+
+  it('uses default functions when options are not provided', async () => {
+    const result = await isMacPeer('127.0.0.1')
+    expect(result).toBe(true)
+  })
+
+  it('rejects undefined IP addresses', async () => {
+    const result = await isMacPeer(undefined, {
+      whoisFn: async () => null,
+      macHostnamesFn: () => new Set()
+    })
+    expect(result).toBe(false)
+  })
+
+  it('rejects empty string IP addresses', async () => {
+    const result = await isMacPeer('', {
+      whoisFn: async () => null,
+      macHostnamesFn: () => new Set()
+    })
+    expect(result).toBe(false)
+  })
+
+  it('does case-insensitive matching', async () => {
+    const result = await isMacPeer('192.168.1.100', {
+      whoisFn: async () => 'GILS-MAC-MINI',
+      macHostnamesFn: () => new Set(['gils-mac-mini'])
+    })
+    expect(result).toBe(true)
   })
 })

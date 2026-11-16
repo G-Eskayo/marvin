@@ -86,3 +86,18 @@ export function peerHosts(readHardwareUuid = defaultReadHardwareUuid, networkPat
     .filter(([id, info]) => id !== me && info && info.tailscale_hostname)
     .map(([id, info]) => ({ id, host: info.tailscale_hostname }))
 }
+
+// Ticket #927: macOS devices by tailscale hostname, for safety-labels webhook gate.
+// Registry devices with os missing or "macos", lowercased tailscale_hostname, as a Set.
+export function macHostnames(networkPath = NETWORK_PATH) {
+  const registry = loadRegistry(networkPath)
+  const hostnames = new Set()
+  for (const [, info] of Object.entries(registry)) {
+    if (!info || !info.tailscale_hostname) continue
+    const os = info.os || 'macos'
+    if (os === 'macos') {
+      hostnames.add(info.tailscale_hostname.toLowerCase())
+    }
+  }
+  return hostnames
+}

@@ -389,6 +389,29 @@ def _model_run_timeouts(days: float = PROBE_WINDOW_DAYS, path: Path | None = Non
     return float(count)
 
 
+def _safety_labels_from_non_mac(days: float = PROBE_WINDOW_DAYS, path: Path | None = None,
+                                 now: datetime | None = None) -> float:
+    """Ticket #927: POST /safety/label requests rejected because the peer is not a registered Mac, from this
+    Mac's errors.jsonl over the window. A rejected peer is gated at the webhook before body parsing. O(log size)."""
+    import error_log
+    now = now or datetime.now(timezone.utc)
+    cut = _cut(now, days)
+    try:
+        lines = Path(path or error_log.PATH).read_text(encoding="utf-8", errors="replace").splitlines()
+    except OSError:
+        return 0.0
+    count = 0
+    for line in lines:
+        try:
+            e = json.loads(line)
+            when = _when(e.get("t"))
+        except (ValueError, TypeError, KeyError, AttributeError):
+            continue
+        if when and when >= cut and e.get("source") == "safety-labels:rejected-non-mac":
+            count += 1
+    return float(count)
+
+
 def _ci_onnx_download_failures(fetch=None, repo: str = "G-Eskayo/marvin", runs: int = 20,
                                days: float = PROBE_WINDOW_DAYS, now: datetime | None = None) -> float:
     """#1098/#1156 (2026-11-09): GitHub's 'Python tests' job failures in the 7-day window. Option B: counts the job's
@@ -472,6 +495,10 @@ PROBES: dict[str, tuple[Callable[..., float], float, str]] = {
     "stale-relay-leaked": (lambda days=PROBE_WINDOW_DAYS: _stale_relay("leaked", days), 0.0,
                            "stale claims that reached the owner over 7 days (question log kind=stale + their own 'that's "
                            "already fixed' replies), per Mac, summed (#1224)"),
+    # Ticket #927: non-Mac peers trying to submit safety labels over the webhook gate. Target 0 always.
+    "safety-labels-from-non-mac": (lambda days=PROBE_WINDOW_DAYS: _safety_labels_from_non_mac(days=days), 0.0,
+                                   "POST /safety/label requests rejected because the peer is not a registered Mac, per Mac, "
+                                   "summed (ticket #927)"),
 }
 MEASURES.update({name: fn for name, (fn, _limit, _what) in PROBES.items()})
 MEASURES["stale-relay-caught"] = lambda: _stale_relay("caught")

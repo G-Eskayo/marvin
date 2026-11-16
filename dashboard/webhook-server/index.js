@@ -38,7 +38,7 @@ import { handlePortfolioRequest } from '../electron/main/portfolio_remote.js'
 import { resolveServiceDefaults } from '../electron/main/device_identity.js'
 import { createRebuildCheckTrigger } from './rebuild_check.js'
 import { supportRepos, createSupportSync } from './support_sync.js'
-import { handleSafetyRequest, SAFETY_MAX_BODY } from './safety_labels.js'
+import { handleSafetyRequest, SAFETY_MAX_BODY, isMacPeer } from './safety_labels.js'
 
 // Authenticate gh/git children from the pipeline's shared credential file (see gh_auth.js).
 const ghTokenSource = loadGhToken()
@@ -118,6 +118,23 @@ const server = createServer(async (req, res) => {
 
   // The safety monitor's shared calibration (safety_labels.js): other Macs deliver review answers, read the tau map.
   if (req.url === '/safety/label' || req.url === '/safety/taus') {
+    // Ticket #927: gate POST /safety/label to registered Mac peers only
+    if (req.method === 'POST' && req.url === '/safety/label') {
+      let isPeer = false
+      try {
+        isPeer = await isMacPeer(req.socket?.remoteAddress)
+      } catch (err) {
+        appendError({ source: 'safety-labels:peer-check-error', message: `peer check failed: ${err.message}`, raw: err.message })
+        res.writeHead(500, { 'Content-Type': 'application/json' }).end(JSON.stringify({ ok: false, error: 'peer check failed' }))
+        return
+      }
+      if (!isPeer) {
+        const resolvedPeer = req.socket?.remoteAddress || 'unknown'
+        appendError({ source: 'safety-labels:rejected-non-mac', message: `rejected non-Mac peer: ${resolvedPeer}`, raw: resolvedPeer })
+        res.writeHead(403, { 'Content-Type': 'application/json' }).end(JSON.stringify({ ok: false, error: 'not a registered Mac' }))
+        return
+      }
+    }
     let body = ''
     if (req.method === 'POST') {
       try {
