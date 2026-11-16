@@ -20,7 +20,7 @@ CELL = 480       # mono cell: 12 px
 P = 40            # one pixel, in font units
 SB = 60           # side bearing each side (1.5 px): 3 px between letters
 SPACE = 300       # word space (7.5 px)
-DESC_CHARS = set('gjpqy,;Q_|()[]{}$@ýÿçÇ')
+DESC_CHARS = set('gjpqy,;Q_|()[]{}$@ýÿçÇ¡¿')
 
 def check():
     bad = []

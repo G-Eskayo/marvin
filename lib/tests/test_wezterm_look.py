@@ -118,13 +118,13 @@ def _font_for(out: str, ch: str) -> str:
 
 # Claude Code's characters are drawn in MARVIN Term itself since draft 0.3 (#1054 step 2): they used to fall back to
 # Menlo, whose smooth strokes beside the pixel letters made $ @ { } ✓ … ⏺ look broken.
-@pytest.mark.parametrize("ch", ["a", "@", "$", "{", "~", "✓", "…", "é", "⌘", "⏺", "⎿", "✻"])
+@pytest.mark.parametrize("ch", ["a", "@", "$", "{", "~", "✓", "…", "é", "⌘", "⏺", "⎿", "✻", "ß", "Ø", "æ"])
 def test_claude_codes_characters_come_from_marvin_term(tmp_path, ch):
     assert "MarvinTermMono-Beam.ttf" in _font_for(_fonts_used(tmp_path, REPO, ch), ch)
 
 
 # What MARVIN Term still hasn't drawn comes from IBM 3270, its CRT parent, before any smooth system font.
-@pytest.mark.parametrize("ch", ["ß", "§", "©", "¿", "Ø"])
+@pytest.mark.parametrize("ch", ["½", "¶", "Æ", "Œ", "¤"])
 def test_undrawn_characters_come_from_ibm_3270_not_menlo(tmp_path, ch):
     line = _font_for(_fonts_used(tmp_path, REPO, ch), ch)
     assert "IBM3270" in line and "Menlo" not in line

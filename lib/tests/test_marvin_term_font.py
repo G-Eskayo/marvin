@@ -22,7 +22,8 @@ ASCII = [chr(c) for c in range(33, 127)]
 CLAUDE_CODE = list("⏺⎿✓✗✔✘·✢✳✶✻✽…•↑↓←→↳▸▶◀⏸●○◐◯■□▪★☆⚠✎⏎⇧⌘⌥")
 TYPOGRAPHY = list("‘’“”–—×÷±≤≥≠€£°")
 ACCENTS = list("áàâäãåéèêëíìîïóòôöõúùûüñçýÿÁÀÂÄÃÅÉÈÊËÍÌÎÏÓÒÔÖÕÚÙÛÜÑÇ")
-REQUIRED = ASCII + CLAUDE_CODE + TYPOGRAPHY + ACCENTS
+LATIN_1 = list("ß§©¡¿Øæœ")
+REQUIRED = ASCII + CLAUDE_CODE + TYPOGRAPHY + ACCENTS + LATIN_1
 
 
 def _build(tmp_path, *args) -> TTFont:
