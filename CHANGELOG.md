@@ -1,5 +1,7 @@
 # Changelog
 
+- Session banner counts command files, not skills: says 36, the repo has 33 ([#1333](https://github.com/G-Eskayo/marvin/pull/1333))
+
 - Research colony silently exits 0 when all sources fail or claude call fails ([#1330](https://github.com/G-Eskayo/marvin/pull/1330))
 
 - Fix non-additive diff skip and destructive quarantine revert in background_review.py ([#1329](https://github.com/G-Eskayo/marvin/pull/1329))
