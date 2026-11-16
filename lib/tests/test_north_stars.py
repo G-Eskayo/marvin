@@ -88,3 +88,10 @@ def test_proposals_know_every_north_star_in_the_doc():
     # marvin#1198: the doc gained a fifth north star; a proposal must be able to name each one.
     import proposals
     assert sorted(proposals.NORTH_STARS) == list(range(1, len(north_stars.titles()) + 1))
+
+
+def test_north_star_fit_asks_about_resources_not_only_tokens():
+    """The north-star-fit instruction asks where it 'saves resources', not 'saves tokens'."""
+    text = north_stars.load()
+    assert "saves resources" in text
+    assert "saves tokens" not in text

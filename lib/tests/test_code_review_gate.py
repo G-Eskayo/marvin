@@ -334,3 +334,71 @@ def test_an_unchanged_worktree_is_clean_without_calling_the_judge(repo):
 def test_a_missing_base_reports_not_run_instead_of_raising(repo):
     r = crg.review_worktree(repo, "no-such-branch", launch=MagicMock())
     assert r["clean"] is None and "diff" in r["error"]
+
+
+# --- marvin#447: resources regression (O(n)-per-request reads, unbounded growth, wasted calls in a loop)
+# must be identified and blocked; new tests verify the rubric text and boundary (small bounded loop → note,
+# not must-fix). Break condition: missing or wrong rubric phrases, truncation hitting the rubric itself
+# (not just the diff), or the must-fix/note boundary moving.
+
+
+def _bullet(start: str, end: str) -> str:
+    """Slice RUBRIC between two anchor strings (not fixed positions)."""
+    return crg.RUBRIC[crg.RUBRIC.index(start):crg.RUBRIC.index(end)]
+
+
+def test_a_resources_must_fix_finding_blocks():
+    """A [must-fix] finding with resources wording → clean is False, finding preserved."""
+    r = crg.review_diff("d", launch=_judge(
+        "VERDICT: findings\n- [must-fix] lib/handler.py:42 — O(n) read inside the request handler on every call, no cache\n"))
+    assert r["clean"] is False
+    assert len(r["findings"]) == 1
+    assert "O(n) read" in r["findings"][0]
+
+
+def test_a_resources_micro_optimisation_note_stays_a_note():
+    """A [note]-tagged micro-optimisation → clean is True, finding in notes list."""
+    r = crg.review_diff("d", launch=_judge(
+        "VERDICT: findings\n- [note] lib/foo.py:10 — this micro-optimisation would reduce loop overhead\n"))
+    assert r["clean"] is True
+    assert r["findings"] == []
+    assert len(r["notes"]) == 1
+    assert "micro-optimisation" in r["notes"][0]
+
+
+def test_truncating_a_huge_diff_never_touches_the_rubric():
+    """build_prompt(huge_diff) → diff truncated, but prompt still starts with RUBRIC + DIFF header."""
+    huge_diff = "line\n" * 100000  # ~500KB
+    prompt = crg.build_prompt(huge_diff)
+    expected_start = f"{crg.RUBRIC}\n\nDIFF:\n\n"
+    assert prompt.startswith(expected_start)
+    assert "[... diff truncated ...]" in prompt
+
+
+def test_an_unknown_tag_on_a_resources_finding_still_blocks():
+    """[perf] tag on a resources-wording finding → ambiguity never resolves to safe, clean is False."""
+    r = crg.review_diff("d", launch=_judge(
+        "VERDICT: findings\n- [perf] lib/cache.py:5 — unbounded cache, never evicted\n"))
+    assert r["clean"] is False
+    assert len(r["findings"]) == 1
+    assert r["notes"] == []
+
+
+def test_resources_paragraph_names_time_space_cleanup_and_wasted_calls():
+    """RUBRIC Resources paragraph names O(1)/indexed, never cleans up/ADR 0065, network/token/subprocess."""
+    para = _bullet("Resources:", "Respond with exactly one line")
+    assert "O(1)" in para or "indexed" in para
+    assert "never cleans up" in para
+    assert "ADR 0065" in para
+    assert "network" in para
+    assert "token" in para
+    assert "subprocess" in para
+
+
+def test_must_fix_bullet_names_resources_regression_and_note_bullet_names_micro_optimisation():
+    """[must-fix] bullet includes 'resources regression'; [note] is 'micro-optimisations' not 'performance'."""
+    must_fix = _bullet("- [must-fix]", "- [note]")
+    note = _bullet("- [note]", "If clean")
+    assert "resources regression" in must_fix
+    assert "micro-optimisations" in note
+    assert "performance" not in note
