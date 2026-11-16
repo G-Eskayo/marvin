@@ -40,83 +40,7 @@ import { sendBackForOptions } from './decisions_submit.js'
 import { createLocalFirst, coalesce, createIssueReader, createRepoHeadCheck } from './local_first.js'
 import { createMrActions } from './mr_actions.js'
 import { createInstanceHandlers } from './instance.js'
-
-const mergeOps = createMergeOps()
-// marvin#568: every change to a merge op is pushed to the renderer (the card subscribes; it reads once on mount).
-function pushMergeOp(url, op) {
-  if (op) mainWindow?.webContents.send('mr:mergeEvent', url, op)
-}
-// marvin#762: every Approve goes through one flow (approve_flow.js): recorded before it is sent (approval_ledger.js),
-// to the Mini first and to this Mac's own webhook when the Mini can't be reached (merge_failover.js), and retried by
-// itself when a Mac comes back (approval_retry.js, run on triggers only: a webhook announcing it started, this Mac
-// waking or being unlocked, the dashboard starting).
-const approvalLedger = createApprovalLedger()
-const approveFlow = createApproveFlow({
-  mergeOps,
-  ledger: approvalLedger,
-  machines: () => mergeMachines({
-    primaryUrl: MR_WEBHOOK_URL,
-    explicit: !!process.env.MARVIN_MR_WEBHOOK_URL,
-    localUrl: process.env.MARVIN_MR_LOCAL_WEBHOOK_URL || undefined,
-    localExplicit: !!process.env.MARVIN_MR_LOCAL_WEBHOOK_URL,
-    primaryId: primaryDeviceId(),
-    localId: resolveDeviceId()
-  }),
-  // marvin#568: the webhook streams each stage as it happens; each one is folded into the op and pushed.
-  send: (url, target, opts) => approveMrStream(url, target, opts),
-  // marvin#940: the Mini short of memory, a later merge Mac that says it is fit takes it once the Mini dropped its copy.
-  ready: (machine, repo) => askReady(machine, repo),
-  forget: (machine, prUrl) => askForget(machine, prUrl),
-  push: (url, op) => pushMergeOp(url, op),
-  // The Approve click is the decision. The native popup is opt-in (prefs.json: confirmMerge) -- the
-  // duplicate-start guard, the merge gate's retest and the base/order checks are what protect a stray click.
-  confirm: async ({ number, url }) => {
-    if (!readPrefs(join(app.getPath('userData'), 'prefs.json')).confirmMerge) return true
-    const { response } = await dialog.showMessageBox(mainWindow, {
-      type: 'warning',
-      buttons: ['Cancel', 'Merge PR'],
-      defaultId: 0,
-      cancelId: 0,
-      message: `Merge PR #${number}?`,
-      detail: `This fires the approval webhook and merges ${url} via gh pr merge. This can't be undone from here.`
-    })
-    return response === 1
-  },
-  // The list must not keep showing a PR that just merged: it leaves at once, and GitHub confirms in the background.
-  after: (url, result) => {
-    // marvin#231: queued on the merge server, nothing merged yet: the list is read again so the card shows its place.
-    if (result?.mergeQueued) {
-      githubChanged(`github:${repoFromPrUrl(url)}`)
-      mainWindow?.webContents.send('mr:refresh')
-      return
-    }
-    if (result?.merged) mrActions.merged(url)
-    else mrActions.reengaged(url)
-    clearReworkCache()
-  }
-})
-const approvalRetry = createApprovalRetry({
-  ledger: approvalLedger,
-  approve: (url, opts) => approveFlow(url, opts),
-  // A fixed PR list (MARVIN_MR_FIXTURE, evidence captures) is its own GitHub: its PRs are open unless it says otherwise.
-  viewPr: (url) => process.env.MARVIN_MR_FIXTURE ? fixturePrState(url) : viewPrState(url),
-  log: (line) => console.log(line)
-})
-function fixturePrState(url) {
-  const pr = JSON.parse(readFileSync(process.env.MARVIN_MR_FIXTURE, 'utf8')).find((p) => p.url === url)
-  if (!pr) throw new Error(`not in the fixture: ${url}`)
-  return { state: pr.state || 'OPEN' }
-}
-const retryApprovals = (trigger) => { approvalRetry.run(trigger).catch((err) => appendError({ source: 'approval-retry', message: `Retrying saved approvals failed (${trigger})`, raw: err?.stack || err })) }
-
-// A merge running here whose PR GitHub now calls merged was merged on GitHub by hand: end it as "Merged on GitHub"
-// (merge_ops.githubChanged). Asked only on a change trigger, once per merging op; nothing while no merge runs.
-const viewPrState = async (url) => JSON.parse(await ghOut(['pr', 'view', url, '--json', 'state']))
-function checkMergedElsewhere(repo, only = null) {
-  mergeOps.githubChanged(repo, viewPrState, Date.now(), only)
-    .then((urls) => urls.forEach((u) => pushMergeOp(u, mergeOps.get(u))))
-    .catch(() => {})
-}
+import { createMainWindowTracker } from './main_window.js'
 import { readRegistry, loadBoard, prsOfProjects, fetchBoardData, fetchCompletedData, withProjectStatus, defaultStagesFor, defaultLiveNumbers, getEvidence, clearCrossProjectCache, REGISTRY_PATH } from './boards.js'
 import { createRelationsService } from './relations_service.js'
 import { machineNames } from './machine_names.js'
@@ -151,9 +75,6 @@ import * as instance from './instance.js'
 import { readSupportState, badgeCount, runSupport, ensureSupportDir, SUPPORT_DIR, supportNotices } from './support.js'
 import { supportWatcher, startAppSupportWatch } from '../../webhook-server/support_sync.js'
 import { createProposals } from './proposals.js'
-const proposalsStore = createProposals()
-// A standby Mac's Health and proposals come from the producer when its own copy has gone stale (marvin#1223).
-const peerCopies = createPeerCopies()
 import { openDevSite } from './dev_site_chrome.js'
 import { listAgents } from './agents.js'
 import { buildWorkingNow } from './working.js'
@@ -181,6 +102,88 @@ import { createAccounts } from './accounts.js'
 import { createAlerts } from './alerts.js'
 import { createLoops } from './loops.js'
 
+const mainWindowTracker = createMainWindowTracker()
+const mergeOps = createMergeOps()
+// marvin#568: every change to a merge op is pushed to the renderer (the card subscribes; it reads once on mount).
+function pushMergeOp(url, op) {
+  if (op) mainWindowTracker.send('mr:mergeEvent', url, op)
+}
+// marvin#762: every Approve goes through one flow (approve_flow.js): recorded before it is sent (approval_ledger.js),
+// to the Mini first and to this Mac's own webhook when the Mini can't be reached (merge_failover.js), and retried by
+// itself when a Mac comes back (approval_retry.js, run on triggers only: a webhook announcing it started, this Mac
+// waking or being unlocked, the dashboard starting).
+const approvalLedger = createApprovalLedger()
+const approveFlow = createApproveFlow({
+  mergeOps,
+  ledger: approvalLedger,
+  machines: () => mergeMachines({
+    primaryUrl: MR_WEBHOOK_URL,
+    explicit: !!process.env.MARVIN_MR_WEBHOOK_URL,
+    localUrl: process.env.MARVIN_MR_LOCAL_WEBHOOK_URL || undefined,
+    localExplicit: !!process.env.MARVIN_MR_LOCAL_WEBHOOK_URL,
+    primaryId: primaryDeviceId(),
+    localId: resolveDeviceId()
+  }),
+  // marvin#568: the webhook streams each stage as it happens; each one is folded into the op and pushed.
+  send: (url, target, opts) => approveMrStream(url, target, opts),
+  // marvin#940: the Mini short of memory, a later merge Mac that says it is fit takes it once the Mini dropped its copy.
+  ready: (machine, repo) => askReady(machine, repo),
+  forget: (machine, prUrl) => askForget(machine, prUrl),
+  push: (url, op) => pushMergeOp(url, op),
+  // The Approve click is the decision. The native popup is opt-in (prefs.json: confirmMerge) -- the
+  // duplicate-start guard, the merge gate's retest and the base/order checks are what protect a stray click.
+  confirm: async ({ number, url }) => {
+    if (!readPrefs(join(app.getPath('userData'), 'prefs.json')).confirmMerge) return true
+    const { response } = await dialog.showMessageBox(mainWindowTracker.get(), {
+      type: 'warning',
+      buttons: ['Cancel', 'Merge PR'],
+      defaultId: 0,
+      cancelId: 0,
+      message: `Merge PR #${number}?`,
+      detail: `This fires the approval webhook and merges ${url} via gh pr merge. This can't be undone from here.`
+    })
+    return response === 1
+  },
+  // The list must not keep showing a PR that just merged: it leaves at once, and GitHub confirms in the background.
+  after: (url, result) => {
+    // marvin#231: queued on the merge server, nothing merged yet: the list is read again so the card shows its place.
+    if (result?.mergeQueued) {
+      githubChanged(`github:${repoFromPrUrl(url)}`)
+      mainWindowTracker.send('mr:refresh')
+      return
+    }
+    if (result?.merged) mrActions.merged(url)
+    else mrActions.reengaged(url)
+    clearReworkCache()
+  }
+})
+const approvalRetry = createApprovalRetry({
+  ledger: approvalLedger,
+  approve: (url, opts) => approveFlow(url, opts),
+  // A fixed PR list (MARVIN_MR_FIXTURE, evidence captures) is its own GitHub: its PRs are open unless it says otherwise.
+  viewPr: (url) => process.env.MARVIN_MR_FIXTURE ? fixturePrState(url) : viewPrState(url),
+  log: (line) => console.log(line)
+})
+function fixturePrState(url) {
+  const pr = JSON.parse(readFileSync(process.env.MARVIN_MR_FIXTURE, 'utf8')).find((p) => p.url === url)
+  if (!pr) throw new Error(`not in the fixture: ${url}`)
+  return { state: pr.state || 'OPEN' }
+}
+const retryApprovals = (trigger) => { approvalRetry.run(trigger).catch((err) => appendError({ source: 'approval-retry', message: `Retrying saved approvals failed (${trigger})`, raw: err?.stack || err })) }
+
+// A merge running here whose PR GitHub now calls merged was merged on GitHub by hand: end it as "Merged on GitHub"
+// (merge_ops.githubChanged). Asked only on a change trigger, once per merging op; nothing while no merge runs.
+const viewPrState = async (url) => JSON.parse(await ghOut(['pr', 'view', url, '--json', 'state']))
+function checkMergedElsewhere(repo, only = null) {
+  mergeOps.githubChanged(repo, viewPrState, Date.now(), only)
+    .then((urls) => urls.forEach((u) => pushMergeOp(u, mergeOps.get(u))))
+    .catch(() => {})
+}
+
+const proposalsStore = createProposals()
+// A standby Mac's Health and proposals come from the producer when its own copy has gone stale (marvin#1223).
+const peerCopies = createPeerCopies()
+
 // The pipeline's screenshot copy runs unattended beside the real dashboard: log, never show a modal (#384).
 if (isEvidenceCapture(process.env)) installCaptureGuard(process)
 
@@ -188,9 +191,6 @@ if (isEvidenceCapture(process.env)) installCaptureGuard(process)
 instrumentIpc(ipcMain)
 
 const execFileAsync = promisify(execFile)
-const accountsView = createAccounts({ machine: () => resolveDeviceId(), execFile: execFileAsync })
-const alertsView = createAlerts({ execFile: execFileAsync })
-const loopsView = createLoops({ execFile: execFileAsync, renew: (account) => accountsView.renew(account, null) })
 
 // marvin#954: a pull-only node (mac-mini-2012, ADR 0069) holds no GitHub credential. Its dashboard reads the open PRs
 // and boards from the Mini's feed (github_feed.js) and every other GitHub read or write here is refused in plain words,
@@ -200,10 +200,6 @@ const pullOnly = isPullOnlyNode({ deviceId: resolveDeviceId(), registry: readNet
 const githubFeed = pullOnly ? createFeedSource() : null
 // Every `gh` this process runs, as its stdout.
 const ghOut = pullOnly ? feedOnlyGh : async (args, opts) => (await execFileAsync('gh', args, opts)).stdout
-
-adoptLoginShellPath()
-adoptSharedGhToken()
-useGhGate()
 
 // ADR 0032: the webhook-server this app talks to lives on whichever
 // machine is the primary automation host, not always localhost -- see
@@ -220,6 +216,14 @@ const MR_DENY_WEBHOOK_URL = process.env.MARVIN_MR_DENY_WEBHOOK_URL || `http://${
 // refreshes immediately instead of waiting on its own fallback poll.
 // 0 = ephemeral (the evidence-capture copy); junk falls back to 7879.
 const DASHBOARD_REFRESH_PORT = parseRefreshPort(process.env.MARVIN_DASHBOARD_REFRESH_PORT)
+
+const accountsView = createAccounts({ machine: () => resolveDeviceId(), execFile: execFileAsync })
+const alertsView = createAlerts({ execFile: execFileAsync })
+const loopsView = createLoops({ execFile: execFileAsync, renew: (account) => accountsView.renew(account, null) })
+
+adoptLoginShellPath()
+adoptSharedGhToken()
+useGhGate()
 
 const ghListOpenPrs = (light) => async (repo) => JSON.parse(await ghOut(prListArgs(repo, { light })))
 
@@ -311,7 +315,7 @@ function startPrCheckWatch() {
     probe: createCheckProbe(),
     onChange: (repo) => {
       githubChanged(`github:${repo}`)
-      mainWindow?.webContents.send('mr:refresh')
+      mainWindowTracker.send('mr:refresh')
       checkMergedElsewhere(repo)
     },
     skip: () => Date.now() < gateCooldownUntil()
@@ -353,7 +357,6 @@ const boardDigest = (board) =>
 
 process.env['ELECTRON_DISABLE_SECURITY_WARNINGS'] = 'true'
 
-let mainWindow = null
 // The Docs tab's outbox matcher (deliverables.js), shared with `marvin show` so its windows and the Docs tab agree.
 let showDeliverables = null
 
@@ -371,7 +374,7 @@ function loadAppPage(win, hash = '') {
 }
 
 function createWindow() {
-  mainWindow = new BrowserWindow({
+  const win = new BrowserWindow({
     width: 1280,
     height: 820,
     minWidth: 900,
@@ -389,25 +392,21 @@ function createWindow() {
     }
   })
 
-  mainWindow.on('ready-to-show', () => {
-    mainWindow.show()
-  })
-  // Closed while the app keeps running (macOS; a `marvin show` window still open, #715): every later
-  // `mainWindow?.webContents.send` must find no window, not a destroyed one ("Object has been destroyed").
-  const created = mainWindow
-  created.on('closed', () => {
-    if (mainWindow === created) mainWindow = null
+  win.on('ready-to-show', () => {
+    win.show()
   })
   // Links that would open a new window go to Chrome, where Gil is signed in (external_links.js).
-  mainWindow.webContents.setWindowOpenHandler(windowOpenHandler((url) => openLink(url, { openExternal: shell.openExternal })))
+  win.webContents.setWindowOpenHandler(windowOpenHandler((url) => openLink(url, { openExternal: shell.openExternal })))
 
   const devUrl = process.env['ELECTRON_RENDERER_URL']
   if (devUrl) {
-    mainWindow.loadURL(devUrl)
-    mainWindow.webContents.openDevTools()
+    win.loadURL(devUrl)
+    win.webContents.openDevTools()
   } else {
-    mainWindow.loadFile(join(__dirname, '../../out/renderer/index.html'))
+    win.loadFile(join(__dirname, '../../out/renderer/index.html'))
   }
+
+  mainWindowTracker.set(win)
 }
 
 function registerMetricsHandlers() {
@@ -438,7 +437,10 @@ function registerSessionHandlers() {
   const readChats = createChatsReader({ peers: () => (chatPeers ||= peerHosts()) })
   ipcMain.handle('marvin:listChats', () => readChats())
   // marvin#1067: only the main window may send, never a show window or anything over HTTP
-  const sendToChat = createChatSender({ isMainWindow: (wc) => !!mainWindow && wc === mainWindow.webContents, readChats })
+  const sendToChat = createChatSender({ isMainWindow: (wc) => {
+    const win = mainWindowTracker.get()
+    return win && wc === win.webContents
+  }, readChats })
   ipcMain.handle('marvin:sendToChat', (event, request) => sendToChat(event.sender, request))
   // Support link (ADR 0073). Every action is checked against this install's own support repos in support.js.
   ipcMain.handle('support:config', () => instance.support())
@@ -479,7 +481,7 @@ function registerHealthHandlers() {
     if (value === 'on') {
       // Same native-dialog defense as Approve: turning this on spends model usage and opens PRs by itself.
       const profile = listProfiles().find((p) => p.repo === repo)
-      const { response } = await dialog.showMessageBox(mainWindow, {
+      const { response } = await dialog.showMessageBox(mainWindowTracker.get(), {
         type: 'warning',
         buttons: ['Cancel', 'Turn on'],
         defaultId: 0,
@@ -528,7 +530,7 @@ function registerHealthHandlers() {
         throw new Error(`${repo} is not ready for merge_from_dashboard`)
       }
       const profile = listProfiles().find((p) => p.repo === repo)
-      const { response } = await dialog.showMessageBox(mainWindow, {
+      const { response } = await dialog.showMessageBox(mainWindowTracker.get(), {
         type: 'warning',
         buttons: ['Cancel', 'Turn on'],
         defaultId: 0,
@@ -538,7 +540,7 @@ function registerHealthHandlers() {
       })
       if (response !== 1) return { done: false, cancelled: true }
     } else {
-      const { response } = await dialog.showMessageBox(mainWindow, {
+      const { response } = await dialog.showMessageBox(mainWindowTracker.get(), {
         type: 'question',
         buttons: ['Cancel', 'Turn off'],
         defaultId: 0,
@@ -558,7 +560,7 @@ function registerHealthHandlers() {
         throw new Error(`${repo} is not ready for dispatch`)
       }
       const profile = listProfiles().find((p) => p.repo === repo)
-      const { response } = await dialog.showMessageBox(mainWindow, {
+      const { response } = await dialog.showMessageBox(mainWindowTracker.get(), {
         type: 'warning',
         buttons: ['Cancel', 'Turn on'],
         defaultId: 0,
@@ -568,7 +570,7 @@ function registerHealthHandlers() {
       })
       if (response !== 1) return { done: false, cancelled: true }
     } else {
-      const { response } = await dialog.showMessageBox(mainWindow, {
+      const { response } = await dialog.showMessageBox(mainWindowTracker.get(), {
         type: 'question',
         buttons: ['Cancel', 'Turn off'],
         defaultId: 0,
@@ -1081,7 +1083,7 @@ function registerMrReviewHandlers() {
         console.error(`[stack-retarget] moved PR #${m.number} (${m.repo}) onto main: its parent #${m.parent} had merged`)
         githubChanged(`github:${m.repo}`)
       }
-      mainWindow?.webContents.send('mr:refresh')
+      mainWindowTracker.send('mr:refresh')
     }
   })
   // MARVIN_MR_FIXTURE=<file.json> (gh pr list JSON) shows a fixed PR list instead of GitHub's: used to screenshot card
@@ -1134,8 +1136,8 @@ function registerMrReviewHandlers() {
   // background"): each action applies GitHub's answer to its own write to memory, asks GitHub about that one PR or
   // ticket once in the background (a conditional request), and says so if GitHub disagrees. See mr_actions.js.
   const notify = (channel, payload) => {
-    mainWindow?.webContents.send(channel, payload)
-    if (channel === 'mr:corrected') mainWindow?.webContents.send('mr:refresh') // redraw from memory, now GitHub's version
+    mainWindowTracker.send(channel, payload)
+    if (channel === 'mr:corrected') mainWindowTracker.send('mr:refresh') // redraw from memory, now GitHub's version
   }
   const localFirst = createLocalFirst({ state: githubState, readIssue: createIssueReader(), onCorrected: (c) => notify('mr:corrected', c) })
   const mrActions = createMrActions({
@@ -1254,7 +1256,7 @@ function registerMrReviewHandlers() {
     assertActsHere()
     assertMergeable(url)
     const isDrop = action === 'drop'
-    const { response } = await dialog.showMessageBox(mainWindow, {
+    const { response } = await dialog.showMessageBox(mainWindowTracker.get(), {
       type: 'warning',
       buttons: ['Cancel', isDrop ? 'Drop PR & Ticket' : 'Send Feedback'],
       defaultId: 0,
@@ -1337,12 +1339,14 @@ function registerShowHandlers() {
       const clone = (p?.localPaths || []).filter((lp) => local.startsWith(lp + '/')).sort((a, b) => b.length - a.length)[0]
       if (clone) target.path = local.slice(clone.length + 1)
     } else if (item.pr) target.path = item.path
-    if (!mainWindow || mainWindow.isDestroyed()) createWindow()
-    const win = mainWindow
+    if (!mainWindowTracker.isAlive()) createWindow()
+    const win = mainWindowTracker.get()
     if (win.isMinimized()) win.restore()
     win.show()
     win.focus()
-    const send = () => { if (!win.isDestroyed()) win.webContents.send('show:openInDocs', target) }
+    const send = () => {
+      if (mainWindowTracker.isAlive()) mainWindowTracker.send('show:openInDocs', target)
+    }
     if (win.webContents.isLoading()) win.webContents.once('did-finish-load', send)
     else send()
     return { ok: true }
@@ -1400,8 +1404,9 @@ app.whenReady().then(() => {
     for (const n of notices) {
       const note = new Notification({ title: n.title, body: n.body })
       note.on('click', () => {
-        mainWindow?.show()
-        mainWindow?.webContents.send('support:focus', { repo: n.repo, number: n.number })
+        const win = mainWindowTracker.get()
+        if (win && !win.isDestroyed()) win.show()
+        mainWindowTracker.send('support:focus', { repo: n.repo, number: n.number })
       })
       note.show()
     }
@@ -1418,7 +1423,7 @@ app.whenReady().then(() => {
   triggerHub.onTrigger((t) => t.topic === 'goals' && (goalsCache = null))
   // The safety monitor's quarantine (Health ▸ Safety reviews): an answer here, a new hold or a sync re-reads it once.
   triggerHub.watchFiles('quarantine', [{ dir: join(homedir(), '.claude'), match: (n) => n === 'quarantine.md' }])
-  triggerHub.onTrigger((t) => mainWindow?.webContents.send('trigger', t))
+  triggerHub.onTrigger((t) => mainWindowTracker.send('trigger', t))
 
   // External pings (webhook-server): bare = the legacy "MR list changed"; with topics = what changed.
   // Port already taken (another dashboard running) = one log line, not a crash (#384).
@@ -1428,7 +1433,7 @@ app.whenReady().then(() => {
     for (const topic of topics) {
       if (topic === 'mr') {
         githubChanged(payload.source)
-        mainWindow?.webContents.send('mr:refresh')
+        mainWindowTracker.send('mr:refresh')
         checkMergedElsewhere(repoOfSource(payload.source))
       } else if (topic === 'merge-host') {
         // marvin#762: a merge machine's webhook just started (its own announcement, relayed by the webhook here).
@@ -1445,7 +1450,7 @@ app.whenReady().then(() => {
 
   app.on('activate', () => {
     // The Dock icon brings the dashboard back even while `marvin show` windows are open (#715).
-    if (!mainWindow || mainWindow.isDestroyed()) createWindow()
+    if (!mainWindowTracker.isAlive()) createWindow()
   })
 
   // marvin#762: saved approvals are retried on events, never on a timer: the dashboard starting, this Mac waking, and
