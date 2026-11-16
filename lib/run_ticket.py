@@ -36,7 +36,8 @@ REPO = "G-Eskayo/marvin"
 FAILURE_MARKER = "Automated implementation did not pass verification"
 TIMEOUT_MARKER = "Automated verification timed out"
 MODEL_MARKER = "The model service was unavailable"
-MAX_CONSECUTIVE_FAILURES = 3
+PARK_WINDOW_HOURS = 72
+MAX_CONSECUTIVE_FAILURES = 2
 MAX_CONSECUTIVE_RETRIES = 5   # failures and verify timeouts together: a timeout is no strike, but retries still end
 
 
@@ -86,7 +87,9 @@ def _trailing_model_failures(issue_number: int, repo: str = REPO) -> int:
     """How many model-unavailable releases in a row this ticket has had (most recent first), for its backoff."""
     n = 0
     for c in reversed(_issue_comments(issue_number, repo) or []):
-        if isinstance(c, dict) and MODEL_MARKER in str(c.get("body", "")):
+        if not isinstance(c, dict):
+            continue
+        if MODEL_MARKER in str(c.get("body", "")):
             n += 1
         else:
             break
@@ -94,47 +97,72 @@ def _trailing_model_failures(issue_number: int, repo: str = REPO) -> int:
 
 
 def _consecutive_failure_streak(issue_number: int, repo: str = REPO) -> int:
-    """Count trailing automated-failure comments on this issue, most-recent
-    first, stopping at the first non-matching comment (a human reply, a
-    passing run, anything else). This is the cross-dispatch retry counter --
-    deliberately not a local state file, so both machines agree on it for
-    free via the shared issue thread, and a human commenting on the ticket
-    (to redirect it, add context, anything) naturally resets the streak.
+    """Count automated-failure comments on this issue within the last PARK_WINDOW_HOURS,
+    stopping at a person's comment (which resets the window). This is the cross-dispatch
+    retry counter -- deliberately not a local state file, so both machines agree on it
+    for free via the shared issue thread, and a human commenting on the ticket (to redirect
+    it, add context, anything) naturally resets the window. The window is 72h to cap a
+    repeat-build cycle at 2 failures per 72h (acceptance 1, P6 2026-11-14).
 
-    Found live 2026-09-04..06: with no cap across separate run_ticket.py
-    invocations, a release-claim-then-immediate-redispatch cycle on a
-    genuinely-too-ambiguous ticket (#28) spun ~6,900 back-to-back headless
-    sessions over 3 days with every attempt reaching an identical
-    'unchanged' verdict -- max_iterations=3 only bounds iterations *inside*
-    one execute_ticket call, nothing bounded the outer release/redispatch
-    loop across calls.
+    Unlike strict "N consecutive" counting, this counts failures even if separated by passes
+    within the window (acceptance 2's real-pass case: a PR raised and later requeued by GitHub
+    CI between two internal failures would reset the old counter but not the window). Per-test
+    failure identity and re-run logic (tasks 3-4) handle the flake case.
 
-    Timeouts are not strikes, but no longer reset the count either (P6, 2026-10-21); see _trailing_streaks."""
+    Timeouts are not strikes but are counted toward the retry cap (MAX_CONSECUTIVE_RETRIES);
+    see _trailing_streaks."""
     return _trailing_streaks(issue_number, repo)[0]
 
 
 def _trailing_streaks(issue_number: int, repo: str = REPO) -> tuple[int, int]:
-    """(failures, verify timeouts) in the trailing run of automated comments, most recent first, up to the first
-    comment from a person. Timeouts used to be free and to reset the failure count, so a ticket whose verify
-    always times out was retried for ever (#563: three runs in 46 minutes on a loaded M4); now they have their own
-    cap (MAX_CONSECUTIVE_RETRIES, with failures). A model-unavailable release is about the service: it is skipped,
-    neither counted nor a reset.
+    """(failures, verify timeouts) in the last PARK_WINDOW_HOURS hours of automated comments on this ticket,
+    across all runs (box and Macs included: GitHub thread is shared). Stops at a person's comment (a handoff resets
+    the window). Timeouts have their own cap (MAX_CONSECUTIVE_RETRIES, with failures). A model-unavailable release
+    is about the service: it is skipped, neither counted nor a reset. Every other MARVIN comment is skipped too
+    (#605: conflict send-back's and ticket agents' own comments must not mask the actual automated runs).
 
-    Every other MARVIN comment is skipped the same way (#605): the conflict send-back's and the ticket agents' own
-    comments used to end the run, so #81 failed 5 times before parking. What ends it (ticket_policy.automated_comment):
-    a person's comment, a passing run, or a hand-off to a person (a park or a loop guard: only a person can send it
-    back, and that is a fresh start). O(comments x body length) over the one thread the caller already fetches."""
+    Found live 2026-09-04..06: with no time bound, a release-claim-then-immediate-redispatch cycle on #28 spun
+    ~6,900 back-to-back headless sessions over 3 days, every attempt reaching identical 'unchanged' verdict.
+    The 72h window (acceptance 1) caps this at 2 failures per 72h. Unlike the old "N consecutive" count, this
+    counts failures even when separated by passes within the window (acceptance 2's real-pass case: a dilution
+    that went undetected with the old logic). Per-test failure identity in evidence_capture (task 3) and
+    build_type_measure (task 4) handle the flake case itself.
+
+    What ends the window (ticket_policy.automated_comment): a person's comment, never a pass. A pass within the
+    window does not reset; a person's comment always does (hand-off semantics unchanged). O(comments x body length)
+    over the one thread the caller already fetches; createdAt is already present and parsed (see _issue_comments)."""
+    now = datetime.now(timezone.utc)
+    cutoff = now - timedelta(hours=PARK_WINDOW_HOURS)
     failures = timeouts = 0
     for c in reversed(_issue_comments(issue_number, repo) or []):
-        body = c.get("body") if isinstance(c, dict) else None
+        if not isinstance(c, dict):
+            # Garbage comments (non-dict) are treated as a person's comment and break the streak
+            break
+        body = c.get("body")
         body = body if isinstance(body, str) else ""
+        created_at_str = c.get("createdAt")
+        # Count missing/unparseable timestamps as in-window (assume UTC)
+        if created_at_str is None:
+            created_at = now
+        else:
+            try:
+                created_at = datetime.fromisoformat(created_at_str.replace("Z", "+00:00"))
+            except (ValueError, TypeError, AttributeError):
+                created_at = now
+        # Normalize naive datetime to UTC for comparison
+        if created_at.tzinfo is None:
+            created_at = created_at.replace(tzinfo=timezone.utc)
+        if created_at < cutoff:
+            break
         if MODEL_MARKER in body:
             continue
+        comment_type = ticket_policy.automated_comment(body)
         if FAILURE_MARKER in body:
             failures += 1
         elif TIMEOUT_MARKER in body:
             timeouts += 1
-        elif ticket_policy.automated_comment(body) != "bot":
+        elif comment_type not in ("bot", "passed"):
+            # Break on a person's comment or handoff, but not on other bot comments or passes
             break
     return failures, timeouts
 

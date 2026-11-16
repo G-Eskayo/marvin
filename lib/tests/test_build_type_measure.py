@@ -246,7 +246,9 @@ def test_measure_never_scopes_pytest_to_the_touched_directory(monkeypatch, repo_
 
     pytest_cmds = [c for c in seen if "pytest" in c]
     assert len(pytest_cmds) == 1
-    assert pytest_cmds[0][-2:] == ["pytest", "-q"]
+    # Command now includes "-m" "not outside_state" for filtering (task 4)
+    assert "pytest" in pytest_cmds[0] and "-q" in pytest_cmds[0]
+    assert "-m" in pytest_cmds[0] and "not outside_state" in pytest_cmds[0]
 
 
 def test_measure_includes_vitest_and_sums_counts_when_a_dashboard_exists(monkeypatch, tmp_path):
@@ -597,3 +599,95 @@ def test_paired_vitest_runs_on_the_untouched_tree_and_after_the_change(marvin_li
     assert [s for s in seen if s[1] == "vitest"] == [(marvin_like, "vitest")] * 2
     assert pm.paired_baseline()["vitest_passed"]["value"] == 10 and current["vitest_passed"]["value"] == 12
     assert pm.paired_baseline()["tests_passed"]["value"] == 12 and current["tests_passed"]["value"] == 14
+
+
+# ── flake checking (single-sided failures that pass on re-run) ───────────────
+
+def test_pytest_with_flake_check_re_runs_single_sided_failures_and_marks_passing_ones_as_flakes(monkeypatch):
+    """Acceptance 2 / test cases 9-14: a test that fails on after but passed on base is a flake."""
+    sys.path.insert(0, str(LIB))
+    import evidence_capture as ec
+
+    call_count = {"after": 0, "rerun": 0}
+
+    def fake_capture(wt, cmd, env=None):
+        if "rerun" in str(env.get("MARVIN_SELECTED_TESTS", "")) if env else False:
+            call_count["rerun"] += 1
+            return {"suite": "pytest", "passed": 2, "failed": 0, "total": 2, "output_tail": "2 passed in 0.1s"}
+        else:
+            call_count["after"] += 1
+            output = (
+                "FAILED lib/tests/test_x.py::test_flake - AssertionError\n"
+                "short test summary info\n"
+                "FAILED lib/tests/test_x.py::test_flake - AssertionError\n"
+                "1 failed, 1 passed in 0.1s"
+            )
+            return {"suite": "pytest", "passed": 1, "failed": 1, "total": 2, "output_tail": output}
+
+    monkeypatch.setattr(btm, "capture_test_results", fake_capture)
+
+    pm = btm.PairedMeasure()
+    base_reading = (
+        (2, 0),  # base: both tests passed
+        {"output_tail": "2 passed in 0.1s"}
+    )
+
+    result = pm._pytest_with_flake_check(Path("/tmp/fake"), None, base_reading=base_reading)
+
+    # After initial run: 1 passed, 1 failed (the flake)
+    # After re-run: 1 passed, 1 failed -> becomes 1 passed (flake), 0 failed (it passed on re-run)
+    # Expected result: 2 passed, 0 failed (flake detected and removed)
+    assert result == (2, 0)
+
+
+def test_pytest_with_flake_check_keeps_real_regressions(monkeypatch):
+    """A test that fails on both after and base is a real regression, not a flake."""
+    sys.path.insert(0, str(LIB))
+
+    def fake_capture(wt, cmd, env=None):
+        output = (
+            "FAILED lib/tests/test_x.py::test_broken - AssertionError\n"
+            "short test summary info\n"
+            "FAILED lib/tests/test_x.py::test_broken - AssertionError\n"
+            "1 failed, 1 passed in 0.1s"
+        )
+        return {"suite": "pytest", "passed": 1, "failed": 1, "total": 2, "output_tail": output}
+
+    monkeypatch.setattr(btm, "capture_test_results", fake_capture)
+
+    pm = btm.PairedMeasure()
+    base_reading = (
+        (1, 1),  # base: also 1 passed, 1 failed
+        {"output_tail": (
+            "FAILED lib/tests/test_x.py::test_broken - AssertionError\n"
+            "short test summary info\n"
+            "FAILED lib/tests/test_x.py::test_broken - AssertionError\n"
+            "1 failed, 1 passed in 0.1s"
+        )}
+    )
+
+    result = pm._pytest_with_flake_check(Path("/tmp/fake"), None, base_reading=base_reading)
+
+    # test_broken failed on both sides -> not a flake, not re-run
+    # Result: 1 passed, 1 failed (unchanged)
+    assert result == (1, 1)
+
+
+def test_pytest_with_flake_check_returns_original_on_no_base():
+    """Without base_reading, _pytest_with_flake_check just returns the after counts."""
+    def fake_capture(wt, cmd, env=None):
+        output = (
+            "FAILED lib/tests/test_x.py::test_flake - AssertionError\n"
+            "short test summary info\n"
+            "FAILED lib/tests/test_x.py::test_flake - AssertionError\n"
+            "1 failed, 1 passed in 0.1s"
+        )
+        return {"suite": "pytest", "passed": 1, "failed": 1, "total": 2, "output_tail": output}
+
+    monkeypatch.setattr(btm, "capture_test_results", fake_capture)
+
+    pm = btm.PairedMeasure()
+    result = pm._pytest_with_flake_check(Path("/tmp/fake"), None, base_reading=None)
+
+    # No base -> no flake detection
+    assert result == (1, 1)

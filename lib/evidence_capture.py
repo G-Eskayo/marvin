@@ -75,6 +75,27 @@ def parse_test_output(suite: str, output: str) -> dict:
     return {"suite": suite, "passed": passed, "failed": failed, "total": passed + failed}
 
 
+def failed_test_ids(output: str) -> set[str]:
+    """Extract pytest test node IDs from the 'short test summary info' section.
+    Pytest prints 'FAILED <nodeid> - ...' for each failing test. Returns a set of
+    node IDs (e.g., 'lib/tests/test_x.py::TestClass::test_method'). Returns empty
+    set if the summary section is not found or if parsing fails."""
+    test_ids = set()
+    # Look for the "short test summary info" section, which starts after this marker
+    summary_start = output.find("short test summary info")
+    if summary_start == -1:
+        return test_ids
+
+    summary_section = output[summary_start:]
+    # Extract lines that start with "FAILED " (after any leading whitespace)
+    for line in summary_section.splitlines():
+        match = re.match(r"^FAILED\s+([^\s]+)", line.strip())
+        if match:
+            test_ids.add(match.group(1))
+
+    return test_ids
+
+
 # macOS gives launchd children (the ticket-pipeline webhook server) and some
 # interactive shells a 256-file soft limit, which a full pytest run exhausts
 # ("OSError: Too many open files"). That turned ~10 unrelated tests into
@@ -220,6 +241,7 @@ def capture_test_results(worktree_path: Path, test_command: list[str], timeout_s
                             preexec_fn=_raise_nofile_limit)
     parsed = parse_test_output(" ".join(test_command), output)
     parsed["output_tail"] = output[-600:]
+    parsed["output"] = output  # Full output for extracting failed test IDs (task 4)
     return parsed
 
 

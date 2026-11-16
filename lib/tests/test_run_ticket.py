@@ -353,10 +353,13 @@ def test_run_still_releases_below_the_failure_cap(monkeypatch):
 
 
 def test_consecutive_failure_streak_counts_trailing_failure_comments(monkeypatch):
+    from datetime import datetime, timedelta, timezone
+    now = datetime.now(timezone.utc)
+    recent = (now - timedelta(hours=1)).isoformat().replace("+00:00", "Z")
     comments = [
-        {"body": "some unrelated human comment"},
-        {"body": f"{rt.FAILURE_MARKER}: unchanged"},
-        {"body": f"{rt.FAILURE_MARKER}: unchanged"},
+        {"body": "some unrelated human comment", "createdAt": recent},
+        {"body": f"{rt.FAILURE_MARKER}: unchanged", "createdAt": recent},
+        {"body": f"{rt.FAILURE_MARKER}: unchanged", "createdAt": recent},
     ]
 
     class FakeResult:
@@ -369,11 +372,14 @@ def test_consecutive_failure_streak_counts_trailing_failure_comments(monkeypatch
 
 
 def test_consecutive_failure_streak_resets_on_a_human_comment(monkeypatch):
+    from datetime import datetime, timedelta, timezone
+    now = datetime.now(timezone.utc)
+    recent = (now - timedelta(hours=1)).isoformat().replace("+00:00", "Z")
     comments = [
-        {"body": f"{rt.FAILURE_MARKER}: unchanged"},
-        {"body": "ok, I re-scoped this, try again"},
-        {"body": f"{rt.FAILURE_MARKER}: unchanged"},
-        {"body": f"{rt.FAILURE_MARKER}: unchanged"},
+        {"body": f"{rt.FAILURE_MARKER}: unchanged", "createdAt": recent},
+        {"body": "ok, I re-scoped this, try again", "createdAt": recent},
+        {"body": f"{rt.FAILURE_MARKER}: unchanged", "createdAt": recent},
+        {"body": f"{rt.FAILURE_MARKER}: unchanged", "createdAt": recent},
     ]
 
     class FakeResult:
@@ -941,7 +947,12 @@ from sandbox_orchestration import ModelRunFailed  # noqa: E402
 class _Thread:
     """A fake gh for one ticket thread: answers `issue view --json comments` and records posted comments."""
     def __init__(self, bodies=()):
-        self.comments = [{"body": b} for b in bodies]
+        from datetime import datetime, timedelta, timezone
+        now = datetime.now(timezone.utc)
+        self.comments = []
+        for i, b in enumerate(bodies):
+            timestamp = (now - timedelta(hours=i)).isoformat().replace("+00:00", "Z")
+            self.comments.append({"body": b, "createdAt": timestamp})
         self.posted, self.edits = [], []
 
     def __call__(self, cmd, **kw):
@@ -950,7 +961,10 @@ class _Thread:
         if cmd[:3] == ["gh", "issue", "comment"]:
             body = cmd[cmd.index("--body") + 1]
             self.posted.append(body)
-            self.comments.append({"body": body})
+            from datetime import datetime, timezone
+            now = datetime.now(timezone.utc)
+            timestamp = now.isoformat().replace("+00:00", "Z")
+            self.comments.append({"body": body, "createdAt": timestamp})
         if cmd[:3] == ["gh", "issue", "edit"]:
             self.edits.append(cmd)
         return rt.subprocess.CompletedProcess(cmd, 0, "", "")
@@ -1085,7 +1099,21 @@ def test_a_broken_notifier_never_stops_the_park(monkeypatch):
 
 def _streaks(monkeypatch, bodies):
     import json as _json
-    comments = [b if isinstance(b, dict) or b is None else {"body": b} for b in bodies]
+    from datetime import datetime, timedelta, timezone
+    now = datetime.now(timezone.utc)
+    comments = []
+    for i, b in enumerate(bodies):
+        if isinstance(b, dict):
+            c = dict(b)
+        elif b is None:
+            c = None
+        else:
+            c = {"body": b}
+        # Add timestamps, each comment is 1 hour apart, going backwards
+        if c is not None and "createdAt" not in c:
+            timestamp = (now - timedelta(hours=i)).isoformat().replace("+00:00", "Z")
+            c["createdAt"] = timestamp
+        comments.append(c)
 
     class FakeResult:
         returncode = 0
@@ -1131,8 +1159,10 @@ def test_a_hand_off_to_a_person_ends_the_streak_so_a_requeue_by_label_starts_fre
         assert _streaks(monkeypatch, [FAIL, FAIL, FAIL, handoff, CONFLICT, FAIL]) == (1, 0), handoff
 
 
-def test_a_passing_run_ends_the_streak(monkeypatch):
-    assert _streaks(monkeypatch, [FAIL, FAIL, "Verification passed. Pull request raised: https://x/pull/359", CONFLICT, FAIL]) == (1, 0)
+def test_a_passing_run_does_not_reset_the_window(monkeypatch):
+    # With the windowed behavior (acceptance 3), a PASSED_MARKER within 72h doesn't reset;
+    # all failures within the window are counted together
+    assert _streaks(monkeypatch, [FAIL, FAIL, "Verification passed. Pull request raised: https://x/pull/359", CONFLICT, FAIL]) == (3, 0)
 
 
 def test_garbage_comments_are_a_person_never_a_crash(monkeypatch):
@@ -1313,3 +1343,173 @@ def test_a_profile_projects_verify_is_untouched_by_the_paired_measure(monkeypatc
     assert not hasattr(pp.Measurer, "paired_baseline")
     monkeypatch.delenv("MARVIN_BASE", raising=False)
     assert "MARVIN_BASE" not in pp.build_env({"verify": []})
+
+
+# ── windowed failure cap (acceptance 1, P6 2026-11-14) ────────────────────────────────────────────────
+
+def _comment_at_time(body, delta_hours):
+    """Helper: create a comment dict with a timestamp delta_hours ago."""
+    from datetime import datetime, timedelta, timezone
+    now = datetime.now(timezone.utc)
+    timestamp = (now - timedelta(hours=delta_hours)).isoformat().replace("+00:00", "Z")
+    return {"body": body, "createdAt": timestamp}
+
+
+def test_two_failures_within_72h_window_from_different_runs_park_at_n_equals_2(monkeypatch):
+    # Test case 1: box failure then Mac failure (acceptance: "box run followed by a Mac run")
+    comments = [
+        _comment_at_time(f"{rt.FAILURE_MARKER}: timeout on box", 1),
+        _comment_at_time(f"{rt.FAILURE_MARKER}: timeout on mac", 2),
+    ]
+    class FakeResult:
+        returncode = 0
+        stdout = __import__("json").dumps({"comments": comments})
+    monkeypatch.setattr(rt.subprocess, "run", lambda *a, **kw: FakeResult())
+    assert rt._consecutive_failure_streak(28) == 2
+
+
+def test_a_failure_older_than_72h_does_not_count(monkeypatch):
+    # Test case 2: old failure outside window, recent failure inside
+    comments = [
+        _comment_at_time(f"{rt.FAILURE_MARKER}: old one", 100),    # > 72h ago
+        _comment_at_time(f"{rt.FAILURE_MARKER}: recent one", 1),   # < 72h ago
+    ]
+    class FakeResult:
+        returncode = 0
+        stdout = __import__("json").dumps({"comments": comments})
+    monkeypatch.setattr(rt.subprocess, "run", lambda *a, **kw: FakeResult())
+    assert rt._consecutive_failure_streak(28) == 1
+
+
+def test_two_failures_both_within_72h_park_despite_intervening_pass(monkeypatch):
+    # Test case 3: a real pass (PR raised, maybe requeued later) between two failures doesn't reset the window
+    # The pass doesn't reset the count; both failures within 72h are counted
+    import ticket_policy as tp
+    passed_comment = tp.PASSED_MARKER  # "Verification passed. Pull request raised" - doesn't reset window
+    comments = [
+        _comment_at_time(f"{rt.FAILURE_MARKER}: second failure", 1),
+        _comment_at_time(passed_comment, 2),  # pass within window, doesn't reset
+        _comment_at_time(f"{rt.FAILURE_MARKER}: first failure", 3),
+    ]
+    class FakeResult:
+        returncode = 0
+        stdout = __import__("json").dumps({"comments": comments})
+    monkeypatch.setattr(rt.subprocess, "run", lambda *a, **kw: FakeResult())
+    assert rt._consecutive_failure_streak(28) == 2
+
+
+def test_model_marker_between_failures_is_skipped_not_counted_or_reset(monkeypatch):
+    # Test case 4: MODEL_MARKER (usage limit) is skipped in counting
+    comments = [
+        _comment_at_time(f"{rt.FAILURE_MARKER}: model unavailable", 1),
+        _comment_at_time(f"{rt.MODEL_MARKER}: rate limited", 2),
+        _comment_at_time(f"{rt.FAILURE_MARKER}: really no model", 3),
+    ]
+    class FakeResult:
+        returncode = 0
+        stdout = __import__("json").dumps({"comments": comments})
+    monkeypatch.setattr(rt.subprocess, "run", lambda *a, **kw: FakeResult())
+    assert rt._consecutive_failure_streak(28) == 2
+
+
+def test_a_persons_comment_between_failures_resets_the_window(monkeypatch):
+    # Test case 5: a genuine person's comment still resets, ending the current window
+    comments = [
+        _comment_at_time(f"{rt.FAILURE_MARKER}: failure after reset", 1),
+        _comment_at_time("I fixed the spec, try again", 2),  # person comment
+        _comment_at_time(f"{rt.FAILURE_MARKER}: first failure", 3),
+    ]
+    class FakeResult:
+        returncode = 0
+        stdout = __import__("json").dumps({"comments": comments})
+    monkeypatch.setattr(rt.subprocess, "run", lambda *a, **kw: FakeResult())
+    # Only the failure after the person's comment counts; the one before is in the old window
+    assert rt._consecutive_failure_streak(28) == 1
+
+
+def test_exactly_n_minus_1_failures_does_not_park_the_nth_does(monkeypatch):
+    # Test case 6: at N=2, exactly 1 failure should not trigger parking, 2 should
+    assert rt.MAX_CONSECUTIVE_FAILURES == 2
+
+    # First with 1 failure (should not park)
+    comments_1 = [
+        _comment_at_time(f"{rt.FAILURE_MARKER}: one failure", 1),
+    ]
+    class FakeResult1:
+        returncode = 0
+        stdout = __import__("json").dumps({"comments": comments_1})
+    monkeypatch.setattr(rt.subprocess, "run", lambda *a, **kw: FakeResult1())
+    assert rt._consecutive_failure_streak(28) == 1
+
+    # Now with 2 failures (should trigger parking at this count)
+    comments_2 = [
+        _comment_at_time(f"{rt.FAILURE_MARKER}: second failure", 1),
+        _comment_at_time(f"{rt.FAILURE_MARKER}: first failure", 2),
+    ]
+    class FakeResult2:
+        returncode = 0
+        stdout = __import__("json").dumps({"comments": comments_2})
+    monkeypatch.setattr(rt.subprocess, "run", lambda *a, **kw: FakeResult2())
+    assert rt._consecutive_failure_streak(28) == 2
+
+
+def test_gh_issue_comments_returning_none_fails_safe(monkeypatch):
+    # Test case 7: when API is unreadable, should not park (safe default)
+    class FakeResult:
+        returncode = 1
+        stdout = ""
+    monkeypatch.setattr(rt.subprocess, "run", lambda *a, **kw: FakeResult())
+    assert rt._consecutive_failure_streak(28) == 0  # no data = no count = no park
+
+
+def test_large_comment_history_counts_correctly(monkeypatch):
+    # Test case 8: many comments outside window, then recent failures inside. Verifies walk stops at cutoff.
+    from datetime import datetime, timedelta, timezone
+    now = datetime.now(timezone.utc)
+    comments = []
+    # Add 40 noise comments far outside the 72h window (80+ hours ago), oldest first
+    for i in range(40):
+        hours_ago = 80 + i  # 80-119 hours ago, all well outside 72h window
+        timestamp = (now - timedelta(hours=hours_ago)).isoformat().replace("+00:00", "Z")
+        comments.append({"body": f"old noise comment #{i}", "createdAt": timestamp})
+    # Then 2 recent failures (within 72h window)
+    comments.append({"body": f"{rt.FAILURE_MARKER}: first failure", "createdAt": _comment_at_time("", 2)["createdAt"]})
+    comments.append({"body": f"{rt.FAILURE_MARKER}: second failure", "createdAt": _comment_at_time("", 1)["createdAt"]})
+    class FakeResult:
+        returncode = 0
+        stdout = __import__("json").dumps({"comments": comments})
+    monkeypatch.setattr(rt.subprocess, "run", lambda *a, **kw: FakeResult())
+    # Only the 2 recent failures within 72h window count; walk stops at cutoff without inspecting old noise
+    assert rt._consecutive_failure_streak(28) == 2
+
+
+def test_missing_createdAt_field_counts_as_in_window(monkeypatch):
+    # Regression test for defect 1: missing createdAt should count comment as in-window, not skip it
+    comments = [
+        {"body": f"{rt.FAILURE_MARKER}: failure with timestamp", "createdAt": _comment_at_time("", 1)["createdAt"]},
+        # This comment has no createdAt field; should count as "now" (in-window)
+        {"body": f"{rt.FAILURE_MARKER}: failure without timestamp"},
+    ]
+    class FakeResult:
+        returncode = 0
+        stdout = __import__("json").dumps({"comments": comments})
+    monkeypatch.setattr(rt.subprocess, "run", lambda *a, **kw: FakeResult())
+    # Both failures should be counted (the one with missing timestamp counts as "now")
+    assert rt._consecutive_failure_streak(28) == 2
+
+
+def test_timezone_naive_createdAt_parses_safely(monkeypatch):
+    # Regression test for defect 2: timezone-naive ISO string should not raise TypeError on comparison
+    from datetime import datetime, timedelta, timezone
+    now = datetime.now(timezone.utc)
+    # Create a timezone-naive ISO string (no Z or +00:00 suffix)
+    naive_timestamp = (now - timedelta(hours=1)).isoformat().split("+")[0]
+    comments = [
+        {"body": f"{rt.FAILURE_MARKER}: failure with naive timestamp", "createdAt": naive_timestamp},
+    ]
+    class FakeResult:
+        returncode = 0
+        stdout = __import__("json").dumps({"comments": comments})
+    monkeypatch.setattr(rt.subprocess, "run", lambda *a, **kw: FakeResult())
+    # Should not raise TypeError and should count the failure
+    assert rt._consecutive_failure_streak(28) == 1

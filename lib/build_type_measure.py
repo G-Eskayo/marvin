@@ -121,8 +121,11 @@ def _measure_commands(worktree_path: Path) -> list[list[str]]:
     readings run different tests. Found 2026-10-01: baseline = whole suite
     (540 passed), current after a change under skills/research = `pytest -q
     skills/research` (0 tests, 'regressed' in 1s); a dashboard ticket compared
-    pytest to vitest. Same fixed set both times, whatever the diff."""
-    commands = [[VENV_PYTHON, "-m", "pytest", "-q"]]
+    pytest to vitest. Same fixed set both times, whatever the diff.
+
+    Excludes outside_state-marked tests (acceptance 4, task 4): host-only checks
+    like portfolio parity shouldn't poison every ticket's measure."""
+    commands = [[VENV_PYTHON, "-m", "pytest", "-q", "-m", "not outside_state"]]
     if (worktree_path / "dashboard" / "package.json").is_file():
         commands.append(["bash", "-c", "cd dashboard && npx vitest run"])
     return commands
@@ -280,13 +283,23 @@ class PairedMeasure:
         if self.full:
             return measure(wt)
         selection = self._selection(wt)
-        after = {"pytest": self._pytest(wt, selection)}
-        if self._vitest_base is not None:
-            after["vitest"] = self._vitest(wt)
         key = None if selection is None else tuple(selection)
+
+        # Compute base result early, for use in flake detection
         if key not in self._base_cache:
             self._base_cache[key] = self._pytest_at_base(wt, selection)
-        base = {"pytest": self._base_cache[key]}
+        base_result = self._base_cache[key]
+        base_counts, base_parsed = base_result
+
+        # Run after with flake checking, using base result for single-sided failure detection
+        after_readings = self._pytest_with_flake_check(wt, selection, base_reading=base_result)
+
+        if self._vitest_base is not None:
+            after = {"pytest": after_readings, "vitest": self._vitest(wt)}
+        else:
+            after = {"pytest": after_readings}
+
+        base = {"pytest": base_counts}
         if self._vitest_base is not None:
             base["vitest"] = self._vitest_base
         self._paired = _metrics(base)
@@ -340,7 +353,8 @@ class PairedMeasure:
             env["MARVIN_SELECTED_TESTS"] = selection_file
         return env
 
-    def _pytest(self, wt: Path, selection: list[str] | None) -> tuple[int, int]:
+    def _pytest(self, wt: Path, selection: list[str] | None) -> tuple[tuple[int, int], dict]:
+        """Run pytest on the given selection, returning ((passed, failed), parsed_dict) for flake checking."""
         import cleanup_sweep
         import os
         import tempfile
@@ -350,16 +364,66 @@ class PairedMeasure:
             with os.fdopen(fd, "w") as f:
                 f.write("\n".join(selection) + "\n")
         try:
-            command = [VENV_PYTHON, "-m", "pytest", "-q", *parallel_args()]
+            command = [VENV_PYTHON, "-m", "pytest", "-q", "-m", "not outside_state", *parallel_args()]
             with cleanup_sweep.disposable_basetemp() as basetemp_args:
                 parsed = capture_test_results(wt, command + basetemp_args, env=self._env(path))
-            return _suite_reading("pytest", parsed)
+            counts = _suite_reading("pytest", parsed)
+            return (counts, parsed)
         finally:
             if path:
                 Path(path).unlink(missing_ok=True)
 
-    def _pytest_at_base(self, wt: Path, selection: list[str] | None) -> tuple[int, int]:
-        """The same selection on the pinned base commit, in a detached worktree removed afterwards."""
+    def _pytest_with_flake_check(self, wt: Path, selection: list[str] | None,
+                                  base_reading: tuple[tuple[int, int], dict] | None = None) -> tuple[int, int]:
+        """Run pytest, handling single-sided failures (flakes) where applicable.
+        Acceptance 2 / test cases 9-14: outside_state tests are excluded via the -m flag,
+        and single-sided failures (fail on after, pass on base) are re-run once.
+        For any re-run that passes, the failed count is decremented and passed incremented."""
+        from evidence_capture import failed_test_ids
+
+        after_counts, after_parsed = self._pytest(wt, selection)
+        passed, failed = after_counts
+
+        # If no base_reading provided, return as-is (no flake detection)
+        if base_reading is None:
+            return (passed, failed)
+
+        base_counts, base_parsed = base_reading
+
+        # Extract failed test IDs from both readings
+        after_output = after_parsed.get("output_tail", "")
+        base_output = base_parsed.get("output_tail", "")
+        after_failed = failed_test_ids(after_output)
+        base_failed = failed_test_ids(base_output)
+
+        # Single-sided failures: failed on after but not on base
+        single_sided = after_failed - base_failed
+
+        if not single_sided:
+            return (passed, failed)
+
+        # Re-run single-sided failures once to detect flakes
+        try:
+            import cleanup_sweep
+            # Pass node IDs directly as pytest arguments
+            command = [VENV_PYTHON, "-m", "pytest", "-q", "-m", "not outside_state", *parallel_args(), *single_sided]
+            with cleanup_sweep.disposable_basetemp() as basetemp_args:
+                rerun_parsed = capture_test_results(wt, command + basetemp_args, env=self._env(None))
+            rerun_failed = failed_test_ids(rerun_parsed.get("output_tail", ""))
+
+            # Count how many single-sided failures became passes on re-run (flakes)
+            flakes = single_sided - rerun_failed
+            passed += len(flakes)
+            failed -= len(flakes)
+        except Exception:
+            # If re-run fails (e.g., timeout), keep the original counts
+            pass
+
+        return (passed, failed)
+
+    def _pytest_at_base(self, wt: Path, selection: list[str] | None) -> tuple[tuple[int, int], dict]:
+        """The same selection on the pinned base commit, in a detached worktree removed afterwards.
+        Returns ((passed, failed), parsed_dict) for consistency with _pytest."""
         import shutil
         import tempfile
         holder = Path(tempfile.mkdtemp(prefix="marvin-paired-base-"))

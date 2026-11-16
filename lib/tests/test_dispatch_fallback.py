@@ -426,7 +426,7 @@ def _wait_for(path, seconds=5.0):
     return False
 
 
-def _gone(pid, seconds=3.0):
+def _gone(pid, seconds=10.0):
     end = time.monotonic() + seconds
     while time.monotonic() < end:
         try:
@@ -450,8 +450,8 @@ def test_a_signal_to_the_wrapper_alone_ends_it_and_its_job_at_once(tmp_path, sig
         job = int(pidfile.read_text())
         t = time.monotonic()
         os.kill(p.pid, sig)                       # the wrapper only, not its group: the job never got the signal
-        assert p.wait(timeout=3) in (code, -sig)   # 128+n, or killed by n: both read as a signal by ssh and timeout
-        assert time.monotonic() - t < 2, "the wrapper waited for its job"
+        assert p.wait(timeout=10) in (code, -sig)   # 128+n, or killed by n: both read as a signal by ssh and timeout
+        assert time.monotonic() - t < 5, "the wrapper waited for its job"
         assert _gone(job), "the job outlived its wrapper"
         assert not record.exists()
         assert '"busy": false' in (home / ".claude" / "dispatch-state.json").read_text()

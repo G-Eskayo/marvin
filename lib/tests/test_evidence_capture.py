@@ -320,3 +320,42 @@ def test_an_uncommitted_change_outside_the_ui_paths_is_not_ui(tmp_path):
     (tmp_path / "lib" / "x.py").write_text("b\n")
     (tmp_path / "lib" / "y.py").write_text("n\n")
     assert _touches(tmp_path) is False
+
+
+# ── failed_test_ids (parsing test node IDs from pytest output) ────────────────
+
+def test_failed_test_ids_extracts_node_ids_from_summary():
+    output = (
+        "FAILED lib/tests/test_x.py::test_one - AssertionError\n"
+        "FAILED lib/tests/test_x.py::test_two - AssertionError\n"
+        "short test summary info\n"
+        "FAILED lib/tests/test_x.py::test_one - AssertionError\n"
+        "FAILED lib/tests/test_x.py::test_two - AssertionError\n"
+    )
+    ids = ec.failed_test_ids(output)
+    assert ids == {"lib/tests/test_x.py::test_one", "lib/tests/test_x.py::test_two"}
+
+
+def test_failed_test_ids_returns_empty_set_when_no_summary():
+    output = "lib/tests/test_x.py::test_one PASSED\nlib/tests/test_x.py::test_two PASSED\n"
+    ids = ec.failed_test_ids(output)
+    assert ids == set()
+
+
+def test_failed_test_ids_ignores_failed_outside_summary():
+    output = (
+        "FAILED lib/tests/test_x.py::test_early - AssertionError\n"
+        "short test summary info\n"
+        "FAILED lib/tests/test_x.py::test_one - AssertionError\n"
+    )
+    ids = ec.failed_test_ids(output)
+    assert ids == {"lib/tests/test_x.py::test_one"}
+
+
+def test_failed_test_ids_handles_node_ids_with_special_characters():
+    output = (
+        "short test summary info\n"
+        "FAILED lib/tests/test_x.py::TestClass::test_method[param1-param2] - AssertionError\n"
+    )
+    ids = ec.failed_test_ids(output)
+    assert ids == {"lib/tests/test_x.py::TestClass::test_method[param1-param2]"}
