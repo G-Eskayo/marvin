@@ -337,6 +337,46 @@ export function createMergeLatch() {
   }
 }
 
+export function createMergeJoiners(timeoutMs = 120_000) {
+  const waiting = new Map() // url -> { reply, timer }[]
+  return {
+    join(url, reply) {
+      if (!waiting.has(url)) waiting.set(url, [])
+      const timer = setTimeout(() => {
+        // Joiner timeout: if settle never runs, reply with a neutral result
+        try {
+          reply.result(200, { merged: false, code: 'NO_LONGER_RUNNING', stage: 'queued', action: 'none',
+            message: 'The merge request timed out waiting for this PR to merge', reason: 'timeout' })
+        } catch {
+          // Joiner going away never breaks cleanup
+        }
+        // Remove this joiner from the list
+        const joiners = waiting.get(url)
+        if (joiners) {
+          const idx = joiners.findIndex((j) => j.timer === timer)
+          if (idx !== -1) joiners.splice(idx, 1)
+          if (joiners.length === 0) waiting.delete(url)
+        }
+      }, timeoutMs)
+      waiting.get(url).push({ reply, timer })
+    },
+    settle(url, status, body) {
+      const joiners = waiting.get(url)
+      if (joiners) {
+        for (const { reply, timer } of joiners) {
+          clearTimeout(timer)
+          try {
+            reply.result(status, body)
+          } catch {
+            // A joiner going away never breaks settling other joiners
+          }
+        }
+        waiting.delete(url)
+      }
+    }
+  }
+}
+
 export function alreadyMergingBody(machineId) {
   const where = machineId ? `the ${machineLabel(machineId)}` : 'this Mac'
   return { merged: false, code: 'ALREADY_MERGING', stage: 'queued', action: 'wait', message: `This PR is already being merged on ${where}. Its result shows when that merge finishes` }

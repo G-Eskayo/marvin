@@ -190,7 +190,19 @@ export function createMergeQueue({ store, load, run, afterRun = async () => {}, 
       again.add(repo)
       // The runner is merging another PR: this Approve is told its place now (one read), and the runner takes it in turn.
       if (attach) {
-        try { attach.queued((await evaluate(repo)).entries[attach.url] || null) } catch { attach.queued(null) }
+        try {
+          const out = await evaluate(repo)
+          if (out.dropped && out.dropped.includes(attach.url)) {
+            if (attach.dropped) {
+              attach.dropped()
+            } else {
+              // Old-style caller without dropped() handler: fall back to queued(null)
+              attach.queued(null)
+            }
+          } else {
+            attach.queued(out.entries[attach.url] || null)
+          }
+        } catch { attach.queued(null) }
       }
       return false
     }
@@ -206,7 +218,16 @@ export function createMergeQueue({ store, load, run, afterRun = async () => {}, 
           if (attach) { attach.queued(null); attach = null }
           break
         }
-        if (attach && attach.url !== out.next) { attach.queued(out.entries[attach.url] || null); attach = null }
+        // If this PR was dropped (merged or closed elsewhere), call its dropped handler instead of queued.
+        if (attach && out.dropped && out.dropped.includes(attach.url)) {
+          if (attach.dropped) {
+            attach.dropped()
+          } else {
+            // Old-style caller without dropped() handler: fall back to queued(null)
+            attach.queued(null)
+          }
+          attach = null
+        } else if (attach && attach.url !== out.next) { attach.queued(out.entries[attach.url] || null); attach = null }
         if (!out.next) {
           if (again.has(repo)) continue
           break

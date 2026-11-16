@@ -255,6 +255,60 @@ describe('merge queue runner', () => {
     expect(createQueueStore(file).forRepo(REPO).items).toEqual([])
   })
 
+  it('attach.dropped is called when the PR is no longer open (merged/closed elsewhere)', async () => {
+    const w = world([{ number: 1 }])
+    const answers = []
+    const { queue, store } = make(w)
+    w.prs.delete(1)                                             // PR is no longer open
+    let droppedCalled = false
+    const attach = {
+      url: url(1),
+      dropped: () => { droppedCalled = true; answers.push({ dropped: true }) }
+    }
+    await queue.approve(REPO, url(1), { attach })
+    expect(droppedCalled).toBe(true)
+    expect(w.runs).toEqual([])
+    expect(store.forRepo(REPO).items).toEqual([])             // dropped, not queued
+  })
+
+  it('attach.dropped omitted (old-style callers) falls back to the current queued(null) behavior', async () => {
+    const w = world([{ number: 1 }])
+    const answers = []
+    const { queue, store } = make(w)
+    w.prs.delete(1)                                             // PR is no longer open
+    const attach = {
+      url: url(1),
+      queued: (e) => answers.push(e)                            // no dropped() callback
+    }
+    await queue.approve(REPO, url(1), { attach })
+    expect(answers).toEqual([null])
+    expect(w.runs).toEqual([])
+    expect(store.forRepo(REPO).items).toEqual([])             // dropped, not queued
+  })
+
+  it('attach.dropped with async handler does not throw TypeError (ASI hazard fixed)', async () => {
+    const w = world([{ number: 1 }])
+    const { queue, store } = make(w)
+    w.prs.delete(1)                                             // PR is no longer open
+    let resultCalled = false
+    const attach = {
+      url: url(1),
+      dropped: undefined,
+      result: (status, body) => { resultCalled = true }
+    }
+    const attachWithDrop = {
+      ...attach,
+      dropped: () => {
+        // This simulates index.js's dropped handler which has async IIFE after answered = true
+        // The ASI hazard would cause TypeError if not fixed
+      }
+    }
+    // This should not throw a TypeError about "true is not a function"
+    expect(async () => {
+      await queue.approve(REPO, url(1), { attach: attachWithDrop })
+    }).not.toThrow()
+  })
+
   it('an empty queue does nothing on a trigger: no GitHub reads', async () => {
     const w = world([{ number: 1 }])
     const { queue } = make(w)

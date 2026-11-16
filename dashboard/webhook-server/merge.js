@@ -794,6 +794,29 @@ export async function readyIfDraft(prUrl, exec) {
   return true
 }
 
+// Check whether the PR is still open (not merged or closed). If it's already merged or closed,
+// throw a refusal so it doesn't try to merge again. A lookup hiccup never blocks, same policy
+// as assertTargetsBase.
+export async function assertOpen(prUrl, exec) {
+  let state = null
+  try {
+    const { stdout } = await exec('gh', ['pr', 'view', prUrl, '--json', 'state'])
+    state = JSON.parse(stdout).state
+  } catch {
+    return
+  }
+  if (state === 'MERGED') {
+    throw new MergeFailure(refusal('ALREADY_MERGED', 'request',
+      'this PR was already merged',
+      'The PR has already been merged. Nothing needed to be done. The PR was not changed or sent back.'))
+  }
+  if (state === 'CLOSED') {
+    throw new MergeFailure(refusal('ALREADY_CLOSED', 'request',
+      'this PR was closed',
+      'The PR is closed. Nothing can be merged. Reopen it on GitHub if the work needs to go in, then approve again. The PR was not changed or sent back.'))
+  }
+}
+
 // What GitHub says about the PR right now, waiting out "UNKNOWN" (it recomputes a PR's mergeability after every
 // push, including the merge gate's own rebase push, and answers UNKNOWN or a stale "not mergeable" meanwhile).
 export async function mergeableNow(prUrl, exec, sleep = (ms) => new Promise((r) => setTimeout(r, ms)), tries = 6, delayMs = 5000) {
@@ -853,7 +876,8 @@ async function mergePrUnqueued(
   rebaseAndRetestFn = rebaseAndRetest,
   reengage = sendFeedback,
   recordStageFn = recordStage,
-  deps = {}
+  deps = {},
+  rawExec = execWithGroupTimeout
 ) {
   const { sleep, recordFailureFn = recordFailure, gateContext = defaultGateContext, baselineFails = null, gateTimeoutMs = GATE_TIMEOUT_MS, rebaseOpen = checkOpenPrs, uiEvidence = assertUiEvidence, decisions = assertDecisions,
     progress: report = noProgress, loadNow = () => machineLoad(), now = Date.now, diskFirstAid = null, memoryCheck = null } = deps
@@ -874,6 +898,7 @@ async function mergePrUnqueued(
   const repo = repoFromPrUrl(prUrl)
   const ctx = repo && repo !== MARVIN_REPO ? await gateContext(repo, exec) : null
 
+  await assertOpen(prUrl, exec)
   await assertTargetsBase(prUrl, exec, ctx ? ctx.base : 'main')
   await assertNotSentBack(prUrl, exec)
   const draftWasMarkedReady = await readyIfDraft(prUrl, exec)
@@ -1015,6 +1040,9 @@ async function mergePrUnqueued(
 
   stage('merging', 'started', '')
   progress('merging', 'running')
+  // Another live read: the snapshot is stale after the rebase. If the PR was closed or merged elsewhere, refuse plainly now.
+  // Use the raw exec (not snapshotExec) to get fresh state from GitHub, not cached from before the rebase.
+  await assertOpen(prUrl, rawExec)
   let mergeError = null
   // "Not mergeable" straight after our own rebase push is usually GitHub still recomputing the PR, not a conflict
   // (finance-os, clarity #66: a good PR was denied and its ticket wrongly sent back). So when merging says that, ask

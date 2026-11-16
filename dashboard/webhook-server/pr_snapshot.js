@@ -9,7 +9,7 @@
 // served from it, since GitHub recomputes it after every push. If the combined read fails or is garbled, every check
 // falls back to its own read, so each keeps its own fail-open rule.
 
-export const SNAPSHOT_FIELDS = ['baseRefName', 'body', 'isDraft', 'files', 'headRefName', 'statusCheckRollup']
+export const SNAPSHOT_FIELDS = ['baseRefName', 'body', 'isDraft', 'files', 'headRefName', 'statusCheckRollup', 'state']
 const SERVED = new Set(SNAPSHOT_FIELDS)
 const PR_URL = /^https:\/\/github\.com\/[\w.-]+\/[\w.-]+\/pull\/\d+$/
 const GH_READS = new Set(['view', 'list', 'status', 'checks', 'diff'])

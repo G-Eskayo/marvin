@@ -2,7 +2,7 @@ import { describe, it, expect, vi } from 'vitest'
 import { snapshotExec, SNAPSHOT_FIELDS } from '../webhook-server/pr_snapshot.js'
 
 const URL = 'https://github.com/G-Eskayo/marvin/pull/569'
-const PR = { baseRefName: 'main', body: 'Closes #560', isDraft: false, files: [{ path: 'a.js' }], headRefName: 'feat/x', statusCheckRollup: [{ __typename: 'CheckRun', name: 'ci', status: 'COMPLETED', conclusion: 'SUCCESS' }] }
+const PR = { baseRefName: 'main', body: 'Closes #560', isDraft: false, files: [{ path: 'a.js' }], headRefName: 'feat/x', state: 'OPEN', statusCheckRollup: [{ __typename: 'CheckRun', name: 'ci', status: 'COMPLETED', conclusion: 'SUCCESS' }] }
 
 function fakeExec(pr = PR, { fail = false } = {}) {
   return vi.fn(async (cmd, args) => {
@@ -73,11 +73,17 @@ describe('snapshotExec: the approve preflight reads the PR once', () => {
   it('another PR, extra flags (--jq), or a field outside the snapshot pass straight through', async () => {
     const exec = fakeExec()
     const wrapped = snapshotExec(URL, exec)
+    // Request for a different PR: goes straight through (not cached)
     await wrapped('gh', view('body', 'https://github.com/G-Eskayo/marvin/pull/1'))
+    // Request with extra flags (--jq): goes straight through (not servable from snapshot)
     await wrapped('gh', ['pr', 'view', URL, '--json', 'files', '--jq', '.files[].path'])
-    await wrapped('gh', view('state'))
+    // Request for mergeable on the main URL: not in snapshot, so triggers snapshot read plus pass-through
+    await wrapped('gh', view('mergeable'))
+    // Three calls: one for different PR, one with extra flags, one for mergeable pass-through
     expect(exec).toHaveBeenCalledTimes(3)
-    expect(exec.mock.calls.every((c) => !String(c[1][4]).includes('isDraft'))).toBe(true)
+    // Verify the pass-through call for mergeable goes straight to the real exec (fourth call would be the snapshot)
+    expect(exec.mock.calls[2][1][2]).toBe(URL)
+    expect(exec.mock.calls[2][1][4]).toBe('mergeable')
   })
 
   it('the combined read failing falls back to each check\'s own read, so their fail-open rules still apply', async () => {
@@ -104,5 +110,17 @@ describe('snapshotExec: the approve preflight reads the PR once', () => {
   it('not a PR url: no snapshot at all', async () => {
     const exec = fakeExec()
     expect(snapshotExec('nonsense', exec)).toBe(exec)
+  })
+
+  it('state field added to SNAPSHOT_FIELDS is served from the combined read, with no extra calls', async () => {
+    const exec = fakeExec()
+    const wrapped = snapshotExec(URL, exec)
+    // First read for state (early check)
+    const answer1 = JSON.parse((await wrapped('gh', view('state'))).stdout)
+    expect(answer1).toEqual({ state: 'OPEN' })
+    // Verify only one combined call was made (not a separate read for state)
+    expect(exec).toHaveBeenCalledTimes(1)
+    expect(exec.mock.calls[0][1][4].split(',').sort()).toEqual([...SNAPSHOT_FIELDS].sort())
+    expect(exec.mock.calls[0][1][4]).toContain('state')
   })
 })

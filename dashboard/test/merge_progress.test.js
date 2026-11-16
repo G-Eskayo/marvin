@@ -1,5 +1,6 @@
 import { describe, it, expect } from 'vitest'
 import { MERGE_STAGES, emptyProgress, applyMergeEvent, mergeRuns, closeRunning, machineLabel, estimateLine, busyLine, opForHead } from '../src/lib/merge_progress.js'
+import { createMergeJoiners } from '../webhook-server/merge_progress.js'
 
 // marvin#568: the merge's stage events, pushed from the webhook, folded into one progress object. The same reducer runs
 // in the webhook (its own record), the main process (what a card reads on mount) and so the card sees what both saw.
@@ -155,5 +156,106 @@ describe('closeRunning (a merge that ended without its own last event)', () => {
     expect(closeRunning(c, 'failed', 'x', 100)).toBe(c)
     expect(closeRunning(null, 'failed')).toBe(null)
     expect(closeRunning(p, 'skipped', 'merged on GitHub', 5).outcome).toBe(null)
+  })
+})
+
+describe('createMergeJoiners: multiple approves wait for one merge result', () => {
+  it('two joiners of one URL both get settled with the same result', () => {
+    const joiners = createMergeJoiners()
+    const replies = [
+      { result: (status, body) => ({ status, body }) },
+      { result: (status, body) => ({ status, body }) }
+    ]
+    const url = 'https://github.com/G-Eskayo/marvin/pull/1'
+    joiners.join(url, replies[0])
+    joiners.join(url, replies[1])
+    const reply1spy = { result: (s, b) => replies[0].result = { status: s, body: b } }
+    const reply2spy = { result: (s, b) => replies[1].result = { status: s, body: b } }
+    // Replace with spies to track calls
+    const joiners2 = createMergeJoiners()
+    let call1, call2
+    const r1 = { result: (s, b) => { call1 = [s, b] } }
+    const r2 = { result: (s, b) => { call2 = [s, b] } }
+    joiners2.join(url, r1)
+    joiners2.join(url, r2)
+    joiners2.settle(url, 200, { merged: true })
+    expect(call1).toEqual([200, { merged: true }])
+    expect(call2).toEqual([200, { merged: true }])
+  })
+
+  it('a joiner whose reply.result throws does not prevent other joiners from settling', () => {
+    const joiners = createMergeJoiners()
+    const url = 'https://github.com/G-Eskayo/marvin/pull/2'
+    let result1Called = false
+    let result2Called = false
+    const r1 = { result: () => { result1Called = true; throw new Error('disconnected') } }
+    const r2 = { result: () => { result2Called = true } }
+    joiners.join(url, r1)
+    joiners.join(url, r2)
+    expect(() => joiners.settle(url, 200, {})).not.toThrow()
+    expect(result1Called).toBe(true)
+    expect(result2Called).toBe(true)
+  })
+
+  it('settling with no joiners registered is a no-op', () => {
+    const joiners = createMergeJoiners()
+    expect(() => joiners.settle('https://github.com/G-Eskayo/marvin/pull/3', 200, {})).not.toThrow()
+  })
+
+  it('joiners are keyed by URL, not global', () => {
+    const joiners = createMergeJoiners()
+    const url1 = 'https://github.com/G-Eskayo/marvin/pull/4'
+    const url2 = 'https://github.com/G-Eskayo/marvin/pull/5'
+    let call1, call2
+    const r1 = { result: (s, b) => { call1 = [s, b] } }
+    const r2 = { result: (s, b) => { call2 = [s, b] } }
+    joiners.join(url1, r1)
+    joiners.join(url2, r2)
+    joiners.settle(url1, 200, { url: url1 })
+    expect(call1).toEqual([200, { url: url1 }])
+    expect(call2).toBeUndefined() // url2's joiner should not have been called
+  })
+
+  it('a joiner times out if settle is never called', async () => {
+    const joiners = createMergeJoiners(100) // 100ms timeout
+    const url = 'https://github.com/G-Eskayo/marvin/pull/6'
+    let result
+    const r = { result: (s, b) => { result = [s, b] } }
+    joiners.join(url, r)
+    // Wait for timeout to fire
+    await new Promise((resolve) => setTimeout(resolve, 150))
+    expect(result).toBeDefined()
+    expect(result[0]).toBe(200)
+    expect(result[1].code).toBe('NO_LONGER_RUNNING')
+  })
+
+  it('settling a joiner cancels its timeout', async () => {
+    const joiners = createMergeJoiners(200)
+    const url = 'https://github.com/G-Eskayo/marvin/pull/7'
+    let result
+    const r = { result: (s, b) => { result = [s, b] } }
+    joiners.join(url, r)
+    // Settle quickly, before timeout
+    joiners.settle(url, 200, { merged: true })
+    await new Promise((resolve) => setTimeout(resolve, 250))
+    // The result should be from settle, not from timeout
+    expect(result).toEqual([200, { merged: true }])
+  })
+
+  it('a late joiner that joins after timeout has passed also times out', async () => {
+    const joiners = createMergeJoiners(100)
+    const url = 'https://github.com/G-Eskayo/marvin/pull/8'
+    let result1, result2
+    const r1 = { result: (s, b) => { result1 = [s, b] } }
+    const r2 = { result: (s, b) => { result2 = [s, b] } }
+    joiners.join(url, r1)
+    await new Promise((resolve) => setTimeout(resolve, 150))
+    expect(result1).toBeDefined()
+    expect(result1[1].code).toBe('NO_LONGER_RUNNING')
+    // Late joiner has its own timeout
+    joiners.join(url, r2)
+    await new Promise((resolve) => setTimeout(resolve, 150))
+    expect(result2).toBeDefined()
+    expect(result2[1].code).toBe('NO_LONGER_RUNNING')
   })
 })

@@ -71,6 +71,8 @@ export const REMEDIATION_BY_CODE = {
   OUT_OF_ORDER: 'Another PR must merge first. See the blockedBy list on this ticket.',
   WRONG_BASE: 'The PR is not based on main. Rebase onto main before approving.',
   SENT_BACK: 'The PR was sent back to its ticket for rework.',
+  ALREADY_MERGED: 'This PR was already merged.',
+  ALREADY_CLOSED: 'This PR was closed.',
   CI_PENDING: 'CI checks are still running. Approve again once they pass.',
   NO_MERGE_PROFILE: 'This project has no merge profile configured. Add one in the project settings.',
   MERGE_REFUSED: 'The merge was refused. See the ticket for details.',

@@ -2,12 +2,12 @@ import { readFileSync } from 'fs'
 import os from 'os'
 import path from 'path'
 import { createServer } from 'http'
-import { mergePr, baselineFailsOnMain, mergesAhead, execWithGroupTimeout, runDiskFirstAid, memoryGuardCheck, withMergeMark, forgetQueuedMerge, readMergeReady, sweepGateClones, repoJobsDone, triggerTicketPipeline } from './merge.js'
+import { mergePr, baselineFailsOnMain, mergesAhead, execWithGroupTimeout, runDiskFirstAid, memoryGuardCheck, withMergeMark, forgetQueuedMerge, readMergeReady, sweepGateClones, repoJobsDone, triggerTicketPipeline, assertOpen } from './merge.js'
 import { createMergeQueue, createQueueStore } from './merge_queue.js'
 import { createUnbuiltCache, createFixTicketsCache, createQueueLoader, createBaseLookup, createFollowUpRequester, readMainHealth, readRepairFailures } from './merge_facts.js'
 import { pendingCheckHeads } from '../electron/main/mr_repos.js'
 import { snapshotExec } from './pr_snapshot.js'
-import { createMergeTracker, createInflightStore, takeInterruptedMerges, recordMergeDuration, estimateMergeMs, machineLoad, approveResponder, wantsStream, createMergeLatch, alreadyMergingBody } from './merge_progress.js'
+import { createMergeTracker, createInflightStore, takeInterruptedMerges, recordMergeDuration, estimateMergeMs, machineLoad, approveResponder, wantsStream, createMergeLatch, createMergeJoiners, alreadyMergingBody } from './merge_progress.js'
 import { resolveDeviceId, peerHosts, isPrimaryHost } from '../electron/main/device_identity.js'
 import { sendFeedback, dropEntirely, handleDenyRequest } from './deny.js'
 import { forwardRefreshPing } from './refresh_relay.js'
@@ -282,9 +282,9 @@ const server = createServer(async (req, res) => {
       reply.result(status, body)
       return
     }
-    // marvin#766: a PR this process is already merging is not started again (a retry after a dropped stream).
+    // marvin#766 / #809: a PR this process is already merging joins its result instead of failing.
     if (mergeQueue.isRunning(prUrl)) {
-      reply.result(409, alreadyMergingBody(machineId))
+      mergeJoiners.join(prUrl, reply)
       return
     }
     // marvin#231: Approve queues the merge. The queue merges in the order it works out (stacked PRs base first, only the
@@ -301,7 +301,25 @@ const server = createServer(async (req, res) => {
         answered = true
         reply.result(200, queuedBody(prUrl, entry))
       },
-      ran: () => { answered = true }
+      ran: () => { answered = true },
+      dropped: () => {
+        if (answered) return
+        answered = true
+        // The PR was merged or closed elsewhere, so it's no longer open.
+        // Check the current state and respond with the appropriate refusal.
+        // Run asynchronously to avoid blocking the queue logic.
+        void (async () => {
+          try {
+            await assertOpen(prUrl, execWithGroupTimeout)
+            // Fail open: if we can't determine the state, assume it's fine and respond with a neutral "no longer queued" message
+            reply.result(200, { merged: false, code: 'NO_LONGER_QUEUED', stage: 'queued', action: 'none',
+              message: 'This PR is no longer in the queue', reason: 'no longer queued' })
+          } catch (error) {
+            const response = failureResponse(error)
+            reply.result(response.status, response.body)
+          }
+        })()
+      }
     }
     try {
       await mergeQueue.approve(repoOfPr(prUrl), prUrl, { by: payload.by === 'auto' ? 'auto' : payload.by === 'memory-queue' ? 'memory-queue' : 'you', attach })
@@ -340,6 +358,8 @@ const rebuildCheck = createRebuildCheckTrigger()
 const machineId = resolveDeviceId()
 const inflight = createInflightStore()
 const mergeLatch = createMergeLatch()
+// marvin#231: multiple approves of the same PR join the result of the running merge; mergeJoiners keeps waiting replies.
+const mergeJoiners = createMergeJoiners()
 // marvin#231 follow-up: each merge's progress, kept for GET /merge-progress, and its stage events sent to the other Macs.
 const liveMerges = createLiveMerges()
 const relayStage = createStageRelay({
@@ -356,6 +376,7 @@ const repoOfPr = (url) => (String(url).match(/github\.com\/([^/]+\/[^/]+)\/pull\
 async function runMerge(prUrl, { by = 'you', reply = null } = {}) {
   const valid = typeof prUrl === 'string' && prUrl.startsWith('https://github.com/')
   if (valid && !mergeLatch.take(prUrl)) return { status: 409, body: alreadyMergingBody(machineId) }
+  let result_status, result_body
   try {
     const tracker = valid ? createMergeTracker({
       url: prUrl,
@@ -396,11 +417,12 @@ async function runMerge(prUrl, { by = 'you', reply = null } = {}) {
         diskFirstAid: () => runDiskFirstAid(),
         // marvin#845: no rebase + retest while memory pressure is at warn or critical; this Approve is queued instead.
         memoryCheck: (url) => memoryGuardCheck(url, PORT)
-      }))
+      }, execWithGroupTimeout))
       tracker?.finish(result)
       if (result?.merged) appendMerge(prUrl, by === 'auto' ? 'auto' : 'you')
       else if (result?.reengaged) console.error(approveErrorLine(prUrl, { error: `${result.code || 'SENT_BACK'} at ${result.stage || 'gate'}: ${String(result.reason || 'sent back for rework').split('\n')[0].slice(0, 200)}` }))
-      return { status: 200, body: result }
+      result_status = 200
+      result_body = result
     } catch (err) {
       // Structured: code, stage, retryable, action, remediation -- so the dashboard can say what broke and the pipeline
       // can act on it (see failure.js). Recorded in the refusal log (#215) and the error log.
@@ -409,8 +431,13 @@ async function runMerge(prUrl, { by = 'you', reply = null } = {}) {
       console.error(approveErrorLine(prUrl, body))
       await recordApproveError(prUrl, body)
       appendError({ source: 'webhook:approve', message: `Approve refused for ${prUrl}`, raw: body.error })
-      return { status, body }
+      result_status = status
+      result_body = body
+    } finally {
+      // Tell all waiting joiners the final result, whether successful or failed.
+      mergeJoiners.settle(prUrl, result_status, result_body)
     }
+    return { status: result_status, body: result_body }
   } finally {
     if (valid) mergeLatch.release(prUrl)
   }
@@ -438,6 +465,8 @@ const mergeQueue = createMergeQueue({
     attach?.ran()
     const { status, body } = await runMerge(url, { by: 'you', reply: attach?.reply || null })
     if (attach) attach.reply.result(status, body)
+    // Tell all waiting joiners the final result.
+    mergeJoiners.settle(url, status, body)
     return status === 200 ? { result: body } : { body }
   },
   // The merge's after-steps run in the repo's job line (stacked PRs moved onto main, the others conflict-checked):
