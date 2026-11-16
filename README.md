@@ -2,9 +2,11 @@
 
 > *"I could calculate your chances of survival, but you won't like it."*: Marvin, The Hitchhiker's Guide to the Galaxy
 
-**MARVIN gives [Claude Code](https://claude.ai/code) a memory, a set of skills, and a way to keep working while you are away.** Claude starts every session cold; MARVIN loads only the context a task needs, applies the right skill, runs on the cheapest model that passes the bench, and ships small changes through a gated pipeline that you review from a dashboard.
+**MARVIN keeps [Claude Code](https://claude.ai/code) working between sessions.** It remembers what you're doing, applies the right skill for each task, uses the smallest model that can do the job well, and submits its changes for you to review before merging. Claude starts each session cold; MARVIN loads just the context the task needs instead of dumping everything.
 
 **Status:** in daily use by its author on two Macs (a primary automation host and a laptop). macOS is the supported platform; Linux and WSL2 run the memory and skills layer but are untested end to end. The dashboard and the background agents are macOS-only (launchd, Electron).
+
+For a hiring-manager-facing technical overview, see the [portfolio project page](https://gileskayo.me/ai-projects/marvin/).
 
 <p align="center">
   <img src="assets/screenshots/brain-map-demo.gif" alt="MARVIN's live 3D architecture map rotating, with skill nodes pulsing gold as activity fires" width="480">
@@ -21,7 +23,7 @@
 | | |
 |---|---|
 | **Memory** | Four kinds of memory (user, feedback, project, reference) plus three ChromaDB collections, retrieved by meaning and keyword so a session starts with what it needs and nothing more. |
-| **32 skills** | Debugging, TDD, research, architecture review, handoffs, README writing and more, each a `SKILL.md` Claude loads on demand. [Full list](docs/skills.md). |
+| **34 skills** | Debugging, TDD, research, architecture review, handoffs, README writing and more, each a `SKILL.md` Claude loads on demand. [Full list](docs/skills.md). |
 | **A gated ticket pipeline** | Issues labelled `ready-for-agent` are worked in an isolated worktree, measured against the repo's own tests, and raised as pull requests with evidence. Nothing merges until you approve it. |
 | **A dashboard** | An Electron app with tabs for metrics, MR review, health, docs, activity boards and a portfolio site manager. |
 | **Background agents** | launchd jobs for a daily digest, a research colony, health checks, code sync between machines, and an auto-fixer limited to safe changes. |
@@ -156,8 +158,8 @@ Tested on macOS ARM only. If something breaks elsewhere, please open an issue.
 Pull requests are welcome: new skills (a `SKILL.md` plus a PR), Linux and WSL2 testing, hard bench tasks (ones where the `clean` profile scores 0.50 or less), and a PowerShell setup for Windows. Run the tests first:
 
 ```bash
-~/.agents/venv/bin/python -m pytest lib/tests -q     # Python (about 900 tests)
-cd dashboard && npx vitest run                       # dashboard (about 490 tests)
+~/.agents/venv/bin/python -m pytest lib/tests -q     # Python (about 4084 tests)
+cd dashboard && npx vitest run                       # dashboard (about 3740 tests)
 ```
 
 ## AI disclosure
