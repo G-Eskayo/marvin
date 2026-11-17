@@ -27,7 +27,16 @@ Then load the returned paths. Check each loaded skill's `calls:` and load those 
 
 ## Fallback: manual manifest matching
 
-If the engine prints `INFO: ... tag fallback` or returns nothing, match by hand:
+The script produces one of three outcomes:
+
+**Printed ranked results** — lines like `  [0.456] (semantic) ~/.agents/skills/foo/SKILL.md` (possibly with `INFO: Ollama unavailable — using tag fallback` earlier)
+→ Load those paths. Nothing to do by hand.
+
+**Printed `No relevant files found.`** — the engine tried tag matching as a fallback and found nothing
+→ Proceed without loading additional skills rather than repeating the same manifest scan. The engine already tried all matching routes.
+
+**Failed to run** — missing venv, script not found, missing ChromaDB/Ollama, or a traceback
+→ Do it by hand. Use these steps:
 
 1. **Read the request** — extract 2–4 keywords describing the task
 2. **Read `~/.claude/manifest.json`** — scan the `index[]` array
@@ -36,8 +45,6 @@ If the engine prints `INFO: ... tag fallback` or returns nothing, match by hand:
 5. **Load those files** — read each matched `path`
 6. **Check `calls`** — if a loaded skill declares `calls: [x, y]`, load those too if the task needs them
 7. **Proceed** with only what's relevant
-
-`~/.claude/manifest.json` is the unified index for all skills AND knowledge files. Each entry has `name`, `path`, `tags[]`, optionally `model-scope`, and optionally `calls[]`. Tags use `namespace:value` — `domain:`, `intent:`, `type:`.
 
 ## Tag Namespaces & Fields
 
