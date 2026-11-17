@@ -1,5 +1,5 @@
 import { emptyProgress, applyMergeEvent, opForHead, closeRunning } from '../../src/lib/merge_progress.js'
-import { repoFromPrUrl } from './mr_repos.js'
+import { repoFromPrUrl, numberFromPrUrl } from './mr_repos.js'
 
 // What each PR's Approve is doing right now, held in the main process so it survives the
 // renderer unmounting (navigating away used to reset the button to "Approve" mid-merge).
@@ -156,6 +156,18 @@ export function createMergeOps({ maxMergingMs = 45 * 60_000 } = {}) {
         changed.push(url)
       }
       return changed
+    },
+    // PRs in terminal states with a recorded head commit: used to detect when a PR's branch is stuck at an old commit.
+    stuckHeads() {
+      const result = []
+      for (const [url, o] of ops) {
+        if (!o || o.head == null) continue
+        if (o.state !== 'error' && o.state !== 'interrupted' && o.state !== 'reengaged') continue
+        const repo = repoFromPrUrl(url)
+        const number = numberFromPrUrl(url)
+        if (repo && Number.isFinite(number)) result.push({ repo, number, head: o.head })
+      }
+      return result
     }
   }
 }

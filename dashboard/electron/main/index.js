@@ -10,7 +10,7 @@ import { promisify } from 'util'
 import { listSubsystems, readHistory, buildIndex } from './metrics.js'
 import { getReworkStatus, clearReworkCache } from './rework.js'
 import { createGithubState, repoOfSource, gateCooldownUntil } from './github_state.js'
-import { startCheckWatch, createCheckProbe, createTreeProbe, startChangeWatch, createGithubProbe } from '../../webhook-server/gh_watch.js'
+import { startCheckWatch, createCheckProbe, createTreeProbe, startChangeWatch, createGithubProbe, startHeadWatch, createHeadProbe } from '../../webhook-server/gh_watch.js'
 import { createStackRetarget } from './stack_retarget.js'
 import { prsForOrderCheck, listPipelinePrs, denyMr, fetchTicketContext, sentBackKeys, clearSentBackLabel } from './mr_review.js'
 import { approveMrStream } from './approve_stream.js'
@@ -313,6 +313,19 @@ function startPrCheckWatch() {
       githubChanged(`github:${repo}`)
       mainWindow?.webContents.send('mr:refresh')
       checkMergedElsewhere(repo)
+    },
+    skip: () => Date.now() < gateCooldownUntil()
+  })
+}
+let headWatch = null
+function startStuckHeadWatch() {
+  if (pullOnly) return
+  headWatch = startHeadWatch({
+    getPrs: () => mergeOps.stuckHeads(),
+    probe: createHeadProbe(),
+    onChange: (repo) => {
+      githubChanged(`github:${repo}`)
+      mainWindow?.webContents.send('mr:refresh')
     },
     skip: () => Date.now() < gateCooldownUntil()
   })
@@ -1423,6 +1436,7 @@ app.whenReady().then(() => {
   // External pings (webhook-server): bare = the legacy "MR list changed"; with topics = what changed.
   // Port already taken (another dashboard running) = one log line, not a crash (#384).
   startPrCheckWatch()
+  startStuckHeadWatch()
   startRefreshServer((payload = {}) => {
     const topics = Array.isArray(payload.topics) ? payload.topics : ['mr']
     for (const topic of topics) {

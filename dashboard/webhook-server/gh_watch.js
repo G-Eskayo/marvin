@@ -216,3 +216,92 @@ export function startCheckWatch({ getHeads, probe, onChange, intervalMs = 20_000
   timer?.unref?.()
   return { watcher, timer, run }
 }
+
+// HEAD watch (marvin#678): track which commit a PR's branch points to. When a PR is merged but the branch
+// is not updated by GitHub, the head stays at an old commit. The watcher detects when a merge's recorded head
+// differs from the current PR head, signaling a stuck head.
+
+export const pullEndpoint = (repo, prNumber) => `https://api.github.com/repos/${repo}/pulls/${prNumber}?per_page=1`
+
+// What a PR's head looks like: the commit OID from a PR view.
+export function headDigest(body) {
+  if (!body || typeof body !== 'object') return undefined
+  const { head } = body
+  return head?.oid ? `${head.oid}` : undefined
+}
+
+// Watcher for PR head commits: tracks when PR branches are at old commits (stuck heads).
+export function createHeadWatcher({ probe, onChange, now = Date.now }) {
+  const watched = new Map() // `${repo}#${number}` -> { etag, head }
+
+  async function tick(heads) {
+    const wanted = new Map()
+    for (const h of Array.isArray(heads) ? heads : []) {
+      if (!h || !h.repo || !Number.isFinite(h.number)) continue
+      const key = `${h.repo}#${h.number}`
+      if (!wanted.has(key)) wanted.set(key, { repo: h.repo, number: h.number })
+    }
+    for (const key of [...watched.keys()]) if (!wanted.has(key)) watched.delete(key)
+    const changed = new Set()
+    for (const [key, w] of wanted) {
+      const known = watched.get(key) || {}
+      let res
+      try {
+        res = await probe({ repo: w.repo, number: w.number, etag: known.etag })
+      } catch {
+        continue
+      }
+      if (!res || (res.status !== 200 && res.status !== 304)) continue
+      const head = res.status === 200 ? headDigest(res.body) : known.head
+      watched.set(key, { etag: res.etag || known.etag, head })
+      if (res.status === 200 && head !== undefined && head !== w.expectedHead) {
+        changed.add(w.repo)
+      }
+    }
+    for (const repo of changed) onChange(repo)
+  }
+
+  return { tick, size: () => watched.size }
+}
+
+// Real probe for PR head: the same authenticated conditional GET.
+export function createHeadProbe(env = process.env, doFetch = fetch) {
+  return async ({ repo, number, etag }) => {
+    const headers = { Accept: 'application/vnd.github+json', 'User-Agent': 'marvin-dashboard-watch' }
+    if (env.GH_TOKEN) headers.Authorization = `Bearer ${env.GH_TOKEN}`
+    if (etag) headers['If-None-Match'] = etag
+    const res = await doFetch(pullEndpoint(repo, number), { headers })
+    const out = { status: res.status, etag: res.headers.get('etag') || undefined }
+    if (res.status === 200) {
+      try {
+        out.body = await res.json()
+      } catch {
+        out.body = undefined
+      }
+    }
+    return out
+  }
+}
+
+// Runs the head watcher on an interval: a slow tick never stacks, nothing is asked while skip() says so,
+// and a failing getPrs only skips that tick.
+export function startHeadWatch({ getPrs, probe, onChange, intervalMs = 20_000, setIntervalFn = setInterval, skip = () => false, now = Date.now }) {
+  const watcher = createHeadWatcher({ probe, onChange, now })
+  let running = false
+  const run = async () => {
+    if (running) return
+    running = true
+    try {
+      if (skip()) return
+      await watcher.tick(getPrs())
+    } catch {
+      // the watch must never die: try again next tick
+    } finally {
+      running = false
+    }
+  }
+  run()
+  const timer = setIntervalFn(run, intervalMs)
+  timer?.unref?.()
+  return { watcher, timer, run }
+}

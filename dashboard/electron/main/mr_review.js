@@ -452,6 +452,13 @@ export function describeApproveFailure(status, body) {
   return `${body.code} at ${body.stage}: ${body.message}${next}. ${body.remediation ?? ''}`.trim()
 }
 
+export function describeDenyFailure(status, body) {
+  if (status === 409) return `PR is not open (state: ${body?.error || 'unknown'})`
+  if (status === 503) return 'Could not verify PR state'
+  if (!body || !body.error) return `Webhook call failed: ${status}`
+  return body.error
+}
+
 export async function approveMr(prUrl, webhookUrl, post) {
   const response = await post(webhookUrl, { pr_url: prUrl })
   if (!response.ok) {
@@ -485,7 +492,13 @@ export async function denyMr({ prUrl, ticketNumber, action, reasons, comment }, 
     comment
   })
   if (!response.ok) {
-    throw new Error(`Webhook call failed: ${response.status}`)
+    let body = null
+    try {
+      body = await response.json()
+    } catch {
+      // not JSON (or no body): fall back to the bare status below
+    }
+    throw new Error(describeDenyFailure(response.status, body))
   }
   return response
 }

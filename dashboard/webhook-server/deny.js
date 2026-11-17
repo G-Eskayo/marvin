@@ -88,6 +88,27 @@ export async function handleDenyRequest({ action, prUrl, ticketNumber, reasons, 
   }
 
   try {
+    // Check if PR is still open before processing deny.
+    let prState = null
+    try {
+      const { stdout } = await exec('gh', ['pr', 'view', prUrl, '--json', 'state'])
+      const parsed = JSON.parse(stdout)
+      prState = parsed.state
+    } catch {
+      // Failed to read PR state: fail closed.
+      return {
+        status: 503,
+        body: { done: false, error: 'Could not verify PR state' }
+      }
+    }
+
+    if (prState !== 'OPEN') {
+      return {
+        status: 409,
+        body: { done: false, error: `PR is not open (state: ${prState})` }
+      }
+    }
+
     if (action === 'send_feedback') {
       await sendFeedback({ prUrl, ticketNumber, reasons, comment }, exec)
     } else {
