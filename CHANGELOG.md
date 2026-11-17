@@ -1,5 +1,7 @@
 # Changelog
 
+- Skip SKILL.md's manual tag-matching replay when retrieve.py already returned tag-fallback results ([#1352](https://github.com/G-Eskayo/marvin/pull/1352))
+
 - Main is red at 5faa676: fix forward ([#1351](https://github.com/G-Eskayo/marvin/pull/1351))
 
 - Purpose probe pipeline-verify-timeouts: count timed-out verify runs per machine ([#1337](https://github.com/G-Eskayo/marvin/pull/1337))
