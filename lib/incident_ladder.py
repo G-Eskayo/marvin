@@ -371,12 +371,13 @@ def step(repo: str, issue: dict, now: datetime, gh=None, measure: Callable | Non
                 aid_results += first_aid(name, only)
             except Exception as exc:  # noqa: BLE001
                 aid_results.append({"step": name, "ok": False, "changed": False, "mac": "?", "detail": str(exc)[:200]})
+        changed_anything = any(r.get("changed") for r in aid_results)
         try:
             after, _ = measure(probe, _window_days(started, datetime.now(timezone.utc)))
         except Exception:  # noqa: BLE001 -- can't tell whether it helped: treat as still tripping
             after = value
-        aid = "worse" if live_before is not None and after > live_before else "ran"
-        log("first-aid", steps=steps, results=aid_results, before=live_before, after=after)
+        aid = "worse" if changed_anything and live_before is not None and after > live_before else "ran"
+        log("first-aid", steps=steps, results=aid_results, before=live_before, after=after, changed=changed_anything)
     aid_lines = [f"- `{r.get('step')}` on {r.get('mac')}: {'ok' if r.get('ok') else 'failed'}"
                  f"{', changed something' if r.get('changed') else ''}: {str(r.get('detail', ''))[:300]}"
                  for r in aid_results] or ["- none listed in the ticket's '## First aid'" if not steps
