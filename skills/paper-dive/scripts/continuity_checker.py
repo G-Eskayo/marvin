@@ -13,47 +13,24 @@ is earlier) and classifies the continuity relationship of each pair.
 Model choice (unvalidated on real abstracts, noted in docstring): qwen2.5:14b
 for judgment, same caliber as logic_auditor's classification task.
 
-Reuses extract_core_claim from argument_mapper.py to keep claim-extraction
-consistent across all synthesis tools, avoiding unnecessary duplication of the
-ollama_chat/prompt plumbing.
+Imports extract_core_claim from argument_mapper.py and ollama_chat from
+ollama_chat.py to keep claim extraction and model calls consistent across
+all synthesis tools, while explicitly routing the judgment call through the
+dedicated 14b inference model when no injected chat_fn overrides it.
 """
 from __future__ import annotations
 import json
 import sys
-import urllib.request
 from pathlib import Path
+
+from ollama_chat import ollama_chat
+from argument_mapper import extract_core_claim
 
 CHROMA_PATH = Path.home() / ".claude" / "chroma"
 COLLECTION_NAME = "paper-knowledge"
-OLLAMA_URL = "http://localhost:11434/api/chat"
 CONTINUITY_MODEL = "qwen2.5:14b"
 
 CONTINUITY_VERDICTS = {"CONSISTENT", "GAP", "CONTRADICTS"}
-
-
-def ollama_chat(model: str, messages: list[dict], timeout: int = 60) -> str:
-    payload = json.dumps({"model": model, "messages": messages, "stream": False}).encode()
-    req = urllib.request.Request(OLLAMA_URL, data=payload, headers={"Content-Type": "application/json"})
-    with urllib.request.urlopen(req, timeout=timeout) as resp:
-        data = json.loads(resp.read())
-    return data["message"]["content"]
-
-
-# Reuse from argument_mapper
-CLAIM_PROMPT = """Below is an academic paper's title and abstract. State its single core claim or finding in ONE crisp sentence -- what did they actually show or argue, not what topic they cover. No preamble, no "This paper...", just the claim itself.
-
-Title: {title}
-
-Abstract: {abstract}
-
-Core claim (one sentence):"""
-
-
-def extract_core_claim(title: str, abstract: str, chat_fn=None) -> str:
-    chat_fn = chat_fn or (lambda messages: ollama_chat(CONTINUITY_MODEL, messages))
-    prompt = CLAIM_PROMPT.format(title=title, abstract=abstract)
-    response = chat_fn([{"role": "user", "content": prompt}])
-    return response.strip().strip('"')
 
 
 CONTINUITY_PROMPT = """Below are two academic papers' core claims. The first (EARLIER) is the earlier paper. The second (LATER) cites it. Classify the continuity relationship:
@@ -134,12 +111,14 @@ def build_continuity_report(
     by_id = {i: (doc, meta) for i, doc, meta in zip(data["ids"], data["documents"], data["metadatas"])}
 
     claims: dict[str, str] = {}
+    # Resolve chat_fn once: use injected function if provided, else route through the 14b inference model
+    resolved_chat_fn = chat_fn or (lambda messages: ollama_chat(CONTINUITY_MODEL, messages))
 
     def claim(doi: str) -> tuple[str, str]:
         doc, meta = by_id[doi]
         title = meta.get("title") or doi
         if doi not in claims:
-            claims[doi] = extract_core_claim(title, doc, chat_fn=chat_fn)
+            claims[doi] = extract_core_claim(title, doc, chat_fn=resolved_chat_fn)
         return title, claims[doi]
 
     result = []
