@@ -389,6 +389,42 @@ def _model_run_timeouts(days: float = PROBE_WINDOW_DAYS, path: Path | None = Non
     return float(count)
 
 
+def _orphan_pipeline_worktrees(min_age_hours: float | None = None) -> float:
+    """#914: pipeline worktrees that are clean, even with main (ahead falsy), have no live task, and are older than
+    EMPTY_MIN_AGE_HOURS. Scoped to cs.WORKTREES_ROOT only (not helper worktrees under .claude/worktrees). Each worktree
+    is an orphan when it has no PR, no commits ahead, no uncommitted work, no live dispatch task, and has aged past the
+    grace window. O(worktree count)."""
+    import cleanup_sweep as cs
+    min_age = min_age_hours if min_age_hours is not None else cs.EMPTY_MIN_AGE_HOURS
+    try:
+        worktrees = cs._list_root(cs.WORKTREES_ROOT, cs._cwds_in_use())
+    except (OSError, Exception):
+        return 0.0
+    count = 0
+    for wt in worktrees:
+        if wt.get("broken"):
+            continue
+        repo, number = wt.get("repo"), cs._extract_issue_number(wt.get("branch", ""))
+        if not repo or number is None:
+            continue
+        try:
+            pr_state = cs._default_pr_state(repo, wt["branch"])
+        except Exception:
+            continue
+        try:
+            has_live_task = cs._default_has_live_task(repo, number)
+        except Exception:
+            continue
+        age = wt.get("age_hours", 0)
+        ahead = wt.get("ahead", 0)
+        dirty = wt.get("dirty", False)
+        in_use = wt.get("in_use", False)
+        if (not ahead and not dirty and not in_use and not has_live_task and pr_state not in ("OPEN",)
+                and age >= min_age):
+            count += 1
+    return float(count)
+
+
 def _ci_onnx_download_failures(fetch=None, repo: str = "G-Eskayo/marvin", runs: int = 20,
                                days: float = PROBE_WINDOW_DAYS, now: datetime | None = None) -> float:
     """#1098/#1156 (2026-11-09): GitHub's 'Python tests' job failures in the 7-day window. Option B: counts the job's
@@ -472,6 +508,8 @@ PROBES: dict[str, tuple[Callable[..., float], float, str]] = {
     "stale-relay-leaked": (lambda days=PROBE_WINDOW_DAYS: _stale_relay("leaked", days), 0.0,
                            "stale claims that reached the owner over 7 days (question log kind=stale + their own 'that's "
                            "already fixed' replies), per Mac, summed (#1224)"),
+    "orphan-pipeline-worktrees": (lambda days=PROBE_WINDOW_DAYS: _orphan_pipeline_worktrees(), 2.0,
+                                  "pipeline worktrees clean, even with main, no live task, older than 2h (#914)"),
 }
 MEASURES.update({name: fn for name, (fn, _limit, _what) in PROBES.items()})
 MEASURES["stale-relay-caught"] = lambda: _stale_relay("caught")

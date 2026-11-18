@@ -56,6 +56,7 @@ from pathlib import Path
 from typing import Callable
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
+import dispatch_concurrency  # noqa: E402
 import gh_env  # noqa: E402
 import host_os  # noqa: E402
 import machine_profile  # noqa: E402
@@ -65,7 +66,7 @@ from sandbox_orchestration import WORKTREES_ROOT  # noqa: E402
 OUTPUT_PATH = Path.home() / ".claude" / "logs" / "mr-pipeline-sweep.md"
 LOCK_PATH = Path.home() / ".claude" / "logs" / "cleanup-sweep.lock"
 STALE_THRESHOLD_HOURS = 24
-EMPTY_MIN_AGE_HOURS = 24
+EMPTY_MIN_AGE_HOURS = 2  # grace window for the claim→dispatch race (2h); live_task check now guards staleness directly (#914)
 BACKUP_MIN_AGE_HOURS = 48  # leftover edits untouched this long are backed up and removed (#629)
 BACKUP_MAX_FILE_BYTES = 50 * 2**20    # bigger leftovers (a model, a recording) are not committed: they'd grow the
 BACKUP_MAX_TOTAL_BYTES = 200 * 2**20  # clone's .git and fail GitHub's 100 MB limit; kept for a person instead
@@ -158,8 +159,14 @@ def _list_root(root: Path, cwds: set[str]) -> list[dict]:
         if common.returncode != 0:
             if (entry / ".git").exists():
                 out.append({"path": entry, "broken": True})
+            else:
+                out.append({"path": entry, "broken": True, "reason": "no .git file or directory"})
             continue
-        if branch.returncode != 0 or not branch.stdout.strip():
+        if branch.returncode != 0:
+            out.append({"path": entry, "broken": True, "reason": "detached HEAD"})
+            continue
+        if not branch.stdout.strip():
+            out.append({"path": entry, "broken": True, "reason": "detached HEAD"})
             continue
         clone = Path(common.stdout.strip()).parent
         url = _git(clone, "remote", "get-url", "origin").stdout.strip()
@@ -194,6 +201,20 @@ def _default_is_claimed(repo: str, number: int) -> bool:
     )
     issue = json.loads(result.stdout)
     return issue.get("state") == "OPEN" and any(l["name"].startswith("claimed:") for l in issue.get("labels", []))
+
+
+def _default_has_live_task(repo: str, number: int) -> bool:
+    """Check if a ticket has a live task running by reading dispatch_concurrency.slots_in_use().
+    No machine filter — a worktree only ever exists on the machine that owns its task record.
+    Pure local file/PID read, no network, so it can never misread a GitHub outage as "no task"."""
+    try:
+        records = dispatch_concurrency.slots_in_use()
+        for rec in records:
+            if str(rec.get("ticket")) == str(number) and rec.get("repo") == repo:
+                return True
+        return False
+    except Exception:
+        return False
 
 
 def _default_remove_worktree(wt: dict) -> bool:
@@ -473,7 +494,7 @@ def sweep_stale_claims(
     return stale
 
 
-def decide_worktree(wt: dict, pr_state: str | None, claimed: bool) -> tuple[str, str]:
+def decide_worktree(wt: dict, pr_state: str | None, live_task: bool) -> tuple[str, str]:
     """("remove" | "backup" | "keep" | "review", reason). "backup" = push its
     leftover work to a backup branch, then remove (#629). "review" = kept for
     now and listed in the log (recent leftover work, or an open PR's)."""
@@ -481,8 +502,8 @@ def decide_worktree(wt: dict, pr_state: str | None, claimed: bool) -> tuple[str,
         return "keep", "not a GitHub clone the sweep knows how to check"
     if wt.get("in_use"):
         return "keep", "a process is working inside it"
-    if claimed:
-        return "keep", "its ticket is claimed (running)"
+    if live_task:
+        return "keep", "a build is running for this ticket right now"
     if wt.get("dirty"):
         if pr_state == "OPEN" or wt.get("age_hours", 0) < BACKUP_MIN_AGE_HOURS:
             return "review", "has uncommitted work"
@@ -503,7 +524,7 @@ def decide_worktree(wt: dict, pr_state: str | None, claimed: bool) -> tuple[str,
 def sweep_worktrees(
     list_worktrees: Callable[[], list[dict]] | None = None,
     pr_state: Callable[[str, str], str | None] | None = None,
-    is_claimed: Callable[[str, int], bool] | None = None,
+    has_live_task: Callable[[str, int], bool] | None = None,
     remove_worktree: Callable[[dict], bool] | None = None,
     backup: Callable[[dict], str | None] | None = None,
     can_push: bool = True,
@@ -512,23 +533,27 @@ def sweep_worktrees(
     backup is a push."""
     list_worktrees = list_worktrees or _default_list_worktrees
     pr_state = pr_state or _default_pr_state
-    is_claimed = is_claimed or _default_is_claimed
+    has_live_task = has_live_task or _default_has_live_task
     remove_worktree = remove_worktree or _default_remove_worktree
     backup = backup or backup_worktree
 
     removed, review = [], []
     for wt in list_worktrees():
         if wt.get("broken"):
-            review.append({**wt, "reason": "folder has no git record (its worktree metadata is gone); not deleted"})
+            review.append({**wt, "reason": (wt.get("reason") or "folder has no git record (its worktree metadata is gone)") + "; not deleted"})
             continue
         repo, number = wt.get("repo"), _extract_issue_number(wt["branch"])
         try:
             state = pr_state(repo, wt["branch"]) if repo else None
-            claimed = bool(repo and number is not None and is_claimed(repo, number))
         except Exception as exc:  # a GitHub failure must never read as "no PR"
             review.append({**wt, "reason": f"could not check GitHub: {str(exc)[:120]}"})
             continue
-        action, reason = decide_worktree(wt, state, claimed)
+        try:
+            live_task = bool(repo and number is not None and has_live_task(repo, number))
+        except Exception as exc:  # could not check for a live task (unreadable TASKS_DIR, etc.)
+            review.append({**wt, "reason": f"could not check for a live task: {str(exc)[:120]}"})
+            continue
+        action, reason = decide_worktree(wt, state, live_task)
         if action == "backup" and not can_push:
             review.append({**wt, "reason": f"{reason}; not backed up: this is a pull-only node (ADR 0069), kept"})
         elif action == "backup":
@@ -732,7 +757,7 @@ def run_daily_sweep(
     list_claimed_open_issues: Callable[[], list[dict]] | None = None,
     list_worktrees: Callable[[], list[dict]] | None = None,
     pr_state: Callable[[str, str], str | None] | None = None,
-    is_claimed: Callable[[str, int], bool] | None = None,
+    has_live_task: Callable[[str, int], bool] | None = None,
     release: Callable[[int, str], None] | None = None,
     remove_worktree: Callable[[dict], bool] | None = None,
     threshold_hours: float = STALE_THRESHOLD_HOURS,
@@ -753,7 +778,7 @@ def run_daily_sweep(
             stale = sweep_stale_claims(threshold_hours, list_claimed_open_issues, release, now)
         except gh_env.GhError as exc:
             notes.append(f"Stale claims not checked: {str(exc)[:200]}")
-    worktrees = sweep_worktrees(list_worktrees, pr_state, is_claimed, remove_worktree, backup, can_push=not pull_only)
+    worktrees = sweep_worktrees(list_worktrees, pr_state, has_live_task, remove_worktree, backup, can_push=not pull_only)
     try:
         simulators = sweep_simulators()
     except Exception as exc:  # noqa: BLE001 -- e.g. no Xcode on this machine; never stops the sweep

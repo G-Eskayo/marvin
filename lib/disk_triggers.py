@@ -112,13 +112,28 @@ def load_config() -> dict:
 
 # ── pre-flight ──────────────────────────────────────────────────────────────────────────────────────────────────
 
+def _orphan_worktrees_step() -> dict:
+    """Remove orphaned pipeline worktrees (clean, no PR, no live task, older than EMPTY_MIN_AGE_HOURS).
+    Returns {"freed_bytes": 0, "detail": "removed N orphaned worktree(s) …"} with no byte accounting,
+    matching the daily sweep's existing worktree-removal logging convention."""
+    result = cs.sweep_worktrees(can_push=not cs._is_pull_only())
+    removed = result.get("removed", [])
+    names = [Path(w["path"]).name for w in removed]
+    return {
+        "freed_bytes": 0,
+        "detail": f"removed {len(removed)} orphaned worktree(s): {', '.join(names[:3])}{'...' if len(names) > 3 else ''}"
+    }
+
+
 def reclaim() -> dict:
     """Everything already ruled disposable, in one pass: the sweep's first aid (old aerial videos, disk_trim's
-    allowlisted caches), merged PRs' worktrees on this Mac, old unused pytest temp folders (#866), and the download
-    cache back under its cap. No rule of its own. Each part is independent: one breaking is reported and the others still run."""
+    allowlisted caches), merged PRs' worktrees on this Mac, orphaned pipeline worktrees, old unused pytest temp
+    folders (#866), and the download cache back under its cap. No rule of its own. Each part is independent: one
+    breaking is reported and the others still run."""
     import download_cache
     parts = [("rebuildable", cs.clear_rebuildable),
              ("merged worktrees", lambda: clean_merged_worktrees()),
+             ("orphaned worktrees", lambda: _orphan_worktrees_step()),
              ("pytest temp", lambda: cs.trim_pytest_temps()),
              ("download cache", lambda: download_cache.enforce_cap())]
     freed, notes = 0, []

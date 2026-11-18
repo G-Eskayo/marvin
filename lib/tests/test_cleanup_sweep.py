@@ -132,24 +132,24 @@ def _wt(tmp_path, name="pipeline-g-eskayo-clarity-captions-13", repo="G-Eskayo/c
 
 @pytest.mark.parametrize("pr_state", ["MERGED", "CLOSED"])
 def test_resolved_pr_is_removed(tmp_path, pr_state):
-    action, _ = cs.decide_worktree(_wt(tmp_path, ahead=1), pr_state=pr_state, claimed=False)
+    action, _ = cs.decide_worktree(_wt(tmp_path, ahead=1), pr_state=pr_state, live_task=False)
     assert action == "remove"
 
 
 def test_open_pr_is_kept(tmp_path):
-    action, _ = cs.decide_worktree(_wt(tmp_path, ahead=1), pr_state="OPEN", claimed=False)
+    action, _ = cs.decide_worktree(_wt(tmp_path, ahead=1), pr_state="OPEN", live_task=False)
     assert action == "keep"
 
 
 def test_uncommitted_work_is_backed_up_never_plainly_removed_even_when_merged(tmp_path):
     # #629: "needs a look" was never looked at (43 worktrees, 11.8 GiB). Leftover edits go to a backup branch first.
-    action, reason = cs.decide_worktree(_wt(tmp_path, dirty=True), pr_state="MERGED", claimed=False)
+    action, reason = cs.decide_worktree(_wt(tmp_path, dirty=True), pr_state="MERGED", live_task=False)
     assert action == "backup"
     assert "uncommitted" in reason
 
 
 def test_commits_without_a_pr_are_backed_up(tmp_path):
-    action, reason = cs.decide_worktree(_wt(tmp_path, ahead=2), pr_state=None, claimed=False)
+    action, reason = cs.decide_worktree(_wt(tmp_path, ahead=2), pr_state=None, live_task=False)
     assert action == "backup"
     assert "no PR" in reason
 
@@ -157,41 +157,42 @@ def test_commits_without_a_pr_are_backed_up(tmp_path):
 def test_recent_leftover_work_is_left_alone_for_now(tmp_path):
     # A helper may still be working in it: only idle worktrees are backed up.
     action, reason = cs.decide_worktree(_wt(tmp_path, dirty=True, age_hours=cs.BACKUP_MIN_AGE_HOURS - 1),
-                                        pr_state=None, claimed=False)
+                                        pr_state=None, live_task=False)
     assert action == "review"
     assert "uncommitted" in reason
 
 
-@pytest.mark.parametrize("why", ["claimed", "open_pr", "in_use"])
+@pytest.mark.parametrize("why", ["live_task", "open_pr", "in_use"])
 def test_leftover_work_that_something_still_owns_is_never_touched(tmp_path, why):
     wt = _wt(tmp_path, dirty=True, ahead=1, age_hours=500)
     if why == "in_use":
         wt["in_use"] = True
-    action, _ = cs.decide_worktree(wt, pr_state="OPEN" if why == "open_pr" else None, claimed=why == "claimed")
+    action, _ = cs.decide_worktree(wt, pr_state="OPEN" if why == "open_pr" else None, live_task=why == "live_task")
     assert action in ("keep", "review")
 
 
 def test_a_process_inside_a_clean_merged_worktree_keeps_it(tmp_path):
     wt = _wt(tmp_path, age_hours=500)
     wt["in_use"] = True
-    assert cs.decide_worktree(wt, pr_state="MERGED", claimed=False)[0] == "keep"
+    assert cs.decide_worktree(wt, pr_state="MERGED", live_task=False)[0] == "keep"
 
 
 def test_empty_old_attempt_with_no_pr_is_removed(tmp_path):
-    action, _ = cs.decide_worktree(_wt(tmp_path, ahead=0, age_hours=48), pr_state=None, claimed=False)
+    action, _ = cs.decide_worktree(_wt(tmp_path, ahead=0, age_hours=48), pr_state=None, live_task=False)
     assert action == "remove"
 
 
 def test_a_ticket_that_just_started_is_not_mistaken_for_empty(tmp_path):
     # A fresh worktree has no PR, no commits, no changes -- exactly like an abandoned one.
-    young = cs.decide_worktree(_wt(tmp_path, age_hours=2), pr_state=None, claimed=False)
-    claimed = cs.decide_worktree(_wt(tmp_path, age_hours=48), pr_state=None, claimed=True)
+    # Age must be < EMPTY_MIN_AGE_HOURS (2h, the claim→dispatch race grace window).
+    young = cs.decide_worktree(_wt(tmp_path, age_hours=1), pr_state=None, live_task=False)
+    live_task_result = cs.decide_worktree(_wt(tmp_path, age_hours=48), pr_state=None, live_task=True)
     assert young[0] == "keep"
-    assert claimed[0] == "keep"
+    assert live_task_result[0] == "keep"
 
 
 def test_unknown_repo_is_kept(tmp_path):
-    action, _ = cs.decide_worktree(_wt(tmp_path, repo=None), pr_state=None, claimed=False)
+    action, _ = cs.decide_worktree(_wt(tmp_path, repo=None), pr_state=None, live_task=False)
     assert action == "keep"
 
 
@@ -213,7 +214,7 @@ def test_sweep_looks_up_each_worktree_in_its_own_repo(tmp_path):
     result = cs.sweep_worktrees(
         list_worktrees=lambda: [a, b],
         pr_state=pr_state,
-        is_claimed=lambda repo, n: False,
+        has_live_task=lambda repo, n: False,
         remove_worktree=lambda wt: removed.append(wt["path"]) or True,
     )
     assert ("G-Eskayo/clarity-captions", "pipeline/g-eskayo/clarity-captions#13") in asked
@@ -228,7 +229,7 @@ def test_sweep_reports_items_needing_review_and_failed_removals(tmp_path):
     result = cs.sweep_worktrees(
         list_worktrees=lambda: [dirty, stuck],
         pr_state=lambda repo, branch: "MERGED",
-        is_claimed=lambda repo, n: False,
+        has_live_task=lambda repo, n: False,
         remove_worktree=lambda wt: False,  # git refused
     )
     assert [r["path"] for r in result["review"]] == [dirty["path"], stuck["path"]]
@@ -280,11 +281,14 @@ def test_lists_real_worktrees_with_repo_and_state(tmp_path, monkeypatch):
     root = tmp_path / "wts"
     git("worktree", "add", "-q", "-b", "pipeline/g-eskayo/clarity-captions#13", str(root / "pipeline-g-eskayo-clarity-captions-13"))
     (root / "pipeline-g-eskayo-clarity-captions-13" / "new.txt").write_text("x")
-    (root / "not-a-git-dir").mkdir()
+    (root / "not-a-git-dir").mkdir()  # this will now be surfaced as "broken" (no .git)
     monkeypatch.setattr(cs, "worktree_roots", lambda: [root])  # never the real ~/Developer
     monkeypatch.setattr(cs, "_cwds_in_use", lambda: set())
 
-    [wt] = cs._default_list_worktrees()
+    worktrees = cs._default_list_worktrees()
+    # The real worktree and the broken non-git dir
+    assert len(worktrees) == 2
+    wt = [w for w in worktrees if not w.get("broken")][0]
     assert wt["repo"] == "G-Eskayo/clarity-captions"
     assert wt["branch"] == "pipeline/g-eskayo/clarity-captions#13"
     assert wt["clone"].resolve() == clone.resolve()
@@ -292,6 +296,9 @@ def test_lists_real_worktrees_with_repo_and_state(tmp_path, monkeypatch):
     assert wt["dirty"] is True
     assert wt["age_hours"] < 1
     assert wt["in_use"] is False
+    # The non-git dir should be marked as broken with a reason
+    broken = [w for w in worktrees if w.get("broken")][0]
+    assert broken["reason"] == "no .git file or directory"
 
 
 # ── logging (visibility standard matching cron_health.py) ──────────────────
@@ -302,7 +309,7 @@ def test_run_daily_sweep_writes_log(log_path, tmp_path):
         list_claimed_open_issues=lambda: [_issue(7, ["claimed:mac-mini"], updated_hours_ago=48)],
         list_worktrees=lambda: [wt],
         pr_state=lambda repo, branch: None,
-        is_claimed=lambda repo, n: False,
+        has_live_task=lambda repo, n: False,
         release=lambda n, m: None,
         remove_worktree=lambda w: True,
         now=NOW,
@@ -340,7 +347,7 @@ def test_run_daily_sweep_returns_summary_dict(log_path, tmp_path):
         list_claimed_open_issues=lambda: [_issue(7, ["claimed:mac-mini"], updated_hours_ago=48)],
         list_worktrees=lambda: [_wt(tmp_path)],
         pr_state=lambda repo, branch: "MERGED",
-        is_claimed=lambda repo, n: False,
+        has_live_task=lambda repo, n: False,
         release=lambda n, m: None,
         remove_worktree=lambda w: True,
         now=NOW,
@@ -612,7 +619,7 @@ def test_a_failed_push_means_no_backup_and_nothing_removed(tmp_path):
     result = cs.sweep_worktrees(
         list_worktrees=lambda: [{**wt, "repo": "G-Eskayo/marvin", "ahead": 0, "dirty": True, "age_hours": 500}],
         pr_state=lambda repo, branch: None,
-        is_claimed=lambda repo, n: False,
+        has_live_task=lambda repo, n: False,
         remove_worktree=lambda w: removed.append(w) or True,
         backup=lambda w: cs.backup_worktree(w, today="20261024", guard=lambda *a: True),
     )
@@ -642,7 +649,7 @@ def test_sweep_backs_up_then_removes_and_a_second_run_finds_nothing_left(tmp_pat
     monkeypatch.setattr(cs, "worktree_roots", lambda: [tmp_path / "wts"])
     monkeypatch.setattr(cs, "_cwds_in_use", lambda: set())
     monkeypatch.setattr(cs, "GITHUB_REPO_RE", __import__("re").compile(r"(origin)\.git$"))
-    kw = dict(pr_state=lambda repo, branch: None, is_claimed=lambda repo, n: False,
+    kw = dict(pr_state=lambda repo, branch: None, has_live_task=lambda repo, n: False,
               backup=lambda w: cs.backup_worktree(w, today="20261024", guard=lambda *a: True))
 
     first = cs.sweep_worktrees(**kw)
@@ -676,7 +683,7 @@ def test_a_folder_with_no_git_record_is_listed_never_deleted(tmp_path, monkeypat
     (broken / ".git").write_text("gitdir: /nowhere/.git/worktrees/x")
     (broken / "work.py").write_text("maybe the only copy")
     monkeypatch.setattr(cs, "worktree_roots", lambda: [root])
-    result = cs.sweep_worktrees(pr_state=lambda r, b: None, is_claimed=lambda r, n: False)
+    result = cs.sweep_worktrees(pr_state=lambda r, b: None, has_live_task=lambda r, n: False)
     assert [r["path"] for r in result["review"]] == [broken]
     assert "no git record" in result["review"][0]["reason"]
     assert (broken / "work.py").exists()
