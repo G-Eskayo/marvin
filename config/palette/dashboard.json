@@ -1,0 +1,77 @@
+{
+  "name": "MARVIN dashboard colour palette (boot and show_window tokens, #1148)",
+  "notes": "Extends the accessible colour pairs rule (marvin#1062, 2026-11-03) to dashboard CSS components. boot.css tokens on #0f1117 (light boot HUD); show_window.css tokens on #05040A (dark show windows). No glass/opacity pairs included: boot.css has no opacity effects, and show_window.css text in .show-card uses full color saturation without opacity modification. Glass effects may be added in a follow-up ticket if future CSS introduces glass backgrounds with opacity-adjusted text.",
+  "levels": {
+    "text": 4.5,
+    "ui": 3.0,
+    "pixel": 7.0
+  },
+  "pairs": [
+    {
+      "what": "boot.css --amber on boot background",
+      "fg": "#f0b32a",
+      "bg": "#0f1117",
+      "level": "text"
+    },
+    {
+      "what": "boot.css --orange on boot background",
+      "fg": "#ff6a1f",
+      "bg": "#0f1117",
+      "level": "text"
+    },
+    {
+      "what": "boot.css --red on boot background",
+      "fg": "#ff3b2f",
+      "bg": "#0f1117",
+      "level": "text"
+    },
+    {
+      "what": "boot.css --green on boot background",
+      "fg": "#54ff8a",
+      "bg": "#0f1117",
+      "level": "text"
+    },
+    {
+      "what": "boot.css --dim on boot background",
+      "fg": "#b89235",
+      "bg": "#0f1117",
+      "level": "text"
+    },
+    {
+      "what": "show_window.css --amber on show background",
+      "fg": "#f0b32a",
+      "bg": "#05040A",
+      "level": "text"
+    },
+    {
+      "what": "show_window.css --orange on show background",
+      "fg": "#ff6a1f",
+      "bg": "#05040A",
+      "level": "text"
+    },
+    {
+      "what": "show_window.css --red on show background",
+      "fg": "#ff3b2f",
+      "bg": "#05040A",
+      "level": "text"
+    },
+    {
+      "what": "show_window.css --green on show background",
+      "fg": "#54ff8a",
+      "bg": "#05040A",
+      "level": "text"
+    },
+    {
+      "what": "show_window.css --dim on show background",
+      "fg": "#b89235",
+      "bg": "#05040A",
+      "level": "text"
+    },
+    {
+      "what": "show_window.css --moon on show background",
+      "fg": "#cfd6e6",
+      "bg": "#05040A",
+      "level": "text"
+    }
+  ]
+}

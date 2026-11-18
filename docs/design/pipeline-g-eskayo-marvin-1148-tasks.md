@@ -1,0 +1,11 @@
+1. Add `config/palette/dashboard.json`: 13 pairs — 5 for `boot.css` tokens (`--amber`, `--orange`, `--red`, `--green`, `--dim`) on `#0f1117`; 6 for `show_window.css` tokens (`--amber`, `--orange`, `--red`, `--green`, `--dim`, `--moon`) on `#05040A`; 2 more for `--amber`/`--red` text inside `.show-card` (opacity ≈0.0157 white over `#05040A`). All at `fg`/old value (`#6b551f` for the two `--dim` pairs) to start red.
+2. Run `contrast.py check config/palette/*.json` + `pytest lib/tests/test_contrast.py::test_every_marvin_palette_meets_the_rule`; confirm it fails on the two `--dim` pairs (2.86:1-ish on `#05040A`, similarly below 4.5 on `#0f1117`).
+3. Change `--dim: #6b551f` → `--dim: #b89235` in `dashboard/src/components/boot.css:3` and `dashboard/src/components/show_window.css:6`. Update the two `--dim` pairs in `dashboard.json` to `#b89235`.
+4. Re-run step 2's commands; confirm pass; record the exact ratios for the PR body.
+5. Update `dashboard/test/show_window_view.test.jsx:23`'s literal `'--dim: #6b551f'` → `'--dim: #b89235'`; run the dashboard vitest suite.
+6. Add `lib/tests/test_contrast.py` to `RULES` in `lib/affected_tests.py:40`, with a short comment (mirrors `test_instance*.py`'s rationale: it judges every file in `config/palette/`, invisible to the name-matching heuristic). Verify with `affected_tests.py list <base>` on a diff touching only `config/palette/dashboard.json`.
+7. Plant a temporary failing pair, confirm `pytest lib/tests/test_contrast.py` fails, revert — the acceptance criterion's demonstration.
+8. `rg '6b551f' dashboard/src` → confirm empty.
+9. Resolve the `glass-scope` Decision; adjust `dashboard.json` accordingly (add or explicitly document the omission in its `notes` field).
+10. Launch the dashboard (via `run` skill), open a `marvin show` window, capture before/after screenshots of the header tag and history strip; attach via `marvin-show --pr N` per `docs/agents/showing-things.md`.
+11. Open the PR: measured ratios, screenshots, the Decisions block from above, "Closes #1148".

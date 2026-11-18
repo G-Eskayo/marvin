@@ -37,7 +37,7 @@ import tempfile
 from collections import defaultdict, deque
 from pathlib import Path
 
-RULES = ["lib/tests/test_instance.py", "lib/tests/test_instance_move.py"]
+RULES = ["lib/tests/test_instance.py", "lib/tests/test_instance_move.py", "lib/tests/test_contrast.py"]  # test_contrast judges all config/palette files
 RUNS_EVERYTHING = re.compile(r"^conftest\.py$|^pytest\.ini$|^requirements-ci\.txt$|^lib/affected_tests\.py$|^\.github/")
 _TEST = re.compile(r"(^|/)(test_[^/]*|[^/]*_test)\.py$")
 _TOO_COMMON = {"__init__.py"}  # a name every package has says nothing about who reads it

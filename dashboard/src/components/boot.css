@@ -1,6 +1,6 @@
 /* Boot sequence (#431). Ported from docs/design/celestial-navigation/boot.html (v7, #428). Scoped to .boot-root. */
 .boot-root {
-  --dash: #0f1117; --amber: #f0b32a; --orange: #ff6a1f; --red: #ff3b2f; --green: #54ff8a; --dim: #6b551f;
+  --dash: #0f1117; --amber: #f0b32a; --orange: #ff6a1f; --red: #ff3b2f; --green: #54ff8a; --dim: #b89235;
   position: fixed; inset: 0; z-index: 9999; background: var(--dash); overflow: hidden; cursor: default; user-select: none;
 }
 .boot-root svg.boot-sky { position: absolute; inset: 0; width: 100%; height: 100%; }

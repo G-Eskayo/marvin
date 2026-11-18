@@ -128,3 +128,37 @@ def test_every_marvin_palette_meets_the_rule():
     for f in palettes:
         r = cx.check(json.loads(f.read_text()))
         assert r["ok"], f"{f.name}: " + "; ".join(r["failures"])
+
+
+def test_ui_level_tokens_are_not_used_for_text():
+    """Tokens marked as 'ui' (3:1) must not be used for text color; text needs 4.5:1.
+    If a token appears in `color:` rules in CSS, it must be marked 'text', not 'ui'."""
+    import re
+    palette_file = REPO / "config" / "palette" / "dashboard.json"
+    palette = json.loads(palette_file.read_text())
+
+    ui_tokens = {pair["what"].split()[-2]: pair["fg"]  # Extract token name (--orange, etc)
+                 for pair in palette["pairs"] if pair["level"] == "ui"}
+
+    if not ui_tokens:
+        return  # No ui tokens to check
+
+    css_files = list((REPO / "dashboard" / "src" / "components").glob("*.css"))
+    text_color_uses = {}
+
+    for css_file in css_files:
+        css_content = css_file.read_text()
+        # Find all 'color: var(--...)' patterns
+        for match in re.finditer(r'color:\s*var\(--([a-z-]+)\)', css_content):
+            token_name = f"--{match.group(1)}"
+            if token_name not in text_color_uses:
+                text_color_uses[token_name] = css_file.name
+
+    # Check that no ui-level tokens are used for text color
+    for token, css_file in text_color_uses.items():
+        if token in ui_tokens:
+            raise AssertionError(
+                f"Token {token} is marked as 'ui' (3:1 contrast) in {palette_file.name}, "
+                f"but is used for text color (requires 4.5:1) in {css_file}. "
+                f"Change its level to 'text' in the palette."
+            )
