@@ -11,6 +11,23 @@ function plain(text) {
     .trim()
 }
 
+// Convert a heading text to a URL-safe slug for use in anchors.
+export function slugifyHeading(text) {
+  return text
+    .toLowerCase()
+    .normalize('NFD')
+    .replace(/[̀-ͯ]/g, '') // remove accents
+    .replace(/[^a-z0-9]+/g, '-') // replace non-alphanumeric with dashes
+    .replace(/^-+|-+$/g, '') // strip leading/trailing dashes
+}
+
+// Find the heading index that matches an anchor slug (case-insensitive).
+export function headingIndexForAnchor(anchor, outline) {
+  if (!anchor) return null
+  const normalized = anchor.toLowerCase()
+  return outline.find((h) => slugifyHeading(h.text) === normalized)?.index ?? null
+}
+
 function* headingLines(markdown) {
   let fence = null
   const lines = markdown.split('\n')

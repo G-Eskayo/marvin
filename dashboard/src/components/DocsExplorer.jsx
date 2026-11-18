@@ -6,7 +6,7 @@ import { extractOutline } from '../lib/docs_text.js'
 import { isNotebookPath, notebookToMarkdown } from '../lib/ipynb.js'
 import { docsCacheFrom, savedCopyLine } from '../lib/docs_cache.js'
 import { getCachedFile, putCachedFile, clearCachedFiles, prefetchTextFiles } from '../lib/outbox_text_cache.js'
-import { KINDS, KIND_LABEL, groupTree, visibleKinds, toggleChip, mainView, searchGroups, countLine, overviewPicks, formatDay, matchedBy, deliverableSummary, rankedResults } from '../lib/docs_view.js'
+import { KINDS, KIND_LABEL, groupTree, visibleKinds, toggleChip, mainView, searchGroups, countLine, overviewPicks, formatDay, matchedBy, deliverableSummary, rankedResults, resolveJumpIndex } from '../lib/docs_view.js'
 import { formatSize as kindSize } from '../lib/file_kinds.js'
 import { DeliverablesGrid, DeliverableHeader, FolderGrid, TicketChip, Thumbs } from './DocsDeliverables.jsx'
 import { cleanIpcError } from '../lib/ipcError.js'
@@ -606,7 +606,7 @@ export default function DocsExplorer({ nav, onOpenBoard, onOpenTicket, onOpenPr 
   const [query, setQuery] = useState('')
   const [searchState, setSearchState] = useState(null)
   const [showResults, setShowResults] = useState(false)
-  const [pendingHeading, setPendingHeading] = useState(null)
+  const [pendingJump, setPendingJump] = useState(null)
   const [source, setSource] = useState(null)
   // #565: a GitHub-only project's saved copy and its one open-time check ({ copy, status }).
   const [copyCheck, setCopyCheck] = useState(null)
@@ -714,16 +714,16 @@ export default function DocsExplorer({ nav, onOpenBoard, onOpenTicket, onOpenPr 
   )
 
   // Open any doc, in any project (from a link in text or from the Related list).
-  function openDoc(project, path) {
+  function openDoc(project, path, anchor = null) {
     setQuery('')
     setShowResults(false)
     if (project !== selectedRepo) {
       setSelectedRepo(project)
       loadTree(project)
     }
-    openFile(project, path)
+    openFile(project, path, anchor)
   }
-  const onLink = (link) => (link.type === 'ticket' ? onOpenTicket?.(link.repo, link.number) : openDoc(link.project, link.path))
+  const onLink = (link) => (link.type === 'ticket' ? onOpenTicket?.(link.repo, link.number) : openDoc(link.project, link.path, link.anchor))
 
   // Deep link from an Activity board, an MR, or an old Files link: open that project's card, doc or deliverable.
   useEffect(() => {
@@ -779,12 +779,13 @@ export default function DocsExplorer({ nav, onOpenBoard, onOpenTicket, onOpenPr 
     el?.scrollIntoView({ block: 'start', behavior: 'smooth' })
   }
 
-  // After a file opened from a search result renders, scroll to the matched section.
+  // After a file opens with an anchor in pendingJump, resolve it and jump to that heading.
   useEffect(() => {
-    if (pendingHeading === null || content === null) return
-    if (pendingHeading >= 0) jumpToHeading(pendingHeading)
-    setPendingHeading(null)
-  }, [content, pendingHeading])
+    if (pendingJump === null || content === null) return
+    const headingIndex = resolveJumpIndex(content, pendingJump)
+    if (headingIndex !== null) jumpToHeading(headingIndex)
+    setPendingJump(null)
+  }, [content, pendingJump])
 
   async function handleRefresh() {
     setRefreshing(true)
@@ -866,12 +867,20 @@ export default function DocsExplorer({ nav, onOpenBoard, onOpenTicket, onOpenPr 
     }
   }
 
-  function openFile(repoName, filePath, headingIndex = null) {
+  // Open a doc file with optional anchor to jump to. Stale-response guard ensures a fast later open
+  // doesn't get clobbered by a slow earlier one (e.g. user clicks file A, then file B before A loads).
+  const docReq = useRef(0)
+  function openFile(repoName, filePath, anchor = null) {
+    const req = ++docReq.current
     setSel({ type: 'doc', path: filePath })
     setFile(null)
     setError(null)
     setShowResults(false)
-    setPendingHeading(headingIndex)
+    if (anchor !== null && anchor !== undefined) {
+      setPendingJump(typeof anchor === 'number' ? { index: anchor } : { anchor })
+    } else {
+      setPendingJump(null)
+    }
     const key = `${repoName}\0${filePath}`
     if (docTexts.has(key)) {
       setContent(docTexts.get(key)) // read before: one render, no IPC; a docs trigger clears these
@@ -883,11 +892,14 @@ export default function DocsExplorer({ nav, onOpenBoard, onOpenTicket, onOpenPr 
     window.api.docs
       .content(repoName, filePath)
       .then((text) => {
-        rememberDoc(key, text)
-        setContent(text)
+        if (req === docReq.current) {
+          rememberDoc(key, text)
+          setContent(text)
+          setLoading(false)
+        }
       })
-      .catch((err) => setError(cleanIpcError(err)))
-      .finally(() => setLoading(false))
+      .catch((err) => req === docReq.current && setError(cleanIpcError(err)))
+      .finally(() => req === docReq.current && setLoading(false))
   }
 
   // A deliverable file opens in the main pane through #402's FileView, as a doc does.
@@ -1045,7 +1057,7 @@ export default function DocsExplorer({ nav, onOpenBoard, onOpenTicket, onOpenPr 
         error={null}
         scrollRef={scrollRef}
         onJump={jumpToHeading}
-        ctx={docCtx}
+        ctx={docCtx ? { ...docCtx, docPath: selectedPath } : null}
         onLink={onLink}
         loadImage={selectedRepo && selectedPath ? (src) => window.api.docs.image(selectedRepo, selectedPath, src) : undefined}
         rel={rel}

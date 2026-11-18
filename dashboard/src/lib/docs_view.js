@@ -2,6 +2,8 @@
 // Docs / Decisions / Deliverables) → Folder or file (tree) → Content (main pane). One control per level: the chip row
 // is the only thing that chooses a kind, while browsing and while searching. Pure functions, so the rules are tested.
 
+import { extractOutline, headingIndexForAnchor } from './docs_text.js'
+
 export const KINDS = ['docs', 'decisions', 'deliverables']
 export const KIND_LABEL = { docs: 'Docs', decisions: 'Decisions', deliverables: 'Deliverables' }
 const ADR = 'docs/adr/'
@@ -122,3 +124,13 @@ export function deliverableSummary(entry) {
 }
 
 export const docPaths = (tree) => flat(tree).map((e) => e.path)
+
+// Resolve a pendingJump into a heading index. Handles both { index } (numeric) and { anchor } (string).
+// Returns the index of the matching heading, or null if not found or no jump to resolve.
+export function resolveJumpIndex(content, pendingJump) {
+  if (!pendingJump) return null
+  if (typeof pendingJump.index === 'number') return pendingJump.index
+  if (!content || !pendingJump.anchor) return null
+  const outline = extractOutline(content)
+  return headingIndexForAnchor(pendingJump.anchor, outline)
+}

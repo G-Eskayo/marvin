@@ -78,6 +78,82 @@ describe('CompletedView', () => {
   })
 })
 
+describe('resolveLink in Markdown', () => {
+  const ctx = { project: 'marvin', repo: 'G-Eskayo/marvin', docPath: 'docs/README.md' }
+
+  it('recognizes a dash: doc link and resolves any relative hrefs in it', () => {
+    const html = renderToStaticMarkup(
+      <Markdown content={'[Plan](dash://doc/marvin/docs/plans/plan.md)'} ctx={ctx} />
+    )
+    expect(html).toContain('bg-blue-950')
+  })
+
+  it('recognizes a dash: ticket link and renders it as an in-app pill', () => {
+    const html = renderToStaticMarkup(
+      <Markdown content={'[Ticket](#12) [Blocked by #12](dash://ticket/G-Eskayo/marvin/12)'} ctx={ctx} />
+    )
+    expect(html).toContain('Blocked by #12')
+    expect(html).toContain('bg-blue-950')
+  })
+
+  it('resolves a relative link (plan.md#section) from docs/README.md to docs/plan.md#section', () => {
+    const html = renderToStaticMarkup(
+      <Markdown content={'[Plan](plan.md#section)'} ctx={ctx} />
+    )
+    expect(html).toContain('bg-blue-950')
+    expect(html).toContain('title="Open docs/plan.md#section"')
+  })
+
+  it('resolves a parent-dir link (../CONTEXT.md) from docs/README.md to CONTEXT.md with project', () => {
+    const html = renderToStaticMarkup(
+      <Markdown content={'[Context](../CONTEXT.md)'} ctx={ctx} />
+    )
+    expect(html).toContain('bg-blue-950')
+    expect(html).toContain('title="Open CONTEXT.md"')
+  })
+
+  it('includes project and anchor in resolved doc links', () => {
+    const html = renderToStaticMarkup(
+      <Markdown content={'[Test](../test.md#intro)'} ctx={ctx} />
+    )
+    expect(html).toContain('bg-blue-950')
+    expect(html).toContain('title="Open test.md#intro"')
+  })
+
+  it('handles leading slash for root-relative links: /CONTEXT.md from any doc', () => {
+    const html = renderToStaticMarkup(
+      <Markdown content={'[Root context](/CONTEXT.md)'} ctx={{...ctx, docPath: 'docs/adr/0033.md'}} />
+    )
+    expect(html).toContain('bg-blue-950')
+    expect(html).toContain('title="Open CONTEXT.md"')
+  })
+
+  it('resolves same-doc anchor links (#section) as in-app pills', () => {
+    const html = renderToStaticMarkup(
+      <Markdown content={'[Jump to section](#my-section)'} ctx={ctx} />
+    )
+    expect(html).toContain('bg-blue-950')
+    expect(html).toContain('title="Open docs/README.md#my-section"')
+  })
+
+  it('renders same-doc anchor links from root-level docs', () => {
+    const rootCtx = { ...ctx, docPath: 'CONTEXT.md' }
+    const html = renderToStaticMarkup(
+      <Markdown content={'[Intro](#intro)'} ctx={rootCtx} />
+    )
+    expect(html).toContain('bg-blue-950')
+    expect(html).toContain('title="Open CONTEXT.md#intro"')
+  })
+
+  it('leaves external URLs alone', () => {
+    const html = renderToStaticMarkup(
+      <Markdown content={'[GitHub](https://github.com)'} ctx={ctx} />
+    )
+    expect(html).toContain('href="https://github.com"')
+    expect(html).toContain('target="_blank"')
+  })
+})
+
 import TicketAgentsPanel from '../src/components/TicketAgentsPanel.jsx'
 
 describe('TicketAgentsPanel', () => {

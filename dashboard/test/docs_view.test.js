@@ -1,6 +1,7 @@
 // #570: the Docs tab's drill-down rules (src/lib/docs_view.js). One chip row chooses the kind, while browsing and searching.
-import { describe, it, expect } from 'vitest'
-import { groupTree, visibleKinds, toggleChip, mainView, searchGroups, hiddenNote, countLine, overviewPicks, formatDay, matchedBy, deliverableSummary, resultKind, rankedResults } from '../src/lib/docs_view.js'
+import { describe, it, expect, beforeEach } from 'vitest'
+import { groupTree, visibleKinds, toggleChip, mainView, searchGroups, hiddenNote, countLine, overviewPicks, formatDay, matchedBy, deliverableSummary, resultKind, rankedResults, resolveJumpIndex } from '../src/lib/docs_view.js'
+import { extractOutline } from '../src/lib/docs_text.js'
 
 const tree = [
   { path: 'PROJECT.md', label: 'Project card' },
@@ -136,5 +137,78 @@ describe('rankedResults (#611)', () => {
     const copy = JSON.parse(JSON.stringify(results))
     rankedResults(results, new Set())
     expect(results).toEqual(copy)
+  })
+})
+
+describe('resolveJumpIndex', () => {
+  const markdown = `# Introduction
+
+Some intro text.
+
+## Getting Started
+
+How to get started.
+
+## Installation
+
+How to install.
+
+# Advanced
+
+Advanced topics.
+
+## Configuration
+
+How to configure.
+`
+
+  it('returns the index of the matching heading when anchor is set', () => {
+    const result = resolveJumpIndex(markdown, { anchor: 'getting-started' })
+    expect(result).toBe(1)
+  })
+
+  it('returns null when anchor is not found', () => {
+    const result = resolveJumpIndex(markdown, { anchor: 'nonexistent' })
+    expect(result).toBeNull()
+  })
+
+  it('returns null when pendingJump is null', () => {
+    const result = resolveJumpIndex(markdown, null)
+    expect(result).toBeNull()
+  })
+
+  it('returns null when content is empty', () => {
+    const result = resolveJumpIndex('', { anchor: 'anything' })
+    expect(result).toBeNull()
+  })
+
+  it('handles anchors that are case-insensitive', () => {
+    const result = resolveJumpIndex(markdown, { anchor: 'CONFIGURATION' })
+    expect(result).toBe(4)
+  })
+
+  it('returns null when pendingJump has no anchor', () => {
+    const result = resolveJumpIndex(markdown, {})
+    expect(result).toBeNull()
+  })
+
+  it('returns the resolved index from the markdown outline', () => {
+    const result = resolveJumpIndex(markdown, { anchor: 'advanced' })
+    expect(result).toBe(3)
+  })
+
+  it('handles numeric index passed directly (from search results)', () => {
+    const result = resolveJumpIndex(markdown, { index: 2 })
+    expect(result).toBe(2)
+  })
+
+  it('returns 0 when numeric index is 0 (not falsy)', () => {
+    const result = resolveJumpIndex(markdown, { index: 0 })
+    expect(result).toBe(0)
+  })
+
+  it('prefers numeric index over anchor if both are present', () => {
+    const result = resolveJumpIndex(markdown, { index: 1, anchor: 'advanced' })
+    expect(result).toBe(1)
   })
 })

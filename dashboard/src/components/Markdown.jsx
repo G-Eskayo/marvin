@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react'
 import ReactMarkdown from 'react-markdown'
 import remarkGfm from 'remark-gfm'
 import { linkify } from '../lib/linkify.js'
+import { resolveDocLink } from '../lib/doc_links.js'
 
 export const markdownComponents = {
   h1: (props) => <h1 className="mb-3 mt-6 text-xl font-semibold text-white first:mt-0" {...props} />,
@@ -55,6 +56,15 @@ export function parseDashLink(href) {
   return null
 }
 
+// Resolve a link: try dash: links first, then resolve relative doc links if docPath is available.
+function resolveLink(href, docPath, project) {
+  const dash = href && parseDashLink(href)
+  if (dash) return dash
+  if (!docPath) return null
+  const resolved = resolveDocLink(href, docPath)
+  return resolved ? { ...resolved, project } : null
+}
+
 // Renders markdown with ticket / ADR references turned into links that stay inside the dashboard.
 // `ctx` says which project the text belongs to (see relations:context); `onLink` receives the click.
 // A repo-relative image in a README (docs/images/x.png) points at the repo, not at the app: resolve it on GitHub.
@@ -97,19 +107,19 @@ export default function Markdown({ content, ctx, onLink, loadImage, onOpenImage 
     ...markdownComponents,
     img: ({ src, alt }) => <MarkdownImage src={src} alt={alt} repo={ctx?.repo} loadImage={loadImage} onOpenImage={onOpenImage} />,
     a: ({ href, children, ...rest }) => {
-      const dash = href && parseDashLink(href)
-      if (dash) {
+      const resolved = resolveLink(href, ctx?.docPath, ctx?.project)
+      if (resolved) {
         return (
           <a
             href="#"
             onClick={(e) => {
               e.preventDefault()
               // A folder or file on this Mac opens straight from here, wherever the markdown is shown.
-              if (dash.type === 'file') window.api?.docs?.openLink?.(dash.path)?.catch?.(() => {})
-              else onLink?.(dash)
+              if (resolved.type === 'file') window.api?.docs?.openLink?.(resolved.path)?.catch?.(() => {})
+              else onLink?.(resolved)
             }}
             className="rounded bg-blue-950 px-1 text-blue-300 no-underline hover:bg-blue-900"
-            title={dash.type === 'ticket' ? `Open ticket #${dash.number}` : dash.type === 'file' ? `Open on this Mac: ${dash.path}` : `Open ${dash.path}`}
+            title={resolved.type === 'ticket' ? `Open ticket #${resolved.number}` : resolved.type === 'file' ? `Open on this Mac: ${resolved.path}` : resolved.type === 'doc' ? `Open ${resolved.path}${resolved.anchor ? `#${resolved.anchor}` : ''}` : `Open ${resolved.path}`}
           >
             {children}
           </a>
