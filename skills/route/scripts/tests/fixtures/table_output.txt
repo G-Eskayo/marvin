@@ -1,0 +1,8 @@
+INTENT        PROFILE  MODEL                      ALIAS            SAVINGS
+------------  -------  -------------------------  ---------------  ----------------------------------------------------------------------------
+recall        marvin   default                    claude-recall    none (session model; correctness over cost)
+research      marvin   claude-haiku-4-5-20251001  claude-research  ~60% vs MARVIN + Sonnet
+coding        lean     default                    claude-code      ~9-10% vs MARVIN + Sonnet on simple coding tasks; not reliable on hard tasks
+architecture  marvin   default                    claude-arch      baseline (optimal for this task type)
+
+Keyword threshold: 2 hits required to override default ('architecture').
