@@ -18,6 +18,7 @@ import { groupPrs, allView, projectOfPr, openLede, helperNames, helperFor, isCol
 import { readSaved, writeSaved } from '../lib/saved_state.js'
 import { GroupingToggle, ProjectGroup, HelperChip } from './MrGroups.jsx'
 import { nameOf } from '../lib/project_names.js'
+import { selectedAfterRefresh } from '../lib/selected_after_refresh.js'
 
 const MR_LIST_REFRESH_MS = 120000
 // By project's collapse choices (marvin#848): kept in saved state; before you choose, groups with nothing for you start
@@ -682,6 +683,45 @@ function OpenPrs({ nav, onOpenDocs, onOpenBoard, onOpenTicket, onCount }) {
   const [notice, setNotice] = useState(null)
   useEffect(() => window.api.mr.onCorrected?.((c) => setNotice({ ...c, at: Date.now() })), [])
 
+  // Track the selected PR so we can decide what to do when it disappears from the list (marvin#810).
+  const selectedRef = useRef(null)
+  selectedRef.current = selected
+  // Prevent duplicate in-flight historyDetail calls for the same PR (marvin#810).
+  const fetchingDetailFor = useRef(null)
+
+  // Apply a fresh PR list and handle the selected PR's state based on whether it's still open, closed, or unknown.
+  function applyFreshList(list, status) {
+    setPrs(list)
+    // Treat {} (no status info) as successful list with no errors
+    const errors = status === null ? null : (status?.errors ?? [])
+    const strategy = selectedAfterRefresh(selectedRef.current, list, errors)
+
+    if (strategy === 'open') {
+      // PR is in the fresh list: use it
+      const fresh = list.find((p) => p.key === selectedRef.current.key)
+      setSelected(fresh)
+    } else if (strategy === 'check') {
+      // PR disappeared but list fetch succeeded: check if it was closed/reopened
+      const url = selectedRef.current.url
+      const key = selectedRef.current.key
+      if (fetchingDetailFor.current === url) return // Already in flight
+      fetchingDetailFor.current = url
+      window.api.mr.historyDetail(url)
+        .then((fresh) => {
+          if (fetchingDetailFor.current === url && selectedRef.current?.key === key) {
+            setSelected(fresh)
+          }
+        })
+        .catch(() => {
+          // historyDetail failed: can't determine state, keep showing the last view
+        })
+        .finally(() => {
+          if (fetchingDetailFor.current === url) fetchingDetailFor.current = null
+        })
+    }
+    // strategy === 'unknown' or 'none': do nothing, keep the existing selected view
+  }
+
   function reload() {
     window.api.mr.projects?.().then(setProjects).catch(() => setProjects(null))
     window.api.mr.helperTabs?.().then((t) => setHelperTabs(Array.isArray(t) ? t : [])).catch(() => setHelperTabs([]))
@@ -690,15 +730,23 @@ function OpenPrs({ nav, onOpenDocs, onOpenBoard, onOpenTicket, onCount }) {
     window.api.mr
       .list()
       .then((list) => {
-        setPrs(list)
-        // An open detail view follows the list (a correction, finished checks); a PR gone from it keeps its last view.
-        setSelected((cur) => (cur ? list.find((p) => p.key === cur.key) || cur : cur))
         onCount?.(list.length)
-        window.api.mr.listStatus?.().then((st) => {
+        // Apply the list immediately, then try to get status if available
+        const handleStatus = (st) => {
           setFetchStatus(st)
           // #422: an unread list is "?", never a reassuring 0.
           if (st?.errors?.length && list.length === 0) onCount?.('?')
-        }).catch(() => setFetchStatus(null))
+          applyFreshList(list, st)
+        }
+        if (window.api.mr.listStatus) {
+          window.api.mr.listStatus?.().then(handleStatus).catch(() => {
+            setFetchStatus(null)
+            applyFreshList(list, null)
+          })
+        } else {
+          // listStatus is not available: apply with successful (no errors) status
+          handleStatus({})
+        }
         // Opening this list is what "seen" means for the tab's status dot
         // (App.jsx) -- mark every currently-listed PR, not just ones you
         // click into, since the dot is about "have you looked at the
@@ -752,8 +800,8 @@ function OpenPrs({ nav, onOpenDocs, onOpenBoard, onOpenTicket, onCount }) {
     window.api.mr
       .list()
       .then((list) => {
-        setPrs(list)
-        setSelected((cur) => (cur ? list.find((p) => p.key === cur.key) || cur : cur))
+        // Pass { errors: [] } to indicate list fetch succeeded with no errors
+        applyFreshList(list, { errors: [] })
       })
       .catch(() => {})
   }
