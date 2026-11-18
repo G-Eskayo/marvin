@@ -452,6 +452,11 @@ export function describeApproveFailure(status, body) {
   return `${body.code} at ${body.stage}: ${body.message}${next}. ${body.remediation ?? ''}`.trim()
 }
 
+// Turns a deny webhook failure into a readable message.
+export function describeDenyFailure(status, body) {
+  return body?.error || `Webhook call failed: ${status}`
+}
+
 export async function approveMr(prUrl, webhookUrl, post) {
   const response = await post(webhookUrl, { pr_url: prUrl })
   if (!response.ok) {
@@ -485,7 +490,13 @@ export async function denyMr({ prUrl, ticketNumber, action, reasons, comment }, 
     comment
   })
   if (!response.ok) {
-    throw new Error(`Webhook call failed: ${response.status}`)
+    let body = null
+    try {
+      body = await response.json()
+    } catch {
+      // not JSON (or no body): fall back to the bare status below
+    }
+    throw new Error(describeDenyFailure(response.status, body))
   }
   return response
 }

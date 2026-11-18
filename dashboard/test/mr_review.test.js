@@ -7,7 +7,8 @@ import {
   listPipelinePrs,
   sentBackKeys,
   approveMr,
-  denyMr
+  denyMr,
+  describeDenyFailure
 } from '../electron/main/mr_review.js'
 
 const PIPELINE_BODY = `Closes G-Eskayo/marvin#42
@@ -378,6 +379,19 @@ describe('approveMr', () => {
   })
 })
 
+describe('describeDenyFailure', () => {
+  it('returns the error message from the body when present', () => {
+    const message = describeDenyFailure(500, { error: 'PR is not open: MERGED' })
+    expect(message).toBe('PR is not open: MERGED')
+  })
+
+  it('falls back to the bare status when body or error is missing', () => {
+    expect(describeDenyFailure(500, null)).toBe('Webhook call failed: 500')
+    expect(describeDenyFailure(500, {})).toBe('Webhook call failed: 500')
+    expect(describeDenyFailure(404, undefined)).toBe('Webhook call failed: 404')
+  })
+})
+
 describe('denyMr', () => {
   it('posts the deny action, ticket number, reasons, and comment to the webhook', async () => {
     const post = vi.fn().mockResolvedValue({ ok: true, status: 200 })
@@ -402,7 +416,7 @@ describe('denyMr', () => {
   })
 
   it('throws when the webhook call fails, so the UI can surface it', async () => {
-    const post = vi.fn().mockResolvedValue({ ok: false, status: 500 })
+    const post = vi.fn().mockResolvedValue({ ok: false, status: 500, json: async () => ({}) })
     await expect(
       denyMr(
         { prUrl: 'https://x/71', ticketNumber: 42, action: 'drop', reasons: [], comment: '' },
@@ -410,6 +424,28 @@ describe('denyMr', () => {
         post
       )
     ).rejects.toThrow('Webhook call failed: 500')
+  })
+
+  it('surfaces the server error message from the JSON body when available', async () => {
+    const post = vi.fn().mockResolvedValue({ ok: false, status: 500, json: async () => ({ error: 'PR is not open: MERGED' }) })
+    await expect(
+      denyMr(
+        { prUrl: 'https://x/71', ticketNumber: 42, action: 'drop', reasons: [], comment: '' },
+        'http://localhost:7878/deny',
+        post
+      )
+    ).rejects.toThrow('PR is not open: MERGED')
+  })
+
+  it('falls back to the bare status when the body is not JSON', async () => {
+    const post = vi.fn().mockResolvedValue({ ok: false, status: 502, json: async () => { throw new Error('not json') } })
+    await expect(
+      denyMr(
+        { prUrl: 'https://x/71', ticketNumber: 42, action: 'drop', reasons: [], comment: '' },
+        'http://localhost:7878/deny',
+        post
+      )
+    ).rejects.toThrow('Webhook call failed: 502')
   })
 })
 

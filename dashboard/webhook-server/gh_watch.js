@@ -25,7 +25,7 @@ export function newestIdentity(body) {
   return number === undefined || !updatedAt ? undefined : `${number}@${updatedAt}`
 }
 
-export function createChangeDetector({ probe, onChange }) {
+export function createChangeDetector({ probe, onChange, identity = newestIdentity, getKnownIdentity = null }) {
   const seen = new Map() // repo -> { etag, identity }
 
   // Returns how many repos GitHub answered for (200 or 304): marvin#954's "the Mini is still looking" signal.
@@ -44,10 +44,14 @@ export function createChangeDetector({ probe, onChange }) {
       }
       if (res.status === 200 || res.status === 304) answered += 1
       if (res.status !== 200) continue // 304 = unchanged; anything else = ignore
-      const identity = newestIdentity(res.body)
-      if (identity === undefined) continue // not an issue list: keep the last state
-      seen.set(repo, { etag: res.etag ?? previous?.etag, identity })
-      if (previous !== undefined && previous.identity !== identity) onChange(repo)
+      const id = identity(res.body)
+      if (id === undefined) continue // not an issue list: keep the last state
+      seen.set(repo, { etag: res.etag ?? previous?.etag, identity: id })
+      // marvin#620: for first-sight reengaged PRs, compare against the stored head, not against undefined
+      if (previous === undefined && getKnownIdentity) {
+        const known = getKnownIdentity(repo)
+        if (known !== null && known !== id) onChange(repo)
+      } else if (previous !== undefined && previous.identity !== id) onChange(repo)
     }
     return answered
   }
@@ -84,14 +88,37 @@ export function createTreeProbe(env = process.env, doFetch = fetch) {
   }
 }
 
+// PR head commit probe: the same conditional GET on a single PR's head commit SHA.
+// Compared with newestIdentity, this tells whether a PR was pushed to (head changed).
+export const pullHeadEndpoint = (repo, number) => `https://api.github.com/repos/${repo}/pulls/${number}`
+export function headIdentity(body) {
+  if (typeof body !== 'object' || !body) return undefined
+  const sha = body.head?.sha ?? null
+  return sha !== null ? String(sha) : undefined
+}
+export function createPullHeadProbe(env = process.env, doFetch = fetch) {
+  return async (prUrl, etag) => {
+    const m = typeof prUrl === 'string' ? prUrl.match(/^https:\/\/github\.com\/([\w.-]+\/[\w.-]+)\/pull\/(\d+)/) : null
+    if (!m) return { status: 400, etag: undefined }
+    const headers = { Accept: 'application/vnd.github+json', 'User-Agent': 'marvin-dashboard-watch' }
+    if (env.GH_TOKEN) headers.Authorization = `Bearer ${env.GH_TOKEN}`
+    if (etag) headers['If-None-Match'] = etag
+    const res = await doFetch(pullHeadEndpoint(m[1], m[2]), { headers })
+    const out = { status: res.status, etag: res.headers.get('etag') || undefined }
+    if (res.status === 200) out.body = await res.json()
+    return out
+  }
+}
+
 // onTick(answered): after each round, how many repos GitHub answered for (a throwing onTick never stops the watch).
-export function startChangeWatch({ getRepos, probe, ping, intervalMs = 20_000, setIntervalFn = setInterval, onTick = null }) {
-  const detector = createChangeDetector({ probe, onChange: (repo) => ping(repo) })
+export function startChangeWatch({ getRepos, probe, ping, identity = newestIdentity, skip = () => false, intervalMs = 20_000, setIntervalFn = setInterval, onTick = null, getKnownIdentity = null }) {
+  const detector = createChangeDetector({ probe, onChange: (repo) => ping(repo), identity, getKnownIdentity })
   let running = false
   const run = async () => {
     if (running) return // a slow tick must not stack
     running = true
     try {
+      if (skip()) return
       const answered = await detector.tick(getRepos())
       try { onTick?.(answered) } catch { /* the watch outlives its listener */ }
     } finally {

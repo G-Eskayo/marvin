@@ -1,5 +1,5 @@
 import { describe, it, expect, vi } from 'vitest'
-import { listOpenPrsAcrossRepos, prKey, normalizeSeen, canMergeFromDashboard, MARVIN_REPO } from '../electron/main/mr_repos.js'
+import { listOpenPrsAcrossRepos, prKey, normalizeSeen, canMergeFromDashboard, MARVIN_REPO, prNumberFromUrl } from '../electron/main/mr_repos.js'
 import { listPipelinePrs } from '../electron/main/mr_review.js'
 import { computeReviewStatus } from '../electron/main/mr_seen.js'
 
@@ -77,6 +77,19 @@ describe('repoFromPrUrl', () => {
     expect(repoFromPrUrl('https://evil.example/G-Eskayo/marvin/pull/1')).toBeNull()
     expect(repoFromPrUrl('not a url')).toBeNull()
     expect(repoFromPrUrl(undefined)).toBeNull()
+  })
+})
+
+describe('prNumberFromUrl', () => {
+  it('extracts the PR number from a GitHub PR url', () => {
+    expect(prNumberFromUrl('https://github.com/G-Eskayo/marvin/pull/123')).toBe(123)
+    expect(prNumberFromUrl('https://github.com/G-Eskayo/clarity-captions/pull/4')).toBe(4)
+  })
+
+  it('returns null for non-PR URLs and invalid inputs', () => {
+    expect(prNumberFromUrl('https://github.com/G-Eskayo/marvin/issues/5')).toBeNull()
+    expect(prNumberFromUrl('not a url')).toBeNull()
+    expect(prNumberFromUrl(undefined)).toBeNull()
   })
 })
 

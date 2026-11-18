@@ -79,6 +79,20 @@ export async function dropEntirely({ prUrl, ticketNumber }, exec = execFileAsync
   await releaseClaim(ticketNumber, exec, repo)
 }
 
+// Check that a PR is still open before denying it. Throws if not open or if the check itself fails.
+export async function assertPrOpen(prUrl, exec) {
+  assertGithubPrUrl(prUrl)
+  try {
+    const { stdout } = await exec('gh', ['pr', 'view', prUrl, '--json', 'state'])
+    const { state } = JSON.parse(stdout)
+    if (state !== 'OPEN') {
+      throw new Error(`PR is not open: ${state}`)
+    }
+  } catch (err) {
+    throw err
+  }
+}
+
 export async function handleDenyRequest({ action, prUrl, ticketNumber, reasons, comment }, exec = execFileAsync) {
   if (action !== 'send_feedback' && action !== 'drop') {
     return {
@@ -88,6 +102,7 @@ export async function handleDenyRequest({ action, prUrl, ticketNumber, reasons, 
   }
 
   try {
+    await assertPrOpen(prUrl, exec)
     if (action === 'send_feedback') {
       await sendFeedback({ prUrl, ticketNumber, reasons, comment }, exec)
     } else {

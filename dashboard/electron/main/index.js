@@ -10,7 +10,7 @@ import { promisify } from 'util'
 import { listSubsystems, readHistory, buildIndex } from './metrics.js'
 import { getReworkStatus, clearReworkCache } from './rework.js'
 import { createGithubState, repoOfSource, gateCooldownUntil } from './github_state.js'
-import { startCheckWatch, createCheckProbe, createTreeProbe, startChangeWatch, createGithubProbe } from '../../webhook-server/gh_watch.js'
+import { startCheckWatch, createCheckProbe, createTreeProbe, startChangeWatch, createGithubProbe, createPullHeadProbe, headIdentity } from '../../webhook-server/gh_watch.js'
 import { createStackRetarget } from './stack_retarget.js'
 import { prsForOrderCheck, listPipelinePrs, denyMr, fetchTicketContext, sentBackKeys, clearSentBackLabel } from './mr_review.js'
 import { approveMrStream } from './approve_stream.js'
@@ -315,6 +315,24 @@ function startPrCheckWatch() {
       checkMergedElsewhere(repo)
     },
     skip: () => Date.now() < gateCooldownUntil()
+  })
+}
+
+// Reengaged head watch: while a PR is reengaged (sent back for rework), watch its head commit SHA every 20 s with an
+// ETag. A push to the PR's branch (new head commit) re-reads just that repo's list and signals the dashboard to refresh.
+// Watches only reengaged PRs (mergeOps.reengagedUrls). Started when the app is ready.
+function startReengagedHeadWatch() {
+  if (pullOnly) return
+  startChangeWatch({
+    getRepos: () => mergeOps.reengagedUrls(),
+    probe: createPullHeadProbe(),
+    identity: headIdentity,
+    skip: () => Date.now() < gateCooldownUntil(),
+    ping: (prUrl) => {
+      githubChanged(`github:${repoFromPrUrl(prUrl)}`)
+      mainWindow?.webContents.send('mr:refresh')
+    },
+    getKnownIdentity: (prUrl) => mergeOps.get(prUrl)?.head ?? null
   })
 }
 const listOpenPrs = ({ light = false, fresh = false } = {}) => fetchOpenPrs(light, fresh)
@@ -1423,6 +1441,7 @@ app.whenReady().then(() => {
   // External pings (webhook-server): bare = the legacy "MR list changed"; with topics = what changed.
   // Port already taken (another dashboard running) = one log line, not a crash (#384).
   startPrCheckWatch()
+  startReengagedHeadWatch()
   startRefreshServer((payload = {}) => {
     const topics = Array.isArray(payload.topics) ? payload.topics : ['mr']
     for (const topic of topics) {

@@ -304,4 +304,21 @@ describe('failover notice and queued approvals', () => {
     expect(ops.cancelQueued(URL)).toBe(false)
     expect(ops.get(URL).state).toBe('merging')
   })
+
+  it('reengagedUrls() returns only PRs in reengaged state (sent back for rework)', () => {
+    const ops = createMergeOps()
+    const url1 = 'https://github.com/o/r/pull/1'
+    const url2 = 'https://github.com/o/r/pull/2'
+    const url3 = 'https://github.com/o/r/pull/3'
+    ops.start(url1); ops.finish(url1, { reengaged: true, reason: 'rework' })
+    ops.start(url2); ops.finish(url2, { merged: true })
+    ops.start(url3); ops.finish(url3, { reengaged: true, reason: 'tests failed' })
+    expect(ops.reengagedUrls()).toEqual([url1, url3])
+  })
+
+  it('reengagedUrls() returns an empty list when no PRs are reengaged', () => {
+    const ops = createMergeOps()
+    ops.start(URL); ops.finish(URL, { merged: true })
+    expect(ops.reengagedUrls()).toEqual([])
+  })
 })

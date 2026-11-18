@@ -1,5 +1,5 @@
 import { describe, it, expect, vi } from 'vitest'
-import { createChangeDetector, createGithubProbe, issuesEndpoint } from '../webhook-server/gh_watch.js'
+import { createChangeDetector, createGithubProbe, issuesEndpoint, headIdentity, createPullHeadProbe, pullHeadEndpoint } from '../webhook-server/gh_watch.js'
 
 const probeFrom = (script) => {
   const calls = []
@@ -130,6 +130,62 @@ describe('createChangeDetector', () => {
     expect(onChange).not.toHaveBeenCalled()
     expect(calls[1].etag).toBeUndefined() // and its old etag was dropped with it
   })
+
+  describe('with getKnownIdentity for reengaged PRs (marvin#620)', () => {
+    it('fires onChange when first-sight identity differs from known identity', async () => {
+      const { probe } = probeFrom([{ status: 200, etag: 'a', body: { head: { sha: 'new-sha' } } }])
+      const onChange = vi.fn()
+      const getKnownIdentity = vi.fn(() => 'old-sha')
+      const d = createChangeDetector({ probe, onChange, identity: (b) => b?.head?.sha, getKnownIdentity })
+      await d.tick(['pr/1'])
+      expect(onChange).toHaveBeenCalledWith('pr/1')
+      expect(getKnownIdentity).toHaveBeenCalledWith('pr/1')
+    })
+
+    it('does not fire onChange when first-sight identity matches known identity', async () => {
+      const { probe } = probeFrom([{ status: 200, etag: 'a', body: { head: { sha: 'same-sha' } } }])
+      const onChange = vi.fn()
+      const getKnownIdentity = vi.fn(() => 'same-sha')
+      const d = createChangeDetector({ probe, onChange, identity: (b) => b?.head?.sha, getKnownIdentity })
+      await d.tick(['pr/1'])
+      expect(onChange).not.toHaveBeenCalled()
+      expect(getKnownIdentity).toHaveBeenCalledWith('pr/1')
+    })
+
+    it('fires onChange on subsequent changes after first-sight comparison', async () => {
+      const { probe } = probeFrom([
+        { status: 200, etag: 'a', body: { head: { sha: 'new-sha' } } },
+        { status: 200, etag: 'b', body: { head: { sha: 'newer-sha' } } }
+      ])
+      const onChange = vi.fn()
+      const getKnownIdentity = vi.fn(() => 'old-sha')
+      const d = createChangeDetector({ probe, onChange, identity: (b) => b?.head?.sha, getKnownIdentity })
+      await d.tick(['pr/1'])
+      expect(onChange).toHaveBeenCalledTimes(1)
+      await d.tick(['pr/1'])
+      expect(onChange).toHaveBeenCalledTimes(2)
+      expect(getKnownIdentity).toHaveBeenCalledOnce() // only called on first sight
+    })
+
+    it('ignores known identity when it is null (PR not found)', async () => {
+      const { probe } = probeFrom([{ status: 200, etag: 'a', body: { head: { sha: 'sha' } } }])
+      const onChange = vi.fn()
+      const getKnownIdentity = vi.fn(() => null)
+      const d = createChangeDetector({ probe, onChange, identity: (b) => b?.head?.sha, getKnownIdentity })
+      await d.tick(['pr/1'])
+      expect(onChange).not.toHaveBeenCalled()
+    })
+
+    it('still works without getKnownIdentity (backward compat)', async () => {
+      const { probe } = probeFrom([top('a', 7, 't1'), top('b', 7, 't2')])
+      const onChange = vi.fn()
+      const d = createChangeDetector({ probe, onChange })
+      await d.tick(['o/r'])
+      expect(onChange).not.toHaveBeenCalled()
+      await d.tick(['o/r'])
+      expect(onChange).toHaveBeenCalledTimes(1)
+    })
+  })
 })
 
 describe('createGithubProbe', () => {
@@ -157,5 +213,61 @@ describe('createGithubProbe', () => {
 describe('issuesEndpoint', () => {
   it('asks for only the most recently updated item, any state', () => {
     expect(issuesEndpoint('o/r')).toBe('https://api.github.com/repos/o/r/issues?state=all&sort=updated&direction=desc&per_page=1')
+  })
+})
+
+describe('headIdentity', () => {
+  it('extracts the head commit SHA as the identity', () => {
+    expect(headIdentity({ head: { sha: 'abc123def456' } })).toBe('abc123def456')
+  })
+
+  it('returns undefined when head or sha is missing', () => {
+    expect(headIdentity({ head: {} })).toBeUndefined()
+    expect(headIdentity({})).toBeUndefined()
+    expect(headIdentity(null)).toBeUndefined()
+  })
+
+  it('returns undefined when body is not an object', () => {
+    expect(headIdentity('not an object')).toBeUndefined()
+    expect(headIdentity(undefined)).toBeUndefined()
+  })
+
+  it('treats null SHA as having no identity', () => {
+    expect(headIdentity({ head: { sha: null } })).toBeUndefined()
+  })
+})
+
+describe('createPullHeadProbe', () => {
+  const fakeFetch = (status, etag, body) => vi.fn(async () => ({ status, headers: { get: (h) => (h === 'etag' ? etag : null) }, json: async () => body }))
+
+  it('sends the etag conditionally and returns the body on a 200', async () => {
+    const doFetch = fakeFetch(200, 'W/"e2"', { head: { sha: 'abc123' } })
+    const res = await createPullHeadProbe({ GH_TOKEN: 'tok' }, doFetch)('https://github.com/o/r/pull/5', 'W/"e1"')
+    expect(doFetch.mock.calls[0][0]).toBe(pullHeadEndpoint('o/r', '5'))
+    expect(doFetch.mock.calls[0][1].headers['If-None-Match']).toBe('W/"e1"')
+    expect(doFetch.mock.calls[0][1].headers.Authorization).toBe('Bearer tok')
+    expect(res).toEqual({ status: 200, etag: 'W/"e2"', body: { head: { sha: 'abc123' } } })
+  })
+
+  it('does not read a body on a 304', async () => {
+    const doFetch = fakeFetch(304, null, undefined)
+    const json = vi.fn()
+    doFetch.mockImplementation(async () => ({ status: 304, headers: { get: () => null }, json }))
+    const res = await createPullHeadProbe({}, doFetch)('https://github.com/o/r/pull/5', 'W/"e1"')
+    expect(res).toEqual({ status: 304, etag: undefined })
+    expect(json).not.toHaveBeenCalled()
+  })
+
+  it('returns 400 for a malformed PR URL', async () => {
+    const doFetch = vi.fn()
+    const res = await createPullHeadProbe({}, doFetch)('not a valid PR URL', undefined)
+    expect(res).toEqual({ status: 400, etag: undefined })
+    expect(doFetch).not.toHaveBeenCalled()
+  })
+})
+
+describe('pullHeadEndpoint', () => {
+  it('builds the correct API endpoint for a PR', () => {
+    expect(pullHeadEndpoint('o/r', '5')).toBe('https://api.github.com/repos/o/r/pulls/5')
   })
 })

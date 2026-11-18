@@ -133,6 +133,7 @@ export function createMergeOps({ maxMergingMs = 45 * 60_000 } = {}) {
     },
     cancel(url) { ops.delete(url) },
     mergingUrls: () => [...ops].filter(([, o]) => o.state === 'merging').map(([url]) => url),
+    reengagedUrls: () => [...ops].filter(([, o]) => o.state === 'reengaged').map(([url]) => url),
     get(url, now = Date.now(), head = null) {
       return opForHead(live(url, now), head)
     },

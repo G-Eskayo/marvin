@@ -1,5 +1,5 @@
 import { describe, it, expect, vi } from 'vitest'
-import { formatFeedback, sendFeedback, dropEntirely, handleDenyRequest } from '../webhook-server/deny.js'
+import { formatFeedback, sendFeedback, dropEntirely, handleDenyRequest, assertPrOpen } from '../webhook-server/deny.js'
 
 const PR_URL = 'https://github.com/G-Eskayo/marvin/pull/71'
 
@@ -124,6 +124,30 @@ describe('feedback and drop for another project', () => {
   })
 })
 
+describe('assertPrOpen', () => {
+  it('allows OPEN PRs through without error', async () => {
+    const exec = vi.fn().mockResolvedValue({ stdout: JSON.stringify({ state: 'OPEN' }) })
+    await expect(assertPrOpen(PR_URL, exec)).resolves.not.toThrow()
+    expect(exec).toHaveBeenCalledWith('gh', ['pr', 'view', PR_URL, '--json', 'state'])
+  })
+
+  it('throws when a PR is not in OPEN state', async () => {
+    const exec = vi.fn().mockResolvedValue({ stdout: JSON.stringify({ state: 'MERGED' }) })
+    await expect(assertPrOpen(PR_URL, exec)).rejects.toThrow('PR is not open')
+  })
+
+  it('throws when the gh command fails', async () => {
+    const exec = vi.fn().mockRejectedValue(new Error('gh failed'))
+    await expect(assertPrOpen(PR_URL, exec)).rejects.toThrow('gh failed')
+  })
+
+  it('rejects non-GitHub URLs without calling exec', async () => {
+    const exec = vi.fn()
+    await expect(assertPrOpen('not-a-url', exec)).rejects.toThrow('Not a GitHub PR URL')
+    expect(exec).not.toHaveBeenCalled()
+  })
+})
+
 describe('handleDenyRequest', () => {
   it('rejects unknown actions with 400', async () => {
     const exec = execReturning('')
@@ -135,6 +159,9 @@ describe('handleDenyRequest', () => {
 
   it('dispatches send_feedback to sendFeedback and returns success', async () => {
     const exec = vi.fn().mockImplementation((cmd, args) => {
+      if (args[0] === 'pr' && args[1] === 'view' && args[2] === PR_URL && args.includes('--json')) {
+        return Promise.resolve({ stdout: JSON.stringify({ state: 'OPEN' }) })
+      }
       if (args[0] === 'issue' && args[1] === 'view') {
         return Promise.resolve({ stdout: JSON.stringify({ labels: [] }) })
       }
@@ -148,7 +175,15 @@ describe('handleDenyRequest', () => {
   })
 
   it('dispatches drop to dropEntirely and returns success', async () => {
-    const exec = vi.fn().mockResolvedValue({ stdout: JSON.stringify({ labels: [] }), stderr: '' })
+    const exec = vi.fn().mockImplementation((cmd, args) => {
+      if (args[0] === 'pr' && args[1] === 'view' && args[2] === PR_URL && args.includes('--json')) {
+        return Promise.resolve({ stdout: JSON.stringify({ state: 'OPEN' }) })
+      }
+      if (args[0] === 'issue' && args[1] === 'view') {
+        return Promise.resolve({ stdout: JSON.stringify({ labels: [] }) })
+      }
+      return Promise.resolve({ stdout: '', stderr: '' })
+    })
     const result = await handleDenyRequest({ action: 'drop', prUrl: PR_URL, ticketNumber: 42, reasons: [], comment: '' }, exec)
     expect(result.status).toBe(200)
     expect(result.body).toEqual({ done: true })
@@ -157,11 +192,34 @@ describe('handleDenyRequest', () => {
   })
 
   it('returns 500 and error details when dispatch fails', async () => {
-    const exec = vi.fn().mockRejectedValue(new Error('gh command failed'))
+    const exec = vi.fn().mockImplementation((cmd, args) => {
+      if (args[0] === 'pr' && args[1] === 'view' && args[2] === PR_URL && args.includes('--json') && args.includes('state')) {
+        // assertPrOpen succeeds
+        return Promise.resolve({ stdout: JSON.stringify({ state: 'OPEN' }) })
+      }
+      if (args[0] === 'pr' && args[1] === 'comment') {
+        // sendFeedback fails here
+        return Promise.reject(new Error('gh command failed'))
+      }
+      return Promise.resolve({ stdout: '', stderr: '' })
+    })
     const result = await handleDenyRequest({ action: 'send_feedback', prUrl: PR_URL, ticketNumber: 42, reasons: [], comment: '' }, exec)
     expect(result.status).toBe(500)
     expect(result.body).toEqual({ done: false, error: expect.stringMatching(/gh command failed/) })
     expect(result.error).toBeDefined()
     expect(result.error).toContain('Deny failed for ' + PR_URL)
+  })
+
+  it('returns 500 when the PR is not open', async () => {
+    const exec = vi.fn().mockImplementation((cmd, args) => {
+      if (args[0] === 'pr' && args[1] === 'view' && args[2] === PR_URL && args.includes('--json')) {
+        return Promise.resolve({ stdout: JSON.stringify({ state: 'MERGED' }) })
+      }
+      return Promise.resolve({ stdout: '', stderr: '' })
+    })
+    const result = await handleDenyRequest({ action: 'send_feedback', prUrl: PR_URL, ticketNumber: 42, reasons: [], comment: '' }, exec)
+    expect(result.status).toBe(500)
+    expect(result.body).toEqual({ done: false, error: expect.stringMatching(/PR is not open/) })
+    expect(result.error).toBeDefined()
   })
 })
