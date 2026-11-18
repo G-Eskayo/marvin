@@ -6,7 +6,7 @@ import { AgentCard } from './AgentsPanel.jsx'
 const REMOTE_POLL_MS = 30000
 
 // Helpers a chat started with the Agent tool, on every Mac (#612), as the same rows Health shows its agents in.
-export function ChatHelpersView({ data, now, onOpenTicket, onOpenMr }) {
+export function ChatHelpersView({ data, now, onOpenTicket, onOpenMr, onDismiss }) {
   if (!data?.helpers?.length) return null
   const down = data.unreachable || []
   return (
@@ -17,7 +17,7 @@ export function ChatHelpersView({ data, now, onOpenTicket, onOpenMr }) {
       </p>
       <div className="flex flex-col gap-2">
         {data.helpers.map((h) => (
-          <AgentCard key={`${h.machine}:${h.id}`} agent={h} now={now} onOpenTicket={onOpenTicket} onOpenMr={onOpenMr} />
+          <AgentCard key={`${h.machine}:${h.id}`} agent={h} now={now} onOpenTicket={onOpenTicket} onOpenMr={onOpenMr} onDismiss={onDismiss} />
         ))}
       </div>
     </div>
@@ -43,5 +43,9 @@ export default function ChatHelpers({ onOpenTicket, onOpenMr }) {
     return () => clearInterval(id)
   }, [anyRunning])
 
-  return <ChatHelpersView data={data} now={now} onOpenTicket={onOpenTicket} onOpenMr={onOpenMr} />
+  const handleDismiss = (id, machine) => {
+    window.api.activity.dismissHelper(id, machine).then(setData).catch(() => {})
+  }
+
+  return <ChatHelpersView data={data} now={now} onOpenTicket={onOpenTicket} onOpenMr={onOpenMr} onDismiss={handleDismiss} />
 }

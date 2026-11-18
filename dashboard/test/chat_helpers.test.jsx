@@ -1,6 +1,6 @@
 import { describe, it, expect, beforeEach, afterEach } from 'vitest'
 import { renderToStaticMarkup } from 'react-dom/server'
-import { mkdtempSync, mkdirSync, writeFileSync, rmSync } from 'fs'
+import { mkdtempSync, mkdirSync, writeFileSync, rmSync, utimesSync } from 'fs'
 import { tmpdir } from 'os'
 import path from 'path'
 import http from 'http'
@@ -13,12 +13,14 @@ const T0 = Date.parse('2026-10-22T15:00:00Z')
 const iso = (ms) => new Date(ms).toISOString()
 
 // What lib/chat_helpers.py writes (lib/tests/test_chat_helpers.py pins the writer's side).
-function helperDoc(id, { status = 'running', started = T0, finished = null, summary = '', error = '', links = [], transcript = '' } = {}) {
+function helperDoc(id, { status = 'running', started = T0, finished = null, summary = '', error = '', links = [], transcript = '', dismissed_at = null } = {}) {
+  const helper = { agent_id: id, agent_type: 'general-purpose', session: 'b41ed591', chat: 'fix the docs search', machine: 'macbook-pro', cwd: '/Users/gil', transcript, links }
+  if (dismissed_at) helper.dismissed_at = dismissed_at
   return {
     job: `helper-${id}`,
     label: `Helper ${id}`,
     kind: 'helper',
-    helper: { agent_id: id, agent_type: 'general-purpose', session: 'b41ed591', chat: 'fix the docs search', machine: 'macbook-pro', cwd: '/Users/gil', transcript, links },
+    helper,
     runs: [{ id: 'r1', status, started_at: iso(started), finished_at: finished ? iso(finished) : null, steps: [{ step: 'working', detail: '', at: iso(started) }], summary, error }]
   }
 }
@@ -189,5 +191,84 @@ describe('Activity rows (rendered from a fixture)', () => {
   it('nothing to show is nothing at all, not an empty section', () => {
     expect(renderToStaticMarkup(<ChatHelpersView data={null} now={now} />)).toBe('')
     expect(renderToStaticMarkup(<ChatHelpersView data={{ helpers: [] }} now={now} />)).toBe('')
+  })
+  it('a crashed helper has a Dismiss button when onDismiss is provided', () => {
+    const crashed = describeHelper(helperDoc('crash', { started: T0 }), { now: T0 + STALE_MS + 60_000 })
+    expect(crashed.status).toBe('crashed')
+    const html = renderToStaticMarkup(<ChatHelpersView data={{ helpers: [crashed], unreachable: [] }} now={T0 + STALE_MS + 60_000} onDismiss={() => {}} />)
+    expect(html).toContain('Dismiss')
+  })
+  it('a non-crashed helper never shows a Dismiss button', () => {
+    const running = describeHelper(helperDoc('run'), { now: T0 })
+    const done = describeHelper(helperDoc('done', { status: 'passed', finished: T0 + 1000, summary: 'ok' }), { now: T0 + 2000 })
+    const html = renderToStaticMarkup(<ChatHelpersView data={{ helpers: [running, done], unreachable: [] }} now={now} onDismiss={() => {}} />)
+    expect(html).not.toContain('Dismiss')
+  })
+  it('a helper with dismissedAt field carries it in describeHelper output', () => {
+    const doc = helperDoc('dismissed', { dismissed_at: iso(T0 + 100) })
+    const h = describeHelper(doc, { now: T0 + 200 })
+    expect(h.dismissedAt).toBe(iso(T0 + 100))
+  })
+  it('listHelpers HOME_CAP preserves all running helpers and caps non-running', () => {
+    const dir = mkdtempSync(path.join(tmpdir(), 'helpers-'))
+    try {
+      // Create 15 running and 12 done helpers; with HOME_CAP=10 we should get all 15 running + 0 done
+      for (let i = 0; i < 15; i++) {
+        writeFileSync(path.join(dir, `helper-r${i}.json`), JSON.stringify(helperDoc(`r${i}`)))
+      }
+      for (let i = 0; i < 12; i++) {
+        writeFileSync(path.join(dir, `helper-d${i}.json`), JSON.stringify(helperDoc(`d${i}`, { status: 'passed', finished: T0 + 1000, summary: 'ok' })))
+      }
+      const list = listHelpers({ dir, now: T0 + 2000 })
+      const running = list.filter(h => h.status === 'running')
+      const done = list.filter(h => h.status === 'done')
+      expect(running.length).toBe(15) // all running kept, even exceeds HOME_CAP
+      expect(done.length).toBe(0)     // non-running capped away
+    } finally {
+      rmSync(dir, { recursive: true, force: true })
+    }
+  })
+  it('listHelpers filters out dismissed helpers older than 24h but keeps recent ones', () => {
+    const dir = mkdtempSync(path.join(tmpdir(), 'helpers-'))
+    const now = Date.now()
+    const recentStart = iso(now - 10 * 60_000)
+    const oldStart = iso(now - 25 * 60 * 60 * 1000)
+    const recentDismissed = iso(now - 5 * 60_000)  // dismissed 5 min ago, should stay visible
+    const oldDismissed = iso(now - 25 * 60 * 60 * 1000)  // dismissed 25 hours ago, should be hidden
+    try {
+      writeFileSync(path.join(dir, 'helper-recent.json'), JSON.stringify(helperDoc('recent', { started: Date.parse(recentStart), dismissed_at: recentDismissed })))
+      writeFileSync(path.join(dir, 'helper-old.json'), JSON.stringify(helperDoc('old', { started: Date.parse(oldStart), dismissed_at: oldDismissed })))
+      const list = listHelpers({ dir, now })
+      expect(list.map((h) => h.id)).toContain('helper-recent')  // recent dismissal stays visible
+      expect(list.map((h) => h.id)).not.toContain('helper-old')  // old dismissal is hidden
+    } finally {
+      rmSync(dir, { recursive: true, force: true })
+    }
+  })
+  it('listHelpers filters out old crashed undismissed helpers (>24h)', () => {
+    const dir = mkdtempSync(path.join(tmpdir(), 'helpers-'))
+    const now = Date.now()
+    const recentStart = now - 10 * 60_000  // helper started 10 min ago
+    const oldStart = now - 25 * 60 * 60 * 1000  // helper started 25 hours ago
+    const recentTranscript = now - 5 * 60_000  // transcript last written 5 min ago
+    const oldTranscript = now - 25 * 60 * 60 * 1000  // transcript last written 25 hours ago
+    try {
+      const transcriptRecent = path.join(dir, 'agent-recent.jsonl')
+      const transcriptOld = path.join(dir, 'agent-old.jsonl')
+      writeFileSync(transcriptRecent, '{}\n')
+      writeFileSync(transcriptOld, '{}\n')
+      // Set transcript mtimes to control when they were last written
+      const sec1 = Math.floor(recentTranscript / 1000)
+      const sec2 = Math.floor(oldTranscript / 1000)
+      utimesSync(transcriptRecent, sec1, sec1)
+      utimesSync(transcriptOld, sec2, sec2)
+      writeFileSync(path.join(dir, 'helper-recent-crash.json'), JSON.stringify(helperDoc('recent-crash', { started: recentStart, transcript: transcriptRecent })))
+      writeFileSync(path.join(dir, 'helper-old-crash.json'), JSON.stringify(helperDoc('old-crash', { started: oldStart, transcript: transcriptOld })))
+      const list = listHelpers({ dir, now })
+      expect(list.map((h) => h.id)).toContain('helper-recent-crash')
+      expect(list.map((h) => h.id)).not.toContain('helper-old-crash')
+    } finally {
+      rmSync(dir, { recursive: true, force: true })
+    }
   })
 })

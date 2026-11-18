@@ -1511,6 +1511,8 @@ except a "Done" state and the ticket chip Markdown uses; they are not counted am
 its webhook server's `GET /helpers` (the `/sessions` channel, #331), read through a 10 s cache with a 30 s backstop, since that
 Mac has no push channel. Gil applies the hooks on each Mac with `marvin_hooks.py install`.
 
+**Crash dismiss (2026-11-15):** A helper that stops unexpectedly (crashed) can be manually dismissed from the UI. The Dismiss button appears only for crashed helpers (status = 'crashed'); clicking it calls `lib/chat_helpers.py dismiss <id>`, which marks the helper with a `dismissed_at` timestamp. Dismissed helpers remain visible for 24h after dismissal (to confirm they're gone), then are auto-hidden. Separately, undismissed crashed helpers are hidden after 24h of no sign of life (measured from the helper's last sign of life — when its transcript was last written, not from its start time — per the design intent). `listHelpers()` applies an interim `HOME_CAP` of 10 on local helpers (superseded when #625 lands with proper limits). The dismiss endpoint (`POST /helpers/dismiss` on the webhook-server, guarded by `allowedPeerAddress`) calls the local CLI and is accessible from other Macs via the dismiss handler in the main process IPC.
+
 ## Project goals on the boards and in Activity (2026-10-26, #625's progress strip)
 
 - Every project profile (`instance/config/projects/<repo>.json`, ADR 0071) carries `goal`, `signals` ([{name, better:

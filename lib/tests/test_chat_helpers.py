@@ -229,8 +229,41 @@ def test_a_killed_helper_is_stale_once_its_transcript_goes_quiet(tmp_path):
     assert ch.state_of(d, now=started + ch.STALE_S + 1) == "stale"
 
 
+# ── dismissing helpers ──────────────────────────────────────────────────────
+
+def test_dismiss_adds_dismissed_at_to_an_existing_helper(tmp_path):
+    e = env(tmp_path)
+    fire(e, "start", now=T0, agent_id="a1", agent_type="x")
+    assert "dismissed_at" not in doc(e, "a1")["helper"]
+    result = ch.dismiss("a1", jobs_dir=e["jobs"], sessions_path=e["sessions"], now=T0 + timedelta(hours=2))
+    assert result is True
+    assert doc(e, "a1")["helper"]["dismissed_at"] == (T0 + timedelta(hours=2)).isoformat()
+
+
+def test_dismiss_returns_false_for_a_nonexistent_helper(tmp_path):
+    e = env(tmp_path)
+    result = ch.dismiss("a1", jobs_dir=e["jobs"], sessions_path=e["sessions"], now=T0)
+    assert result is False
+
+
+def test_dismiss_handles_agent_id_with_or_without_prefix(tmp_path):
+    e = env(tmp_path)
+    fire(e, "start", agent_id="a1", agent_type="x")
+    assert ch.dismiss("a1", jobs_dir=e["jobs"], sessions_path=e["sessions"]) is True
+    e2 = env(tmp_path / "2")
+    fire(e2, "start", agent_id="agent-a2", agent_type="x")
+    assert ch.dismiss("agent-a2", jobs_dir=e2["jobs"], sessions_path=e2["sessions"]) is True
+
+
+def test_dismiss_rejects_bad_agent_ids(tmp_path):
+    e = env(tmp_path)
+    for bad_id in ("", "a/b", "../../etc/passwd", "a" * 100):
+        result = ch.dismiss(bad_id, jobs_dir=e["jobs"])
+        assert result is False
+
+
 def _run_cli(home, stdin, *args):
-    return subprocess.run([sys.executable, str(LIB / "chat_helpers.py"), "hook", *args], input=stdin,
+    return subprocess.run([sys.executable, str(LIB / "chat_helpers.py"), *args], input=stdin,
                           capture_output=True, text=True, timeout=20, env={**os.environ, "HOME": str(home)})
 
 
@@ -239,10 +272,10 @@ def test_the_hook_exits_0_silently_on_garbage_and_with_no_logs_dir(tmp_path):
     home.mkdir()  # no ~/.claude at all
     for stdin, event in (("garbage{", "start"), ("", "stop"), (json.dumps({"agent_id": "a1", "agent_type": "x"}), "start"),
                          ("{}", "nope")):
-        p = _run_cli(home, stdin, event)
+        p = _run_cli(home, stdin, "hook", event)
         assert p.returncode == 0 and p.stdout == "", (event, p.stdout, p.stderr)
     assert (home / ".claude" / "logs" / "jobs" / "helper-a1.json").exists()  # created the folder when it could
-    p = _run_cli(home, "{}")  # no event named
+    p = _run_cli(home, "{}", "hook")  # no event named
     assert p.returncode == 0 and p.stdout == ""
 
 
@@ -250,8 +283,41 @@ def test_the_hook_exits_0_when_the_logs_dir_cannot_be_written(tmp_path):
     home = tmp_path / "home"
     (home / ".claude").mkdir(parents=True)
     (home / ".claude" / "logs").write_text("a file where the folder should be")
-    p = _run_cli(home, json.dumps({"agent_id": "a1", "agent_type": "x"}), "start")
+    p = _run_cli(home, json.dumps({"agent_id": "a1", "agent_type": "x"}), "hook", "start")
     assert p.returncode == 0 and p.stdout == ""
+
+
+def test_the_dismiss_cli_returns_ok_true_on_success(tmp_path):
+    home = tmp_path / "home"
+    (home / ".claude" / "logs" / "jobs").mkdir(parents=True)
+    (home / ".claude" / "logs" / "sessions-active.json").write_text(json.dumps({"sessions": {}}))
+    proj = home / ".claude" / "projects" / "-Users-gil" / SESSION / "subagents"
+    proj.mkdir(parents=True)
+    (home / ".claude" / "projects" / "-Users-gil" / f"{SESSION}.jsonl").write_text("{}\n")
+    fire_home = {"jobs": home / ".claude" / "logs" / "jobs", "sessions": home / ".claude" / "logs" / "sessions-active.json",
+                 "transcript": str(home / ".claude" / "projects" / "-Users-gil" / f"{SESSION}.jsonl")}
+    fire(fire_home, "start", agent_id="a1", agent_type="x")
+    p = _run_cli(home, "", "dismiss", "a1")
+    assert p.returncode == 0
+    data = json.loads(p.stdout.strip())
+    assert data == {"ok": True}
+
+
+def test_the_dismiss_cli_returns_ok_false_and_exits_1_on_failure(tmp_path):
+    home = tmp_path / "home"
+    (home / ".claude" / "logs" / "jobs").mkdir(parents=True)
+    p = _run_cli(home, "", "dismiss", "a1")
+    assert p.returncode == 1
+    data = json.loads(p.stdout.strip())
+    assert data == {"ok": False}
+
+
+def test_the_dismiss_cli_exits_0_on_bad_input(tmp_path):
+    home = tmp_path / "home"
+    home.mkdir()
+    for bad_id in ("", "a/b"):
+        p = _run_cli(home, "", "dismiss", bad_id)
+        assert p.returncode == 1
 
 
 # ── the map's Work half hears about it (#854) ───────────────────────────────

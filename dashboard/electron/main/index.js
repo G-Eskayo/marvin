@@ -174,7 +174,7 @@ import { createBoundsStore } from './show_bounds.js'
 import { readFileForView, fileFromBuffer } from './outbox.js'
 import { resolveLocalClone } from './docs_local.js'
 import { resolveServiceDefaults, resolveDeviceId, peerHosts, primaryDeviceId } from './device_identity.js'
-import { createHelpersReader } from './chat_helpers.js'
+import { createHelpersReader, createHelperDismisser, postDismissTo, dismissLocalHelper } from './chat_helpers.js'
 import { createChatsReader, createChatSender } from './chat_tabs.js'
 import { isPullOnlyNode, createFeedSource, feedOnlyGh, readNetworkRegistry, assertActsHere as assertPullOnlyActs, canMergeHere, withReadOnlyReason } from './github_feed.js'
 import { createAccounts } from './accounts.js'
@@ -588,6 +588,17 @@ function registerActivityHandlers() {
   let peers = null // the registry changes rarely and the app is relaunched on every rebuild
   const readHelpers = createHelpersReader({ peers: () => (peers ||= peerHosts()) })
   ipcMain.handle('activity:helpers', () => readHelpers())
+  const dismissHelper = createHelperDismisser({
+    dismissLocal: dismissLocalHelper,
+    postRemote: postDismissTo,
+    resolveMe: () => resolveDeviceId(),
+    peers: () => (peers ||= peerHosts())
+  })
+  ipcMain.handle('activity:dismissHelper', async (_event, { id, machine }) => {
+    await dismissHelper(id, machine)
+    readHelpers.forget(machine)
+    return readHelpers()
+  })
   ipcMain.handle('activity:timeline', (_event, number, repo) => getTicketTimeline(number, undefined, repo || null))
 
   // Project boards: only repos in the registry are fetchable, so the renderer

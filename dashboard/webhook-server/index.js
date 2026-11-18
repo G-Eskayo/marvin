@@ -26,7 +26,7 @@ import { readLiveSessions } from './sessions.js'
 import { listLocalChats } from '../electron/main/chat_tabs.js'
 import { gateCheckNames } from './ci_status.js'
 import { engineRepo } from '../electron/main/instance.js'
-import { listHelpers } from './chat_helpers.js'
+import { listHelpers, dismissLocalHelper, HELPER_ID } from './chat_helpers.js'
 import { startChangeWatch, createGithubProbe, startCheckWatch, createCheckProbe } from './gh_watch.js'
 import { createGithubFeedWriter } from './github_feed_writer.js'
 import { gateCooldownUntil } from '../electron/main/github_state.js'
@@ -201,6 +201,36 @@ const server = createServer(async (req, res) => {
   // Chat helpers on this Mac (#612), for the other Mac's Activity tab. Read-only, like /sessions.
   if (req.method === 'GET' && req.url === '/helpers') {
     res.writeHead(200, { 'Content-Type': 'application/json' }).end(JSON.stringify({ helpers: listHelpers() }))
+    return
+  }
+
+  // Dismiss a local chat helper (remove from UI and mark as dismissed).
+  if (req.method === 'POST' && req.url === '/helpers/dismiss') {
+    if (!allowedPeerAddress(req.socket?.remoteAddress)) {
+      res.writeHead(403, { 'Content-Type': 'application/json' }).end('{"ok":false}')
+      return
+    }
+    let body
+    try {
+      body = await readBody(req, 512)
+    } catch (err) {
+      res.writeHead(413, { 'Content-Type': 'application/json' }).end(JSON.stringify({ ok: false, error: err.message }))
+      return
+    }
+    let payload
+    try {
+      payload = JSON.parse(body)
+    } catch {
+      res.writeHead(400, { 'Content-Type': 'application/json' }).end('{"ok":false}')
+      return
+    }
+    const id = String(payload?.id || '').replace(/^helper-/, '')
+    if (!HELPER_ID.test(`helper-${id}`)) {
+      res.writeHead(400, { 'Content-Type': 'application/json' }).end('{"ok":false}')
+      return
+    }
+    const result = await dismissLocalHelper(id)
+    res.writeHead(200, { 'Content-Type': 'application/json' }).end(JSON.stringify(result))
     return
   }
 

@@ -1,6 +1,7 @@
-// Evidence capture for marvin#612 (chat helpers in Activity): drives the built app against a sandbox HOME whose
+// Evidence capture for marvin#612 & crash dismiss (chat helpers in Activity): drives the built app against a sandbox HOME whose
 // ~/.claude/logs/jobs holds fixture helper logs (and whose ~/.agents/bin/gh is a fake), never the real store or GitHub.
-// One launch, two widths (Gil views it narrow on the Mini). Usage: HOME=<sandbox> node chat_helpers_evidence.mjs <out-dir>
+// Two launches at two widths (Gil views it narrow on the Mini), capturing: a recent crashed helper with Dismiss button,
+// an old (>24h) dismissed helper (hidden), and the HOME_CAP applied. Usage: HOME=<sandbox> node chat_helpers_evidence.mjs <out-dir>
 import { chromium } from 'playwright-core'
 import { spawn } from 'node:child_process'
 import path from 'node:path'
@@ -36,10 +37,12 @@ try {
   })
   await page.waitForSelector('[data-testid="chat-helpers"]', { timeout: 15000 })
   await sleep(1500)
-  await page.screenshot({ path: `${OUT}/pr-612-activity-helpers.png` })
-  await page.setViewportSize({ width: 860, height: 1000 })
-  await sleep(1200)
-  await page.screenshot({ path: `${OUT}/pr-612-activity-helpers-narrow.png` })
+  await page.setViewportSize({ width: 900, height: 1000 })
+  await sleep(800)
+  await page.screenshot({ path: `${OUT}/dismiss-helpers-narrow-900px.png` })
+  await page.setViewportSize({ width: 1440, height: 900 })
+  await sleep(800)
+  await page.screenshot({ path: `${OUT}/dismiss-helpers-wide-1440px.png` })
   console.log('shots in', OUT)
 } finally {
   await b?.close().catch(() => {})

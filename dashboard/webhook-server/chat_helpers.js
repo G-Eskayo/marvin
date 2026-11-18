@@ -1,3 +1,4 @@
+import { execFile } from 'child_process'
 import { readFileSync, readdirSync, statSync } from 'fs'
 import os from 'os'
 import path from 'path'
@@ -9,6 +10,9 @@ import path from 'path'
 // mid-run sends no stop event and only that Mac can see its transcript go quiet.
 export const HELPERS_DIR = path.join(os.homedir(), '.claude', 'logs', 'jobs')
 export const STALE_MS = 15 * 60 * 1000 // must match chat_helpers.STALE_S
+export const CRASH_EXPIRY_MS = 24 * 60 * 60 * 1000 // 24 hours: dismissed helpers older than this are hidden
+export const HOME_CAP = 10 // interim cap on local helpers shown, per #625
+export const HELPER_ID = /^helper-[A-Za-z0-9_-]{1,64}$/
 const PREFIX = 'helper-'
 
 const ms = (iso) => {
@@ -42,6 +46,7 @@ export function describeHelper(doc, { now = Date.now(), mtime = () => null } = {
   const step = Array.isArray(run.steps) && run.steps.length ? run.steps[run.steps.length - 1] : { step: 'working', detail: '' }
   const machine = String(h.machine || '')
   const chat = String(h.chat || '')
+  const dismissedAtStr = typeof h.dismissed_at === 'string' ? h.dismissed_at : null
   return {
     id: String(doc.job),
     label: String(doc.label || doc.job),
@@ -53,6 +58,7 @@ export function describeHelper(doc, { now = Date.now(), mtime = () => null } = {
     machine,
     session: String(h.session || ''),
     startedAt: run.started_at,
+    dismissedAt: dismissedAtStr,
     links: cleanLinks(h.links),
     job: {
       job: String(doc.job),
@@ -102,13 +108,50 @@ export function listHelpers({ dir = HELPERS_DIR, now = Date.now() } = {}) {
   const out = []
   for (const n of names) {
     try {
-      const h = describeHelper(JSON.parse(readFileSync(path.join(dir, n), 'utf-8')), { now, mtime })
-      if (h) out.push(h)
+      const doc = JSON.parse(readFileSync(path.join(dir, n), 'utf-8'))
+      const h = describeHelper(doc, { now, mtime })
+      if (!h) continue
+      // dismissed helpers older than 24h are hidden, but keep them visible for 24h after dismissal
+      if (h.dismissedAt && now - Date.parse(h.dismissedAt) > CRASH_EXPIRY_MS) continue
+      if (h.status === 'crashed') {
+        // measure crash expiry from the last sign of life, not the start
+        const run = Array.isArray(doc?.runs) ? doc.runs[doc.runs.length - 1] : null
+        const transcriptMs = typeof (doc.helper?.transcript) === 'string' && doc.helper.transcript ? mtime(doc.helper.transcript) : null
+        const lastSignOfLife = Math.max(Date.parse(h.startedAt) || 0, transcriptMs || 0)
+        if (now - lastSignOfLife > CRASH_EXPIRY_MS) continue
+      }
+      out.push(h)
     } catch {
       // a half-written or corrupt log is skipped, not fatal
     }
   }
-  return sortHelpers(out)
+  const sorted = sortHelpers(out)
+  const capped = sorted.slice(0, HOME_CAP)
+  const droppedRunning = sorted.slice(HOME_CAP).filter(h => h.status === 'running')
+  return [...capped, ...droppedRunning]
+}
+
+export function dismissLocalHelper(aid, { run = execFile } = {}) {
+  return new Promise((resolve) => {
+    if (!HELPER_ID.test(`helper-${aid}`)) {
+      resolve({ ok: false, error: 'invalid helper id' })
+      return
+    }
+    const python = path.join(os.homedir(), '.agents', 'venv', 'bin', 'python')
+    const script = path.join(os.homedir(), '.agents', 'lib', 'chat_helpers.py')
+    run(python, [script, 'dismiss', aid], { timeout: 5000 }, (err, stdout, stderr) => {
+      try {
+        const parsed = JSON.parse(String(stdout).trim().split('\n').pop())
+        if (typeof parsed === 'object' && parsed !== null) {
+          resolve(parsed)
+        } else {
+          resolve({ ok: false, error: 'invalid response' })
+        }
+      } catch {
+        resolve({ ok: false, error: (stderr || err?.message || 'dismiss failed').slice(0, 300) })
+      }
+    })
+  })
 }
 
 export function sortHelpers(list) {

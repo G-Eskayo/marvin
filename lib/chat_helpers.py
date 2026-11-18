@@ -208,6 +208,18 @@ def state_of(doc: dict, now: float | None = None) -> str:
     return "running" if now - beat <= STALE_S else "stale"
 
 
+def dismiss(aid: str, *, jobs_dir: Path | None = None, sessions_path: Path | None = None, now: datetime | None = None) -> bool:
+    """Mark a helper as dismissed (manually removed from the UI). Returns True if dismissed, False if not found."""
+    aid = _agent_id(aid)
+    if not aid:
+        return False
+    jobs_dir = jobs_dir or _jobs_dir()
+    sessions_path = sessions_path or _sessions_path()
+    now = now or datetime.now(timezone.utc)
+    return _update(aid, {}, lambda d, r: d["helper"].update(dismissed_at=_now_iso(now)),
+                   jobs_dir=jobs_dir, sessions_path=sessions_path, machine="", now=now, create=False)
+
+
 def prune(jobs_dir: Path, keep: int = KEEP, now: float | None = None) -> None:
     """Keep the newest `keep` helper logs (by last write); a helper still running is never removed."""
     try:
@@ -308,6 +320,10 @@ def main(argv: list[str]) -> int:
     try:
         if argv[:1] == ["hook"] and len(argv) >= 2:
             handle(argv[1], sys.stdin.read(200_000))
+        elif argv[:1] == ["dismiss"] and len(argv) >= 2:
+            result = dismiss(argv[1])
+            print(json.dumps({"ok": result}))
+            return 0 if result else 1
     except Exception:  # noqa: BLE001
         pass
     return 0
