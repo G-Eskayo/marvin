@@ -1,0 +1,32 @@
+## North-star fit
+
+- **Reuses before adding anything new:** the SKILL.md↔code drift-check pattern already in `lib/tests/test_audit_entry_format_sync.py` (`extract_entry_format_block`, a regex that pulls a bracketed/field list out of a `SKILL.md` block and diffs it against the authoritative source) — same shape applies here: extract the `**Impact**: [...]` bracket from `skills/architecture-review/SKILL.md` and diff its values against `lib/inbox.py`'s `IMPACT_RANK` keys, instead of inventing a new parsing approach. For the ordering assertion, reuses `lib/tests/test_inbox.py`'s existing "suggestions: import and read-time order" style (e.g. `test_suggestions_are_read_in_adr_0017_order`), which already builds items with an `impact` field and checks output order via `inbox.suggestion_order`/`list_items`.
+- **Simplest sufficient approach:** `IMPACT_RANK` in `lib/inbox.py:364` already contains `"pipeline-logic": 3` — it was added for this exact purpose and never finished. No production code changes needed at all: the only functional file touched is `skills/architecture-review/SKILL.md` (one bracket), plus new tests. `sort_suggestions.py` imports `IMPACT_RANK`/`EFFORT_RANK` from `lib/inbox.py` and needs no change (confirmed by reading it — it has no ranking logic of its own left, ADR 0017's dict now lives solely in `inbox.py`).
+- **Line 54 judgment call:** its tie-break sentence ("token-reduction/speed rank above organization/robustness per `## Optimization Priorities` below") names two illustrative endpoints, not an exhaustive order — it already omits `reliability` too, and defers to the `## Optimization Priorities` list below, which already ranks pipeline-logic 4th correctly. Judgment call: **no edit needed there**; it doesn't fail the ticket's conditional ("if it lists the order without pipeline-logic") because it never lists the order.
+- **Tokens:** spends a few tokens fixing one line of documentation and adding ~20-30 lines of test code; saves recurring confusion (the rank/enum mismatch was flagged from an actual architecture-review pass, i.e. it already cost a real review cycle to notice).
+- **Phone-OS direction:** neutral/indirect — this is backlog-tooling hygiene (north star 4, tool-for-tools), keeping the suggestion-sorter and its documented contract from silently diverging again.
+- **User capability:** leaves Gil more capable — `pipeline-logic` suggestions can now actually be tagged and will sort correctly between organization and reliability, instead of being silently unreachable dead code in the triage queue.
+
+No owner decisions needed — the ticket specifies the exact replacement bracket text and the dict needs no change.
+
+## Tests I will write first
+
+From "How we'll try to break it":
+1. **Extra spaces / trailing period in the bracket still parses** — e.g. `[token-reduction | speed | organization | pipeline-logic | reliability | robustness ]` or with a stray `.` — the parity-check regex/split must still extract the correct value set (strip whitespace, don't require an exact trailing char).
+2. **An entry with an Impact value not in the table still sorts last (rank 99), not an error** — already covered implicitly by `inbox.suggestion_order`'s `IMPACT_RANK.get(..., 99)`, but I'll add an explicit case: an item with `impact: "nonsense"` sorts after one with `impact: "robustness"`, and raises nothing.
+
+Additional misuse not explicitly called out, covering the ticket's own acceptance criteria:
+3. **Bracket/dict parity, both directions** — a value in the bracket but missing from `IMPACT_RANK` (e.g. simulate by asserting set equality, not subset) must fail the test; a value in `IMPACT_RANK` but missing from the bracket (the literal bug being fixed) must fail the test. I'll write the test against current `main`-shaped content first conceptually, confirm it fails pre-fix, then apply the fix.
+4. **Order through `inbox.suggestion_order`**: three items identical except `impact` = `organization`, `pipeline-logic`, `reliability` (all `status: open`, same `priority`), sorted via `inbox.list_items`/`suggestion_order` directly, must come out in that exact order (organization, pipeline-logic, reliability) — this is acceptance criterion 3, literally.
+5. **Empty/missing Impact bracket** (malformed input to the extractor): if the `Entry format:` block or `**Impact**:` line is missing entirely, the test helper raises a clear `AssertionError` rather than silently reporting an empty/passing diff — mirrors `test_audit_entry_format_sync.py`'s own `raise AssertionError("Could not find...")` guard.
+6. **Drift re-detection** (mirrors `test_drift_check_detects_a_field_missing_from_audits_prompt`): inject a synthetic extra value into one side only and assert the parity check actually flags it — proves the test can fail, not just pass vacuously.
+
+No dependency failures, concurrency, or permissions cases apply here — this is pure static-text/dict comparison and in-memory sort, no I/O, network, or shared mutable state touched by this change.
+
+## Task List
+
+1. Add a new test file `lib/tests/test_architecture_review_impact_sync.py` (pattern reused from `test_audit_entry_format_sync.py`): extract the `**Impact**: [...]` bracket values from `skills/architecture-review/SKILL.md`, compare the set against `inbox.IMPACT_RANK.keys()`, with tests for: parity (criterion 1/2), whitespace/trailing-punctuation tolerance, missing-block guard, and synthetic-drift detection. Confirm it fails against the current (unfixed) SKILL.md bracket.
+2. Add a test to `lib/tests/test_inbox.py` (new function near `test_suggestions_are_read_in_adr_0017_order`) asserting an `open` suggestion with `fields={"impact": "pipeline-logic"}` sorts strictly between one with `impact: "organization"` and one with `impact: "reliability"` via `inbox.suggestion_order`/`inbox.list_items`, plus the unknown-impact-sorts-last case.
+3. Edit `skills/architecture-review/SKILL.md` line 44: replace `**Impact**: [token-reduction | speed | reliability | organization | robustness]` with `**Impact**: [token-reduction | speed | organization | pipeline-logic | reliability | robustness]`.
+4. Leave line 54 unchanged (judgment call above — doesn't list the order, so nothing to fix).
+5. Run the new/edited tests and confirm they pass against the fixed SKILL.md; run the full `lib/tests/test_inbox.py` and `lib/tests/test_audit_entry_format_sync.py` suites to confirm no regression.

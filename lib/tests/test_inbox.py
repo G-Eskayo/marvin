@@ -339,6 +339,57 @@ def test_suggestions_are_read_in_adr_0017_order(root):
     assert titles == ["High one", "Tie on priority, better impact", "Low one", "Done one"]
 
 
+def test_pipeline_logic_impact_sorts_between_organization_and_reliability(root):
+    """Verify pipeline-logic impact sorts in the correct position per IMPACT_RANK."""
+    # Create three items with the same priority, different impacts
+    # Insert in reverse order (reliability, pipeline-logic, organization) to ensure
+    # sort actually uses impact ranking, not insertion order
+    # They should sort in this order: organization (2) < pipeline-logic (3) < reliability (4)
+    reliability_item, _ = inbox.add("suggestions", item(
+        title="Reliability impact",
+        fields={"priority": 5, "impact": "reliability", "effort": "low"}
+    ), root, TODAY)
+
+    pipeline_item, _ = inbox.add("suggestions", item(
+        title="Pipeline logic impact",
+        fields={"priority": 5, "impact": "pipeline-logic", "effort": "low"}
+    ), root, TODAY)
+
+    org_item, _ = inbox.add("suggestions", item(
+        title="Organization impact",
+        fields={"priority": 5, "impact": "organization", "effort": "low"}
+    ), root, TODAY)
+
+    items = inbox.list_items("suggestions", root)["items"]
+    titles = [i["title"] for i in items]
+
+    assert titles.index("Organization impact") < titles.index("Pipeline logic impact"), \
+        "Organization should sort before pipeline-logic"
+    assert titles.index("Pipeline logic impact") < titles.index("Reliability impact"), \
+        "Pipeline logic should sort before reliability"
+
+
+def test_unknown_impact_sorts_last(root):
+    """Verify unknown impact values sort last (rank 99)."""
+    # Insert unknown item first, then robustness (worst known rank), to ensure
+    # unknown sorts last even with reverse insertion order
+    unknown_item, _ = inbox.add("suggestions", item(
+        title="Unknown impact",
+        fields={"priority": 5, "impact": "unknown-impact-type", "effort": "low"}
+    ), root, TODAY)
+
+    robustness_item, _ = inbox.add("suggestions", item(
+        title="Robustness impact",
+        fields={"priority": 5, "impact": "robustness", "effort": "low"}
+    ), root, TODAY)
+
+    items = inbox.list_items("suggestions", root)["items"]
+    titles = [i["title"] for i in items]
+
+    assert titles.index("Robustness impact") < titles.index("Unknown impact"), \
+        "Known impact (even robustness, the worst rank) should sort before unknown impact"
+
+
 def test_rendered_suggestion_parses_back_to_the_same_item(root):
     [orig] = [i for i in inbox.parse_suggestions(SUGGESTIONS_MD) if i["title"] == "High one"]
     [back] = inbox.parse_suggestions(inbox.render_suggestion(orig))
