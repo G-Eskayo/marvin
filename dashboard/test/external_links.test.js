@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { openLink, windowOpenHandler } from '../electron/main/external_links.js'
+import { openLink, windowOpenHandler, navigateGuard } from '../electron/main/external_links.js'
 
 // A fake execFile: answers each call from a queue of errors and records what was asked.
 function fakeRun(errors = []) {
@@ -69,5 +69,29 @@ describe('A link that would open a new window', () => {
   it('still denies the window when opening the link throws', () => {
     const handler = windowOpenHandler(() => { throw new Error('boom') })
     expect(handler({ url: PR })).toEqual({ action: 'deny' })
+  })
+})
+
+describe('Navigation guard for the main window', () => {
+  it('prevents navigation and opens the link in the browser instead', () => {
+    const asked = []
+    const event = { preventDefault: () => {} }
+    const guard = navigateGuard((u) => { asked.push(u) })
+    guard(event, PR)
+    expect(asked).toEqual([PR])
+  })
+
+  it('still prevents navigation when opening the link throws', () => {
+    const event = { preventDefault: () => {} }
+    const guard = navigateGuard(() => { throw new Error('boom') })
+    expect(() => guard(event, PR)).not.toThrow()
+  })
+
+  it('calls preventDefault on the event', () => {
+    const prevented = []
+    const event = { preventDefault: () => { prevented.push(true) } }
+    const guard = navigateGuard(() => {})
+    guard(event, PR)
+    expect(prevented).toEqual([true])
   })
 })

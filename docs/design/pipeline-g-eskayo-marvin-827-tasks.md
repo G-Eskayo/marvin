@@ -1,0 +1,8 @@
+1. `dashboard/electron/main/external_links.js` — add `export function navigateGuard(open)` returning `(event, url) => { event.preventDefault(); try { Promise.resolve(open(url)).catch(() => {}) } catch {} }`, with a one-line comment on why (the main window's own navigation must never leave the app).
+2. `dashboard/test/external_links.test.js` — add the `navigateGuard` tests from above.
+3. `dashboard/electron/main/index.js` `createWindow()` — right after the existing `setWindowOpenHandler(windowOpenHandler(...))` line (~402), add `mainWindow.webContents.on('will-navigate', navigateGuard((url) => openLink(url, { openExternal: shell.openExternal })))`, and import `navigateGuard` alongside `openLink, windowOpenHandler` (line 137).
+4. `dashboard/electron/main/index.js` — add `ipcMain.handle('support:openLink', (_event, url) => openLink(String(url || ''), { openExternal: shell.openExternal }))` next to the other `support:*` handlers (~line 444-450).
+5. `dashboard/electron/preload/index.js` — add `openLink: (url) => ipcRenderer.invoke('support:openLink', url)` to the `support` namespace (~line 91-102).
+6. `dashboard/src/components/SupportTab.jsx` — change the `<a href={thread.request.url}>` at lines 208-211 to add `onClick={(e) => { e.preventDefault(); window.api?.support?.openLink?.(thread.request.url)?.catch?.(() => {}) }}`, keeping `href` and the existing classes/text unchanged (no visible change — no screenshots needed).
+7. `dashboard/test/support_view.test.jsx` — add the `Thread` click tests from above.
+8. Run `dashboard`'s test suite (not just the touched files) and confirm green before handing off.

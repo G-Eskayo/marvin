@@ -93,6 +93,7 @@ contextBridge.exposeInMainWorld('api', {
     config: () => ipcRenderer.invoke('support:config'),
     state: () => ipcRenderer.invoke('support:state'),
     act: (cmd, request) => ipcRenderer.invoke('support:act', cmd, request),
+    openLink: (url) => ipcRenderer.invoke('support:openLink', url),
     // A notice was clicked: { repo, number } of the request to open.
     onFocus: (callback) => {
       const listener = (_event, target) => callback(target)

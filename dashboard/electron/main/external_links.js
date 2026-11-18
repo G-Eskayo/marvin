@@ -27,3 +27,13 @@ export function windowOpenHandler(open) {
     return { action: 'deny' }
   }
 }
+
+// The main window's own navigation must never leave the app.
+export function navigateGuard(open) {
+  return (event, url) => {
+    event.preventDefault()
+    try {
+      Promise.resolve(open(url)).catch(() => {})
+    } catch {}
+  }
+}

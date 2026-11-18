@@ -31,7 +31,7 @@ describe('Support tab (ADR 0073)', () => {
     const html = renderToStaticMarkup(
       <SupportTab api={api()} triggers={noop} initial={{ role: 'helper', requests: [R(1, 'needs-you')], errors: { 'helped-person/marvin-support': 'offline' } }} />
     )
-    expect(html).toContain('Couldn’t reach helped-person/marvin-support')
+    expect(html).toContain("reach helped-person/marvin-support. Showing the last saved state")
     expect(html).toContain('Request 1')
   })
 
@@ -66,7 +66,7 @@ describe('Support tab (ADR 0073)', () => {
     expect(groups.map((g) => [g.title, g.items.map((r) => r.number)])).toEqual([['Replies waiting', [1]], ['In progress', [2]], ['Done', [3]], ['Ideas', []]])
   })
 
-  it('the helped thread offers Apply with MARVIN and a follow-up, not the helper’s reply tools', () => {
+  it('the helped thread offers Apply with MARVIN and a follow-up, not the helper s reply tools', () => {
     const t = { request: { ...R(1, 'answered'), body: 'x', author: 'helped' }, comments: [{ author: 'helper', body: 'Run gh auth login', check: 'gh auth status' }] }
     const html = renderToStaticMarkup(<Thread thread={t} role="helped" busy={false} draft="" setDraft={() => {}} check="" setCheck={() => {}} />)
     expect(html).toContain('Fix it with MARVIN')
@@ -122,7 +122,7 @@ describe('IT button (ADR 0073)', () => {
     expect(quiet).not.toContain('rounded-full bg-blue-500')
   })
 
-  it('its panel asks what is wrong and lists the person’s requests in their own words', () => {
+  it('its panel asks what is wrong and lists the person s requests in their own words', () => {
     const html = renderToStaticMarkup(
       <ItButton api={api()} triggers={noop} initialOpen initial={{ badge: 1, requests: [R(1, 'answered'), R(2, 'helper-trying')] }} />
     )
@@ -145,7 +145,7 @@ describe('ideas (feature, skill and prompt ideas)', () => {
     expect(helped.find((g) => g.id === 'ideas').items.map((r) => r.number)).toEqual([2, 3])
   })
 
-  it('an idea says what happened to it, in each side’s words', () => {
+  it('an idea says what happened to it, in each side s words', () => {
     expect(outcome('helped', R(1, 'idea-ticket')).text).toBe('Made a ticket ✓')
     expect(outcome('helped', R(1, 'idea-shipped', false)).text).toBe('✓ Built')
     expect(outcome('helped', R(1, 'idea-dismissed', false)).text).toBe('Not now')
@@ -176,7 +176,7 @@ describe('written for the person being helped (audience)', () => {
   const t = (comments, state = 'answered') => ({ request: { ...R(1, state), body: 'x', author: 'helped' }, comments })
   const render = (thread, role, extra = {}) => renderToStaticMarkup(<Thread thread={thread} role={role} busy={false} draft="hi" setDraft={() => {}} check="" setCheck={() => {}} {...extra} />)
 
-  it('each comment says who wrote it, in the reader’s words', () => {
+  it('each comment says who wrote it, in the reader s words', () => {
     const c = { requester: { by: 'requester', author: 'helped' }, helper: { by: 'helper', author: 'helper-login' }, marvin: { by: 'helper-marvin', author: 'helper-login' } }
     expect([c.requester, c.helper, c.marvin].map((x) => authorLabel('helped', x))).toEqual(['You', 'Your helper', "Your helper's MARVIN (automatic)"])
     expect([c.requester, c.helper, c.marvin].map((x) => authorLabel('helper', x))).toEqual(['helped', 'You', 'Your MARVIN (automatic)'])
@@ -187,7 +187,7 @@ describe('written for the person being helped (audience)', () => {
     expect(html).toContain('How we&#x27;ll know it&#x27;s fixed: your project list exists')
   })
 
-  it('a failed fix tells the helped person they don’t need to do anything', () => {
+  it('a failed fix tells the helped person they don t need to do anything', () => {
     const v = { check: 'test -s ~/x', before: { exit: 1 }, after: { exit: 1 }, passed: false }
     const html = render(t([{ by: 'requester', author: 'helped', body: 'r', verification: v }], 'helper-trying'), 'helped')
     expect(html).toContain('✗ Not fixed yet.')
@@ -205,7 +205,7 @@ describe('written for the person being helped (audience)', () => {
     expect(during).toContain('Every command is kept exactly as you wrote it')
   })
 
-  it('the helped person’s diagnostics are labelled in plain words', () => {
+  it('the helped person s diagnostics are labelled in plain words', () => {
     const body = 'Blank\n\n<details><summary>Diagnostics (scrubbed)</summary>\n\n```json\n{}\n```\n</details>\n'
     const html = renderToStaticMarkup(<Thread thread={{ request: { ...R(1, 'needs-you'), body, author: 'helped' }, comments: [] }} role="helped" busy={false} draft="" setDraft={() => {}} check="" setCheck={() => {}} />)
     expect(html).toContain('Technical details (sent automatically, no passwords)')
@@ -216,7 +216,7 @@ describe('headless on the helped Mac (views)', () => {
   const t = (comments, state = 'answered') => ({ request: { ...R(1, state), body: 'x', author: 'helped' }, comments })
   const render = (thread, extra = {}) => renderToStaticMarkup(<Thread thread={thread} role="helped" busy={false} draft="" setDraft={() => {}} check="" setCheck={() => {}} {...extra} />)
 
-  it('an explanation is closed with "Got it, thanks", with nothing to fix', () => {
+  it('an explanation is closed with Got it, thanks, with nothing to fix', () => {
     const html = render(t([{ by: 'helper-marvin', author: 'h', body: 'Here is what that means', kind: 'explain' }]))
     expect(html).toContain('Got it, thanks')
     expect(html).not.toContain('Fix it with MARVIN')
@@ -239,7 +239,7 @@ describe('headless on the helped Mac (views)', () => {
     expect(html).not.toContain('MARVIN will fix this by itself')
   })
 
-  it('while the helper’s MARVIN works, the person is told they’ll hear back', () => {
+  it('while the helper s MARVIN works, the person is told they ll hear back', () => {
     expect(render(t([], 'helper-trying'))).toContain('You&#x27;ll get a notification')
   })
 
@@ -255,7 +255,7 @@ describe('headless on the helped Mac (views)', () => {
   })
 })
 
-describe('the helper’s reply box says what each button does', () => {
+describe("the helper s reply box says what each button does", () => {
   const t = { request: { ...R(1, 'needs-you'), body: 'x', author: 'helped' }, comments: [] }
   const html = renderToStaticMarkup(<Thread thread={t} role="helper" busy={false} draft="note" setDraft={() => {}} check="" setCheck={() => {}} />)
   it('offers a plain send, a preview, and handing it back to MARVIN, each explained', () => {
