@@ -77,7 +77,7 @@ describe('MergeProgress', () => {
 
 describe('the card\'s status from the main process\'s op', () => {
   it('maps each op state', () => {
-    expect(statusFromOp({ state: 'merging', progress: midTests })).toEqual({ status: 'approving', errorMessage: null, progress: midTests })
+    expect(statusFromOp({ state: 'merging', progress: midTests })).toEqual({ status: 'approving', errorMessage: null, progress: midTests, code: null, remediation: null })
     expect(statusFromOp({ state: 'interrupted', reason: 'The merge was interrupted when the webhook restarted. Approve again.' }).status).toBe('interrupted')
     expect(statusFromOp({ state: 'merged', elsewhere: true, reason: 'Merged on GitHub' })).toMatchObject({ status: 'merged', errorMessage: 'Merged on GitHub' })
     expect(statusFromOp({ state: 'merged' })).toMatchObject({ status: 'merged', errorMessage: null })
@@ -114,7 +114,7 @@ describe('failover and queued approvals on the card', () => {
   const WHY = "Neither Mac can merge right now: the Mac mini is offline, and this MacBook Pro's merge service isn't running. Your approval is saved and will merge by itself when one comes back."
 
   it('a merge failed over carries its notice; one without a notice reads as before', () => {
-    expect(statusFromOp({ state: 'merging', notice: NOTICE, progress: null })).toEqual({ status: 'approving', errorMessage: NOTICE, progress: null })
+    expect(statusFromOp({ state: 'merging', notice: NOTICE, progress: null })).toEqual({ status: 'approving', errorMessage: NOTICE, progress: null, code: null, remediation: null })
     const v = describePrState(pr, { status: 'approving', errorMessage: NOTICE, progress: true })
     expect(v).toMatchObject({ kind: 'merging', headline: 'Merging…', approve: 'hidden' })
     expect(v.detail).toBe(`${NOTICE} You can leave this screen; it carries on.`)

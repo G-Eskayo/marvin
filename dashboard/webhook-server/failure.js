@@ -12,49 +12,101 @@
 const RULES = [
   { code: 'GH_AUTH_INVALID', action: 'escalate', retryable: false,
     test: /bad credentials|http 401|authentication failed|could not read username|requires authentication|token.*(invalid|expired)|invalid.*token/i,
-    remediation: 'GitHub rejected the credential. Fix ~/.claude/.gh-token on the machine running the webhook (the Health tab shows auth:gh per machine).' },
+    label: 'GitHub credential invalid',
+    remediation: 'GitHub rejected the credential. Fix ~/.claude/.gh-token on the machine running the webhook (the Health tab shows auth:gh per machine).',
+    needsYou: true },
   { code: 'NOT_MERGEABLE', action: 'reengage', retryable: false,
     test: /not mergeable|merge conflict|conflicts? must be resolved|cannot be merged/i,
-    remediation: 'The PR conflicts with main. It was sent back to its ticket for rework.' },
+    label: 'PR has conflicts',
+    remediation: 'The PR conflicts with main. It was sent back to its ticket for rework.',
+    needsYou: false },
   // GitHub will not merge a draft. The gate marks an owner-approved draft ready first (readyIfDraft in merge.js);
   // this catches one that slipped through, so it is named instead of UNKNOWN (clarity-captions #77/#78, 2026-10-09).
   { code: 'PR_DRAFT', action: 'escalate', retryable: false,
     test: /is still a draft|pull request is a draft|draft pull request/i,
-    remediation: 'The PR is a draft. Mark it "Ready for review" on GitHub, then approve again. The PR was not sent back.' },
+    label: 'PR is still a draft',
+    remediation: 'The PR is a draft. Mark it "Ready for review" on GitHub, then approve again. The PR was not sent back.',
+    needsYou: true },
   { code: 'BRANCH_PROTECTION', action: 'escalate', retryable: false,
     test: /protected branch|required status check|required review|branch protection|gh006|gh013/i,
-    remediation: 'Branch protection blocked the merge. Satisfy the required checks/reviews, or adjust the rule.' },
+    label: 'Branch protection blocked merge',
+    remediation: 'Branch protection blocked the merge. Satisfy the required checks/reviews, or adjust the rule.',
+    needsYou: true },
   // GitHub refuses a merge when the base branch moved between it checking and merging (two merges close
   // together). Nothing is wrong with the PR; trying again, once main has settled, is the right response.
   { code: 'BASE_MOVED', action: 'retry', retryable: true,
     test: /base branch was modified|try the merge again/i,
-    remediation: 'main moved while this merged. Retried automatically; if it keeps failing, another merge is racing it.' },
+    label: 'Main moved during merge',
+    remediation: 'main moved while this merged. Retried automatically; if it keeps failing, another merge is racing it.',
+    needsYou: false },
   { code: 'RATE_LIMITED', action: 'retry', retryable: true,
     test: /rate limit|secondary rate|abuse detection/i,
-    remediation: 'GitHub rate limit. Retried automatically with backoff; try again shortly if it persists.' },
+    label: 'GitHub rate limit',
+    remediation: 'GitHub rate limit. Retried automatically with backoff; try again shortly if it persists.',
+    needsYou: false },
   // GitHub itself failing (an incident, not our network): its own 5xx answers. Seen 2026-10-07 when a rebase push
   // died with "remote: Internal Server Error" after a full retest. The PR is fine; waiting and retrying is the answer.
   { code: 'GITHUB_OUTAGE', action: 'retry', retryable: true,
     test: /internal server error|http 500|returned error: 50[0-4]/i,
-    remediation: 'GitHub is having an outage (githubstatus.com). Nothing is wrong with this PR and it was not sent back; approve again once GitHub recovers.' },
+    label: 'GitHub is down',
+    remediation: 'GitHub is having an outage (githubstatus.com). Nothing is wrong with this PR and it was not sent back; approve again once GitHub recovers.',
+    needsYou: false },
   { code: 'TRANSIENT_NETWORK', action: 'retry', retryable: true,
     test: /econnreset|etimedout|enotfound|econnrefused|eai_again|socket hang up|network|timed out|http 50[234]|bad gateway|service unavailable|gateway time-?out/i,
-    remediation: 'Transient network or GitHub error. Retried automatically; check connectivity if it persists.' },
+    label: 'Transient network error',
+    remediation: 'Transient network or GitHub error. Retried automatically; check connectivity if it persists.',
+    needsYou: false },
   { code: 'TOOL_MISSING', action: 'escalate', retryable: false,
     test: /enoent|command not found|no such file or directory.*(gh|git|npm|npx)/i,
-    remediation: "A required tool (gh/git/npm) is missing from the webhook's PATH. Install it or fix the launchd plist PATH." },
+    label: 'Required tool missing',
+    remediation: "A required tool (gh/git/npm) is missing from the webhook's PATH. Install it or fix the launchd plist PATH.",
+    needsYou: true },
   { code: 'PR_NOT_FOUND', action: 'escalate', retryable: false,
     test: /could not resolve to a pullrequest|pull request not found|no pull requests? found/i,
-    remediation: 'GitHub has no such pull request. It may have been closed or deleted, or the URL is wrong.' },
+    label: 'PR not found',
+    remediation: 'GitHub has no such pull request. It may have been closed or deleted, or the URL is wrong.',
+    needsYou: true },
   { code: 'INVALID_REQUEST', action: 'escalate', retryable: false,
     test: /not a github pr url/i,
-    remediation: 'The request did not contain a valid GitHub PR URL.' }
+    label: 'Invalid PR URL',
+    remediation: 'The request did not contain a valid GitHub PR URL.',
+    needsYou: true }
 ]
 
-// Built from RULES above (for error-pattern failures) plus inline refusal() codes for non-pattern failures.
-// Exported for dashboard visibility (stage_strip.js) and stage history rendering.
+// Consolidated code info: labels, remediations, and whether this needs the owner to act.
+export const CODE_INFO = Object.fromEntries(
+  [
+    ...RULES,
+    // From inline refusal() calls in merge.js and decisions.js:
+    { code: 'OUT_OF_ORDER', label: 'merge another PR first', remediation: 'Another PR must merge first. See the blockedBy list on this ticket.', needsYou: false },
+    { code: 'WRONG_BASE', label: 'wrong base branch', remediation: 'The PR is not based on main. Rebase onto main before approving.', needsYou: true },
+    { code: 'SENT_BACK', label: 'sent back for rework', remediation: 'The PR was sent back to its ticket for rework.', needsYou: false },
+    { code: 'CI_PENDING', label: 'checks still running', remediation: 'CI checks are still running. Approve again once they pass.', needsYou: false },
+    { code: 'NO_MERGE_PROFILE', label: 'this project cannot merge from the dashboard', remediation: 'This project has no merge profile configured. Add one in the project settings.', needsYou: true },
+    { code: 'MERGE_REFUSED', label: 'GitHub refused the merge', remediation: 'The merge was refused. See the ticket for details.', needsYou: false },
+    { code: 'CI_FAILED', label: 'GitHub checks failed', remediation: 'CI failed. Fix the failing tests and approve again.', needsYou: true },
+    { code: 'GATE_INFRA', label: 'the build machine failed', remediation: 'The merge gate infrastructure failed (no test command, full disk, database locked). Retry once fixed.', needsYou: true },
+    { code: 'MEMORY_PRESSURE', label: 'waiting for memory', remediation: 'The Mac\'s memory is under pressure, so the check waits. It starts by itself when pressure drops; nothing was stopped.', needsYou: false },
+    { code: 'MAIN_RED', label: 'main was failing', remediation: 'main branch is failing tests. Approve again once main is green.', needsYou: false },
+    { code: 'GATE_TESTS_FAILED', label: 'tests failed', remediation: 'Tests failed in the merge gate. Fix the failing tests and approve again.', needsYou: true },
+    { code: 'VERSION_BUMP_FAILED', label: 'version bump failed', remediation: 'Version bump failed. Check the CHANGELOG format and ticket metadata.', needsYou: true },
+    { code: 'REBASE_CONFLICT', label: 'conflicts after rebase', remediation: 'Needs a person to rebase by hand until #230 can resolve it automatically.', needsYou: true },
+    { code: 'NO_UI_EVIDENCE', label: 'needed screenshots', remediation: 'Add images of the changed screens to the PR description.', needsYou: true },
+    { code: 'UI_EVIDENCE_UNCHECKED', label: 'images not verified', remediation: 'The images exist but failed verification. Check that they show the current state and are clearly linked.', needsYou: true },
+    { code: 'IMAGES_UNPINNED', label: 'images unpinned', remediation: 'Link the images by the commit they were taken at.', needsYou: true },
+    { code: 'DECISIONS_PENDING', label: 'decisions not answered', remediation: 'Answer the required decisions in the PR.', needsYou: true },
+    { code: 'DECISIONS_UNCHECKED', label: 'decisions not valid', remediation: 'The decisions section failed validation. Check the structure and ensure all required fields are present.', needsYou: true },
+    { code: 'DECISIONS_UNSTRUCTURED', label: 'decisions improperly formatted', remediation: 'Use the Decisions section format with buttons and options, not prose.', needsYou: true },
+    { code: 'ENV_MISSING', label: 'environment not configured', remediation: 'A required environment variable or configuration is missing. Check the setup.', needsYou: true },
+    { code: 'ALREADY_MERGING', label: 'already merging on this machine', remediation: 'This PR is already merging on another machine. Wait for it to finish.', needsYou: false },
+    { code: 'IMAGES_STALE', label: 'images are stale', remediation: 'Re-pin the images to the latest commit.', needsYou: true },
+    { code: 'UNKNOWN', label: 'unclassified failure', remediation: 'Unclassified failure. See the evidence; this needs triage.', needsYou: true }
+  ].map((r) => [r.code, { label: r.label, remediation: r.remediation, needsYou: r.needsYou }])
+)
+
+// Built from CODE_INFO for backward compatibility: just the remediation text by code.
 export const REMEDIATION_BY_CODE = Object.fromEntries(
-  RULES.map((r) => [r.code, r.remediation])
+  Object.entries(CODE_INFO).map(([code, info]) => [code, info.remediation])
 )
 
 const EVIDENCE_MAX = 600

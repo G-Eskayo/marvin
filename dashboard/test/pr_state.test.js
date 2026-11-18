@@ -1,6 +1,48 @@
 import { describe, it, expect } from 'vitest'
 import { describePrState } from '../src/lib/prState.js'
 
+// Test the extractCode function indirectly through describePrState
+describe('extractCode (tested through describePrState fallback)', () => {
+  const ready = { sentBack: false, conflicts: false, checks: { state: 'passing', failing: [], pending: [] }, waitingOn: [], baseProblem: null }
+  const state = (over = {}, ui = {}) => describePrState({ ...ready, ...over }, { status: 'idle', errorMessage: null, ...ui })
+
+  it('extracts GITHUB_OUTAGE from "GITHUB_OUTAGE at webhook:" format', () => {
+    const s = state({}, { status: 'error', errorMessage: 'GITHUB_OUTAGE at webhook: Internal Server Error', code: null })
+    expect(s.kind).toBe('github-outage')
+    expect(s.code).toBe('GITHUB_OUTAGE')
+  })
+
+  it('extracts GITHUB_OUTAGE from "GITHUB_OUTAGE:" format', () => {
+    const s = state({}, { status: 'error', errorMessage: 'GITHUB_OUTAGE: Internal Server Error', code: null })
+    expect(s.kind).toBe('github-outage')
+    expect(s.code).toBe('GITHUB_OUTAGE')
+  })
+
+  it('extracts IMAGES_STALE from error message', () => {
+    const s = state({}, { status: 'error', errorMessage: 'IMAGES_STALE at request: images pinned to old commit', code: null })
+    expect(s.kind).toBe('images-stale')
+    expect(s.code).toBe('IMAGES_STALE')
+  })
+
+  it('extracts SENT_BACK and does not show as error (MIRRORED_REFUSALS)', () => {
+    const s = state({}, { status: 'error', errorMessage: 'SENT_BACK at stage: sent back for rework', code: null })
+    // SENT_BACK is in MIRRORED_REFUSALS, so it doesn't show as error kind
+    expect(s.kind).not.toBe('error')
+  })
+
+  it('extracts RATE_LIMITED and shows as error (not in MIRRORED_REFUSALS)', () => {
+    const s = state({}, { status: 'error', errorMessage: 'RATE_LIMITED at webhook: rate limit hit', code: null })
+    expect(s.kind).toBe('error')
+    expect(s.code).toBe('RATE_LIMITED')
+  })
+
+  it('does not extract from message without code prefix', () => {
+    const s = state({}, { status: 'error', errorMessage: 'Something went wrong', code: null })
+    expect(s.kind).toBe('error')
+    expect(s.code).toBeNull()
+  })
+})
+
 const ready = { sentBack: false, conflicts: false, checks: { state: 'passing', failing: [], pending: [] }, waitingOn: [], baseProblem: null }
 const state = (over = {}, ui = {}) => describePrState({ ...ready, ...over }, { status: 'idle', errorMessage: null, ...ui })
 
@@ -25,26 +67,26 @@ describe('describePrState: one headline, only the buttons that make sense', () =
   })
 
   it('a refusal left over from an earlier click is never shown on top of the state that caused it', () => {
-    const s = state({ sentBack: true }, { status: 'error', errorMessage: 'SENT_BACK at request: this PR was sent back' })
+    const s = state({ sentBack: true }, { status: 'error', errorMessage: 'SENT_BACK at request: this PR was sent back', code: 'SENT_BACK' })
     expect(s.kind).toBe('sent-back')
     expect(JSON.stringify(s)).not.toMatch(/Failed|SENT_BACK at request/)
   })
 
   it('and once that state clears, the stale refusal does not come back', () => {
     for (const code of ['SENT_BACK', 'CI_PENDING', 'CI_FAILED', 'WRONG_BASE', 'NO_UI_EVIDENCE', 'IMAGES_UNPINNED', 'DECISIONS_PENDING', 'DECISIONS_UNSTRUCTURED']) {
-      expect(state({}, { status: 'error', errorMessage: `${code} at request: x` }).kind).toBe('ready')
+      expect(state({}, { status: 'error', errorMessage: 'some message', code }).kind).toBe('ready')
     }
   })
 
   it('IMAGES_STALE is shown as its own blocked state because it cannot be re-verified live', () => {
-    const s = state({}, { status: 'error', errorMessage: 'IMAGES_STALE at request: screenshots pinned to abc123 but SettingsView.swift changed in def456' })
+    const s = state({}, { status: 'error', errorMessage: 'screenshots pinned to abc123 but SettingsView.swift changed in def456', code: 'IMAGES_STALE' })
     expect(s).toMatchObject({ kind: 'images-stale', tone: 'blocked', approve: 'enabled', deny: 'enabled' })
     expect(s.headline).toMatch(/Images are older than the latest change/i)
     expect(s.detail).toMatch(/SettingsView.swift changed/)
   })
 
   it('a real merge failure is shown, and the PR can be tried again', () => {
-    const s = state({}, { status: 'error', errorMessage: 'MERGE_REFUSED at merging: GitHub refused it' })
+    const s = state({}, { status: 'error', errorMessage: 'GitHub refused it', code: 'MERGE_REFUSED' })
     expect(s).toMatchObject({ kind: 'error', approve: 'enabled' })
     expect(s.detail).toMatch(/GitHub refused it/)
   })
@@ -107,16 +149,65 @@ describe('describePrState: one headline, only the buttons that make sense', () =
   })
 
   it('a GitHub outage says so, keeps Approve available, and does not blame the PR', () => {
-    const s = state({}, { status: 'error', errorMessage: 'GITHUB_OUTAGE at merging: remote: Internal Server Error' })
+    const s = state({}, { status: 'error', errorMessage: 'remote: Internal Server Error', code: 'GITHUB_OUTAGE' })
     expect(s).toMatchObject({ kind: 'github-outage', approve: 'enabled', deny: 'enabled' })
     expect(s.headline).toMatch(/GitHub is having an outage/)
     expect(s.detail).toMatch(/nothing is wrong with this PR/i)
   })
 
   it('a previous "sent back for rework" result is shown once, as the PR\'s state, not as an error', () => {
-    const s = state({}, { status: 'reengaged', errorMessage: 'REBASE_CONFLICT: ...' })
+    const s = state({}, { status: 'reengaged', errorMessage: '...', code: 'REBASE_CONFLICT' })
     expect(s.kind).toBe('sent-back-now')
     expect(s.approve).toBe('hidden')
+  })
+
+  it('GITHUB_OUTAGE recognized by code parameter (not errorMessage prefix)', () => {
+    const s = state({}, { status: 'error', errorMessage: 'GitHub server is down', code: 'GITHUB_OUTAGE' })
+    expect(s).toMatchObject({ kind: 'github-outage', approve: 'enabled', deny: 'enabled' })
+  })
+
+  it('IMAGES_STALE recognized by code parameter (not errorMessage prefix)', () => {
+    const s = state({}, { status: 'error', errorMessage: 'images pinned to old commit', code: 'IMAGES_STALE', remediation: 'Re-pin the images.' })
+    expect(s).toMatchObject({ kind: 'images-stale', approve: 'enabled', deny: 'enabled' })
+    expect(s.remediation).toBe('Re-pin the images.')
+  })
+
+  it('MIRRORED_REFUSALS codes (SENT_BACK, CI_PENDING, etc) do not show as error when code is passed', () => {
+    for (const code of ['SENT_BACK', 'CI_PENDING', 'CI_FAILED', 'WRONG_BASE', 'NO_UI_EVIDENCE', 'IMAGES_UNPINNED', 'DECISIONS_PENDING', 'DECISIONS_UNSTRUCTURED']) {
+      const s = state({}, { status: 'error', errorMessage: 'some message', code })
+      expect(s.kind).not.toBe('error')
+    }
+  })
+
+  it('other error codes show as error state with code and remediation', () => {
+    const s = state({}, { status: 'error', errorMessage: 'Rate limit hit', code: 'RATE_LIMITED', remediation: 'Wait before trying again.' })
+    expect(s).toMatchObject({ kind: 'error', approve: 'enabled', deny: 'enabled', code: 'RATE_LIMITED' })
+    expect(s.remediation).toBe('Wait before trying again.')
+  })
+
+  it('GITHUB_OUTAGE recognized by errorMessage prefix when code is null (fallback path)', () => {
+    const s = state({}, { status: 'error', errorMessage: 'GITHUB_OUTAGE at webhook: Internal Server Error', code: null })
+    expect(s).toMatchObject({ kind: 'github-outage', approve: 'enabled', deny: 'enabled' })
+    expect(s.headline).toMatch(/GitHub is having an outage/)
+  })
+
+  it('IMAGES_STALE recognized by errorMessage prefix when code is null (fallback path)', () => {
+    const s = state({}, { status: 'error', errorMessage: 'IMAGES_STALE: images pinned to old commit', code: null })
+    expect(s).toMatchObject({ kind: 'images-stale', approve: 'enabled', deny: 'enabled' })
+    expect(s.code).toBe('IMAGES_STALE')
+  })
+
+  it('MIRRORED_REFUSALS codes extracted from errorMessage prefix when code is null do not show as error', () => {
+    for (const code of ['SENT_BACK', 'CI_PENDING', 'CI_FAILED', 'WRONG_BASE', 'NO_UI_EVIDENCE', 'IMAGES_UNPINNED', 'DECISIONS_PENDING', 'DECISIONS_UNSTRUCTURED']) {
+      const s = state({}, { status: 'error', errorMessage: `${code} at request: some message`, code: null })
+      expect(s.kind).not.toBe('error')
+    }
+  })
+
+  it('unknown error code falls back to generic error when code extraction fails', () => {
+    const s = state({}, { status: 'error', errorMessage: 'Something went wrong', code: null })
+    expect(s).toMatchObject({ kind: 'error', approve: 'enabled', deny: 'enabled' })
+    expect(s.headline).toMatch(/The last merge attempt failed/)
   })
 })
 

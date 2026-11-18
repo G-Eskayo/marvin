@@ -1,4 +1,5 @@
 import { approveOnAnyMachine, backupForMemory } from './merge_failover.js'
+import { CODE_INFO } from '../../webhook-server/failure.js'
 
 // One Approve, from the click (or a retry of a saved click) to its outcome (marvin#762). The IPC handler and the
 // retry both run this, so a retried approval is exactly a click: the same in-flight op (mergeOps.start refuses a PR
@@ -73,10 +74,15 @@ export function createApproveFlow({ mergeOps, ledger, machines, send, push = () 
       const stillQueuedThere = retry && before?.outcome === 'waiting-memory' && err?.payload?.code === 'ALREADY_MERGING'
       if (queuedForMemory || stillQueuedThere) {
         const id = err.machine?.id ?? before?.machine ?? null
-        const reason = queuedForMemory ? err.payload.message : before?.reason ?? err.payload.message
-        ledger.conclude(url, 'waiting-memory', { machine: id, reason, unsent: stillQueuedThere })
-        push(url, mergeOps.waitMemory(url, reason, err.machine?.label ?? null))
-        return { merged: false, waitingMemory: true, machine: id, machineLabel: err.machine?.label ?? null, reason, cancelled: false }
+        const payload = err?.payload ?? {}
+        const detail = {
+          message: queuedForMemory ? payload.message : before?.reason ?? payload.message,
+          code: queuedForMemory ? payload.code : null,
+          remediation: queuedForMemory ? (payload.remediation || CODE_INFO[payload.code]?.remediation) : null
+        }
+        ledger.conclude(url, 'waiting-memory', { machine: id, reason: detail.message, unsent: stillQueuedThere })
+        push(url, mergeOps.waitMemory(url, detail, err.machine?.label ?? null))
+        return { merged: false, waitingMemory: true, machine: id, machineLabel: err.machine?.label ?? null, reason: detail.message, cancelled: false }
       }
       if (pin && (err?.noMachine || err?.payload?.code === 'ALREADY_MERGING')) return stillInterrupted(err.message)
       if (err?.noMachine) {
@@ -84,8 +90,14 @@ export function createApproveFlow({ mergeOps, ledger, machines, send, push = () 
         push(url, mergeOps.queue(url, err.message))
         return { merged: false, queued: true, reason: err.message, cancelled: false }
       }
-      ledger.conclude(url, 'refused', { machine: err?.machine?.id ?? null, reason: err?.message })
-      push(url, mergeOps.fail(url, err?.message))
+      const payload = err?.payload ?? {}
+      const detail = {
+        message: payload.message || err?.message,
+        code: payload.code,
+        remediation: payload.remediation || (payload.code ? CODE_INFO[payload.code]?.remediation : null)
+      }
+      ledger.conclude(url, 'refused', { machine: err?.machine?.id ?? null, reason: payload.message || err?.message })
+      push(url, mergeOps.fail(url, detail))
       throw err
     }
 

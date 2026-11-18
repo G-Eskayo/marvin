@@ -86,10 +86,13 @@ export function createMergeOps({ maxMergingMs = 45 * 60_000 } = {}) {
       ops.set(url, result?.reengaged ? { state: 'reengaged', reason: result.reason, ...base, ...where } : { state: 'merged', ...base, ...where })
       return ops.get(url)
     },
-    fail(url, reason, now = Date.now()) {
+    fail(url, reasonOrDetail, now = Date.now()) {
       if (mergedHere(url)) return ops.get(url)
       const o = ops.get(url)
-      ops.set(url, { state: 'error', reason, head: o?.head ?? null, progress: closeRunning(o?.progress, 'failed', null, now), at: now })
+      const detail = reasonOrDetail && typeof reasonOrDetail === 'object'
+        ? reasonOrDetail
+        : { message: reasonOrDetail ?? null, code: null, remediation: null }
+      ops.set(url, { state: 'error', reason: detail.message, code: detail.code, remediation: detail.remediation, head: o?.head ?? null, progress: closeRunning(o?.progress, 'failed', null, now), at: now })
       return ops.get(url)
     },
     // The approve stream ended with no result: the webhook went away mid-merge (restart, crash, machine asleep).
@@ -110,18 +113,24 @@ export function createMergeOps({ maxMergingMs = 45 * 60_000 } = {}) {
     },
     // No machine could take the approval: it is saved (approval_ledger.js) and retried when one comes back. Nothing
     // ran, so there is no progress to show.
-    queue(url, reason, now = Date.now()) {
+    queue(url, reasonOrDetail, now = Date.now()) {
       if (mergedHere(url)) return ops.get(url)
       const o = ops.get(url)
-      ops.set(url, { state: 'queued', reason, head: o?.head ?? null, progress: null, at: now })
+      const detail = reasonOrDetail && typeof reasonOrDetail === 'object'
+        ? reasonOrDetail
+        : { message: reasonOrDetail ?? null, code: null, remediation: null }
+      ops.set(url, { state: 'queued', reason: detail.message, code: detail.code, remediation: detail.remediation, head: o?.head ?? null, progress: null, at: now })
       return ops.get(url)
     },
     // marvin#940: the machine refused it for memory and queued it; it runs there by itself when pressure drops. Nothing
     // ran, so no progress. `machine` is the machine's name for the card ("Mac mini").
-    waitMemory(url, reason, machine = null, now = Date.now()) {
+    waitMemory(url, reasonOrDetail, machine = null, now = Date.now()) {
       if (mergedHere(url)) return ops.get(url)
       const o = ops.get(url)
-      ops.set(url, { state: 'waiting-memory', reason, machine, head: o?.head ?? null, progress: null, at: now })
+      const detail = reasonOrDetail && typeof reasonOrDetail === 'object'
+        ? reasonOrDetail
+        : { message: reasonOrDetail ?? null, code: null, remediation: null }
+      ops.set(url, { state: 'waiting-memory', reason: detail.message, code: detail.code, remediation: detail.remediation, machine, head: o?.head ?? null, progress: null, at: now })
       return ops.get(url)
     },
     // Deny cancels a saved approval. One waiting for memory on the Mini is then refused by the Mini's own gate when its

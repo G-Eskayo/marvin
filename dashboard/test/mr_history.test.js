@@ -86,8 +86,13 @@ describe('mergedPrArgs: incremental merged list', () => {
 describe('plainReason', () => {
   it.each([
     ['MAIN_RED', 'main was failing'], ['GATE_TESTS_FAILED', 'tests failed'], ['OUT_OF_ORDER', 'merge another PR first'],
-    ['CI_PENDING', 'checks still running'], ['NO_UI_EVIDENCE', 'needed screenshots'], ['SENT_BACK', 'sent back for rework'], ['WHATEVER', 'WHATEVER']
+    ['CI_PENDING', 'checks still running'], ['NO_UI_EVIDENCE', 'needed screenshots'], ['SENT_BACK', 'sent back for rework']
   ])('%s → %s', (code, text) => expect(plainReason(code)).toBe(text))
+
+  it('unknown codes return CODE_INFO.UNKNOWN.label, not the bare code', () => {
+    expect(plainReason('WHATEVER')).toBe('unclassified failure')
+    expect(plainReason('UNKNOWN_CODE_XYZ')).toBe('unclassified failure')
+  })
 })
 
 describe('buildRows', () => {

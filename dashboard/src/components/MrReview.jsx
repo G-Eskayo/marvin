@@ -210,18 +210,20 @@ const REWORK_TONE = {
 // What a card's merge is doing, from the main process's op (marvin#568): the status this card shows, its message, and
 // the stage-by-stage progress. Exported for the tests.
 export function statusFromOp(m) {
-  if (!m || !m.state || m.state === 'idle') return { status: 'idle', errorMessage: null, progress: null }
-  if (m.state === 'merging') return { status: 'approving', errorMessage: m.notice || null, progress: m.progress || null }
+  if (!m || !m.state || m.state === 'idle') return { status: 'idle', errorMessage: null, progress: null, code: null, remediation: null }
+  if (m.state === 'merging') return { status: 'approving', errorMessage: m.notice || null, progress: m.progress || null, code: null, remediation: null }
   // marvin#940: merged on a backup Mac: which one, and the OS flag when its tests ran on another OS.
-  if (m.state === 'merged' && m.mergedOn && !m.elsewhere) return { status: 'merged', errorMessage: m.note || null, progress: m.progress || null, machine: m.mergedOn }
-  if (m.state === 'merged') return { status: 'merged', errorMessage: m.elsewhere ? m.reason || 'Merged on GitHub' : null, progress: m.progress || null }
-  return { status: m.state, errorMessage: m.reason || null, progress: m.progress || null, machine: m.machine || null }
+  if (m.state === 'merged' && m.mergedOn && !m.elsewhere) return { status: 'merged', errorMessage: m.note || null, progress: m.progress || null, machine: m.mergedOn, code: null, remediation: null }
+  if (m.state === 'merged') return { status: 'merged', errorMessage: m.elsewhere ? m.reason || 'Merged on GitHub' : null, progress: m.progress || null, code: null, remediation: null }
+  return { status: m.state, errorMessage: m.reason || null, progress: m.progress || null, machine: m.machine || null, code: m.code || null, remediation: m.remediation || null }
 }
 const MERGE_STATUSES = new Set(['approving', 'error', 'reengaged', 'interrupted', 'merged', 'queued', 'waiting-memory'])
 
 export function ApproveDenyActions({ pr, onApproved, onDenied, inDetail = false }) {
   const [status, setStatus] = useState('idle') // idle | approving | error | reengaged | interrupted | merged | queued | waiting-memory
   const [errorMessage, setErrorMessage] = useState(null)
+  const [code, setCode] = useState(null) // the error code (from apply only, not handleApprove catch)
+  const [remediation, setRemediation] = useState(null) // the remediation text (from apply only)
   const [showDenyModal, setShowDenyModal] = useState(false)
   const [clearing, setClearing] = useState(null) // null | 'confirm' | 'working' | 'done' | { failed }
   const [optionsAsk, setOptionsAsk] = useState(null) // null | 'working' | 'done' | { failed }
@@ -243,10 +245,14 @@ export function ApproveDenyActions({ pr, onApproved, onDenied, inDetail = false 
         // Nothing running, or the last failure was on an older commit than this PR's head (a fix was pushed).
         setStatus((s) => (MERGE_STATUSES.has(s) ? 'idle' : s))
         setErrorMessage(null)
+        setCode(null)
+        setRemediation(null)
       } else {
         setStatus(v.status)
         setErrorMessage(v.errorMessage)
         setMachine(v.machine || null)
+        setCode(v.code || null)
+        setRemediation(v.remediation || null)
       }
     }
     const off = window.api.mr.onMergeEvent?.((url, op) => {
@@ -263,6 +269,8 @@ export function ApproveDenyActions({ pr, onApproved, onDenied, inDetail = false 
   async function handleApprove() {
     setStatus('approving')
     setErrorMessage(null)
+    setCode(null)
+    setRemediation(null)
     try {
       const result = await window.api.mr.approve({ number: pr.number, url: pr.url, head: pr.headRefOid })
       if (result.cancelled) {
@@ -325,7 +333,7 @@ export function ApproveDenyActions({ pr, onApproved, onDenied, inDetail = false 
     )
   }
 
-  const view = describePrState(pr, { status, errorMessage, progress: !!progress, machine })
+  const view = describePrState(pr, { status, errorMessage, progress: !!progress, machine, code, remediation })
   const TONE = { ready: 'text-emerald-400', wait: 'text-amber-400', blocked: 'text-red-400', working: 'text-blue-400' }
 
   // "Too vague: needs options" (2026-10-09): one click asks the author to restate the questions as a Decisions section.
@@ -376,6 +384,16 @@ export function ApproveDenyActions({ pr, onApproved, onDenied, inDetail = false 
       ) : null}
       <p className={`max-w-xs text-right text-sm font-medium ${TONE[view.tone] || ''}`}>{view.headline}</p>
       {view.detail && <p className="max-w-xs text-right text-xs text-neutral-400">{view.detail}</p>}
+      {view.remediation && <p className="max-w-xs text-right text-xs text-neutral-400">{view.remediation}</p>}
+      {view.code && (
+        <details className="max-w-xs text-right text-xs">
+          <summary className="cursor-pointer text-neutral-500 hover:text-neutral-400">▸ Technical details</summary>
+          <div className="mt-1 space-y-1 text-left">
+            <p className="font-mono text-neutral-600">Code: {view.code}</p>
+            {view.needsYou !== undefined && <p className="text-neutral-500">Needs you: {view.needsYou ? 'yes' : 'no'}</p>}
+          </div>
+        </details>
+      )}
       {view.checkProgress && <CheckProgress checks={pr.checks} tone={view.tone} />}
       {progress && MERGE_STATUSES.has(status) && <MergeProgress progress={progress} />}
       {view.note && <p className="text-right text-xs text-emerald-400">{view.note}</p>}

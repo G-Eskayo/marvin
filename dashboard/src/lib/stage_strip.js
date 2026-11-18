@@ -2,6 +2,11 @@
 // No React, no DOM. Used by both StageStrip.jsx (dashboard) and future MARVIN Mobile renderer.
 // Shared with ../components/PipelineHistory.jsx via exported helpers.
 
+import { CODE_INFO, REMEDIATION_BY_CODE as REMEDIATION_BY_CODE_IMPORTED } from '../../webhook-server/failure.js'
+
+// Re-export for backward compatibility: existing imports stay the same.
+export { CODE_INFO, REMEDIATION_BY_CODE_IMPORTED as REMEDIATION_BY_CODE }
+
 // Canonical stage order from ticket_stages.js' VALID_STAGES, in pipeline-execution order.
 const TERMINAL_STAGE_ORDER = ['claimed', 'planning', 'executing', 'verifying', 'gate', 'merging', 'versioning', 'rebuilding', 'done']
 
@@ -52,41 +57,9 @@ export function extractCode(detail) {
   return match ? match[1] : null
 }
 
-// Map from extracted code to remediation text. Built from failure.js's RULES plus inline refusals.
-export const REMEDIATION_BY_CODE = {
-  // From failure.js RULES table:
-  GH_AUTH_INVALID: 'GitHub rejected the credential. Fix ~/.claude/.gh-token on the machine running the webhook (the Health tab shows auth:gh per machine).',
-  NOT_MERGEABLE: 'The PR conflicts with main. It was sent back to its ticket for rework.',
-  PR_DRAFT: 'The PR is a draft. Mark it "Ready for review" on GitHub, then approve again. The PR was not sent back.',
-  BRANCH_PROTECTION: 'Branch protection blocked the merge. Satisfy the required checks/reviews, or adjust the rule.',
-  BASE_MOVED: 'main moved while this merged. Retried automatically; if it keeps failing, another merge is racing it.',
-  RATE_LIMITED: 'GitHub rate limit. Retried automatically with backoff; try again shortly if it persists.',
-  GITHUB_OUTAGE: 'GitHub is having an outage (githubstatus.com). Nothing is wrong with this PR and it was not sent back; approve again once GitHub recovers.',
-  TRANSIENT_NETWORK: 'Transient network or GitHub error. Retried automatically; check connectivity if it persists.',
-  TOOL_MISSING: "A required tool (gh/git/npm) is missing from the webhook's PATH. Install it or fix the launchd plist PATH.",
-  PR_NOT_FOUND: 'GitHub has no such pull request. It may have been closed or deleted, or the URL is wrong.',
-  INVALID_REQUEST: 'The request did not contain a valid GitHub PR URL.',
-
-  // From inline refusal() calls in merge.js and decisions.js:
-  OUT_OF_ORDER: 'Another PR must merge first. See the blockedBy list on this ticket.',
-  WRONG_BASE: 'The PR is not based on main. Rebase onto main before approving.',
-  SENT_BACK: 'The PR was sent back to its ticket for rework.',
-  CI_PENDING: 'CI checks are still running. Approve again once they pass.',
-  NO_MERGE_PROFILE: 'This project has no merge profile configured. Add one in the project settings.',
-  MERGE_REFUSED: 'The merge was refused. See the ticket for details.',
-  CI_FAILED: 'CI failed. Fix the failing tests and approve again.',
-  GATE_INFRA: 'The merge gate infrastructure failed (no test command, full disk, database locked). Retry once fixed.',
-  MEMORY_PRESSURE: 'The Mac\'s memory is under pressure, so the check waits. It starts by itself when pressure drops; nothing was stopped.',
-  MAIN_RED: 'main branch is failing tests. Approve again once main is green.',
-  GATE_TESTS_FAILED: 'Tests failed in the merge gate. Fix the failing tests and approve again.',
-  VERSION_BUMP_FAILED: 'Version bump failed. Check the CHANGELOG format and ticket metadata.',
-  REBASE_CONFLICT: 'Needs a person to rebase by hand until #230 can resolve it automatically.',
-  UNKNOWN: 'Unclassified failure. See the evidence; this needs triage.'
-}
-
 // Lookup remediation for an extracted code, or null if unknown.
 export function remediationFor(code) {
-  return code ? REMEDIATION_BY_CODE[code] || null : null
+  return code ? REMEDIATION_BY_CODE_IMPORTED[code] || null : null
 }
 
 // Derive the status of a stage given its most-recent event(s) and live overlay.
@@ -140,7 +113,7 @@ export function deriveStageStrip(events = [], opts = {}) {
     if (status === 'failed' && stageEvents.length > 0) {
       const latest = stageEvents[stageEvents.length - 1]
       code = extractCode(latest.detail)
-      remediation = remediationFor(code)
+      remediation = remediationFor(code) || CODE_INFO.UNKNOWN?.remediation
       // What the gate knew went wrong ("The Mac mini's disk is nearly full (...)"), after the code (2026-10-28).
       if (code) cause = String(latest.detail).slice(code.length + 1).trim() || null
     }

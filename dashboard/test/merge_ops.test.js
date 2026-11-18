@@ -305,3 +305,54 @@ describe('failover notice and queued approvals', () => {
     expect(ops.get(URL).state).toBe('merging')
   })
 })
+
+describe('fail(), queue(), waitMemory() handle undefined/null reasonOrDetail without throwing', () => {
+  it('fail() with undefined reasonOrDetail stores reason as null', () => {
+    const ops = createMergeOps()
+    ops.start(URL)
+    ops.fail(URL, undefined)
+    expect(ops.get(URL)).toMatchObject({ state: 'error', reason: null, code: null, remediation: null })
+  })
+
+  it('fail() with null reasonOrDetail stores reason as null', () => {
+    const ops = createMergeOps()
+    ops.start(URL)
+    ops.fail(URL, null)
+    expect(ops.get(URL)).toMatchObject({ state: 'error', reason: null, code: null, remediation: null })
+  })
+
+  it('queue() with undefined reasonOrDetail stores reason as null', () => {
+    const ops = createMergeOps()
+    ops.start(URL)
+    ops.queue(URL, undefined)
+    expect(ops.get(URL)).toMatchObject({ state: 'queued', reason: null, code: null, remediation: null })
+  })
+
+  it('queue() with null reasonOrDetail stores reason as null', () => {
+    const ops = createMergeOps()
+    ops.start(URL)
+    ops.queue(URL, null)
+    expect(ops.get(URL)).toMatchObject({ state: 'queued', reason: null, code: null, remediation: null })
+  })
+
+  it('waitMemory() with undefined reasonOrDetail stores reason as null', () => {
+    const ops = createMergeOps()
+    ops.start(URL)
+    ops.waitMemory(URL, undefined, 'Mac mini')
+    expect(ops.get(URL)).toMatchObject({ state: 'waiting-memory', reason: null, code: null, remediation: null, machine: 'Mac mini' })
+  })
+
+  it('waitMemory() with null reasonOrDetail stores reason as null', () => {
+    const ops = createMergeOps()
+    ops.start(URL)
+    ops.waitMemory(URL, null, 'Mac mini')
+    expect(ops.get(URL)).toMatchObject({ state: 'waiting-memory', reason: null, code: null, remediation: null, machine: 'Mac mini' })
+  })
+
+  it('fail() with object detail preserves code and remediation', () => {
+    const ops = createMergeOps()
+    ops.start(URL)
+    ops.fail(URL, { message: 'Rate limited', code: 'RATE_LIMITED', remediation: 'Wait a moment and try again' })
+    expect(ops.get(URL)).toMatchObject({ state: 'error', reason: 'Rate limited', code: 'RATE_LIMITED', remediation: 'Wait a moment and try again' })
+  })
+})

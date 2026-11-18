@@ -7,9 +7,19 @@
 // exception is a PR that is only WAITING (checks running, decisions to answer), where a disabled Approve tells
 // you it is coming. Order is the merge queue's (marvin#231): a stacked PR can be approved, and waits in the queue.
 
+import { CODE_INFO } from '../../webhook-server/failure.js'
+
+// Extract code from error messages like "CODE at stage: message" (from MergeFailure format)
+// or just look for a code prefix when the code parameter is null.
+function extractCode(errorMessage) {
+  if (!errorMessage) return null
+  const match = String(errorMessage).match(/^([A-Z_]+)(?:\s+at\s+\w+\s*:|:)/)
+  return match ? match[1] : null
+}
+
 // Codes the function re-derives live above this point. If one of these is left over from an earlier click,
 // it is stale as soon as the state changes, so it is never shown as an error.
-const MIRRORED_REFUSALS = /^(SENT_BACK|CI_PENDING|CI_FAILED|WRONG_BASE|NO_UI_EVIDENCE|IMAGES_UNPINNED|DECISIONS_PENDING|DECISIONS_UNSTRUCTURED)\b/
+const MIRRORED_REFUSALS = new Set(['SENT_BACK', 'CI_PENDING', 'CI_FAILED', 'WRONG_BASE', 'NO_UI_EVIDENCE', 'IMAGES_UNPINNED', 'DECISIONS_PENDING', 'DECISIONS_UNSTRUCTURED'])
 
 // The owner's answer on #767 (marvin#848): a draft offers no Approve until it's marked ready for review. A merge
 // already under way (merging, saved, merged) is shown as it is.
@@ -19,14 +29,14 @@ export function describePrState(pr, opts = {}) {
   const view = describeState(pr, opts)
   if (!pr.isDraft || DRAFT_KEEPS.has(view.kind)) return view
   if (view.kind === 'ready') {
-    return { ...view, kind: 'draft', tone: 'wait', headline: 'Draft', detail: 'Approve shows once it is marked ready for review on GitHub.', approve: 'hidden', note: null }
+    return { ...view, kind: 'draft', tone: 'wait', headline: 'Draft', detail: 'Approve shows once it is marked ready for review on GitHub.', approve: 'hidden', note: null, remediation: null, code: null, needsYou: null }
   }
   return view.approve === 'hidden' ? view : { ...view, approve: 'hidden' }
 }
 
-function describeState(pr, { status = 'idle', errorMessage = null, progress = false, machine = null } = {}) {
+function describeState(pr, { status = 'idle', errorMessage = null, progress = false, machine = null, code = null, remediation = null } = {}) {
   const ci = pr.checks || { state: 'none', failing: [], pending: [] }
-  const base = (kind, tone, headline, detail, approve, deny, extra = {}) => ({ kind, tone, headline, detail, approve, deny, actions: [], note: null, rework: null, checkProgress: false, ...extra })
+  const base = (kind, tone, headline, detail, approve, deny, extra = {}) => ({ kind, tone, headline, detail, approve, deny, actions: [], note: null, rework: null, checkProgress: false, remediation: null, code: null, needsYou: null, ...extra })
   const main = pr.baseProblem?.expected || 'main'
   // Each check's own row is known (marvin#555): the card can show the progress bar and per-check drill-down.
   const hasRuns = Array.isArray(ci.runs) && ci.runs.length > 0
@@ -81,8 +91,10 @@ function describeState(pr, { status = 'idle', errorMessage = null, progress = fa
   }
 
   if (status === 'reengaged') {
+    const codeInfo = code ? CODE_INFO[code] : null
     return base('sent-back-now', 'blocked', 'Not merged: sent back for rework',
-      `${errorMessage || 'The merge gate rejected it.'} The ticket will be rebuilt and this PR updated.`, 'hidden', 'hidden')
+      `${errorMessage || 'The merge gate rejected it.'} The ticket will be rebuilt and this PR updated.`, 'hidden', 'hidden',
+      { code, remediation, needsYou: codeInfo?.needsYou })
   }
 
   // marvin#231: approved and in the merge queue on the merge Mac (one queue for both Macs and the phone). It merges by
@@ -171,20 +183,29 @@ function describeState(pr, { status = 'idle', errorMessage = null, progress = fa
       { checkProgress: hasRuns })
   }
 
-  if (status === 'error' && /^GITHUB_OUTAGE\b/.test(errorMessage || '')) {
+  if (status === 'error' && (code ?? extractCode(errorMessage)) === 'GITHUB_OUTAGE') {
+    const resolvedCode = code ?? extractCode(errorMessage)
+    const codeInfo = resolvedCode ? CODE_INFO[resolvedCode] : null
     return base('github-outage', 'wait', 'GitHub is having an outage',
-      'The last merge attempt hit a GitHub server error (githubstatus.com). Nothing is wrong with this PR and it was not sent back. Approve again once GitHub recovers.', 'enabled', 'enabled')
+      'The last merge attempt hit a GitHub server error (githubstatus.com). Nothing is wrong with this PR and it was not sent back. Approve again once GitHub recovers.', 'enabled', 'enabled',
+      { code: resolvedCode, remediation: remediation || codeInfo?.remediation, needsYou: codeInfo?.needsYou })
   }
 
   // IMAGES_STALE cannot be re-verified live: it needs the gate's `gh api compare` to check whether
   // UI files changed after the pinned commit. The user can re-pin images in the PR body without pushing,
   // so Approve stays enabled to allow a retry (like GITHUB_OUTAGE above).
-  if (status === 'error' && /^IMAGES_STALE\b/.test(errorMessage || '')) {
-    return base('images-stale', 'blocked', 'Images are older than the latest change', errorMessage, 'enabled', 'enabled')
+  if (status === 'error' && (code ?? extractCode(errorMessage)) === 'IMAGES_STALE') {
+    const resolvedCode = code ?? extractCode(errorMessage)
+    const codeInfo = resolvedCode ? CODE_INFO[resolvedCode] : null
+    return base('images-stale', 'blocked', 'Images are older than the latest change', errorMessage, 'enabled', 'enabled',
+      { code: resolvedCode, remediation: remediation || codeInfo?.remediation, needsYou: codeInfo?.needsYou })
   }
 
-  if (status === 'error' && errorMessage && !MIRRORED_REFUSALS.test(errorMessage)) {
-    return base('error', 'blocked', 'The last merge attempt failed', errorMessage, 'enabled', 'enabled')
+  if (status === 'error' && errorMessage && !MIRRORED_REFUSALS.has(code ?? extractCode(errorMessage))) {
+    const resolvedCode = code ?? extractCode(errorMessage)
+    const codeInfo = resolvedCode ? CODE_INFO[resolvedCode] : null
+    return base('error', 'blocked', 'The last merge attempt failed', errorMessage, 'enabled', 'enabled',
+      { code: resolvedCode, remediation: remediation || codeInfo?.remediation, needsYou: codeInfo?.needsYou })
   }
 
   if (rb?.state === 'tests_failed') {

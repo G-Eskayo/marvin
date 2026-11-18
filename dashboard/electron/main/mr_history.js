@@ -1,5 +1,6 @@
 import { readFileSync, writeFileSync, renameSync, mkdirSync } from 'fs'
 import path from 'path'
+import { CODE_INFO } from '../../webhook-server/failure.js'
 
 // MR Review's Merged view (marvin#419): every merged PR across registered projects, who merged it, and every refused
 // Approve, newest first. History only grows, so GitHub is asked only for PRs merged since the newest one already
@@ -14,13 +15,7 @@ export function mergedPrArgs(repo, since) {
   return [...args, '--search', `merged:>=${day}`]
 }
 
-const REASONS = {
-  MAIN_RED: 'main was failing', GATE_TESTS_FAILED: 'tests failed', GATE_INFRA: 'the build machine failed', MEMORY_PRESSURE: 'waiting for memory', OUT_OF_ORDER: 'merge another PR first',
-  CI_PENDING: 'checks still running', CI_FAILED: 'GitHub checks failed', SENT_BACK: 'sent back for rework', WRONG_BASE: 'wrong base branch',
-  NO_UI_EVIDENCE: 'needed screenshots', DECISIONS_PENDING: 'decisions not answered',
-  NO_MERGE_PROFILE: 'this project can’t merge from the dashboard', MERGE_REFUSED: 'GitHub refused the merge', REBASE_CONFLICT: 'conflicts after rebase'
-}
-export const plainReason = (code) => REASONS[code] || code
+export const plainReason = (code) => CODE_INFO[code]?.label || CODE_INFO.UNKNOWN.label
 
 const PR_RE = /^https:\/\/github\.com\/([\w.-]+\/[\w.-]+)\/pull\/(\d+)$/
 

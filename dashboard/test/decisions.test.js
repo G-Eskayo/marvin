@@ -302,7 +302,7 @@ describe('mergePr and the review card', () => {
   })
 
   it('a stale DECISIONS_ refusal is not shown as an error once the state explains it', () => {
-    const s = describePrState({ decisions: { present: true, questions: [], problems: [], pending: [] } }, { status: 'error', errorMessage: 'DECISIONS_PENDING at request: x' })
+    const s = describePrState({ decisions: { present: true, questions: [], problems: [], pending: [] } }, { status: 'error', errorMessage: 'x', code: 'DECISIONS_PENDING' })
     expect(s.kind).not.toBe('error')
   })
 })
