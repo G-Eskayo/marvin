@@ -52,6 +52,8 @@ def test_captures_every_scene_in_light_and_dark_into_the_worktree(tmp_path):
     assert ["xcodegen", "generate"] in cmds
     build = next(c for c in cmds if c[0] == "xcodebuild")
     assert "CODE_SIGNING_ALLOWED=NO" in build and "platform=iOS Simulator,name=iPhone 17 Pro" in build
+    # Defect fix #3: SwiftPM cache is per-worktree to avoid concurrent build collisions
+    assert "-clonedSourcePackagesDirPath" in build and str(tmp_path / ".swiftpm-cache") in build
     assert ["xcrun", "simctl", "ui", "booted", "appearance", "dark"] in cmds
     launches = [c for c in cmds if c[:3] == ["xcrun", "simctl", "launch"]]
     assert launches[0][-1] == "-ClarityDemoStatic" and "com.gileskayo.captions" in launches[0]

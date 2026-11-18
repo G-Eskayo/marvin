@@ -55,6 +55,8 @@ def test_every_scene_is_captured_in_light_and_dark_into_the_worktree(tmp_path):
     assert ["xcodegen", "generate"] in cmds
     build = next(c for c in cmds if c[0] == "xcodebuild")
     assert "platform=macOS" in build and "CODE_SIGN_IDENTITY=-" in build
+    # Defect fix #3: SwiftPM cache is per-worktree to avoid concurrent build collisions
+    assert "-clonedSourcePackagesDirPath" in build and str(tmp_path / ".swiftpm-cache") in build
     first, kw = _app_runs(run)[0]
     assert first[0].endswith("MARVIN Voice.app/Contents/MacOS/MARVIN Voice")
     assert first[1:3] == ["-MarvinScene", "menu"] and first[first.index("-MarvinAppearance") + 1] == "light"

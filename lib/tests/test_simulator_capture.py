@@ -49,6 +49,65 @@ class TestHaveSimulator:
         pass
 
 
+class TestRuntimeSelection:
+    """Tests for iOS runtime selection."""
+
+    def test_get_latest_ios_runtime_parses_version_correctly(self):
+        """_get_latest_ios_runtime uses numeric version parsing, not lexicographic."""
+        from simulator_capture import _get_latest_ios_runtime
+
+        def mock_simctl_run(cmd, *args, **kwargs):
+            if cmd[0:3] == ["list", "runtimes", "--json"]:
+                return 0, json.dumps({
+                    "runtimes": [
+                        {"name": "iOS 18.0", "identifier": "iOS-18-0", "isAvailable": True},
+                        {"name": "iOS 18.9", "identifier": "iOS-18-9", "isAvailable": True},
+                        {"name": "iOS 18.10", "identifier": "iOS-18-10", "isAvailable": True},
+                    ]
+                })
+            return 1, ""
+
+        with patch("simulator_capture._simctl_run", side_effect=mock_simctl_run):
+            result = _get_latest_ios_runtime()
+            assert result == "iOS-18-10", f"Expected iOS-18-10 (numeric 18.10), got {result}"
+
+    def test_get_latest_ios_runtime_filters_unavailable(self):
+        """_get_latest_ios_runtime skips unavailable runtimes."""
+        from simulator_capture import _get_latest_ios_runtime
+
+        def mock_simctl_run(cmd, *args, **kwargs):
+            if cmd[0:3] == ["list", "runtimes", "--json"]:
+                return 0, json.dumps({
+                    "runtimes": [
+                        {"name": "iOS 18.0", "identifier": "iOS-18-0", "isAvailable": False},
+                        {"name": "iOS 17.5", "identifier": "iOS-17-5", "isAvailable": True},
+                    ]
+                })
+            return 1, ""
+
+        with patch("simulator_capture._simctl_run", side_effect=mock_simctl_run):
+            result = _get_latest_ios_runtime()
+            assert result == "iOS-17-5", f"Expected iOS-17-5 (the available one), got {result}"
+
+    def test_get_latest_ios_runtime_handles_missing_is_available(self):
+        """_get_latest_ios_runtime treats missing isAvailable as unavailable."""
+        from simulator_capture import _get_latest_ios_runtime
+
+        def mock_simctl_run(cmd, *args, **kwargs):
+            if cmd[0:3] == ["list", "runtimes", "--json"]:
+                return 0, json.dumps({
+                    "runtimes": [
+                        {"name": "iOS 18.0", "identifier": "iOS-18-0"},
+                        {"name": "iOS 17.5", "identifier": "iOS-17-5", "isAvailable": True},
+                    ]
+                })
+            return 1, ""
+
+        with patch("simulator_capture._simctl_run", side_effect=mock_simctl_run):
+            result = _get_latest_ios_runtime()
+            assert result == "iOS-17-5"
+
+
 class TestValidateScenario:
     """Tests for scenario validation."""
 
@@ -87,13 +146,43 @@ class TestValidateScenario:
 class TestCaptureScenarios:
     """Tests for the main capture_scenarios function."""
 
-    def test_capture_scenarios_empty_list(self):
+    def test_capture_scenarios_empty_list(self, tmp_path):
         """Empty scenarios list returns empty results."""
-        pass
+        from simulator_capture import capture_scenarios
+        result = capture_scenarios(tmp_path, [], "com.test.app", "Test.app", sweep_simulators=lambda: None)
+        assert result == []
 
     def test_capture_scenarios_single_valid_scenario(self, tmp_path):
         """Single valid scenario captures successfully."""
-        pass
+        from simulator_capture import capture_scenarios
+        app_path = tmp_path / "Test.app"
+        app_path.mkdir()
+        evidence_dir = tmp_path / "docs" / "evidence"
+        evidence_dir.mkdir(parents=True)
+        scenarios = [{"screen": "home", "dark": True, "orientation": "portrait"}]
+
+        def mock_simctl_run(cmd, *args, **kwargs):
+            if cmd[0] == "boot":
+                return 0, "already booted"
+            elif cmd[0] == "install":
+                return 0, ""
+            elif cmd[0] == "launch":
+                return 0, ""
+            elif cmd[0] == "ui_set_appearance":
+                return 0, ""
+            elif cmd[0] == "ui_set_orientation":
+                return 0, ""
+            elif cmd[0] == "io" and cmd[2] == "screenshot":
+                Path(cmd[3]).write_bytes(b"\x89PNG\r\n\x1a\n")
+                return 0, ""
+            return 0, ""
+
+        with patch("simulator_capture._simctl_run", side_effect=mock_simctl_run):
+            with patch("simulator_capture._create_device", return_value=True):
+                with patch("simulator_capture._device_exists", return_value=True):
+                    result = capture_scenarios(tmp_path, scenarios, "com.test.app", str(app_path), sweep_simulators=lambda: None)
+                    assert len(result) == 1
+                    assert result[0]["ok"] is True
 
     def test_capture_scenarios_install_fails(self):
         """When app installation fails, scenario is marked failed but others continue."""
@@ -106,6 +195,30 @@ class TestCaptureScenarios:
     def test_capture_scenarios_screenshot_produces_zero_bytes(self):
         """Zero-byte screenshot file is treated as a failure."""
         pass
+
+    def test_capture_scenarios_calls_cleanup_sweep_by_default(self, tmp_path):
+        """Defect fix: sweep_simulators defaults to cleanup_sweep.sweep_simulators and is called at start."""
+        from simulator_capture import capture_scenarios
+        sweep_called = []
+
+        def mock_sweep():
+            sweep_called.append(True)
+
+        app_path = tmp_path / "Test.app"
+        app_path.mkdir()
+        evidence_dir = tmp_path / "docs" / "evidence"
+        evidence_dir.mkdir(parents=True)
+
+        scenarios = [{"screen": "home", "dark": True}]
+
+        with patch("simulator_capture._simctl_run", return_value=(1, "not available")):
+            with patch("simulator_capture._create_device", return_value=False):
+                try:
+                    capture_scenarios(tmp_path, scenarios, "com.test.app", str(app_path), sweep_simulators=mock_sweep)
+                except Exception:
+                    pass
+
+        assert sweep_called, "Defect #1: sweep_simulators was not called"
 
     def test_capture_scenarios_worktree_scoped_device_name(self):
         """Device names are uniquely scoped to worktree/ticket to avoid collisions."""

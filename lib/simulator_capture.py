@@ -20,6 +20,7 @@ from pathlib import Path
 from typing import Callable
 
 import project_profile as pp  # noqa: E402
+import cleanup_sweep  # noqa: E402
 
 
 class SimulatorUnavailable(pp.EnvMissing):
@@ -110,6 +111,59 @@ def _simctl_run(cmd: list[str], env: dict | None = None, timeout: int = 60) -> t
         return 127, str(e)
 
 
+def _device_exists(device_name: str) -> bool:
+    """Check if simulator device exists."""
+    rc, out = _simctl_run(["list", "devices", "--json"])
+    if rc != 0:
+        return False
+    try:
+        data = json.loads(out)
+        for devices_by_os in data.get("devices", {}).values():
+            for device in devices_by_os:
+                if device.get("name") == device_name:
+                    return True
+    except (json.JSONDecodeError, KeyError, TypeError):
+        pass
+    return False
+
+
+def _parse_version(version_str: str) -> tuple[int, ...]:
+    """Parse 'iOS 18.0' or similar to (18, 0) for proper version comparison."""
+    try:
+        parts = version_str.split()[-1].split(".")
+        return tuple(int(p) for p in parts)
+    except (ValueError, IndexError):
+        return (0,)
+
+
+def _get_latest_ios_runtime() -> str | None:
+    """Get the identifier of the latest available iOS runtime, or None if none available."""
+    rc, out = _simctl_run(["list", "runtimes", "--json"])
+    if rc != 0:
+        return None
+    try:
+        data = json.loads(out)
+        ios_runtimes = [r for r in data.get("runtimes", []) if r.get("name", "").startswith("iOS") and r.get("isAvailable")]
+        if not ios_runtimes:
+            return None
+        latest = max(ios_runtimes, key=lambda r: _parse_version(r.get("name", "")))
+        return latest.get("identifier")
+    except (json.JSONDecodeError, KeyError, TypeError, ValueError):
+        pass
+    return None
+
+
+def _create_device(device_name: str, device_type: str = "iPhone 17 Pro") -> bool:
+    """Create a simulator device. Returns True if successful or device already exists."""
+    if _device_exists(device_name):
+        return True
+    runtime = _get_latest_ios_runtime()
+    if not runtime:
+        return False
+    rc, out = _simctl_run(["create", device_name, device_type, runtime])
+    return rc == 0
+
+
 def capture_scenarios(
     worktree_path: Path,
     scenarios: list[dict],
@@ -117,6 +171,7 @@ def capture_scenarios(
     app_path: str,
     ticket_id: str | None = None,
     timeout_s: int = 300,
+    sweep_simulators: Callable | None = None,
 ) -> list[dict]:
     """Capture screenshots for a list of scenarios. Returns one result dict per scenario,
     with 'ok', 'screen', 'path'/'reason', 'appearance', 'orientation' fields.
@@ -132,6 +187,7 @@ def capture_scenarios(
         app_path: path to built .app bundle, relative to worktree or absolute
         ticket_id: optional ticket identifier for device name uniqueness
         timeout_s: per-scenario timeout (not total)
+        sweep_simulators: optional callable to clean stale simulators (default: cleanup_sweep.sweep_simulators)
 
     Returns:
         List of scenario result dicts. Each has:
@@ -168,10 +224,21 @@ def capture_scenarios(
     except (OSError, PermissionError) as e:
         raise pp.EnvMissing("simulator-capture", [f"docs/evidence/ not writable: {e}"])
 
+    # Call cleanup sweep at start to remove stale simulators (devices created by MARVIN unused for 14 days)
+    sweep = sweep_simulators or cleanup_sweep.sweep_simulators
+    try:
+        sweep()
+    except Exception:
+        pass  # Cleanup failure doesn't block capture
+
     device_name = _device_name(worktree_path, ticket_id)
     results = []
 
     try:
+        # Create device if it doesn't exist (idempotent: reuses if present)
+        if not _create_device(device_name):
+            raise SimulatorUnavailable()
+
         # Boot the simulator (idempotent: reuses if already running)
         rc, out = _simctl_run(["boot", device_name])
         if rc != 0 and "already booted" not in out and "Unable to boot" in out:

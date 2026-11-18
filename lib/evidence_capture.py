@@ -346,9 +346,12 @@ def capture_ios_simulator(worktree_path: Path, cfg: dict, run=subprocess.run, sl
 
 def _capture_ios(worktree_path: Path, cfg: dict, project_dir: Path, derived: Path, run, sleep) -> list[dict]:
     configuration = cfg.get("configuration", "Debug")
+    swiftpm_cache = Path(worktree_path) / ".swiftpm-cache"
     _run_checked(run, ["xcodebuild", "-project", cfg["project"], "-scheme", cfg["scheme"],
                        "-destination", f"platform=iOS Simulator,name={cfg['simulator']}", "-configuration", configuration,
-                       "CODE_SIGNING_ALLOWED=NO", "-derivedDataPath", str(derived), "build"], cwd=project_dir)
+                       "CODE_SIGNING_ALLOWED=NO", "-derivedDataPath", str(derived),
+                       "-clonedSourcePackagesDirPath", str(swiftpm_cache),
+                       "build"], cwd=project_dir)
     apps = sorted((derived / "Build" / "Products" / f"{configuration}-iphonesimulator").glob("*.app"))
     if not apps:
         raise RuntimeError("xcodebuild failed: no .app was built for the simulator")
@@ -409,10 +412,13 @@ def capture_macos_app(worktree_path: Path, cfg: dict, run=subprocess.run) -> lis
 def _capture_macos(worktree_path: Path, cfg: dict, project_dir: Path, run, derived: Path | None) -> list[dict]:
     configuration = cfg.get("configuration", "Debug")
     if derived is not None:
+        swiftpm_cache = Path(worktree_path) / ".swiftpm-cache"
         # Ad-hoc signed: pipeline machines have no signing identity, and an arm64 Mac won't run an unsigned binary.
         _run_checked(run, ["xcodebuild", "-project", cfg["project"], "-scheme", cfg["scheme"], "-destination", "platform=macOS",
                            "-configuration", configuration, "CODE_SIGN_IDENTITY=-", "DEVELOPMENT_TEAM=",
-                           "-derivedDataPath", str(derived), "build"], cwd=project_dir)
+                           "-derivedDataPath", str(derived),
+                           "-clonedSourcePackagesDirPath", str(swiftpm_cache),
+                           "build"], cwd=project_dir)
         apps = sorted((derived / "Build" / "Products" / configuration).glob("*.app"))
         exes = sorted(p for p in (apps[0] / "Contents" / "MacOS").iterdir()) if apps else []
         if not exes:

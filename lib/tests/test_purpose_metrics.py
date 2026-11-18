@@ -1,5 +1,5 @@
 """Purpose metrics and outcome checks (marvin#304): a ticket that promises a measurable effect gets measured."""
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 
 import pytest
 
@@ -631,3 +631,67 @@ def test_ci_onnx_download_failures_is_registered():
     assert "ci-onnx-download-failures" in pm.PROBES
     fn, limit, what = pm.PROBES["ci-onnx-download-failures"]
     assert limit == 6.0 and "#1098" in what and "#1156" in what and "#1163" in what
+
+
+def test_disk_under_floor_probe_counts_distinct_dates_below_threshold(tmp_path):
+    """Disk-under-floor probe counts distinct calendar dates where free space fell below threshold."""
+    import json
+    from datetime import timedelta
+
+    log = tmp_path / "disk-triggers.jsonl"
+    now = datetime(2026, 11, 14, 12, tzinfo=timezone.utc)
+    floor = 15 * 2**30  # 15 GB
+
+    # Create log entries: multiple entries per day when below floor, some days above floor
+    entries = [
+        # 2026-11-14 (today): 2 entries below floor
+        {"ts": now.isoformat(), "trigger": "preflight", "freed_bytes": 0, "free_after": floor - 1},
+        {"ts": (now + timedelta(hours=1)).isoformat(), "trigger": "after-merge", "freed_bytes": 1000, "free_after": floor - 2},
+        # 2026-11-13: 1 entry below floor
+        {"ts": (now - timedelta(days=1)).isoformat(), "trigger": "preflight", "freed_bytes": 0, "free_after": floor - 1},
+        # 2026-11-12: 1 entry above floor (should not count)
+        {"ts": (now - timedelta(days=2)).isoformat(), "trigger": "preflight", "freed_bytes": 0, "free_after": floor + 1},
+        # 2026-11-11: 2 entries below floor (same date)
+        {"ts": (now - timedelta(days=3)).isoformat(), "trigger": "preflight", "freed_bytes": 0, "free_after": floor - 1},
+        {"ts": (now - timedelta(days=3, hours=1)).isoformat(), "trigger": "after-merge", "freed_bytes": 2000, "free_after": floor - 3},
+        # Old entry outside 7-day window
+        {"ts": (now - timedelta(days=10)).isoformat(), "trigger": "preflight", "freed_bytes": 0, "free_after": 0},
+    ]
+    log.write_text("\n".join(json.dumps(e) for e in entries) + "\n")
+
+    # Should count 3 distinct dates: today, 2026-11-13, 2026-11-11
+    result = pm._days_under_disk_floor(path=log, now=now, floor_bytes=floor)
+    assert result == 3.0
+
+    # Missing log returns 0
+    assert pm._days_under_disk_floor(path=tmp_path / "missing.log", now=now) == 0.0
+
+
+def test_disk_under_floor_skips_missing_free_after(tmp_path):
+    """Entries without 'free_after' field should be skipped, not counted as 0 bytes (false positive)."""
+    import json
+    from datetime import timedelta
+
+    log = tmp_path / "disk-triggers.jsonl"
+    now = datetime(2026, 11, 14, 12, tzinfo=timezone.utc)
+    floor = 15 * 2**30
+
+    entries = [
+        # Entry with free_after below floor: should count
+        {"ts": now.isoformat(), "trigger": "preflight", "freed_bytes": 0, "free_after": floor - 1},
+        # Entry with no free_after field: should be skipped
+        {"ts": (now + timedelta(hours=1)).isoformat(), "trigger": "after-merge", "freed_bytes": 1000},
+        # Entry with null free_after: should be skipped
+        {"ts": (now - timedelta(days=1)).isoformat(), "trigger": "preflight", "freed_bytes": 0, "free_after": None},
+    ]
+    log.write_text("\n".join(json.dumps(e) for e in entries) + "\n")
+
+    result = pm._days_under_disk_floor(path=log, now=now, floor_bytes=floor)
+    assert result == 1.0  # Only the first entry counts
+
+
+def test_disk_under_floor_is_registered():
+    """The disk-under-floor probe is registered in PROBES."""
+    assert "disk-under-15gb-floor" in pm.PROBES
+    fn, limit, what = pm.PROBES["disk-under-15gb-floor"]
+    assert limit == 0.0 and "15 GB" in what

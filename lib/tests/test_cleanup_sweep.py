@@ -148,6 +148,48 @@ def test_uncommitted_work_is_backed_up_never_plainly_removed_even_when_merged(tm
     assert "uncommitted" in reason
 
 
+# ── simulator decisions (device lifecycle) ────────────────────────────────────
+
+def test_capture_simulator_never_booted_is_kept_not_deleted():
+    """Defect fix: a simulator created for capture but not yet booted (missing lastBootedAt) should be kept,
+    not deleted. A concurrent capture may be about to boot it."""
+    sim = {"name": "marvin-12345678", "udid": "X", "state": "Shutdown", "last_booted_at": None}
+    action, reason = cs.decide_simulator(sim, {"iPhone 17"}, lambda n: False, now=NOW)
+    assert action == "keep", f"Expected 'keep' for unbooted capture sim, got {action}: {reason}"
+
+
+def test_capture_simulator_unbooted_with_old_creation_time_is_removed():
+    """Defect fix: never-booted simulator with creation time > 14 days old is removed (grace period expired)."""
+    old_creation = (NOW - timedelta(days=15)).isoformat().replace("+00:00", "Z")
+    sim = {"name": "marvin-12345678", "udid": "X", "state": "Shutdown", "last_booted_at": None, "created_at": old_creation}
+    action, reason = cs.decide_simulator(sim, {"iPhone 17"}, lambda n: False, now=NOW)
+    assert action == "remove", f"Expected 'remove' for 15-day-old unbooted sim, got {action}: {reason}"
+
+
+def test_capture_simulator_unbooted_with_recent_creation_time_is_kept():
+    """Never-booted simulator with recent creation time (< 14 days) is kept (within grace period)."""
+    recent_creation = (NOW - timedelta(days=7)).isoformat().replace("+00:00", "Z")
+    sim = {"name": "marvin-12345678", "udid": "X", "state": "Shutdown", "last_booted_at": None, "created_at": recent_creation}
+    action, reason = cs.decide_simulator(sim, {"iPhone 17"}, lambda n: False, now=NOW)
+    assert action == "keep", f"Expected 'keep' for 7-day-old unbooted sim, got {action}: {reason}"
+
+
+def test_capture_simulator_14_days_since_boot_is_removed():
+    """After 14 days of not being booted, a capture simulator is removed."""
+    old_date = (NOW - timedelta(days=14)).isoformat().replace("+00:00", "Z")
+    sim = {"name": "marvin-12345678", "udid": "X", "state": "Shutdown", "last_booted_at": old_date}
+    action, reason = cs.decide_simulator(sim, {"iPhone 17"}, lambda n: False, now=NOW)
+    assert action == "remove"
+
+
+def test_capture_simulator_13_days_since_boot_is_kept():
+    """Before 14 days, a capture simulator is kept."""
+    old_date = (NOW - timedelta(days=13)).isoformat().replace("+00:00", "Z")
+    sim = {"name": "marvin-12345678", "udid": "X", "state": "Shutdown", "last_booted_at": old_date}
+    action, reason = cs.decide_simulator(sim, {"iPhone 17"}, lambda n: False, now=NOW)
+    assert action == "keep"
+
+
 def test_commits_without_a_pr_are_backed_up(tmp_path):
     action, reason = cs.decide_worktree(_wt(tmp_path, ahead=2), pr_state=None, claimed=False)
     assert action == "backup"
@@ -429,8 +471,11 @@ def test_drop_build_output_refuses_paths_outside_the_worktree(tmp_path):
 STOCK = {"iPhone 17 Pro", "iPhone 17", "iPad Pro 13-inch (M5)", "iPad (A16)"}
 
 
-def _sim(name, state="Shutdown", udid=None):
-    return {"name": name, "udid": udid or f"U-{name}", "state": state}
+def _sim(name, state="Shutdown", udid=None, lastBootedAt=None):
+    sim = {"name": name, "udid": udid or f"U-{name}", "state": state}
+    if lastBootedAt is not None:
+        sim["last_booted_at"] = lastBootedAt
+    return sim
 
 
 def test_a_simulator_named_for_a_merged_ticket_is_removed_even_while_booted():
@@ -455,9 +500,20 @@ def test_a_simulator_the_sweep_cannot_tie_to_a_ticket_is_reported_not_deleted():
     assert action == "review"
 
 
-def test_a_leftover_capture_simulator_is_removed_once_it_is_shut_down():
-    assert cs.decide_simulator(_sim("marvin-1a2b3c4d"), STOCK, ticket_open=lambda n: True)[0] == "remove"
-    assert cs.decide_simulator(_sim("marvin-1a2b3c4d", "Booted"), STOCK, ticket_open=lambda n: True)[0] == "keep"
+def test_a_leftover_capture_simulator_is_removed_when_not_booted_and_stale():
+    import datetime
+    old_time = (NOW - datetime.timedelta(days=20)).isoformat().replace("+00:00", "Z")
+    assert cs.decide_simulator(_sim("marvin-1a2b3c4d", "Shutdown", lastBootedAt=old_time),
+                               STOCK, ticket_open=lambda n: True, now=NOW)[0] == "remove"
+    assert cs.decide_simulator(_sim("marvin-1a2b3c4d", "Booted", lastBootedAt=old_time),
+                               STOCK, ticket_open=lambda n: True, now=NOW)[0] == "keep"
+    recent_time = (NOW - datetime.timedelta(days=10)).isoformat().replace("+00:00", "Z")
+    assert cs.decide_simulator(_sim("marvin-1a2b3c4d", "Shutdown", lastBootedAt=recent_time),
+                               STOCK, ticket_open=lambda n: True, now=NOW)[0] == "keep"
+    # Device with no lastBootedAt (never booted, likely just created) is kept to avoid race condition
+    # where concurrent capture A creates device, and sweep B deletes it before A boots it
+    assert cs.decide_simulator(_sim("marvin-1a2b3c4d"),
+                               STOCK, ticket_open=lambda n: True, now=NOW)[0] == "keep"
 
 
 def test_a_github_failure_never_reads_as_ticket_closed():

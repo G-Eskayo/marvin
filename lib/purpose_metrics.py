@@ -435,6 +435,35 @@ def _ci_onnx_download_failures(fetch=None, repo: str = "G-Eskayo/marvin", runs: 
     return float(count)
 
 
+def _days_under_disk_floor(days: float = PROBE_WINDOW_DAYS, path: Path | None = None,
+                           now: datetime | None = None, floor_bytes: int = 15 * 2**30) -> float:
+    """Distinct calendar dates where free disk space fell below floor_bytes over the window. Reads disk_triggers.LOG_PATH
+    (disk usage log that accumulates from all triggers on this Mac). Returns count of unique dates where any entry's
+    `free_after < floor_bytes`. O(log size)."""
+    import disk_triggers
+    now = now or datetime.now(timezone.utc)
+    cut = now - timedelta(days=days)
+    path = path or disk_triggers.LOG_PATH
+    try:
+        lines = Path(path).read_text(encoding="utf-8", errors="replace").splitlines()
+    except OSError:
+        return 0.0
+    dates_under_floor = set()
+    for line in lines:
+        try:
+            e = json.loads(line)
+            when = datetime.fromisoformat(e.get("ts", "").replace("Z", "+00:00"))
+            free_after = e.get("free_after")
+            if free_after is None:
+                continue
+            free_after = int(free_after)
+        except (ValueError, KeyError, TypeError):
+            continue
+        if when >= cut and free_after < floor_bytes:
+            dates_under_floor.add(when.date())
+    return float(len(dates_under_floor))
+
+
 # name -> (symptom counter, the most it may read while the fix holds, what it counts). Summed across Macs like any
 # measure; the logs are per Mac (~/.claude/logs doesn't sync), so nothing is counted twice.
 # Each counter takes `days` (default the 7-day window): a watched incident is re-measured over the time since its last
@@ -472,6 +501,8 @@ PROBES: dict[str, tuple[Callable[..., float], float, str]] = {
     "stale-relay-leaked": (lambda days=PROBE_WINDOW_DAYS: _stale_relay("leaked", days), 0.0,
                            "stale claims that reached the owner over 7 days (question log kind=stale + their own 'that's "
                            "already fixed' replies), per Mac, summed (#1224)"),
+    "disk-under-15gb-floor": (lambda days=PROBE_WINDOW_DAYS: _days_under_disk_floor(days=days), 0.0,
+                              "distinct calendar dates where free disk fell below 15 GB over 7 days, per Mac, summed (ADR 0749)"),
 }
 MEASURES.update({name: fn for name, (fn, _limit, _what) in PROBES.items()})
 MEASURES["stale-relay-caught"] = lambda: _stale_relay("caught")

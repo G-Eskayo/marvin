@@ -562,7 +562,25 @@ def _simctl_json(*args: str) -> dict:
 
 def _default_list_simulators() -> list[dict]:
     devices = _simctl_json("devices").get("devices", {})
-    return [{"name": d["name"], "udid": d["udid"], "state": d.get("state", "")} for ds in devices.values() for d in ds]
+    result = []
+    for ds in devices.values():
+        for d in ds:
+            entry = {
+                "name": d["name"],
+                "udid": d["udid"],
+                "state": d.get("state", ""),
+                "last_booted_at": d.get("lastBootedAt"),
+            }
+            # Try to get device creation time from dataPath mtime as a fallback
+            data_path = d.get("dataPath")
+            if data_path:
+                try:
+                    mtime = os.stat(data_path).st_mtime
+                    entry["created_at"] = datetime.fromtimestamp(mtime, tz=timezone.utc).isoformat()
+                except OSError:
+                    pass
+            result.append(entry)
+    return result
 
 
 def _default_stock_names() -> set[str]:
@@ -597,15 +615,38 @@ def _ticket_open_anywhere(number: int, repos: list[str] | None = None,
     return "OPEN" in states or not any(states)
 
 
-def decide_simulator(sim: dict, stock: set[str], ticket_open: Callable[[int], bool]) -> tuple[str, str]:
+def decide_simulator(sim: dict, stock: set[str], ticket_open: Callable[[int], bool],
+                     now: datetime | None = None) -> tuple[str, str]:
     """("remove" | "keep" | "review", reason)."""
+    now = now or datetime.now(timezone.utc)
     name = sim["name"]
     if name in stock:
         return "keep", "one of Xcode's own devices"
     if CAPTURE_SIM_RE.match(name):
         if sim.get("state") == "Booted":
             return "keep", "a screenshot capture may be using it"
-        return "remove", "leftover screenshot-capture simulator"
+        last_booted = sim.get("last_booted_at")
+        if last_booted is None:
+            # Never booted: use created_at as grace period baseline. If no created_at, use conservative default.
+            created_at = sim.get("created_at")
+            if created_at:
+                try:
+                    created_dt = datetime.fromisoformat(created_at.replace("Z", "+00:00"))
+                    age_days = (now - created_dt).days
+                    if age_days >= 14:
+                        return "remove", f"leftover screenshot-capture simulator, never booted, created {age_days} days ago"
+                    return "keep", f"leftover screenshot-capture simulator, never booted, created {age_days} days ago, keeping"
+                except (ValueError, AttributeError):
+                    pass
+            return "keep", "screenshot-capture simulator, never booted, no creation time available (likely just created, in use)"
+        try:
+            last_booted_dt = datetime.fromisoformat(last_booted.replace("Z", "+00:00"))
+            age_days = (now - last_booted_dt).days
+            if age_days >= 14:
+                return "remove", f"leftover screenshot-capture simulator, last booted {age_days} days ago"
+            return "keep", f"leftover screenshot-capture simulator, last booted {age_days} days ago, keeping"
+        except (ValueError, AttributeError):
+            return "keep", "leftover screenshot-capture simulator, unable to parse boot time"
     match = SIM_TICKET_RE.search(name)
     if not match:
         return "review", "can't tie it to a ticket"
@@ -620,9 +661,11 @@ def sweep_simulators(
     stock_names: Callable[[], set[str]] | None = None,
     ticket_open: Callable[[int], bool] | None = None,
     delete_simulator: Callable[[dict], bool] | None = None,
+    now: datetime | None = None,
 ) -> dict:
     if list_simulators is None and shutil.which("xcrun") is None:
         return {"removed": [], "review": []}   # no Xcode on this machine (mac-mini-2012): no simulators exist
+    now = now or datetime.now(timezone.utc)
     sims = (list_simulators or _default_list_simulators)()
     stock = (stock_names or _default_stock_names)()
     if not stock:  # without it, "iPhone 17" looks like ticket #17: delete nothing
@@ -635,7 +678,7 @@ def sweep_simulators(
     removed, review = [], []
     for sim in sims:
         try:
-            action, reason = decide_simulator(sim, stock, ticket_open)
+            action, reason = decide_simulator(sim, stock, ticket_open, now=now)
         except Exception as exc:  # a GitHub failure must never read as "ticket closed"
             review.append({**sim, "reason": f"could not check GitHub: {str(exc)[:120]}"})
             continue
