@@ -28,6 +28,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import code_sync  # noqa: E402
 import cron_health as ch  # noqa: E402
+import guard_reading  # noqa: E402
 import machine_profile  # noqa: E402
 from machine_profile import machine_label  # noqa: E402
 from task_dispatch import TAILSCALE_BIN, TAILSCALE_ENV  # noqa: E402  (absolute path -- launchd's PATH omits the shell's additions)
@@ -719,6 +720,30 @@ def check_github_budget(query=None) -> dict:
     except (KeyError, ValueError):
         when = str(b.get("resetAt", "?"))
     return _result(cid, label, sev, f"{left:,} of {limit:,} left, resets {when}", value=left)
+
+
+def check_guard_readings() -> list[dict]:
+    """Guard sensor status: when a core sensor can't be read, it's logged and Health reports yellow if the outage
+    persists past 30 minutes, escalates to alert if it stays down for 2 hours. This check always returns 8 rows
+    (one per guard: disk, memory, task_records, peer_state, tailscale, github_budget, breaker, tools), never red
+    (guards don't trigger red themselves — they cause work to be refused with explicit messages on the UI)."""
+    import guard_reading
+    now = datetime.now(timezone.utc)
+    episodes = guard_reading.episodes(now)
+    results = []
+    for guard_name in guard_reading.GUARD_TABLE:
+        cid = f"guard:{guard_name}"
+        label = f"Input: {guard_name}"
+        ep = episodes.get(guard_name)
+        if ep:
+            age_min = ep.get("age_minutes", 0)
+            detail = f"can't be read ({age_min}min)"
+            sev = "yellow" if age_min >= guard_reading.YELLOW_AFTER_MINUTES else "green"
+        else:
+            detail = "readable"
+            sev = "green"
+        results.append(_result(cid, label, sev, detail, value=guard_name))
+    return results
 
 
 def check_missing_profiles(snapshot: dict | None = None, repos: list[str] | None = None, gh=None, profiles_dir: Path | None = None) -> list[dict]:
@@ -1801,6 +1826,7 @@ def default_checks(reach: dict[str, str] | None = None, reach_results: list[dict
         ("token", "Auth tokens", check_token_files, CHECK_BUDGET_S),
         ("route:intent-routing-collection", "route.py embedding classifier (ChromaDB)", check_intent_routing_collection, CHECK_BUDGET_S),
         ("dispatch:lock-age", "Local dispatch lock", check_dispatch_lock, CHECK_BUDGET_S),
+        ("guard:reading", "Core sensor health", check_guard_readings, CHECK_BUDGET_S),
         ("pipeline:breaker", "Ticket pipeline circuit breaker", lambda: check_pipeline_breaker(reach), CROSS_MACHINE_BUDGET_S),
         ("sync:stuck", "Code sync", lambda: check_sync_stuck(reach), CROSS_MACHINE_BUDGET_S),
         ("sync:union-review", "Code sync: merged lines to check", check_union_merge_review, CHECK_BUDGET_S),
@@ -1978,6 +2004,45 @@ def alert_red_checks(checks: list[dict], path: Path | None = None, fire=None, to
     return ", ".join(f"{n} {why}" for why, n in counts.items())
 
 
+GUARD_ALERT_STATE = HOME / ".claude" / "logs" / "guard-alerted.json"
+
+
+def alert_degraded_guards(checks: list[dict], path: Path | None = None, fire=None, today=None) -> str:
+    """One alert path over guard readings: turned degraded, still degraded (daily), cleared. Reuses alert_on_change."""
+    import mr_notification
+    now = datetime.now(timezone.utc)
+    episodes = guard_reading.episodes(now)
+    items = []
+    # Pass all 8 guards: degraded if they have an episode lasting >= 2 hours, ok otherwise. This lets alert_on_change detect clearing.
+    for guard_name in guard_reading.GUARD_TABLE:
+        if guard_name in episodes:
+            ep = episodes[guard_name]
+            age_min = ep.get("age_minutes", 0)
+            # Only alert if the episode is at least ALERT_AFTER_HOURS old.
+            is_degraded = age_min >= guard_reading.ALERT_AFTER_HOURS * 60
+            items.append({
+                "key": f"guard:{guard_name}",
+                "state": "degraded" if is_degraded else "ok",
+                "title": f"MARVIN: {guard_name} input can't be read",
+                "message": f"Can't read {guard_name} for {age_min} minutes"
+            })
+        else:
+            items.append({
+                "key": f"guard:{guard_name}",
+                "state": "ok",
+                "title": f"MARVIN: {guard_name} input is readable",
+                "message": f"{guard_name} is healthy"
+            })
+    due = mr_notification.alert_on_change(items, path or GUARD_ALERT_STATE, bad=("degraded",), fire=fire, today=today,
+                                          batch_over=ALERT_BATCH_OVER)
+    if not due:
+        return "nothing changed"
+    counts: dict[str, int] = {}
+    for d in due:
+        counts[d["why"]] = counts.get(d["why"], 0) + 1
+    return ", ".join(f"{n} {why}" for why, n in counts.items())
+
+
 @job_events.reported("health-check", "Health check sweep")
 def _cli() -> None:
     out = write_status()
@@ -1985,6 +2050,9 @@ def _cli() -> None:
     # Tell the owner when a check turns red, once a day while it stays red, and when it clears (#1123, ADR 0083).
     # It replaced the disk forecast's own three-channel notifier: disk:headroom is one of these checks.
     job_events.step("Alerts", alert_red_checks(out.get("checks", [])))
+
+    # Alert on degraded guards (sensors that can't be read): once when they cross 2 h, daily reminder, clear when fixed.
+    job_events.step("Sensor alerts", alert_degraded_guards(out.get("checks", [])))
 
     for aid in react_to_low_disk(out.get("checks", [])):
         job_events.step("Disk first aid", f"{aid['device']}: {'ok' if aid['ok'] else 'failed'}, {aid['detail']}")

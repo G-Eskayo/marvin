@@ -40,6 +40,7 @@ from typing import Callable
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import cleanup_sweep as cs  # noqa: E402
 import gh_env  # noqa: E402
+from guard_reading import guard_reading  # noqa: E402
 
 MARVIN_ROOT = Path(__file__).resolve().parent.parent
 CONFIG_PATH = MARVIN_ROOT / "config" / "disk_triggers.json"
@@ -137,12 +138,17 @@ def reclaim() -> dict:
 def preflight(what: str, floor: int = FLOOR_BYTES, free: Callable[[], int | None] | None = None,
               reclaim: Callable[[], dict] | None = None) -> dict:
     """Before heavy work starts. Above the floor: go, touching nothing. Below it: reclaim once (no retry loop), then
-    go if that was enough, else refuse with a message a person can act on. Free space that can't be read never blocks
-    (as #690). Returns {"ok", "free_before", "free_after", "reclaimed", "message"}."""
+    go if that was enough, else refuse with a message a person can act on. Free space that can't be read now fails closed.
+    Returns {"ok", "free_before", "free_after", "reclaimed", "message"}."""
     free = free or free_bytes
     reclaim = reclaim or globals()["reclaim"]
     before = free()
-    if before is None or before >= floor:
+    before = guard_reading("disk_local", before)
+    if before is None:
+        message = f"Not starting {what}: disk space cannot be read. Free up space on this Mac (Health shows what is using it), then start it again."
+        record("preflight", 0, "disk unreadable", what=what, ok=False, free_before=before)
+        return {"ok": False, "free_before": before, "free_after": before, "reclaimed": None, "message": message}
+    if before >= floor:
         return {"ok": True, "free_before": before, "free_after": before, "reclaimed": None, "message": ""}
     try:
         r = reclaim() or {}
@@ -150,9 +156,10 @@ def preflight(what: str, floor: int = FLOOR_BYTES, free: Callable[[], int | None
     except Exception as exc:  # noqa: BLE001 -- a broken reclaim is a refusal with the reason, never a crash
         detail, freed = f"cleanup failed: {type(exc).__name__}: {str(exc)[:120]}", 0
     after = free()
-    ok = after is None or after >= floor
+    after = guard_reading("disk_local", after)
+    ok = after is not None and after >= floor
     message = "" if ok else (
-        f"Not starting {what}: the disk has {GB(after)} free and work needs {GB(floor)}. "
+        f"Not starting {what}: the disk has {GB(after) if after else 'unknown'} free and work needs {GB(floor)}. "
         f"Cleanup already ran ({detail}). Free up space on this Mac (Health shows what is using it), then start it again.")
     record("preflight", freed, detail, what=what, ok=ok, free_before=before)
     return {"ok": ok, "free_before": before, "free_after": after, "reclaimed": detail, "message": message}

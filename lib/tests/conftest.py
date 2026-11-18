@@ -327,6 +327,13 @@ def _isolate_disk_triggers(tmp_path_factory, monkeypatch):
 
 
 @pytest.fixture(autouse=True)
+def _isolate_guard_readings(tmp_path_factory, monkeypatch):
+    # marvin#889: guard readings are logged under ~/.claude/logs; never from a test.
+    import guard_reading
+    monkeypatch.setattr(guard_reading, "LOG_PATH", tmp_path_factory.mktemp("guard-readings") / "guard-readings.jsonl")
+
+
+@pytest.fixture(autouse=True)
 def _full_node_by_default(request, monkeypatch):
     # marvin#911: the cleanup sweep and the health check skip GitHub and sync writes on a pull-only node, read from the
     # registry. The suite must give the same answers on any machine (mac-mini-2012 is the test machine, ADR 0069), so

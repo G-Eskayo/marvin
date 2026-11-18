@@ -17,6 +17,8 @@ import tempfile
 from datetime import datetime, timezone
 from pathlib import Path
 
+from guard_reading import guard_reading
+
 PATH = Path(__file__).resolve().parents[1] / "config" / "dispatch.json"
 TASKS_DIR = Path.home() / ".claude" / "dispatch" / "tasks"
 DISPATCH_STATE_PATH = Path.home() / ".claude" / "dispatch-state.json"
@@ -157,7 +159,7 @@ def _safe(reader, *args):
 
 
 def can_start_another(machine: str, settings: dict, *, slots_in_use, disk_free_gb, github_budget_pct,
-                      breaker_tripped, missing_tools, credit_ready=None) -> tuple[bool, str | None]:
+                      breaker_tripped, missing_tools, credit_ready=None, is_self=None) -> tuple[bool, str | None]:
     # An unreadable credit state means the plan's slots only: never a block, never extra builds on a guess.
     limit = effective_limit(settings, machine, credit_ready=bool(credit_ready and _safe(credit_ready, machine)))
     used = slots_in_use(machine)
@@ -166,17 +168,22 @@ def can_start_another(machine: str, settings: dict, *, slots_in_use, disk_free_g
     if not settings.get("parallel"):
         return True, None  # off: exactly today's behaviour, no extra guards
     g = settings["guards"]
-    disk = _safe(disk_free_gb, machine)
-    if disk is not None and disk < g["min_disk_gb"]:
+    disk_guard = "disk_local" if is_self else "disk_remote"
+    disk = guard_reading(disk_guard, _safe(disk_free_gb, machine))
+    if disk is None:
+        return False, f"disk space on {machine} cannot be read"
+    if disk < g["min_disk_gb"]:
         return False, f"disk {disk:g} GB free on {machine}, minimum {g['min_disk_gb']:g}"
-    pct = _safe(github_budget_pct)
+    pct = guard_reading("github_budget", _safe(github_budget_pct))
     if pct is not None and pct < g["min_github_budget_pct"]:
         return False, f"GitHub request budget {pct:g}% left, minimum {g['min_github_budget_pct']:g}%"
-    trips = _safe(breaker_tripped) or []
+    trips_raw = _safe(breaker_tripped)
+    trips = guard_reading("breaker", trips_raw or []) if trips_raw is not None else guard_reading("breaker", None) or []
     if trips:
         t = trips[0]
         return False, f"circuit breaker tripped for {str(t.get('project', '?')).split('/')[-1]}: {t.get('signature', '?')}"
-    missing = _safe(missing_tools, machine) or []
+    missing_raw = _safe(missing_tools, machine)
+    missing = guard_reading("tools", missing_raw or []) if missing_raw is not None else guard_reading("tools", None) or []
     if missing:
         return False, f"{machine} lacks tools the project needs: {', '.join(missing)}"
     return True, None
@@ -310,13 +317,15 @@ def _read_task_records(tasks_dir: Path | None = None) -> list[dict]:
     """Glob *.json files in tasks_dir, skip unreadable/malformed files. Returns list of task records."""
     tasks_dir = tasks_dir or TASKS_DIR
     records = []
+    unreadable = False
     if not tasks_dir.exists():
         return records
     for f in tasks_dir.glob("*.json"):
         try:
             records.append(json.loads(f.read_text()))
         except (OSError, ValueError):
-            pass
+            unreadable = True
+    guard_reading("task_records", None if unreadable else records or [])
     return records
 
 

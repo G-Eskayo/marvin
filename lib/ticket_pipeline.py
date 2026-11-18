@@ -57,6 +57,7 @@ import project_catalog  # noqa: E402
 import ticket_evidence  # noqa: E402
 import project_onboard  # noqa: E402
 import dispatch_concurrency  # noqa: E402
+from guard_reading import guard_reading  # noqa: E402
 
 VENV_PYTHON = str(Path.home() / ".agents" / "venv" / "bin" / "python")
 RUN_TICKET_SCRIPT = str(Path.home() / ".agents" / "lib" / "run_ticket.py")
@@ -767,6 +768,20 @@ def _free_disk_gb() -> float | None:
         return None
 
 
+def _free_disk_gb_remote(host: str, run=None) -> float | None:
+    """Free disk GB on another machine over SSH; None when it can't be asked."""
+    run = run or subprocess.run
+    try:
+        proc = run(["ssh", "-o", "ConnectTimeout=5", "-o", "BatchMode=yes", "-o", "StrictHostKeyChecking=accept-new",
+                    host, 'cd "$HOME/.agents" && "$HOME/.agents/venv/bin/python" -c "import shutil; from pathlib import Path; print(shutil.disk_usage(Path.home()).free / 1e9)"'],
+                   capture_output=True, text=True, timeout=10)
+        if proc.returncode != 0:
+            return None
+        return float(proc.stdout.strip())
+    except Exception:
+        return None
+
+
 def _github_budget_pct() -> float | None:
     """Percent of this hour's GitHub allowance left; None when it cannot be read (an unreadable guard never blocks)."""
     try:
@@ -845,13 +860,20 @@ def _select_for_profile(profile: dict, settings: dict | None = None, taken: dict
                 continue
         if parallel:
             used = (local_base if is_self else 0) + taken.get(device, 0)
+            def disk_free_gb_fn(m, s=is_self, sel=selected):
+                if s:
+                    return _free_disk_gb()
+                else:
+                    host = sel[1].get("tailscale_hostname")
+                    return _free_disk_gb_remote(host) if host else None
             ok, why = dispatch_concurrency.can_start_another(
                 device, settings, slots_in_use=lambda m, used=used: used,
                 credit_ready=lambda m: settings.get("credit_ready", {}).get(m, False),
-                disk_free_gb=lambda m, s=is_self: _free_disk_gb() if s else None,
+                disk_free_gb=disk_free_gb_fn,
                 github_budget_pct=_github_budget_pct,
                 breaker_tripped=lambda: [],   # a tripped breaker already removed that project from this scan
-                missing_tools=lambda m: [])
+                missing_tools=lambda m: [],
+                is_self=is_self)
             if not ok:
                 if refusals is not None:
                     refusals.append(why)

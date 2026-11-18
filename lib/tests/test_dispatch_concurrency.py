@@ -111,9 +111,14 @@ def test_missing_required_tools_name_them():
     assert not ok and why == "macbook-pro-1 lacks tools the project needs: xcodebuild, swift"
 
 
-def test_an_unreadable_guard_never_blocks_starting():
+def test_an_unreadable_disk_guard_blocks_starting_but_unreadable_budget_does_not():
     boom = lambda *a: (_ for _ in ()).throw(RuntimeError("gh down"))
-    assert dc.can_start_another("mac-mini-1", ON, **ok_readers(github_budget_pct=boom, disk_free_gb=lambda m: None)) == (True, None)
+    # Disk unreadable (closed) -> refuses
+    ok, why = dc.can_start_another("mac-mini-1", ON, **ok_readers(github_budget_pct=boom, disk_free_gb=lambda m: None))
+    assert not ok and "disk" in why
+    # GitHub budget unreadable (open) -> allows
+    ok, why = dc.can_start_another("mac-mini-1", ON, **ok_readers(github_budget_pct=boom, disk_free_gb=lambda m: 50.0))
+    assert ok and why is None
 
 
 def test_cli_get_prints_settings_and_set_refuses_invalid(tmp_path, monkeypatch, capsys):

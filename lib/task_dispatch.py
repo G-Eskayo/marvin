@@ -30,6 +30,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 from machine_profile import registry_id, remote_devices, _load_registry  # noqa: E402
 import host_os  # noqa: E402
 from hook_errors import log_hook_error  # noqa: E402
+from guard_reading import guard_reading  # noqa: E402
 
 
 def _log_hook_error_safe(context: str, exc: BaseException) -> None:
@@ -86,9 +87,9 @@ def tailscale_online_hosts_or_none() -> set[str] | None:
         proc = subprocess.run([TAILSCALE_BIN, "status"], capture_output=True, text=True, timeout=10, env=TAILSCALE_ENV)
     except Exception as exc:
         _log_hook_error_safe("tailscale_online_hosts_or_none", exc)
-        return None
+        return guard_reading("tailscale", exc)
     if proc.returncode != 0:
-        return None
+        return guard_reading("tailscale", None)
     online = set()
     for line in proc.stdout.splitlines():
         parts = line.split()
@@ -97,7 +98,7 @@ def tailscale_online_hosts_or_none() -> set[str] | None:
         hostname = parts[1]
         if "offline" not in line:
             online.add(hostname)
-    return online
+    return guard_reading("tailscale", online)
 
 
 def _tailscale_online_hosts() -> set[str]:
@@ -107,7 +108,9 @@ def _tailscale_online_hosts() -> set[str]:
 
 def _read_local_dispatch_state() -> dict:
     import stamped
-    return stamped.read(DISPATCH_STATE_PATH).value or {"busy": False}
+    state = stamped.read(DISPATCH_STATE_PATH).value or {"busy": False}
+    guard_reading("peer_state_local", state)
+    return state
 
 
 def _read_remote_dispatch_state(host: str) -> dict:
@@ -118,23 +121,29 @@ def _read_remote_dispatch_state(host: str) -> dict:
         )
         if proc.returncode != 0:
             _log_hook_error_safe("_read_remote_dispatch_state", RuntimeError(f"ssh to {host} exited {proc.returncode}: {proc.stderr[:300]}"))
+            guard_reading("peer_state_remote", None)
             return {"busy": False}
         if not proc.stdout.strip():
+            guard_reading("peer_state_remote", {"busy": False})
             return {"busy": False}
-        return json.loads(proc.stdout)
+        state = json.loads(proc.stdout)
+        guard_reading("peer_state_remote", state)
+        return state
     except Exception as exc:
         _log_hook_error_safe("_read_remote_dispatch_state", exc)
+        guard_reading("peer_state_remote", exc)
         return {"busy": False}
 
 
 def _candidates() -> dict:
     """All known devices (self + registered remotes) keyed by device_id,
-    each tagged with whether it's self."""
+    each tagged with whether it's self. All entries have tailscale_hostname (None for self, hostname for remotes)."""
     self_id = registry_id()
     devices = _load_registry()
     result = {self_id: {**devices.get(self_id, {}), "is_self": True, "tailscale_hostname": None}}
     for device_id, info in remote_devices().items():
-        result[device_id] = {**info, "is_self": False}
+        # Ensure tailscale_hostname is present, even if the registry entry doesn't have it.
+        result[device_id] = {**info, "is_self": False, "tailscale_hostname": info.get("tailscale_hostname", device_id)}
     return result
 
 

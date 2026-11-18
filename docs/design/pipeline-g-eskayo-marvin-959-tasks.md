@@ -1,0 +1,10 @@
+1. Add `lib/guard_reading.py`: `GUARD_TABLE`, `guard_reading(name, value_or_error)`, the bounded JSONL log + its trimming, and `episodes(now=None)` implementing the 2-reading/30-minute onset and 2-consecutive-good-reads clear rule (tests 1–13).
+2. Wire `guard_reading` into `memory_guard.read_level`'s call site in `check()`, and flip the unreadable branch to fail closed (tests 18).
+3. Wire `guard_reading` into `disk_triggers.preflight`'s `free()` call, and flip the unreadable branch to fail closed (test 19).
+4. Wire `guard_reading` into `dispatch_concurrency.can_start_another`'s four `_safe(...)` outputs (disk, github_budget, breaker, tools); flip only the disk branch to fail closed, leave the other three's pass-through behaviour unchanged (test 20).
+5. Add `ticket_pipeline._free_disk_gb_remote(host)` (SSH, mirroring `credit_ready_remote`) and use it in `_select_for_profile`'s remote lambda instead of the hard-coded `None`; route both local and remote readings through `guard_reading("disk", ...)` (test 21).
+6. Wire `guard_reading` into `dispatch_concurrency._read_task_records` (log once per call, unreadable if any file was skipped) (test 22).
+7. Wire `guard_reading` into `task_dispatch.tailscale_online_hosts_or_none` (all three return paths, including the previously-unlogged non-zero-returncode branch) and into `_read_remote_dispatch_state` / `_read_local_dispatch_state` as `"peer_state"` (tests 23–24).
+8. Wire `guard_reading` into `ticket_pipeline._github_budget_pct` (test 25).
+9. Add `health_checks.check_guard_readings()` (8 rows, yellow/green only) and register it in `default_checks()`; add `health_checks.alert_degraded_guards()` (reusing `mr_notification.alert_on_change`, `bad=("degraded",)`) and wire it into `_cli()` alongside the existing `alert_red_checks` call (tests 14–17).
+10. Run the full guard/dispatch/health test suites (not just the new files) to confirm no regression in the unchanged-behaviour branches (github_budget/breaker/tools/peer_state/tailscale staying open).

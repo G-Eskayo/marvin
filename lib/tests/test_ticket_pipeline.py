@@ -873,9 +873,15 @@ def _parallel(monkeypatch, marvin=(), cc=(), total=2, per_project=1, local_used=
     monkeypatch.setattr(tp, "_local_slots_used", lambda: local_used)
     monkeypatch.setattr(tp, "_inflight_by_repo", lambda repos: dict(inflight or {}))
     monkeypatch.setattr(tp, "_free_disk_gb", lambda: disk)
+    monkeypatch.setattr(tp, "_free_disk_gb_remote", lambda host, **k: disk)  # remote disk reading returns same value as local
     monkeypatch.setattr(tp, "_github_budget_pct", lambda: budget)
     monkeypatch.setattr(tp, "MARVIN_MACHINES", tuple(BOTH))
-    return _capture(monkeypatch, select=lambda target=None: (target, {"is_self": target == "mac-mini-1"}))
+    def select_with_tailscale(target=None):
+        return (target, {
+            "is_self": target == "mac-mini-1",
+            "tailscale_hostname": f"{target}.local" if target else None
+        })
+    return _capture(monkeypatch, select=select_with_tailscale)
 
 
 def _targets(got):

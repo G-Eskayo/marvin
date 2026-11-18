@@ -49,6 +49,8 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Callable, Iterable, Iterator
 
+from guard_reading import guard_reading
+
 HERE = Path(__file__).resolve()
 PY = Path.home() / ".agents" / "venv" / "bin" / "python"
 STATE_DIR = Path.home() / ".claude" / "memory-guard"
@@ -132,7 +134,11 @@ def record(event: str, **fields) -> None:
 def check(what: str, level=_READ, swap=_READ) -> dict:
     """{"ok", "level", "swap_used", "message"}. Refuses only at warn or critical."""
     level = read_level() if level is _READ else level
-    if level not in HIGH:
+    level = guard_reading("memory", level)
+    if level is None or level not in HIGH:
+        if level is None:
+            message = f"The {machine_name()}'s memory level cannot be read; {what} waits until it can be."
+            return {"ok": False, "level": level, "swap_used": None, "message": message}
         return {"ok": True, "level": level, "swap_used": None, "message": ""}
     swap = read_swap_used() if swap is _READ else swap
     detail = f"Pressure: {level}" + (f", {GB(swap)} of swap in use." if swap else ".")
