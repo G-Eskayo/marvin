@@ -1,0 +1,5 @@
+1. Edit `skills/index/SKILL.md` step 2 of the "Failed to run" numbered list (around current line 42) to state what the manifest actually indexes (every skill plus only knowledge files carrying `tags:` frontmatter — 2 today) and instruct scanning `MEMORY.md`'s one-line hooks on this manual path.
+2. Delete the `## Examples` section (current lines 58–72, i.e. the heading through its three example blocks, stopping right before `## Manifest Structure`).
+3. Edit `## Keeping the Manifest Current` (current line 89) to change "When creating a new skill or memory file:" to "When creating a new skill (or a knowledge file you want found by tag):".
+4. Add `tests/test_index_skill_doc.py` with the four assertions above.
+5. Run the new test file (and the existing `tests/test_skill_doc_links.py` for the sibling pattern) to confirm both pass.
