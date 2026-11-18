@@ -1,0 +1,8 @@
+1. Add `dashboard/electron/main/main_window.js`: `createMainWindow({ BrowserWindow, preload, loadPage, webPreferencesExtra? })` returning `{ ensure(), window(), send(channel, ...args) }`, modeled on `show_window.js`'s `alive()`/DI pattern; `'closed'` nulls the held reference exactly once per instance (guard against double-handling via an identity check, as `index.js:398-399` already does).
+2. Write `dashboard/test/main_window.test.js` covering tests 1–8 above with a fake `BrowserWindow` (same fake shape as `show_window.test.js`'s).
+3. Wire `index.js`: replace `createWindow()`/`mainWindow` (`index.js:356,373-411`) with `main_window.js`'s `ensure()`/`window()`; replace all 11 `mainWindow?.webContents.send(...)` call sites (`index.js:47,90,314,1084,1137,1138,1404,1421,1431`, and the guarded ones at `1340-1348`) with the module's `send(...)`; replace `dialog.showMessageBox(mainWindow, ...)` call sites (`75,482,531,541,561,571,1257`) with `dialog.showMessageBox(mainWin.window(), ...)`.
+4. Update the two `isDestroyed()` recreate checks (`index.js:1340,1448`, in the show-in-Docs handler and `app.on('activate')`) to call `ensure()` instead of duplicating the check.
+5. Run the full Vitest suite (`dashboard/test`) plus `entry_files_load.test.js` to confirm `index.js` still parses and nothing else regresses.
+6. Apply the owner's `safety-net` decision (above) — add or skip the log-only `uncaughtException`/`unhandledRejection` listener in normal (non-capture) mode.
+7. Manual verification steps 9–11 (close + file-touch, Dock reopen, screenshots at 900/1440 px) — pin results via `marvin-show`, not a file card.
+8. Open the PR naming `Closes #831`, carrying the Decisions block above.
