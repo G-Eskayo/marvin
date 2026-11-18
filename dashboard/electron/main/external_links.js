@@ -27,3 +27,16 @@ export function windowOpenHandler(open) {
     return { action: 'deny' }
   }
 }
+
+// will-navigate: when markdown or other content tries to navigate to a URL (not window.open). Same behavior as
+// windowOpenHandler: external links go to the browser, everything gets denied so Electron doesn't navigate the app page.
+export function navigateHandler(open) {
+  return (event, url) => {
+    // url may be on event.url (Electron version differences) or passed as second arg
+    const targetUrl = url || event.url
+    try {
+      Promise.resolve(open(targetUrl)).catch(() => {})
+    } catch {}
+    event.preventDefault()
+  }
+}

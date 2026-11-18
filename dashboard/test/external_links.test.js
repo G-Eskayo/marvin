@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { openLink, windowOpenHandler } from '../electron/main/external_links.js'
+import { openLink, windowOpenHandler, navigateHandler } from '../electron/main/external_links.js'
 
 // A fake execFile: answers each call from a queue of errors and records what was asked.
 function fakeRun(errors = []) {
@@ -69,5 +69,35 @@ describe('A link that would open a new window', () => {
   it('still denies the window when opening the link throws', () => {
     const handler = windowOpenHandler(() => { throw new Error('boom') })
     expect(handler({ url: PR })).toEqual({ action: 'deny' })
+  })
+})
+
+describe('A will-navigate event (markdown link or document navigation)', () => {
+  it('opens the URL in the browser and prevents the navigation', () => {
+    const asked = []
+    const prevented = []
+    const event = { preventDefault: () => prevented.push(true) }
+    const handler = navigateHandler((u) => { asked.push(u) })
+    handler(event, PR)
+    expect(asked).toEqual([PR])
+    expect(prevented).toEqual([true])
+  })
+
+  it('prevents the navigation even when opening the link throws', () => {
+    const prevented = []
+    const event = { preventDefault: () => prevented.push(true) }
+    const handler = navigateHandler(() => { throw new Error('boom') })
+    handler(event, PR)
+    expect(prevented).toEqual([true])
+  })
+
+  it('handles event.url fallback on different Electron versions', () => {
+    const asked = []
+    const prevented = []
+    const event = { url: PR, preventDefault: () => prevented.push(true) }
+    const handler = navigateHandler((u) => { asked.push(u) })
+    handler(event) // no url param, should use event.url
+    expect(asked).toEqual([PR])
+    expect(prevented).toEqual([true])
   })
 })

@@ -1,0 +1,7 @@
+1. `dashboard/electron/main/external_links.js`: add `navigateHandler(open)`, exported, same style as `windowOpenHandler`.
+2. `dashboard/electron/main/index.js`: import `navigateHandler` alongside the existing `openLink, windowOpenHandler` import (line 137); wire `mainWindow.webContents.on('will-navigate', navigateHandler((url) => openLink(url, { openExternal: shell.openExternal })))` right after the `setWindowOpenHandler` call (line 402).
+3. `dashboard/src/components/SupportTab.jsx:208`: add `target="_blank" rel="noreferrer"` to the request-thread header link.
+4. `dashboard/src/components/Markdown.jsx`: replace `urlTransform={(url) => url}` (line 126) with an exported `safeMarkdownUrl` that returns the URL unchanged when `parseDashLink(url)?.type === 'file'`, else `safeUrl(url) ?? ''`; import `safeUrl` from `../lib/issueBody.js`.
+5. Write and land tests 1–19 above (`external_links.test.js`, a `markdown_url` test file or extension of `markdown_images.test.js`, `support_view.test.jsx`) before/alongside the corresponding code changes.
+6. Run the dashboard's full test suite (not just the touched files — a hand-merge/verify needs the whole suite green per `feedback-full-suites-before-hand-merge`).
+7. No screenshots needed: neither change alters anything visually (an `<a>` attribute and two main-process/pure-function changes) — note this explicitly in the PR instead of attaching screenshots, satisfying the acceptance criterion's "if anything visible changes" clause by stating that nothing does.

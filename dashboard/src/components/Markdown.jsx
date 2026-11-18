@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react'
 import ReactMarkdown from 'react-markdown'
 import remarkGfm from 'remark-gfm'
 import { linkify } from '../lib/linkify.js'
+import { safeUrl } from '../lib/issueBody.js'
 
 export const markdownComponents = {
   h1: (props) => <h1 className="mb-3 mt-6 text-xl font-semibold text-white first:mt-0" {...props} />,
@@ -64,6 +65,13 @@ export function resolveImage(src, repo) {
   return `https://raw.githubusercontent.com/${full}/HEAD/${src.replace(/^\.?\//, '')}`
 }
 
+// Filter URLs for react-markdown's urlTransform: dashboard links (file:) pass through unchanged; other URLs are filtered with safeUrl.
+export function safeMarkdownUrl(url) {
+  if (!url) return ''
+  if (parseDashLink(url)?.type === 'file') return url
+  return safeUrl(url) ?? ''
+}
+
 // An image whose bytes come from the main process (an outbox markdown file's `shots/x.png`, G-Eskayo/marvin#402).
 // `load(src)` resolves to { ok, dataUrl } | { ok: false, reason }; a failure shows a short note, never a broken icon.
 function LoadedImage({ src, alt, load, onOpen }) {
@@ -123,7 +131,7 @@ export default function Markdown({ content, ctx, onLink, loadImage, onOpenImage 
     }
   }
   return (
-    <ReactMarkdown remarkPlugins={[remarkGfm]} components={components} urlTransform={(url) => url}>
+    <ReactMarkdown remarkPlugins={[remarkGfm]} components={components} urlTransform={safeMarkdownUrl}>
       {text}
     </ReactMarkdown>
   )

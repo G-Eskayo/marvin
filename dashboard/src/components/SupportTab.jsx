@@ -205,7 +205,7 @@ export function Thread({ thread, role, busy, draft, setDraft, check, setCheck, o
     <div className="space-y-4">
       <div>
         <h3 className="text-base font-semibold text-white">{thread.request.title}</h3>
-        <a href={thread.request.url} className="text-xs text-neutral-500 hover:text-neutral-300">
+        <a href={thread.request.url} className="text-xs text-neutral-500 hover:text-neutral-300" target="_blank" rel="noreferrer">
           {thread.request.repo}#{thread.request.number}
         </a>
       </div>
