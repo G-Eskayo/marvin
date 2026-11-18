@@ -1,0 +1,80 @@
+{
+  "name": "MARVIN Dashboard (celestial-navigation tokens)",
+  "levels": {"text": 4.5, "large": 3.0, "ui": 3.0},
+  "pairs": [
+    {
+      "what": "boot: dim text (labels, progress bar)",
+      "fg": "#b89235",
+      "bg": "#0f1117",
+      "level": "text"
+    },
+    {
+      "what": "boot: amber text (summary status)",
+      "fg": "#f0b32a",
+      "bg": "#0f1117",
+      "level": "text"
+    },
+    {
+      "what": "boot: green text (success state)",
+      "fg": "#54ff8a",
+      "bg": "#0f1117",
+      "level": "text"
+    },
+    {
+      "what": "boot: orange text (nominal/lock)",
+      "fg": "#ff6a1f",
+      "bg": "#0f1117",
+      "level": "text"
+    },
+    {
+      "what": "boot: red text (errors)",
+      "fg": "#ff3b2f",
+      "bg": "#0f1117",
+      "level": "text"
+    },
+    {
+      "what": "show window: dim text (tags, metadata)",
+      "fg": "#b89235",
+      "bg": "#05040A",
+      "level": "text"
+    },
+    {
+      "what": "show window: amber text (labels, links)",
+      "fg": "#f0b32a",
+      "bg": "#05040A",
+      "level": "text"
+    },
+    {
+      "what": "show window: green text (hover state)",
+      "fg": "#54ff8a",
+      "bg": "#05040A",
+      "level": "text"
+    },
+    {
+      "what": "show window: orange text (project name)",
+      "fg": "#ff6a1f",
+      "bg": "#05040A",
+      "level": "text"
+    },
+    {
+      "what": "show window: red text (error state, reason tag)",
+      "fg": "#ff3b2f",
+      "bg": "#05040A",
+      "level": "text"
+    },
+    {
+      "what": "show window: moon text (default body text)",
+      "fg": "#cfd6e6",
+      "bg": "#05040A",
+      "level": "text"
+    },
+    {
+      "what": "show window: card URL (amber link on composited 1.6% white card)",
+      "fg": "#f0b32a",
+      "bg": "#ffffff",
+      "opacity": 0.016,
+      "backdrop": "#05040A",
+      "level": "text"
+    }
+  ]
+}

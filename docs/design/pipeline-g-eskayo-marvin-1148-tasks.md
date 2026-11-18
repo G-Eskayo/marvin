@@ -1,0 +1,7 @@
+1. Change `--dim: #6b551f` to `--dim: #b89235` in `dashboard/src/components/boot.css` and `dashboard/src/components/show_window.css`.
+2. Update `dashboard/test/show_window_view.test.jsx`'s literal-token assertion from `--dim: #6b551f` to `--dim: #b89235`.
+3. Create `config/palette/dashboard.json` with `levels: {text: 4.5, large: 3.0, ui: 3.0}` and pairs for every text token actually used in `boot.css`/`show_window.css` against its real background(s): `--dim`, `--amber`, `--green`, `--orange`, `--red` on `#0f1117` (boot); `--dim`, `--amber`, `--orange`, `--green`, `--red`, `--moon` on `#05040A` (show window); `--amber` (show-card-url) on the composited `#ffffff04`-over-`#05040A` card background.
+4. Write `lib/tests/test_dashboard_look.py`: the extraction-based "every `--dim` use is a checked, passing pair" test, the hover/disabled-state scan, the `6b551f`-is-gone grep test, and the planted-bad-pair regression test (item 5 above).
+5. Resolve the `vibrancy` Decision and act on the chosen option before marking the PR ready.
+6. Run `contrast.py check config/palette/*.json`, capture the ratios for every `--dim` use, and run the dashboard vitest suite; put the measured ratios in the PR body per acceptance criterion 1.
+7. Boot the dashboard, screenshot the show window's header tag and history strip before and after the colour change, and attach both via `marvin-show` per `docs/agents/showing-things.md`.

@@ -20,7 +20,7 @@ describe('the look', () => {
     expect(html).not.toMatch(/Mock-up look|waiting for sign-off|data-mockup-tag/)
     const css = readFileSync(new URL('../src/components/show_window.css', import.meta.url), 'utf8')
     // the token table in docs/design/celestial-navigation/README.md, not a fork of it
-    for (const t of ['--bg: #05040A', '--green: #54ff8a', '--amber: #f0b32a', '--line: #7a5a14', '--orange: #ff6a1f', '--red: #ff3b2f', '--dim: #6b551f', '--moon: #cfd6e6']) expect(css).toContain(t)
+    for (const t of ['--bg: #05040A', '--green: #54ff8a', '--amber: #f0b32a', '--line: #7a5a14', '--orange: #ff6a1f', '--red: #ff3b2f', '--dim: #b89235', '--moon: #cfd6e6']) expect(css).toContain(t)
     expect(css).toMatch(/Saira Condensed/)
     expect(css).toMatch(/Share Tech Mono/)
   })
