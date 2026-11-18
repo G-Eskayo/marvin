@@ -1,0 +1,3 @@
+1. Edit `skills/diagnose/SKILL.md` Phase 3: insert the sentence "Also skim `retrospective.md` (same folder) for past sessions' lessons, especially `S:` lines, which record verification approaches that worked." immediately before the "**MARVIN-specific gotcha classes**" paragraph (currently line 80), as its own paragraph.
+2. Do not touch Phase 6 (no second writer — `self-improve/SKILL.md`'s Annotation format already owns writing retrospective entries).
+3. Re-read the diff to confirm only that one paragraph was added and Markdown structure/formatting around it is intact.
