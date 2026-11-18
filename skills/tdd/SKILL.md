@@ -88,6 +88,8 @@ Rules:
 - Don't anticipate future tests
 - Keep tests focused on observable behavior
 
+**Then ask: does this test failure point to something beyond the current increment?** If it's unexplained behavior, a fix that doesn't change the failure, or two attempts without progress, hand off to `diagnose` to find the root cause. Resume the TDD loop once the cause is known.
+
 ### 4. Refactor
 
 After all tests pass, look for [refactor candidates](refactoring.md):
