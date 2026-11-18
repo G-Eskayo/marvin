@@ -416,6 +416,30 @@ def _banner_skill_count_drift(repo: Path | None = None, run=subprocess.run) -> f
         return 0.0
 
 
+def _safety_labels_from_non_mac(calibration_file: Path | None = None) -> float:
+    """Count of safety-monitor calibration rows with a source field that is not 'mac'.
+    A point-in-time count (no days window): the total of already-recorded non-Mac labels.
+    Returns 0.0 on missing file or read errors."""
+    calibration_file = calibration_file or Path.home() / ".claude" / "safety-monitor" / "calibration.jsonl"
+    if not calibration_file.exists():
+        return 0.0
+    try:
+        count = 0
+        for line in calibration_file.read_text(errors="ignore").splitlines():
+            line = line.strip()
+            if not line:
+                continue
+            try:
+                row = json.loads(line)
+                if isinstance(row, dict) and row.get("source") and row.get("source") != "mac":
+                    count += 1
+            except json.JSONDecodeError:
+                continue
+        return float(count)
+    except Exception:
+        return 0.0
+
+
 def _ci_onnx_download_failures(fetch=None, repo: str = "G-Eskayo/marvin", runs: int = 20,
                                days: float = PROBE_WINDOW_DAYS, now: datetime | None = None) -> float:
     """#1098/#1156 (2026-11-09): GitHub's 'Python tests' job failures in the 7-day window. Option B: counts the job's
@@ -502,6 +526,9 @@ PROBES: dict[str, tuple[Callable[..., float], float, str]] = {
     # marvin#997: local skills that exist on live ~/.agents/skills but not in the repo's origin/main (missing upstream).
     "banner-skill-count-drift": (lambda days=PROBE_WINDOW_DAYS: _banner_skill_count_drift(), 0.0,
                                  "skills on live ~/.agents/skills but not in origin/main (marvin#997)"),
+    # Safety monitor: labels from non-Mac sources in the calibration file (point-in-time, not windowed).
+    "safety-labels-from-non-mac": (lambda days=PROBE_WINDOW_DAYS: _safety_labels_from_non_mac(), 0.0,
+                                    "rows in safety-monitor calibration with source field != 'mac' (webhook origin gate, ticket #927)"),
 }
 MEASURES.update({name: fn for name, (fn, _limit, _what) in PROBES.items()})
 MEASURES["stale-relay-caught"] = lambda: _stale_relay("caught")

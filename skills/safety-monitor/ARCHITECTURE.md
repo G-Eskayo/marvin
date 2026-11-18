@@ -96,10 +96,11 @@ risk_controlled(rows):
 ```
 
 Every recorded label recomputes the whole map into `tau.json` (G-Eskayo/marvin#599: it used to pick the smallest
-tau, which pinned it to the lowest labeled score, and was cached once and never recomputed). Answers given on any Mac
+tau, which pinned it to the lowest labeled score, and was cached once and never recomputed). Answers given on registered Macs
 are delivered to the primary host's webhook (`POST /safety/label`); a Mac that can't reach it queues them in
-`~/.claude/safety-monitor/outbox.jsonl` and delivers on the next run, de-duplicated by entry hash. Other Macs cache
-the primary's map (`GET /safety/taus`).
+`~/.claude/safety-monitor/outbox.jsonl` and delivers on the next run, de-duplicated by entry hash. The webhook restricts
+`POST /safety/label` to requests from registered Macs (identified by Tailscale hostname resolution and registry lookup),
+rejecting any other origin with 403. Other Macs cache the primary's map (`GET /safety/taus`).
 
 `tau.json` is per-loop because loops have different risk profiles (a bad research-digest entry costs a few minutes; a bad self-improve skill edit costs a broken routing table).
 

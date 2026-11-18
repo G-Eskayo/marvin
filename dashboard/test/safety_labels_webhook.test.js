@@ -46,3 +46,31 @@ describe('GET /safety/taus', () => {
     expect((await handleSafetyRequest({ method: 'GET', url: '/safety/taus' }, async () => { throw new Error('x') })).status).toBe(500)
   })
 })
+
+describe('POST /safety/label integration (with origin check)', () => {
+  it('allows a valid label from a trusted origin to proceed through body parsing', async () => {
+    const r = ok('{"ok": true, "recorded": true, "taus": {"*": 0.3}}')
+    const res = await handleSafetyRequest(
+      { method: 'POST', url: '/safety/label', body: JSON.stringify({ loop: 'daily_digest', score: 0.4, label: 1 }) },
+      r.run
+    )
+    expect(res.status).toBe(200)
+    expect(r.calls.length).toBe(1)
+  })
+
+  it('malformed JSON still returns 400 for POST requests (origin check is earlier)', async () => {
+    const r = ok('{}')
+    const res = await handleSafetyRequest({ method: 'POST', url: '/safety/label', body: 'not json' }, r.run)
+    expect(res.status).toBe(400)
+  })
+
+  it('script execution still runs for a valid POST', async () => {
+    const r = ok('{"ok": true, "recorded": true, "taus": {"*": 0.3}}')
+    await handleSafetyRequest(
+      { method: 'POST', url: '/safety/label', body: JSON.stringify({ loop: 'test_loop', score: 0.6, label: 0 }) },
+      r.run
+    )
+    expect(r.calls.length).toBe(1)
+    expect(r.calls[0][0]).toBe('record')
+  })
+})

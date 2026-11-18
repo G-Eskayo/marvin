@@ -33,6 +33,7 @@ MIN_LABELS = 20         # per loop, and for the global fallback
 GLOBAL = "*"            # tau.json key for the all-loops tau (never a valid loop name)
 LOOP_RE = re.compile(r"^[a-z0-9_]{1,64}$")
 ENTRY_ID_RE = re.compile(r"^[0-9a-f]{16}$")
+SOURCE_RE = re.compile(r"^[a-z]{1,20}$")
 NOTE_CAP = 1_000
 
 
@@ -70,7 +71,7 @@ def _locked():
         os.close(fd)
 
 
-def valid_label(loop_name, score, label, note=None, entry_id=None) -> str | None:
+def valid_label(loop_name, score, label, note=None, entry_id=None, source=None) -> str | None:
     """Why this label can't be recorded, or None. Labels arrive over the network from other Macs: checked here."""
     if not isinstance(loop_name, str) or not LOOP_RE.match(loop_name):
         return "loop"
@@ -82,23 +83,40 @@ def valid_label(loop_name, score, label, note=None, entry_id=None) -> str | None
         return "note"
     if entry_id is not None and (not isinstance(entry_id, str) or not ENTRY_ID_RE.match(entry_id)):
         return "entry_id"
+    if source is not None and (not isinstance(source, str) or not SOURCE_RE.match(source)):
+        return "source"
     return None
 
 
 def record_label(loop_name: str, score: float, label: int, note: str | None = None,
-                 entry_id: str | None = None) -> bool:
+                 entry_id: str | None = None, source: str = "mac") -> bool:
     """label: 0 = approved (was actually fine), 1 = denied (was actually bad).
     note: the reviewer's "modify" text, kept with the label so a typed correction is never thrown away.
     entry_id: the quarantine entry's hash; a second answer for the same entry (two Macs, or a re-delivery) is
-    ignored. Returns True if recorded, False for a duplicate. Recomputes the tau map after recording.
+    ignored unless the new source is "mac" and the existing row's source is unverified (missing or not "mac").
+    Returns True if recorded, False for a duplicate. Recomputes the tau map after recording.
+    source: the source of the label (e.g., "mac" for labels from registered Macs). Defaults to "mac".
+
+    Rows written before the source field existed are treated as unverified for override purposes (per Decision B):
+    a later "mac" source can replace them, self-healing any pre-fix poisoning; they still count for tau_map().
     """
-    why = valid_label(loop_name, score, label, note, entry_id)
+    why = valid_label(loop_name, score, label, note, entry_id, source)
     if why:
         raise ValueError(f"invalid label: {why}")
     with _locked():
-        if entry_id and any(r.get("entry_id") == entry_id for r in _rows()):
-            return False
-        row = {"loop": loop_name, "score": float(score), "label": label}
+        if entry_id:
+            existing = next((r for r in _rows() if r.get("entry_id") == entry_id), None)
+            if existing:
+                # Only override if the new source is "mac" and the existing source is unverified.
+                # Unverified = missing source field (None) or explicitly not "mac".
+                existing_source = existing.get("source")
+                if source == "mac" and existing_source != "mac":
+                    # Allow override: append new row alongside the old one.
+                    pass
+                else:
+                    # Don't override: existing is already verified Mac source, or new source isn't "mac".
+                    return False
+        row = {"loop": loop_name, "score": float(score), "label": label, "source": source}
         if note:
             row["note"] = note
         if entry_id:
@@ -190,7 +208,7 @@ def _cli(argv: list[str]) -> int:
         # The primary host's webhook hands one delivered label here (shared_labels.py sends it): JSON in, JSON out.
         try:
             p = json.loads(argv[1])
-            ok = record_label(p.get("loop"), p.get("score"), p.get("label"), p.get("note"), p.get("entry_id"))
+            ok = record_label(p.get("loop"), p.get("score"), p.get("label"), p.get("note"), p.get("entry_id"), p.get("source", "mac"))
             print(json.dumps({"ok": True, "recorded": ok, "taus": read_taus()}))
         except (ValueError, AttributeError, TypeError) as e:
             print(json.dumps({"ok": False, "error": str(e)}))

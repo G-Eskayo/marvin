@@ -86,3 +86,19 @@ export function peerHosts(readHardwareUuid = defaultReadHardwareUuid, networkPat
     .filter(([id, info]) => id !== me && info && info.tailscale_hostname)
     .map(([id, info]) => ({ id, host: info.tailscale_hostname }))
 }
+
+// Check if a hostname is a registered Mac (case-insensitive). Returns true only when the hostname
+// matches a registered device's tailscale_hostname and that device's OS is macOS.
+// Mirrors machine_profile.py's remote_macs() documented rule: only macOS devices are trusted.
+export function isRegisteredMacHostname(hostname, networkPath = NETWORK_PATH) {
+  if (!hostname || typeof hostname !== 'string') return false
+  const registry = loadRegistry(networkPath)
+  const lowerHostname = hostname.toLowerCase()
+  for (const [id, info] of Object.entries(registry)) {
+    if (!info || !info.tailscale_hostname) continue
+    if (info.tailscale_hostname.toLowerCase() === lowerHostname) {
+      return (info.os || 'macos') === 'macos'
+    }
+  }
+  return false
+}

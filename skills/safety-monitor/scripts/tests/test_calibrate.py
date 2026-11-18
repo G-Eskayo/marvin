@@ -122,6 +122,11 @@ def test_malformed_rows_and_a_corrupt_tau_file_do_not_raise(state):
     dict(loop_name="ok", score=True, label=1), dict(loop_name="ok", score=0.5, label=2),
     dict(loop_name="ok", score=0.5, label=True), dict(loop_name="ok", score=0.5, label=0, note="a\nb"),
     dict(loop_name="ok", score=0.5, label=0, note="x" * 1001), dict(loop_name="ok", score=0.5, label=0, entry_id="zz"),
+    dict(loop_name="ok", score=0.5, label=0, source="mac; rm -rf ~"),  # shell injection
+    dict(loop_name="ok", score=0.5, label=0, source="Mac"),  # uppercase
+    dict(loop_name="ok", score=0.5, label=0, source="123"),  # numeric
+    dict(loop_name="ok", score=0.5, label=0, source=""),  # empty
+    dict(loop_name="ok", score=0.5, label=0, source="a" * 21),  # overlong
 ])
 def test_hostile_labels_are_refused_and_nothing_is_written(state, bad):
     with pytest.raises(ValueError):
@@ -133,6 +138,36 @@ def test_the_same_entry_answered_twice_is_recorded_once(state):
     assert c.record_label("research_colony", 0.4, 0, entry_id="a" * 16) is True
     assert c.record_label("research_colony", 0.4, 1, entry_id="a" * 16) is False
     assert [r["label"] for r in c._rows()] == [0]
+
+
+def test_a_mac_source_overrides_an_unverified_row_with_missing_source(state):
+    """Test 5b: a row with no source field is unverified (Decision B); mac source can replace it."""
+    write_rows(state, [{"loop": "research_colony", "score": 0.4, "label": 0, "entry_id": "b" * 16}])
+    assert len(c._rows()) == 1
+    # First row has no source field. A mac-source label for the same entry_id replaces it.
+    assert c.record_label("research_colony", 0.6, 1, entry_id="b" * 16, source="mac") is True
+    rows = c._rows()
+    assert len(rows) == 2  # old row still in file, new one appended
+    assert rows[-1]["label"] == 1 and rows[-1]["score"] == 0.6 and rows[-1]["source"] == "mac"
+
+
+def test_an_unverified_source_never_overrides_a_mac_source(state):
+    """Test 5b inverse: a non-mac source never overrides an existing mac source."""
+    assert c.record_label("research_colony", 0.4, 0, entry_id="c" * 16, source="mac") is True
+    # Try to override with a non-mac source: should be ignored.
+    assert c.record_label("research_colony", 0.6, 1, entry_id="c" * 16, source="unknown") is False
+    rows = c._rows()
+    assert len(rows) == 1
+    assert rows[0]["label"] == 0 and rows[0]["source"] == "mac"
+
+
+def test_the_same_mac_resubmitting_identical_label_is_a_noop(state):
+    """Test 16: normal outbox retry (same entry_id, same source, same everything) stays a no-op."""
+    assert c.record_label("research_colony", 0.4, 0, entry_id="d" * 16, source="mac") is True
+    assert c.record_label("research_colony", 0.4, 0, entry_id="d" * 16, source="mac") is False
+    assert len(c._rows()) == 1
+
+
 
 
 def test_cli_record_and_taus_speak_json(state, capsys):
