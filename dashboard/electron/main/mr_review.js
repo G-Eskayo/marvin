@@ -7,6 +7,7 @@ import { detectMockups } from './mockups.js'
 import { prSummary } from './pr_summary.js'
 import { summarizeDecisions, vagueness } from '../../webhook-server/decisions.js'
 import { mergeOrder, enrichForOrder, mainStateFrom } from '../../webhook-server/merge_order.js'
+import { readNoRunnerReruns } from '../../webhook-server/no_runner_rerun.js'
 
 // Reads open PRs and identifies which follow the MR pipeline's evidence
 // schema (G-Eskayo/marvin#72, ADR 0024) -- one fixed, structured PR body
@@ -254,8 +255,9 @@ export function markSentBack(prs, keys) {
 // Why a PR can't be approved as it stands, whatever else merges first, or null: the blockers that hide or hold its own
 // Approve. Merge order skips a PR with one (pr_order.js), so it never holds up newer PRs that touch the same files.
 // Waiting for checks is not one: that PR is approvable soon. Unknown files never count, so a light list fails closed.
-export function ownBlocker(pr, uiPathsFor = () => []) {
-  if (ciState(pr.statusCheckRollup).state === 'failing') return 'GitHub checks failed'
+export function ownBlocker(pr, uiPathsFor = () => [], gateCoversFor = () => null) {
+  const gates = gateCoversFor(pr.repo || MARVIN_REPO)
+  if (ciState(pr.statusCheckRollup, { ignore: gates }).state === 'failing') return 'GitHub checks failed'
   if (needsImages(pr, uiPathsFor)) return 'needs images'
   if (vagueness(pr.body || '')) return 'asks you to choose without options'
   const dec = summarizeDecisions(pr.body || '')
@@ -263,19 +265,19 @@ export function ownBlocker(pr, uiPathsFor = () => []) {
   return null
 }
 
-export function markBlocked(prs, uiPathsFor = () => []) {
-  return prs.map((p) => ({ ...p, blocked: ownBlocker(p, uiPathsFor) }))
+export function markBlocked(prs, uiPathsFor = () => [], gateCoversFor = () => null) {
+  return prs.map((p) => ({ ...p, blocked: ownBlocker(p, uiPathsFor, gateCoversFor) }))
 }
 
 // The PR list to hand assertInOrder at Approve time. A failing lookup marks nothing sent back (fails closed on order).
-export async function prsForOrderCheck(prs, sentBackTickets, uiPathsFor = () => []) {
+export async function prsForOrderCheck(prs, sentBackTickets, uiPathsFor = () => [], gateCoversFor = () => null) {
   let keys = new Set()
   try {
     keys = await sentBackTickets([...new Set(prs.map((p) => p.repo || MARVIN_REPO))])
   } catch {
     keys = new Set()
   }
-  return markBlocked(markSentBack(prs, keys), uiPathsFor)
+  return markBlocked(markSentBack(prs, keys), uiPathsFor, gateCoversFor)
 }
 
 // A UI change whose description shows no image (marvin #374), or only unpinned ones (#733): {files, unpinned?} for the card, or null. Only judged when the list
@@ -369,20 +371,50 @@ export async function listPipelinePrs(listOpenPrs, { canMerge = canMergeFromDash
       rework = {}
     }
   }
-  // Each PR with the facts that decide whether it can be waited on (sent back for rework; conflicts), so merge order skips the
-  // ones that cannot merge as they stand.
-  const withState = markBlocked(markSentBack(prs, sentBackKeys), uiPathsFor)
-  // The merge queue's line for each PR (marvin#231). Best effort, like the rebase results.
+  // The merge queue's line for each PR (marvin#231) + gate checks. Best effort, like the rebase results.
   let lines = {}
+  let queue = null
   if (mergeQueue) {
-    let queue = null
     try { queue = await mergeQueue() } catch { queue = null }
     try { lines = queueLines(prs, { queue, issuesFor: issuesFor || (() => []), sentBackKeys, rebased }) } catch { lines = {} }
   }
+  const gateCoversFor = (repo) => queue?.facts?.gateCovers?.[repo] || null
+
+  // Each PR with the facts that decide whether it can be waited on (sent back for rework; conflicts), so merge order skips the
+  // ones that cannot merge as they stand.
+  const withState = markBlocked(markSentBack(prs, sentBackKeys), uiPathsFor, gateCoversFor)
+
+  // No-runner reruns: one per head SHA + run ID per PR, read once and filtered to live checks.
+  const noRunnerReruns = readNoRunnerReruns()
+
   return prs.map((pr) => {
     const ticketRef = parseTicketRef(pr.body || '', pr.repo || MARVIN_REPO)
     const hasSchema = hasEvidenceSchema(pr.body)
     const evidence = hasSchema ? parseEvidence(pr.body) : null
+    const gates = gateCoversFor(pr.repo || MARVIN_REPO)
+
+    // Determine if this PR has a no-runner rerun record for a live check on the current head.
+    let noRunner = null
+    const rollup = pr.statusCheckRollup || []
+    if (gates) {
+      const failing = rollup.filter((c) => c?.status === 'COMPLETED' && c?.conclusion && ['FAILURE', 'TIMED_OUT', 'CANCELLED', 'ACTION_REQUIRED', 'STARTUP_FAILURE'].includes(c.conclusion))
+      if (!failing.some((c) => c.conclusion === 'FAILURE')) {
+        for (const check of failing) {
+          if (!gates.includes(check.name)) {
+            const urlMatch = /\/actions\/runs\/(\d+)\/job\/(\d+)/.exec(check.detailsUrl || '')
+            if (urlMatch) {
+              const key = `${pr.repo || MARVIN_REPO}#${pr.number}@${pr.headRefOid}@${urlMatch[1]}`
+              const record = noRunnerReruns[key]
+              if (record && record.result !== 'refused') {
+                noRunner = { checkName: check.name, result: record.result }
+                break
+              }
+            }
+          }
+        }
+      }
+    }
+
     return {
       number: pr.number,
       title: pr.title,
@@ -401,7 +433,7 @@ export async function listPipelinePrs(listOpenPrs, { canMerge = canMergeFromDash
       autoMerge: shadow[pr.url]?.current || null,
       // Each check's own state and times, and when GitHub was last asked (the check watch's probe, else the list read):
       // MR Review's progress bar, drill-down and "Last checked" (marvin#555).
-      checks: { ...ciState(pr.statusCheckRollup), runs: checkRuns(pr.statusCheckRollup), checkedAt: pr.checkedAt ?? pr.listedAt ?? null },
+      checks: { ...ciState(pr.statusCheckRollup, { ignore: gates }), runs: checkRuns(pr.statusCheckRollup), checkedAt: pr.checkedAt ?? pr.listedAt ?? null },
       needsImages: needsImages(pr, uiPathsFor),
       // Choices the PR asks the owner to make (its Decisions section), and whether it asks in prose with nowhere to
       // answer (2026-10-09): either one holds Approve until it is answered or restated.
@@ -429,6 +461,8 @@ export async function listPipelinePrs(listOpenPrs, { canMerge = canMergeFromDash
       rework: ticketRef !== null && sentBackKeys.has(`${pr.repo || MARVIN_REPO}#${ticketRef}`) ? rework[`${pr.repo || MARVIN_REPO}#${ticketRef}`] || null : null,
       ticketNumber: ticketRef !== null ? Number(ticketRef) : null,
       evidence,
+      // No-runner rerun state: when a check failed due to runner capacity, not code.
+      noRunner,
       // Full body, untruncated -- MrDetail.jsx needs the whole thing since
       // it's exactly the "drill in and actually read it" view; PrCard.jsx
       // truncates its own display slice for the compact list card.

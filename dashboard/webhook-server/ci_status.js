@@ -29,6 +29,22 @@ export function ciState(rollup, { ignore = null } = {}) {
   return { state, failing, pending }
 }
 
+// Returns CheckRun entries with FAILED conclusions (not StatusContext), optionally excluding
+// gate-covered checks. Each item is {name, conclusion, detailsUrl}. Used by no-runner retry
+// to find checks eligible for re-run inspection.
+export function failingCheckRuns(rollup, { ignore = null } = {}) {
+  const skip = new Set(Array.isArray(ignore) ? ignore : [])
+  const result = []
+  for (const c of (rollup || [])) {
+    if (!c || c.__typename === 'StatusContext') continue
+    if (skip.has(c?.name)) continue
+    if (c.status === 'COMPLETED' && FAILED.has(c.conclusion)) {
+      result.push({ name: c.name, conclusion: c.conclusion, detailsUrl: c.detailsUrl })
+    }
+  }
+  return result
+}
+
 // One row per check, for MR Review's progress bar and drill-down (marvin#555): its name, a plain state
 // (passed / failed / skipped / neutral / running / queued), whether it finished, and GitHub's own start and finish
 // times (strings, untouched; a commit status has only when it was posted, and no finish time). ciState above is what

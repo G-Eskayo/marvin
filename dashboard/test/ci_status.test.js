@@ -1,6 +1,9 @@
 import { describe, it, expect, vi } from 'vitest'
-import { ciState, assertChecksGreen } from '../webhook-server/ci_status.js'
+import { ciState, assertChecksGreen, failingCheckRuns, gateCheckNames, postGateStatus } from '../webhook-server/ci_status.js'
 import { MergeFailure } from '../webhook-server/failure.js'
+import fs from 'fs'
+import os from 'os'
+import path from 'path'
 
 const run = (name, status, conclusion) => ({ __typename: 'CheckRun', name, status, conclusion })
 const ctx = (name, state) => ({ __typename: 'StatusContext', context: name, state })
@@ -27,6 +30,54 @@ describe('ciState: what GitHub says about a PR\'s checks', () => {
   })
   it('a failure outranks pending: no point waiting for the rest', () => {
     expect(ciState([run('a', 'COMPLETED', 'FAILURE'), run('b', 'IN_PROGRESS', null)]).state).toBe('failing')
+  })
+})
+
+describe('failingCheckRuns', () => {
+  const GATE = ['Rules', 'Python tests', 'Dashboard unit tests']
+
+  it('returns {name, conclusion, detailsUrl} for completed CheckRuns with FAILED conclusions', () => {
+    const failing = failingCheckRuns([
+      run('a', 'COMPLETED', 'FAILURE'),
+      run('b', 'COMPLETED', 'TIMED_OUT'),
+      run('c', 'COMPLETED', 'CANCELLED'),
+      run('d', 'COMPLETED', 'ACTION_REQUIRED'),
+      run('e', 'COMPLETED', 'STARTUP_FAILURE'),
+      run('f', 'COMPLETED', 'SUCCESS')
+    ], { ignore: [] })
+    expect(failing.map((f) => f.name)).toEqual(['a', 'b', 'c', 'd', 'e'])
+    expect(failing[0]).toMatchObject({ name: 'a', conclusion: 'FAILURE' })
+  })
+
+  it('never returns StatusContext entries (they have no rerunnable id)', () => {
+    const failing = failingCheckRuns([
+      run('check', 'COMPLETED', 'FAILURE'),
+      ctx('status', 'FAILURE')
+    ], { ignore: [] })
+    expect(failing.map((f) => f.name)).toEqual(['check'])
+  })
+
+  it('excludes gate-covered check names matching the ignore list', () => {
+    const failing = failingCheckRuns([
+      run('Python tests', 'COMPLETED', 'FAILURE'),
+      run('Secret scan', 'COMPLETED', 'FAILURE')
+    ], { ignore: GATE })
+    expect(failing.map((f) => f.name)).toEqual(['Secret scan'])
+  })
+
+  it('with no ignore list (or null) returns all failing checks', () => {
+    const failing = failingCheckRuns([
+      run('a', 'COMPLETED', 'FAILURE'),
+      run('b', 'COMPLETED', 'FAILURE')
+    ])
+    expect(failing.map((f) => f.name)).toEqual(['a', 'b'])
+  })
+
+  it('includes detailsUrl in the returned objects', () => {
+    const failing = failingCheckRuns([
+      { __typename: 'CheckRun', name: 'test', status: 'COMPLETED', conclusion: 'FAILURE', detailsUrl: 'https://github.com/o/r/actions/runs/123/job/456' }
+    ], { ignore: [] })
+    expect(failing[0]).toMatchObject({ detailsUrl: 'https://github.com/o/r/actions/runs/123/job/456' })
   })
 })
 
@@ -97,11 +148,7 @@ describe('assertChecksGreen with checks the gate covers', () => {
   })
 })
 
-describe('gateCheckNames and postGateStatus (marvin#1099)', async () => {
-  const fs = await import('fs')
-  const os = await import('os')
-  const path = await import('path')
-  const { gateCheckNames, postGateStatus } = await import('../webhook-server/ci_status.js')
+describe('gateCheckNames and postGateStatus (marvin#1099)', () => {
   const dirWith = (text) => {
     const d = fs.mkdtempSync(path.join(os.tmpdir(), 'gate-'))
     fs.mkdirSync(path.join(d, '.github'))

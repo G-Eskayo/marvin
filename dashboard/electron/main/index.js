@@ -12,6 +12,7 @@ import { getReworkStatus, clearReworkCache } from './rework.js'
 import { createGithubState, repoOfSource, gateCooldownUntil } from './github_state.js'
 import { startCheckWatch, createCheckProbe, createTreeProbe, startChangeWatch, createGithubProbe } from '../../webhook-server/gh_watch.js'
 import { createStackRetarget } from './stack_retarget.js'
+import { createNoRunnerRetry } from './no_runner_retry.js'
 import { prsForOrderCheck, listPipelinePrs, denyMr, fetchTicketContext, sentBackKeys, clearSentBackLabel } from './mr_review.js'
 import { approveMrStream } from './approve_stream.js'
 import { readSeenNumbers, markSeen, computeReviewStatus } from './mr_seen.js'
@@ -1084,6 +1085,12 @@ function registerMrReviewHandlers() {
       mainWindow?.webContents.send('mr:refresh')
     }
   })
+  // Safety net for checks that failed due to runner capacity: automatically reruns them once per head SHA.
+  const noRunnerRetry = createNoRunnerRetry({
+    gh: (args) => ghOut(args),
+    gateCoversFor: (repo) => null, // Will be set from getMergeQueue() in the mr:list handler
+    log: (line) => console.error(line)
+  })
   // MARVIN_MR_FIXTURE=<file.json> (gh pr list JSON) shows a fixed PR list instead of GitHub's: used to screenshot card
   // states no open PR happens to be in (e.g. "Too vague: needs options") for the owner's image rule.
   const fixturePrs = process.env.MARVIN_MR_FIXTURE ? async () => JSON.parse(readFileSync(process.env.MARVIN_MR_FIXTURE, 'utf8')) : null
@@ -1124,7 +1131,21 @@ function registerMrReviewHandlers() {
     .map(({ id, name, catalogName, repo, status, aliases }) => ({ id, name, catalogName, repo, status, aliases })))
   ipcMain.handle('mr:helperTabs', () => readHelperTabs())
   ipcMain.handle('mr:list', async () => {
-    if (!fixturePrs && !pullOnly) listOpenPrs().then((prs) => stackRetarget.check(prs)).catch(() => {})
+    if (!fixturePrs && !pullOnly) {
+      const prs = await listOpenPrs()
+      stackRetarget.check(prs).catch(() => {})
+      // Get gate covers from the merge queue to pass to no-runner retry
+      let queue = null
+      try { queue = await getMergeQueue() } catch { queue = null }
+      const gateCoversFor = (repo) => queue?.facts?.gateCovers?.[repo] || null
+      // Create a new noRunnerRetry with the proper gateCoversFor
+      const retryWithGates = createNoRunnerRetry({
+        gh: (args) => ghOut(args),
+        gateCoversFor,
+        log: (line) => console.error(line)
+      })
+      retryWithGates.check(prs).catch(() => {})
+    }
     const list = await mrList()
     catchUpMerges(list)
     return list
@@ -1206,9 +1227,14 @@ function registerMrReviewHandlers() {
     // the list marks them, or a newer PR waits forever on one that can't merge (marvin #209). A refusal is recorded (#215).
     // P5: the order check runs on the remembered list after one conditional check of this repo's open PRs (heads,
     // bases), not a fresh re-list of all 13 repos (10.4 s for PR #569). Stale re-reads that one repo.
+    let gateCoversFor = () => null
+    try {
+      const queue = await getMergeQueue()
+      gateCoversFor = (repo) => queue?.facts?.gateCovers?.[repo] || null
+    } catch { }
     await guardApprove(url, {
       assertMergeable,
-      loadPrs: async () => prsForOrderCheck(await mrActions.approvePrs(url), sentBackTickets),
+      loadPrs: async () => prsForOrderCheck(await mrActions.approvePrs(url), sentBackTickets, () => [], gateCoversFor),
       record: recordRefusal
     })
     // marvin#762: the click is recorded, sent to the Mini, and run on this Mac instead when the Mini can't be reached

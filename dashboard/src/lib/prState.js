@@ -105,9 +105,19 @@ function describeState(pr, { status = 'idle', errorMessage = null, progress = fa
       `${since}It can't merge as it is. The hourly scan first tries to resolve it automatically (when both sides only added lines); a real conflict sends a pipeline PR's ticket back to be rebuilt on the current ${main}, and flags a hand-made PR for you.`, 'hidden', 'hidden')
   }
 
+  if (pr.noRunner) {
+    if (pr.noRunner.result === 'reran') {
+      return base('checks-not-run', 'wait', 'Rechecking: GitHub had no runner',
+        `${pr.noRunner.checkName} failed because GitHub had no runner capacity, not because the code is wrong. It is rerunning now.`, 'disabled', 'enabled')
+    }
+    // 'asked' or 'refused' state
+    return base('checks-not-run', 'blocked', 'Checks failed: GitHub has no runner capacity',
+      `${pr.noRunner.checkName} failed because GitHub has no runner capacity, not because the code is wrong. The rerun was attempted but could not complete.`, 'enabled', 'enabled')
+  }
+
   if (ci.state === 'failing') {
     return base('checks-failed', 'blocked', 'GitHub checks failed',
-      `${ci.failing.join(', ')}. It is sent back for rework automatically, so there is nothing to approve.`, 'hidden', 'hidden',
+      `${ci.failing.join(', ')}.`, 'hidden', 'hidden',
       { checkProgress: hasRuns })
   }
 
@@ -206,6 +216,7 @@ function describeState(pr, { status = 'idle', errorMessage = null, progress = fa
 // always keeps its line, since only the line says its place.
 const SAID_BY_HEADLINE = {
   'checks-failed': /^checks failing\b/,
+  'checks-not-run': /^checks failing\b/,
   'decisions-pending': /\bDecisions? (?:is|are) waiting for you$/,
   'needs-options': /^asks you to choose without options$/,
   conflict: /^conflicts with\b/,

@@ -54,6 +54,24 @@ describe('describePrState: one headline, only the buttons that make sense', () =
     const f = state({ checks: { state: 'failing', failing: ['CaptionCore unit tests'], pending: [] } })
     expect(f).toMatchObject({ kind: 'checks-failed', approve: 'hidden' })
     expect(f.detail).toMatch(/CaptionCore unit tests/)
+    // The new wording for checks-failed does NOT say "sent back for rework automatically"
+    expect(f.detail).not.toMatch(/sent back/)
+  })
+
+  it('no-runner state: reran result shows as waiting', () => {
+    const s = state({ noRunner: { checkName: 'Python tests', result: 'reran' } })
+    expect(s).toMatchObject({ kind: 'checks-not-run', tone: 'wait', approve: 'disabled', deny: 'enabled' })
+    expect(s.headline).toMatch(/Rechecking/)
+    expect(s.detail).toMatch(/GitHub had no runner capacity/)
+    expect(s.detail).toMatch(/Python tests/)
+    expect(s.detail).not.toMatch(/sent back/)
+  })
+
+  it('no-runner state: asked or refused result shows as blocked', () => {
+    const s = state({ noRunner: { checkName: 'Python tests', result: 'asked' } })
+    expect(s).toMatchObject({ kind: 'checks-not-run', tone: 'blocked', approve: 'enabled', deny: 'enabled' })
+    expect(s.headline).toMatch(/GitHub has no runner capacity/)
+    expect(s.detail).toMatch(/could not complete/)
   })
 
   it('waiting on checks is shown as waiting: approve is visible but disabled, and says what it is waiting for', () => {
@@ -73,7 +91,7 @@ describe('describePrState: one headline, only the buttons that make sense', () =
     const runs = [{ name: 'a', status: 'failed', done: true }]
     const f = state({ checks: { state: 'failing', failing: ['a'], pending: [], runs } })
     expect(f).toMatchObject({ kind: 'checks-failed', approve: 'hidden', checkProgress: true })
-    expect(f.detail).toMatch(/^a\. It is sent back/)
+    expect(f.detail).toMatch(/^a\./)
   })
 
   it('no rows (older data, or an empty list): the old sentence, and no progress view', () => {
