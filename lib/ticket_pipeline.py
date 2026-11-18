@@ -1132,6 +1132,8 @@ def _box_fallback(repo, rest, settings, step, summary, fail, dry_run) -> dict | 
     for ticket in rest:
         if label not in names(ticket):
             continue
+        if _retry_not_before(repo, ticket) is not None:
+            continue
         ok, why = _box_route(repo, ticket, settings)
         if ok:
             return ticket if _dispatch_to_box(repo, ticket, step, summary, fail, dry_run) == "started" else None

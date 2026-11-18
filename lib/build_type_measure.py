@@ -19,6 +19,7 @@ re-deriving it -- this module only adds the test-command selection and
 the metrics_registry shaping on top.
 """
 from __future__ import annotations
+import re
 import subprocess
 import sys
 from pathlib import Path
@@ -216,6 +217,12 @@ def _changed_since(worktree: Path, base_sha: str) -> list[str]:
     return sorted(set(tracked) | set(new))
 
 
+def failed_ids(output: str) -> list[str]:
+    """Extract failed test IDs from pytest output (e.g., 'lib/tests/test_file.py::test_name')."""
+    import re
+    return [m.group(1) for m in re.finditer(r"^FAILED\s+(\S+)", output, re.M)]
+
+
 def _suite_reading(label: str, parsed: dict) -> tuple[int, int]:
     """(passed, failed) from one run, with measure()'s rule: a crash is an error, a runner's 'no tests ran' is 0."""
     if parsed.get("passed") is None and parsed.get("failed") is None:
@@ -233,6 +240,14 @@ def _metrics(suites: dict[str, tuple[int, int]]) -> dict:
     out["tests_passed"] = {"value": sum(p for p, _ in suites.values()), "higher_is_better": True}
     out["tests_failed"] = {"value": sum(f for _, f in suites.values()), "higher_is_better": False}
     return out
+
+
+def _exclude_same_sides_red(base_failed: list[str], after_failed: list[str]) -> tuple[int, int]:
+    """Count of tests failing identically on both base and after (for exclusion from the delta).
+    Returns (baseline_reduction, current_reduction) -- the number of failures to remove from each side."""
+    same_sides_red = set(base_failed) & set(after_failed)
+    reduction = len(same_sides_red)
+    return reduction, reduction
 
 
 class PairedMeasure:
@@ -255,8 +270,10 @@ class PairedMeasure:
         self._started = False
         self._vitest_base: tuple[int, int] | None = None
         self._base_cache: dict = {}
+        self._base_cache_failed_ids: dict = {}  # failed test IDs cached per selection
         self._paired: dict | None = None
         self._last: dict | None = None          # {"selection", "passed", "failed"} of the last reading after the change
+        self._after_failed_ids: list[str] = []  # failed test IDs from the last after-change run
 
     # ── execute_ticket's interface ─────────────────────────────────────────
     def __call__(self, worktree_path: Path) -> dict:
@@ -281,11 +298,17 @@ class PairedMeasure:
             return measure(wt)
         selection = self._selection(wt)
         after = {"pytest": self._pytest(wt, selection)}
+        after_failed_ids = list(self._after_failed_ids)
         if self._vitest_base is not None:
             after["vitest"] = self._vitest(wt)
         key = None if selection is None else tuple(selection)
+        base_failed_ids = None
         if key not in self._base_cache:
-            self._base_cache[key] = self._pytest_at_base(wt, selection)
+            base_result, base_failed_ids = self._pytest_at_base(wt, selection)
+            self._base_cache[key] = base_result
+            self._base_cache_failed_ids[key] = base_failed_ids
+        else:
+            base_failed_ids = self._base_cache_failed_ids.get(key, [])
         base = {"pytest": self._base_cache[key]}
         if self._vitest_base is not None:
             base["vitest"] = self._vitest_base
@@ -293,7 +316,22 @@ class PairedMeasure:
         p, f = after["pytest"]
         self._last = {"selection": selection, "passed": p + after.get("vitest", (0, 0))[0],
                       "failed": f + after.get("vitest", (0, 0))[1], "vitest": "vitest" in after}
-        return _metrics(after)
+        after_metrics = _metrics(after)
+        base_reduction, after_reduction = _exclude_same_sides_red(base_failed_ids or [], after_failed_ids)
+        if base_reduction > 0:
+            pair_pytest = self._paired.get("pytest_failed")
+            if isinstance(pair_pytest, dict) and "value" in pair_pytest:
+                pair_pytest["value"] = max(0, pair_pytest["value"] - base_reduction)
+            pair_tests = self._paired.get("tests_failed")
+            if isinstance(pair_tests, dict) and "value" in pair_tests:
+                pair_tests["value"] = max(0, pair_tests["value"] - base_reduction)
+            after_pytest = after_metrics.get("pytest_failed")
+            if isinstance(after_pytest, dict) and "value" in after_pytest:
+                after_pytest["value"] = max(0, after_pytest["value"] - after_reduction)
+            after_tests = after_metrics.get("tests_failed")
+            if isinstance(after_tests, dict) and "value" in after_tests:
+                after_tests["value"] = max(0, after_tests["value"] - after_reduction)
+        return after_metrics
 
     def paired_baseline(self) -> dict | None:
         """The base reading on the same tests as the last call's (execute_ticket compares against this)."""
@@ -353,13 +391,16 @@ class PairedMeasure:
             command = [VENV_PYTHON, "-m", "pytest", "-q", *parallel_args()]
             with cleanup_sweep.disposable_basetemp() as basetemp_args:
                 parsed = capture_test_results(wt, command + basetemp_args, env=self._env(path))
+            output = parsed.get("output", "")
+            self._after_failed_ids = failed_ids(output)
             return _suite_reading("pytest", parsed)
         finally:
             if path:
                 Path(path).unlink(missing_ok=True)
 
-    def _pytest_at_base(self, wt: Path, selection: list[str] | None) -> tuple[int, int]:
-        """The same selection on the pinned base commit, in a detached worktree removed afterwards."""
+    def _pytest_at_base(self, wt: Path, selection: list[str] | None) -> tuple[tuple[int, int], list[str]]:
+        """The same selection on the pinned base commit, in a detached worktree removed afterwards.
+        Returns ((passed, failed), failed_ids)."""
         import shutil
         import tempfile
         holder = Path(tempfile.mkdtemp(prefix="marvin-paired-base-"))
@@ -375,7 +416,9 @@ class PairedMeasure:
                 node_modules_seed.seed_tree(base_wt)
             except Exception:  # noqa: BLE001 - a seed miss leaves the tree as a fresh worktree, as for the ticket
                 pass
-            return self._pytest(base_wt, selection)
+            result = self._pytest(base_wt, selection)
+            base_failed_ids = list(self._after_failed_ids)
+            return result, base_failed_ids
         finally:
             subprocess.run(["git", "worktree", "remove", "--force", str(base_wt)], cwd=wt, capture_output=True)
             shutil.rmtree(holder, ignore_errors=True)

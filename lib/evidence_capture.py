@@ -220,6 +220,7 @@ def capture_test_results(worktree_path: Path, test_command: list[str], timeout_s
                             preexec_fn=_raise_nofile_limit)
     parsed = parse_test_output(" ".join(test_command), output)
     parsed["output_tail"] = output[-600:]
+    parsed["output"] = output
     return parsed
 
 

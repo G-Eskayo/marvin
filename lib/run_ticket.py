@@ -14,6 +14,7 @@ import os
 import re
 import subprocess
 import sys
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
@@ -36,8 +37,9 @@ REPO = "G-Eskayo/marvin"
 FAILURE_MARKER = "Automated implementation did not pass verification"
 TIMEOUT_MARKER = "Automated verification timed out"
 MODEL_MARKER = "The model service was unavailable"
-MAX_CONSECUTIVE_FAILURES = 3
+MAX_CONSECUTIVE_FAILURES = 2  # per-ticket park cap: N=2 full runs in 72h
 MAX_CONSECUTIVE_RETRIES = 5   # failures and verify timeouts together: a timeout is no strike, but retries still end
+FAILURE_WINDOW_HOURS = 72      # time window for counting consecutive failures
 
 
 def _machine_load() -> float | None:
@@ -68,7 +70,8 @@ def _comment_failure(issue_number: int, reason: str, repo: str = REPO, retry: tu
 
 
 def _issue_comments(issue_number: int, repo: str = REPO) -> list | None:
-    """The ticket's comments, or None when they can't be read (no gh, offline, garbage): callers then count nothing."""
+    """The ticket's comments, or None when they can't be read (no gh, offline, garbage): callers then count nothing.
+    Each comment dict includes body, createdAt, and author fields for streak counting and timestamp-based windowing."""
     try:
         proc = subprocess.run(
             ["gh", "issue", "view", str(issue_number), "--repo", repo, "--json", "comments"],
@@ -80,6 +83,16 @@ def _issue_comments(issue_number: int, repo: str = REPO) -> list | None:
     except Exception:  # noqa: BLE001 -- unreadable history must never crash the cleanup that follows
         return None
     return comments if isinstance(comments, list) else None
+
+
+def _parse_comment_timestamp(created_at: str | None) -> datetime | None:
+    """Parse ISO 8601 timestamp from comment, or None if unreadable."""
+    if not created_at or not isinstance(created_at, str):
+        return None
+    try:
+        return datetime.fromisoformat(created_at.replace('Z', '+00:00'))
+    except (ValueError, AttributeError):
+        return None
 
 
 def _trailing_model_failures(issue_number: int, repo: str = REPO) -> int:
@@ -115,19 +128,24 @@ def _consecutive_failure_streak(issue_number: int, repo: str = REPO) -> int:
 
 def _trailing_streaks(issue_number: int, repo: str = REPO) -> tuple[int, int]:
     """(failures, verify timeouts) in the trailing run of automated comments, most recent first, up to the first
-    comment from a person. Timeouts used to be free and to reset the failure count, so a ticket whose verify
-    always times out was retried for ever (#563: three runs in 46 minutes on a loaded M4); now they have their own
-    cap (MAX_CONSECUTIVE_RETRIES, with failures). A model-unavailable release is about the service: it is skipped,
-    neither counted nor a reset.
+    comment from a person or the FAILURE_WINDOW_HOURS boundary. Timeouts used to be free and to reset the failure count,
+    so a ticket whose verify always times out was retried for ever (#563: three runs in 46 minutes on a loaded M4);
+    now they have their own cap (MAX_CONSECUTIVE_RETRIES, with failures). A model-unavailable release is about the
+    service: it is skipped, neither counted nor a reset.
 
     Every other MARVIN comment is skipped the same way (#605): the conflict send-back's and the ticket agents' own
     comments used to end the run, so #81 failed 5 times before parking. What ends it (ticket_policy.automated_comment):
     a person's comment, a passing run, or a hand-off to a person (a park or a loop guard: only a person can send it
     back, and that is a fresh start). O(comments x body length) over the one thread the caller already fetches."""
     failures = timeouts = 0
+    now = datetime.now(timezone.utc)
+    window_start = now - timedelta(hours=FAILURE_WINDOW_HOURS)
     for c in reversed(_issue_comments(issue_number, repo) or []):
         body = c.get("body") if isinstance(c, dict) else None
         body = body if isinstance(body, str) else ""
+        created_at = _parse_comment_timestamp(c.get("createdAt")) if isinstance(c, dict) else None
+        if created_at and created_at < window_start:
+            break
         if MODEL_MARKER in body:
             continue
         if FAILURE_MARKER in body:

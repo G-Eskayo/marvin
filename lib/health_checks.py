@@ -592,6 +592,52 @@ def check_site_published(gh=None, git=None) -> dict | None:
     return _result(cid, label, r["severity"], r["detail"])
 
 
+def check_playwright_and_dev_site() -> dict | None:
+    """Does this machine have Playwright chromium and the live dev site running? Host-only checks needed by build-time
+    parity tests. Returns None if this machine is not expected to run parity tests; yellow when Playwright chromium
+    or the dev site is missing; green when both are available."""
+    import machine_profile
+    cid = "build:parity-deps"
+    label = "Build parity test dependencies (Playwright chromium + dev site)"
+
+    registry = machine_profile._load_registry()
+    me_id = machine_profile.registry_id()
+    me_info = registry.get(me_id, {})
+    me_label = me_info.get("label")
+
+    if me_label != "mac-mini":
+        return None
+
+    # Check if Playwright chromium is available
+    playwright_ok = False
+    try:
+        from playwright.sync_api import sync_playwright
+        with sync_playwright() as p:
+            browser = p.chromium.launch()
+            browser.close()
+        playwright_ok = True
+    except Exception:
+        pass
+
+    # Check if dev site is running
+    dev_site_ok = False
+    try:
+        import urllib.request
+        urllib.request.urlopen("http://localhost:8080/", timeout=3)
+        dev_site_ok = True
+    except OSError:
+        pass
+
+    if not playwright_ok and not dev_site_ok:
+        return _result(cid, label, "yellow", "Playwright chromium not installed and/or dev site not running")
+    elif not playwright_ok:
+        return _result(cid, label, "yellow", "Playwright chromium not installed")
+    elif not dev_site_ok:
+        return _result(cid, label, "yellow", "Dev site not running on localhost:8080")
+    else:
+        return _result(cid, label, "green", "All parity test dependencies available")
+
+
 def check_stale_relay(reachability: dict[str, str] | None = None) -> dict:
     """Stale claims caught by the resume check vs leaked to the owner this week, per Mac (marvin#1224). An asleep Mac is
     unknown for the week, not 0."""
@@ -1823,6 +1869,7 @@ def default_checks(reach: dict[str, str] | None = None, reach_results: list[dict
         ("memory:claims", "Memory doesn't call finished work open", check_memory_claims, CHECK_BUDGET_S),
         ("profile:parity", "Public profile matches everywhere", check_profile_parity, CHECK_BUDGET_S),
         ("site:published", "The site is published", check_site_published, CHECK_BUDGET_S),
+        ("build:parity-deps", "Build parity test dependencies", check_playwright_and_dev_site, CHECK_BUDGET_S),
         ("seal:beta-ingest", "Seal Speak beta reports are picked up", check_seal_beta_ingest, CHECK_BUDGET_S),
         ("brief:builder", "Morning brief builder", check_brief_builder, CHECK_BUDGET_S),
         ("merge:service", "Merge service reachable", check_merge_service, CROSS_MACHINE_BUDGET_S),

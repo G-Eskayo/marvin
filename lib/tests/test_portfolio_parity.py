@@ -31,8 +31,18 @@ def test_a_missing_part_in_the_preview_is_a_difference():
 
 
 def _has_playwright():
+    """Check both that the playwright package is installed AND the chromium browser binary is available."""
     import importlib.util
-    return importlib.util.find_spec("playwright") is not None
+    if importlib.util.find_spec("playwright") is None:
+        return False
+    try:
+        from playwright.sync_api import sync_playwright
+        with sync_playwright() as p:
+            browser = p.chromium.launch()
+            browser.close()
+        return True
+    except Exception:
+        return False
 
 
 def _live():

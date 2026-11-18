@@ -1313,3 +1313,90 @@ def test_a_profile_projects_verify_is_untouched_by_the_paired_measure(monkeypatc
     assert not hasattr(pp.Measurer, "paired_baseline")
     monkeypatch.delenv("MARVIN_BASE", raising=False)
     assert "MARVIN_BASE" not in pp.build_env({"verify": []})
+
+
+# ── 72h time window for failure streak (AC1, tests 3-6) ──────────────────
+from datetime import datetime as _dt, timedelta as _td, timezone as _tz
+
+
+def test_two_failures_within_72h_count_toward_the_streak(monkeypatch):
+    """Failures within the 72h window are counted for parking."""
+    now = _dt.now(_tz.utc)
+    old_failure = now - _td(hours=48)
+    recent_failure = now - _td(hours=24)
+    comments = [
+        {"body": f"{rt.FAILURE_MARKER}: unchanged", "createdAt": old_failure.isoformat().replace('+00:00', 'Z')},
+        {"body": f"{rt.FAILURE_MARKER}: unchanged", "createdAt": recent_failure.isoformat().replace('+00:00', 'Z')},
+    ]
+
+    class FakeResult:
+        returncode = 0
+        stdout = __import__("json").dumps({"comments": comments})
+
+    monkeypatch.setattr(rt.subprocess, "run", lambda *a, **kw: FakeResult())
+    assert rt._consecutive_failure_streak(28) == 2
+
+
+def test_two_failures_more_than_72h_apart_do_not_count(monkeypatch):
+    """Failures outside the 72h window don't count toward the streak."""
+    now = _dt.now(_tz.utc)
+    old_failure = now - _td(hours=100)
+    recent_failure = now - _td(hours=24)
+    comments = [
+        {"body": f"{rt.FAILURE_MARKER}: unchanged", "createdAt": old_failure.isoformat().replace('+00:00', 'Z')},
+        {"body": f"{rt.FAILURE_MARKER}: unchanged", "createdAt": recent_failure.isoformat().replace('+00:00', 'Z')},
+    ]
+
+    class FakeResult:
+        returncode = 0
+        stdout = __import__("json").dumps({"comments": comments})
+
+    monkeypatch.setattr(rt.subprocess, "run", lambda *a, **kw: FakeResult())
+    assert rt._consecutive_failure_streak(28) == 1
+
+
+def test_malformed_timestamp_is_treated_as_in_window(monkeypatch):
+    """A comment with a malformed or missing createdAt is treated conservatively (as in window)."""
+    comments = [
+        {"body": f"{rt.FAILURE_MARKER}: unchanged"},
+        {"body": f"{rt.FAILURE_MARKER}: unchanged", "createdAt": "invalid-timestamp"},
+    ]
+
+    class FakeResult:
+        returncode = 0
+        stdout = __import__("json").dumps({"comments": comments})
+
+    monkeypatch.setattr(rt.subprocess, "run", lambda *a, **kw: FakeResult())
+    assert rt._consecutive_failure_streak(28) == 2
+
+
+def test_box_settle_then_mac_settle_parks_at_new_cap_of_2(monkeypatch):
+    """The specific case: 1 prior failure exists, current run fails -> parks at streak 2. Uses real comment data with timestamps."""
+    from datetime import datetime, timedelta, timezone
+
+    monkeypatch.setattr(rt, "execute_ticket", lambda *a: _failing_result())
+    monkeypatch.setattr(rt, "raise_mr", lambda *a, **kw: {"raised": False, "pr_url": None, "reason": "unchanged"})
+    monkeypatch.setattr(rt, "_comment_failure", lambda *a, **k: None)
+    monkeypatch.setattr(rt, "_trigger_redispatch", lambda: None)
+
+    now = datetime.now(timezone.utc)
+
+    comments = [
+        {"body": f"{rt.FAILURE_MARKER}: box run failed", "createdAt": now.isoformat()},
+    ]
+
+    class FakeResult:
+        returncode = 0
+        stdout = __import__("json").dumps({"comments": comments})
+
+    monkeypatch.setattr(rt.subprocess, "run", lambda *a, **kw: FakeResult())
+
+    released = []
+    monkeypatch.setattr(rt, "_release_claim", lambda issue_number, **kw: released.append(issue_number))
+    parked = []
+    monkeypatch.setattr(rt, "_park_stuck_ticket", lambda issue_number, streak, **kw: parked.append((issue_number, streak)))
+
+    rt.run(28)
+
+    assert released == []
+    assert parked == [(28, 2)]

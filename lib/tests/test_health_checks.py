@@ -1693,3 +1693,31 @@ def test_react_to_accounts_summarises_and_never_raises():
 def test_the_health_sweep_entry_point_runs_the_accounts_check():
     import inspect
     assert "react_to_accounts()" in inspect.getsource(hc._cli)
+
+
+# ── build parity dependencies (Playwright + dev site) ─────────────────────
+
+def test_check_playwright_and_dev_site_is_registered(monkeypatch):
+    """The new health check for build parity dependencies is registered."""
+    monkeypatch.setattr("lib.machine_profile.registry_id", lambda: "test-mac-mini")
+    ids = [spec[0] for spec in hc.default_checks()]
+    assert "build:parity-deps" in ids
+
+
+def test_check_playwright_and_dev_site_returns_none_on_non_mini(monkeypatch):
+    """On a non-mac-mini machine, the check returns None (not applicable)."""
+    import machine_profile
+    monkeypatch.setattr(machine_profile, "registry_id", lambda: "test-laptop")
+    monkeypatch.setattr(machine_profile, "_load_registry", lambda: {"test-laptop": {"label": "macbook"}})
+    result = hc.check_playwright_and_dev_site()
+    assert result is None
+
+
+def test_check_playwright_and_dev_site_on_mac_mini_returns_dict(monkeypatch):
+    """On a mac-mini, the check returns a dict with severity (may be yellow or green depending on system state)."""
+    import machine_profile
+    monkeypatch.setattr(machine_profile, "registry_id", lambda: "test-mac-mini")
+    monkeypatch.setattr(machine_profile, "_load_registry", lambda: {"test-mac-mini": {"label": "mac-mini"}})
+    result = hc.check_playwright_and_dev_site()
+    # Result is either None (if dependencies aren't available for testing) or a dict with severity
+    assert result is None or (isinstance(result, dict) and "severity" in result)

@@ -1858,6 +1858,28 @@ def test_the_box_takes_one_ticket_per_scan_when_parallel_dispatch_is_off(monkeyp
     assert len(starts) <= 1
 
 
+def test_box_fallback_skips_a_ticket_still_in_backoff(monkeypatch):
+    """_box_fallback honors _retry_not_before: skip ticket #6 (backing off) and try #7 instead."""
+    later = _dt.now(_tz.utc) + _td(minutes=30)
+    tickets = [_ticket(5), _ticket(6, "2026-02-02T00:00:00Z", labels=["linux-ok"]), _ticket(7, "2026-02-03T00:00:00Z", labels=["linux-ok"])]
+    got, asked, starts = _no_mac_box(monkeypatch, tickets, _linux)
+    monkeypatch.setattr(tp, "_retry_not_before", lambda repo, t, now=None: later if t["number"] == 6 else None)
+    tp.main()
+    # #6 is skipped due to backoff without asking the box, #7 is asked and builds
+    assert 6 not in asked and 7 in asked
+    assert starts == ["G-Eskayo/marvin#7"]
+
+
+def test_box_fallback_builds_a_ticket_whose_backoff_has_expired(monkeypatch):
+    """Regression: _box_fallback doesn't skip all linux-ok tickets just because one is backing off."""
+    tickets = [_ticket(5), _ticket(6, "2026-02-02T00:00:00Z", labels=["linux-ok"])]
+    got, asked, starts = _no_mac_box(monkeypatch, tickets, _linux)
+    monkeypatch.setattr(tp, "_retry_not_before", lambda repo, t, now=None: None if t["number"] == 6 else None)
+    tp.main()
+    # Backoff has expired, so #6 is built normally
+    assert starts == ["G-Eskayo/marvin#6"]
+
+
 # ── evidence lookup should work correctly across multi-project scenarios ──
 
 def test_a_pr_that_closes_multiple_tickets_excludes_all_of_them(monkeypatch):
