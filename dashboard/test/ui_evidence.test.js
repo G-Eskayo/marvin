@@ -8,6 +8,7 @@ import { touchesUi, uiFiles, hasImage, assertUiEvidence, globToRegExp, DEFAULT_U
 import { mergePr } from '../webhook-server/merge.js'
 import { describePrState } from '../src/lib/prState.js'
 
+
 // marvin #374 (2026-10-09): the owner's hard rule. Anything that changes how an app looks carries images, so he can
 // see what he is approving. Several clarity-captions UI PRs merged with none, and he found unapproved design changes
 // on his phone.

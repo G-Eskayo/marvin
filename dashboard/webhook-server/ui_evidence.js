@@ -94,88 +94,133 @@ export function imagePins(body) {
 
 const listed = (items) => items.slice(0, 3).join(', ') + (items.length > 3 ? ` and ${items.length - 3} more` : '')
 
-// Refuses a UI-touching PR whose body has no image. Fails CLOSED when GitHub can't be asked: a refused Approve costs
-// one more click once GitHub answers, while merging a UI change nobody has seen breaks the rule this exists for.
+const _FIX = "Pin them with `pr-shots <images>` from the PR's worktree (it commits them and links each by full commit SHA)."
+const _WHY = {
+  "relative": "a repo path, which doesn't show in a PR",
+  "blob": "a blob/...?raw=true link, a 404 for private repos",
+  "branch": "linked by branch name or short SHA, so it shows whatever is newest"
+}
+
+function link_problem(url) {
+  // Why this image link breaks or goes stale, or null when it's pinned
+  if (!url.startsWith("http://") && !url.startsWith("https://")) return "relative"
+  if (/^https:\/\/github\.com\/[^/]+\/[^/]+\/(blob|raw)\//.test(url) && url.includes("?raw=true")) return "blob"
+  const raw = /^https:\/\/raw\.githubusercontent\.com\/[^/]+\/[^/]+\/([^/]+)\//.exec(url)
+  if (raw && !/^[0-9a-f]{40}$/.test(raw[1])) return "branch"
+  return null
+}
+
+// Verify UI evidence: a UI PR must show images. Takes the PR URL and an exec function (for GitHub API calls).
+// exec(cmd, args) is a callable that runs `cmd` (e.g. 'gh') with the given args and returns { stdout, stderr }.
 export async function assertUiEvidence(prUrl, exec, extraPatterns = []) {
-  let files, body, head
-  try {
-    const { stdout } = await exec('gh', ['pr', 'view', prUrl, '--json', 'files,body,headRefOid'])
-    const parsed = JSON.parse(stdout)
-    files = (parsed.files || []).map((f) => f.path)
-    body = parsed.body || ''
-    head = parsed.headRefOid || ''
-  } catch (error) {
-    const reason = String(error?.stderr || error?.message || error).split('\n')[0].slice(0, 200)
+  // Parse the PR URL to extract owner, repo, and number
+  const parsed = /^https:\/\/github\.com\/([^/]+)\/([^/]+)\/pull\/(\d+)$/.exec(prUrl)
+  if (!parsed) {
     throw new MergeFailure(refusal('UI_EVIDENCE_UNCHECKED', 'request',
-      `couldn't check whether this PR changes how the app looks (${reason})`,
+      `invalid PR URL: ${prUrl}`,
+      'This is a dashboard error. Contact the owner.'))
+  }
+
+  const [, owner, repo, number] = parsed
+  const pr_repo = `${owner}/${repo}`
+
+  let pr, files, body, head_ref
+  try {
+    // Fetch PR facts
+    const result = await exec('gh', ['pr', 'view', number, '--repo', pr_repo, '--json', 'files,body,headRefOid'])
+    pr = JSON.parse(result.stdout)
+    files = (pr.files || []).map(f => f.path)
+    body = pr.body || ''
+    head_ref = pr.headRefOid
+  } catch (error) {
+    throw new MergeFailure(refusal('UI_EVIDENCE_UNCHECKED', 'request',
+      `couldn't fetch PR #${number}: ${String(error?.message || error).slice(0, 100)}`,
       'Approve again in a moment. UI changes must show images before they merge, so the merge waits until that can be checked.'))
   }
-  const changed = uiFiles(files, extraPatterns)
-  if (changed.length && !hasImage(body)) {
-    const shown = changed.slice(0, 3).join(', ') + (changed.length > 3 ? ` and ${changed.length - 3} more` : '')
+
+  // Check if this PR touches UI files
+  const ui = uiFiles(files, extraPatterns)
+  if (!ui.length) {
+    return  // Not a UI change, no image check needed
+  }
+
+  // Check for images
+  const urls = imageUrls(body)
+  if (!urls.length) {
     throw new MergeFailure(refusal('NO_UI_EVIDENCE', 'request',
-      `this PR changes how the app looks (${shown}) but shows no images`,
+      `This PR changes how something looks (${listed(ui)}) but shows no images. ${_FIX}`,
       'Add screenshots of the changed screens to the PR description (simulator or running app, light and dark where both apply), then approve again. The PR was not sent back.'))
   }
-  if (!changed.length) return
-  const unpinned = unpinnedImages(body)
-  if (unpinned.length) {
+
+  // Check for broken image links
+  const bad = []
+  for (const u of urls) {
+    const p = link_problem(u)
+    if (p) bad.push([u, p])
+  }
+  if (bad.length > 0) {
+    const lines = bad.slice(0, 3).map(([u, p]) => `${u} is ${_WHY[p]}`).join('; ')
     throw new MergeFailure(refusal('IMAGES_UNPINNED', 'request',
-      `this PR's images aren't pinned to a commit (${listed(unpinned)}), so they may be old copies`,
-      'Link each image by the full commit SHA it was taken at (raw.githubusercontent.com/<owner>/<repo>/<sha>/<path>), then approve again. The PR was not sent back.'))
+      `Some images won't show or will go stale: ${lines}. ${_FIX}`,
+      'Fix the image links (pin them to a commit SHA, not a branch), then approve again. The PR was not sent back.'))
   }
-  // Pinned, but is any look-changing file newer than the images? One compare per distinct commit (usually one).
-  const [owner, repo, , number] = new URL(prUrl).pathname.split('/').filter(Boolean)
-  const prRepo = `${owner}/${repo}`
-  const unchecked = (sha, where, error) => {
-    const reason = String(error?.stderr || error?.message || error).split('\n')[0].slice(0, 200)
-    return new MergeFailure(refusal('UI_EVIDENCE_UNCHECKED', 'request',
-      `couldn't check whether the images (taken at ${sha.slice(0, 7)} in ${where}) are current (${reason})`,
-      'Approve again in a moment. If it keeps failing, retake the screenshots at the PR\'s latest commit and pin them to it.'))
-  }
-  let prCommits = null // fetched once, only when an image lives in another repo
-  for (const { repo: imgRepo, sha } of imagePins(body).filter((p) => p.sha !== head).slice(0, 5)) {
-    let since
-    if (imgRepo === prRepo) {
-      try {
-        const { stdout } = await exec('gh', ['api', `repos/${prRepo}/compare/${sha}...${head}`])
-        since = (JSON.parse(stdout).files || []).map((f) => f.filename)
-      } catch (error) { throw unchecked(sha, prRepo, error) }
-    } else {
-      // Another repo's commit: compare by time. The images are as new as their commit; the PR's last commit at or
-      // before that moment is what they show, and only UI files changed after it can make them stale.
-      let taken
-      try {
-        const { stdout } = await exec('gh', ['api', `repos/${imgRepo}/commits/${sha}`])
-        taken = Date.parse(JSON.parse(stdout)?.commit?.committer?.date)
-        if (!Number.isFinite(taken)) throw new Error('no commit date')
-      } catch (error) { throw unchecked(sha, imgRepo, error) }
-      try {
-        if (!prCommits) {
-          const { stdout } = await exec('gh', ['api', '--paginate', `repos/${prRepo}/pulls/${number}/commits?per_page=100`])
-          prCommits = JSON.parse(stdout).map((c) => ({ sha: c.sha, at: Date.parse(c?.commit?.committer?.date) }))
-        }
-      } catch (error) { throw unchecked(sha, prRepo, error) }
-      const before = prCommits.filter((c) => Number.isFinite(c.at) && c.at <= taken)
-      const shown = before.length ? before[before.length - 1].sha : null
-      if (shown === head) continue
-      if (!shown) {
-        since = files // older than the whole PR: every file it changes is newer than the images
+
+  // Check for staleness (images older than later UI changes)
+  const pins = imagePins(body)
+  const pr_files = new Set(files)
+  for (const pin of pins) {
+    if (pin.sha === head_ref) continue  // Pinned to head, always current
+
+    try {
+      let changed
+      if (pin.repo === pr_repo) {
+        // Same repo: use compare endpoint
+        const compareResult = await exec('gh', ['api', `repos/${pr_repo}/compare/${pin.sha}...${head_ref}`])
+        const compare = JSON.parse(compareResult.stdout)
+        changed = (compare.files || []).map(f => f.filename)
       } else {
-        try {
-          const { stdout } = await exec('gh', ['api', `repos/${prRepo}/compare/${shown}...${head}`])
-          since = (JSON.parse(stdout).files || []).map((f) => f.filename)
-        } catch (error) { throw unchecked(sha, prRepo, error) }
+        // Cross-repo: compare by commit time
+        const imgCommitRes = await exec('gh', ['api', `repos/${pin.repo}/commits/${pin.sha}`])
+        const imgCommit = JSON.parse(imgCommitRes.stdout)
+        const img_time = imgCommit.commit?.committer?.date
+        if (!img_time) {
+          throw new Error('could not get image commit time')
+        }
+
+        const prCommitsRes = await exec('gh', ['api', '--paginate', `repos/${pr_repo}/pulls/${number}/commits?per_page=100`])
+        const prCommits = JSON.parse(prCommitsRes.stdout)
+        if (!Array.isArray(prCommits)) throw new Error('invalid commits response')
+
+        const matching = prCommits.filter(c =>
+          c.commit?.committer?.date && c.commit.committer.date <= img_time)
+        if (matching.length === 0) {
+          // Images are older than entire PR
+          changed = files
+        } else {
+          const last_sha = matching[matching.length - 1].sha
+          if (last_sha === head_ref) {
+            changed = []
+          } else {
+            const compareResult = await exec('gh', ['api', `repos/${pr_repo}/compare/${last_sha}...${head_ref}`])
+            const compare = JSON.parse(compareResult.stdout)
+            changed = (compare.files || []).map(f => f.filename)
+          }
+        }
       }
-    }
-    // Only the PR's own UI files can make its images stale. A compare across a merge of main also lists what main
-    // changed, which this PR's images were never meant to show (2026-11-02: #971 refused for 10 files from main).
-    const own = new Set(files)
-    const newer = uiFiles(since.filter((f) => own.has(f)), extraPatterns)
-    if (newer.length) {
-      throw new MergeFailure(refusal('IMAGES_STALE', 'request',
-        `the images were taken at ${sha.slice(0, 7)}, and ${listed(newer)} changed after that, so they may not show what PR #${number} looks like now`,
-        'Retake the changed screens at the latest commit and pin the links to it, then approve again. The PR was not sent back.'))
+
+      // Only the PR's own files count toward staleness
+      const newer_ui = uiFiles(changed.filter(f => pr_files.has(f)), extraPatterns)
+        .filter(f => !/\.(png|jpe?g|gif|webp|mp4|mov)$/.test(f))
+      if (newer_ui.length > 0) {
+        throw new MergeFailure(refusal('IMAGES_STALE', 'request',
+          `The images are older than later changes to how it looks (${listed(newer_ui)}). ${_FIX}`,
+          'Retake the screenshots at the latest commit and re-pin them, then approve again. The PR was not sent back.'))
+      }
+    } catch (error) {
+      if (error instanceof MergeFailure) throw error
+      throw new MergeFailure(refusal('UI_EVIDENCE_UNCHECKED', 'request',
+        `Couldn't check whether the images (pinned to ${pin.sha.slice(0, 7)} in ${pin.repo}) are current. Retake them and re-pin, then try again: ${_FIX}`,
+        'Approve again in a moment. If it keeps failing, retake the screenshots and re-pin them.'))
     }
   }
 }

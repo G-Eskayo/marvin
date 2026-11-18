@@ -288,17 +288,46 @@ def ui_evidence_refusal(argv: list[str], ask, read_file=None, current_branch=Non
         pr = ask(["pr", "view", *target, "--repo", repo, "--json", "files,body,headRefOid"])
         files, body, head_ref = [f["path"] for f in pr.get("files", [])], pr.get("body") or "", pr.get("headRefOid")
 
-    def changed_since(sha):
+    def changed_since(img_repo: str, img_sha: str):
         try:
-            return [f["filename"] for f in ask(["api", f"repos/{repo}/compare/{sha}...{head_ref}"]).get("files", [])]
+            if img_repo == repo:
+                # Same repo: direct compare
+                return [f["filename"] for f in ask(["api", f"repos/{repo}/compare/{img_sha}...{head_ref}"]).get("files", [])]
+            else:
+                # Cross-repo: compare by time (marvin#773)
+                img_commit = ask(["api", f"repos/{img_repo}/commits/{img_sha}"])
+                img_time = img_commit.get("commit", {}).get("committer", {}).get("date")
+                if not img_time:
+                    return None
+
+                # Find which PR commits are <= that time
+                pr_commits = ask(["api", "--paginate", f"repos/{repo}/pulls/{call['target']}/commits?per_page=100"]) if call["target"] else []
+                if not isinstance(pr_commits, list):
+                    return None
+
+                matching = [c for c in pr_commits
+                           if c.get("commit", {}).get("committer", {}).get("date") and
+                              c.get("commit", {}).get("committer", {}).get("date") <= img_time]
+                if not matching:
+                    return files
+
+                last_sha = matching[-1].get("sha")
+                if not last_sha or last_sha == head_ref:
+                    return []
+
+                return [f["filename"] for f in ask(["api", f"repos/{repo}/compare/{last_sha}...{head_ref}"]).get("files", [])]
         except Exception:  # noqa: BLE001
             return None
 
     extra = pi.ui_paths_for(repo, profiles_dir or Path(os.environ.get("MARVIN_INSTANCE_DIR") or Path.home() / ".agents" / "instance") / "config" / "projects")
-    problems = pi.verdict(files, body, extra, changed_since if head_ref else None)
+    problems = pi.verdict(files, body, extra, changed_since if head_ref else None, repo, head_ref)
     if not problems:
         return None
+
     code, message = problems[0]
+    # Fail open on STALENESS_UNCHECKED (documented policy: bin/gh fails open when GitHub can't be asked)
+    if code == "STALENESS_UNCHECKED":
+        return None
     return f"{code}: {message}"
 
 

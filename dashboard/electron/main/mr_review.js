@@ -278,8 +278,9 @@ export async function prsForOrderCheck(prs, sentBackTickets, uiPathsFor = () => 
   return markBlocked(markSentBack(prs, keys), uiPathsFor)
 }
 
-// A UI change whose description shows no image (marvin #374), or only unpinned ones (#733): {files, unpinned?} for the card, or null. Only judged when the list
-// carried the PR's files (the light list for the status dot doesn't), so a missing field never flags a PR.
+// A UI change whose description shows no image (marvin #374), or only unpinned ones (#733): {files, unpinned?} for the card, or null.
+// Decision B (marvin#1004): uses existing JS helpers (no GitHub calls) — staleness is gate-only.
+// Only judged when the list carried the PR's files (the light list for the status dot doesn't), so a missing field never flags a PR.
 function needsImages(pr, uiPathsFor) {
   if (!Array.isArray(pr.files)) return null
   let own = []
@@ -287,7 +288,7 @@ function needsImages(pr, uiPathsFor) {
   const files = uiFiles(pr.files.map((f) => f?.path), own)
   if (!files.length) return null
   if (!hasImage(pr.body || '')) return { files }
-  // Images linked by branch name may be old copies (marvin #733). Staleness needs GitHub calls, so only the gate checks it.
+  // Images linked by branch name may be old copies (marvin #733). Staleness needs GitHub calls, so only the gate checks it (Decision B).
   const unpinned = unpinnedImages(pr.body || '')
   return unpinned.length ? { files, unpinned } : null
 }
