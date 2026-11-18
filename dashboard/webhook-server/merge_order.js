@@ -1,5 +1,6 @@
 import { ciState } from './ci_status.js'
 import { summarizeDecisions, vagueness, answersAsBuilt } from './decisions.js'
+import { prTicketRefs } from '../electron/main/ticket_refs.js'
 
 // The merge queue's order (marvin#231, decided with the owner 2026-10-30): for every open PR of one repo, whether it is
 // queued and where, or what it waits for, as one plain line. Pure: the webhook's runner and MR Review (both Macs) call
@@ -211,6 +212,16 @@ export function mergeOrder(openPrs, mainState, queue) {
   const isFix = (p) => closesRefs(p.body, p.repo).some((n) => fixes.has(n))
   const fixPrs = prs.filter(isFix).sort((a, b) => a.number - b.number)
   const redWaitsFor = fixPrs[0]?.number ?? (main.redTickets || [])[0] ?? null
+  const redTicketSet = new Set(main.redTickets || [])
+  const normalizeRepo = (r) => String(r || '').toLowerCase()
+  const getPartOfRedTicket = (p) => {
+    const refs = prTicketRefs(p.body, p.repo)
+    const partOfRed = refs.find((r) =>
+      r.relation === 'part-of' && normalizeRepo(r.repo) === normalizeRepo(p.repo) && redTicketSet.has(r.number)
+    )
+    return partOfRed?.number ?? null
+  }
+  const isPartOfRed = (p) => getPartOfRedTicket(p) !== null
 
   const entries = {}
   for (const p of prs) {
@@ -236,7 +247,12 @@ export function mergeOrder(openPrs, mainState, queue) {
     }
     if (!why && main.red && !isFix(p)) {
       waitsFor = redWaitsFor
-      why = { reason: redWaitsFor ? `main is red · waits for #${redWaitsFor}` : 'main is red · waits for a fix' }
+      const partOfRedNum = getPartOfRedTicket(p)
+      if (partOfRedNum !== null && fixPrs.length === 0) {
+        why = { reason: `waits for a PR that closes #${partOfRedNum}, and none does yet` }
+      } else {
+        why = { reason: redWaitsFor ? `main is red · waits for #${redWaitsFor}` : 'main is red · waits for a fix' }
+      }
     }
     entries[p.url] = { url: p.url, number: p.number, queued, state: why ? 'waiting' : queued ? 'queued' : 'ready', tone: why ? 'amber' : queued ? 'sky' : null,
       reason: why?.reason || null, position: null, waitsFor, ...(why?.unbuilt ? { unbuilt: true } : {}), ...(why?.conflict ? { conflict: true } : {}) }

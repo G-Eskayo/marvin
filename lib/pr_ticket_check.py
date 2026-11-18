@@ -14,6 +14,9 @@ Only repos with a MARVIN board (an onboarded project, ~/.claude/boards/registry.
 or one we can't tell, passes. The dashboard's parser is dashboard/electron/main/ticket_refs.js; this is the same rule
 in Python (bin/gh must not need node for it), and both run dashboard/test/fixtures/pr_ticket_refs_cases.json.
 MARVIN_NO_TICKET="<reason>" lets one call through, logged. Stdlib only: bin/gh imports it on every call.
+
+marvin#1147: a PR that is part of a red ticket prints a warning (not a refusal). Red tickets: label main-red, or bug+p0
+titled "Main red".
 """
 from __future__ import annotations
 import json
@@ -27,6 +30,7 @@ import decisions_check
 OVERRIDE = "MARVIN_NO_TICKET"
 REGISTRY_PATH = Path.home() / ".claude" / "boards" / "registry.json"
 RULE_DOC = "docs/agents/issue-tracker.md"
+MAX_PART_OF_LOOKUPS = 10
 
 _REF = r"(?:https?://github\.com/[\w.-]+/[\w.-]+/issues/\d+|(?:[\w.-]+/[\w.-]+)?#\d+)(?![\w-])"
 _CLOSES = re.compile(rf"\b(?:close[sd]?|fix(?:e[sd])?|resolve[sd]?)\b:?\s+({_REF})", re.I | re.A)
@@ -36,6 +40,7 @@ _URL = re.compile(r"github\.com/([\w.-]+/[\w.-]+)/issues/(\d+)", re.A)
 _CODE = [re.compile(r"```[\s\S]*?```"), re.compile(r"~~~[\s\S]*?~~~"), re.compile(r"`[^`\n]*`")]
 _REMOTE = re.compile(r"github\.com[:/]([\w.-]+/[\w.-]+?)(?:\.git)?/?$", re.A)
 _PR_URL = re.compile(r"github\.com/([\w.-]+/[\w.-]+)/pull/\d+", re.A)
+FIX_TITLE = re.compile(r"\bmain\s+(?:is\s+)?red\b", re.I | re.A)
 
 
 def _strip_code(text: str) -> str:
@@ -69,6 +74,31 @@ def ticket_refs(body: str | None, pr_repo: str | None) -> list[tuple[str | None,
     return [tuple(v) for v in found.values()]
 
 
+def is_red_ticket(issue: dict | None) -> bool:
+    """True when issue says main is red: label main-red, or bug+p0 titled 'Main red'. False if closed."""
+    if not issue or not isinstance(issue, dict):
+        return False
+    state = (issue.get("state") or "").upper()
+    if state == "CLOSED":
+        return False
+    labels = issue.get("labels") or []
+    if isinstance(labels, list):
+        label_names = set()
+        for label in labels:
+            if isinstance(label, dict):
+                label_names.add((label.get("name") or "").lower())
+            elif isinstance(label, str):
+                label_names.add(label.lower())
+    else:
+        return False
+    if "main-red" in label_names:
+        return True
+    if "bug" in label_names and "priority:p0" in label_names:
+        title = issue.get("title") or ""
+        return bool(FIX_TITLE.search(title))
+    return False
+
+
 def refusal(body: str | None) -> str | None:
     """The refusal message for a PR body that names no ticket either way, else None."""
     if ticket_refs(body, None):
@@ -77,6 +107,29 @@ def refusal(body: str | None) -> str | None:
             "parity check flags it. Add one line to the body: \"Closes #N\" if this PR finishes the ticket, or "
             "\"Part of #N\" if it is a step (a mock-up, a stacked slice, a plan, docs). Use owner/repo#N for a ticket "
             f"in another repo. \"for #N\" or a bare \"#N\" doesn't count ({RULE_DOC}).")
+
+
+def red_ticket_warning(body: str | None, repo: str | None, ask) -> str | None:
+    """A warning message if this PR is part of a red ticket, else None. `ask(args)` runs gh and returns JSON.
+    Returns None on any failure (fails open) or if nothing's red."""
+    if not ask or not repo or not body:
+        return None
+    try:
+        refs = ticket_refs(body, repo)
+        part_of_refs = [(r, n) for r, n, rel in refs if rel == "part-of"]
+        for idx, (target_repo, number) in enumerate(part_of_refs):
+            if idx >= MAX_PART_OF_LOOKUPS:
+                break
+            try:
+                issue = ask(["issue", "view", str(number), "--repo", target_repo or repo, "--json", "labels,title,state"])
+                if is_red_ticket(issue):
+                    return (f"warning: this PR is part of a red ticket (#{number}). "
+                            f"Main merges are blocked until it is fixed.")
+            except Exception:  # noqa: BLE001
+                pass
+    except Exception:  # noqa: BLE001
+        pass
+    return None
 
 
 def pr_call(argv) -> dict | None:
@@ -129,8 +182,9 @@ def onboarded(repo: str | None, registry: Path = REGISTRY_PATH) -> bool:
     return any(isinstance(b, dict) and str(b.get("repo", "")).lower() == want for b in boards)
 
 
-def gate(argv, say, log, env=None, read_file=None, registry: Path | None = None, here=repo_here) -> int | None:
-    """What bin/gh calls: 1 (refused, said why) or None (go on). `log(entry)` records overrides and refusals."""
+def gate(argv, say, log, env=None, read_file=None, registry: Path | None = None, here=repo_here, ask=None) -> int | None:
+    """What bin/gh calls: 1 (refused, said why) or None (go on). `log(entry)` records overrides and refusals.
+    `ask(args)` runs gh with JSON output for red ticket checks."""
     env = os.environ if env is None else env
     call = pr_call(argv)
     if not call:
@@ -150,9 +204,13 @@ def gate(argv, say, log, env=None, read_file=None, registry: Path | None = None,
     else:
         body = call["body"]
     msg = refusal(body)
-    if not msg:
-        return None
-    say(msg)
-    say(f'(only if a person agrees this PR is for no ticket: {OVERRIDE}="<reason>" gh ...)')
-    log({"cmd": call["cmd"], "repo": repo, "rc": 1, "no_ticket": msg[:200]})
-    return 1
+    if msg:
+        say(msg)
+        say(f'(only if a person agrees this PR is for no ticket: {OVERRIDE}="<reason>" gh ...)')
+        log({"cmd": call["cmd"], "repo": repo, "rc": 1, "no_ticket": msg[:200]})
+        return 1
+    warn = red_ticket_warning(body, repo, ask)
+    if warn:
+        say(warn)
+        log({"cmd": call["cmd"], "repo": repo, "red_ticket_warning": warn[:200]})
+    return None
