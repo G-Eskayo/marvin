@@ -492,6 +492,27 @@ def _ci_onnx_download_failures(fetch=None, repo: str = "G-Eskayo/marvin", runs: 
         page += 1
 
     return float(count)
+def _label_problems(days: float = PROBE_WINDOW_DAYS, path: Path | None = None, now: datetime | None = None) -> float:
+    """Label healing events (missing labels handled by bin/gh) in gh-calls.jsonl over the window.
+    Counts when label_heal action occurred (gate attempted to heal) or label_refused (uncatalogued label).
+    O(log size)."""
+    import github_usage
+    now = now or datetime.now(timezone.utc)
+    cut = _cut(now, days)
+    try:
+        lines = Path(path or github_usage.LOGS / "gh-calls.jsonl").read_text(encoding="utf-8", errors="replace").splitlines()
+    except OSError:
+        return 0.0
+    count = 0
+    for line in lines:
+        try:
+            e = json.loads(line)
+            when = datetime.fromisoformat(e["t"]) if isinstance(e.get("t"), str) else datetime.fromtimestamp(float(e["t"]), tz=timezone.utc)
+        except (ValueError, TypeError, KeyError, AttributeError):
+            continue
+        if when >= cut and (e.get("label_heal") or e.get("label_refused")):
+            count += 1
+    return float(count)
 
 
 # name -> (symptom counter, the most it may read while the fix holds, what it counts). Summed across Macs like any
@@ -537,6 +558,8 @@ PROBES: dict[str, tuple[Callable[..., float], float, str]] = {
     # marvin#997: local skills that exist on live ~/.agents/skills but not in the repo's origin/main (missing upstream).
     "banner-skill-count-drift": (lambda days=PROBE_WINDOW_DAYS: _banner_skill_count_drift(), 0.0,
                                  "skills on live ~/.agents/skills but not in origin/main (marvin#997)"),
+    "label-problems": (lambda days=PROBE_WINDOW_DAYS: _label_problems(days=days), 0.0,
+                       "label healing events (missing labels handled by bin/gh) over 7 days, per Mac, summed"),
 }
 MEASURES.update({name: fn for name, (fn, _limit, _what) in PROBES.items()})
 MEASURES["stale-relay-caught"] = lambda: _stale_relay("caught")

@@ -24,18 +24,13 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 import board_registry as br
+import label_catalog as lc
 import project_profile as pp
 
 
 TIMEOUT = 60
-TRIAGE_LABELS = {"needs-triage", "needs-info", "ready-for-agent", "ready-for-human", "wontfix"}
-TRIAGE_LABEL_COLORS = {
-    "needs-triage": "d4c5f9",
-    "needs-info": "ffd700",
-    "ready-for-agent": "90ee90",
-    "ready-for-human": "ffb6c1",
-    "wontfix": "808080",
-}
+TRIAGE_LABELS = set(lc.CORE.keys())
+TRIAGE_LABEL_COLORS = {name: data["color"] for name, data in lc.CORE.items()}
 CONFIG_ONBOARDING = Path(__file__).resolve().parent.parent / "config" / "onboarding"
 ONBOARDING_DIR = Path.home() / ".claude" / "onboarding"
 

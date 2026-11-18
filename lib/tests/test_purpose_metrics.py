@@ -195,6 +195,25 @@ def test_a_probe_that_throws_is_not_judged_and_nothing_is_posted():
     assert out["met"] is None and posted == []
 
 
+def test_label_problems_counts_healing_and_refusals(tmp_path):
+    # Test that _label_problems counts both label_heal and label_refused events
+    from pathlib import Path as _Path
+    log_file = tmp_path / "gh-calls.jsonl"
+    now = NOW
+
+    # Create a fake gh-calls.jsonl with both heal and refusal entries
+    entries = [
+        {"t": (now - timedelta(hours=1)).timestamp(), "cmd": "issue create", "label_heal": 1},
+        {"t": (now - timedelta(hours=2)).timestamp(), "cmd": "pr edit", "label_refused": True},
+        {"t": (now - timedelta(days=10)).timestamp(), "cmd": "issue create", "label_heal": 1},  # outside window
+        {"t": (now - timedelta(hours=3)).timestamp(), "cmd": "api", "rc": 0},  # no label problem
+    ]
+    log_file.write_text("\n".join(_json.dumps(e) for e in entries) + "\n")
+
+    count = pm._label_problems(path=log_file, now=now)
+    assert count == 2.0  # Should count the heal and refusal, but not the old one or non-label calls
+
+
 def test_the_daily_run_checks_bug_tickets_too_and_never_posts_twice(monkeypatch):
     issues = {pm.LABEL: [_issue(277, BODY, comments=[1])],
               "bug": [_issue(604, RECUR, comments=[1]), _issue(277, BODY, comments=[1]), _issue(9, "## What\nno check")]}

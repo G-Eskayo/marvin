@@ -89,7 +89,16 @@ def _fake_gh(tmp_path, stderr="", rc=0, stdout="ok"):
     d = tmp_path / "realbin"
     d.mkdir(exist_ok=True)
     f = d / "gh"
-    f.write_text(f"#!/bin/sh\necho '{stdout}'\necho '{stderr}' >&2\nexit {rc}\n")
+    # Safely generate a shell script using base64 to avoid quoting issues
+    import base64
+    stdout_b64 = base64.b64encode(stdout.encode()).decode()
+    stderr_b64 = base64.b64encode(stderr.encode()).decode()
+    script = f"""#!/bin/sh
+echo {stdout_b64} | base64 -d
+echo {stderr_b64} | base64 -d >&2
+exit {rc}
+"""
+    f.write_text(script)
     f.chmod(f.stat().st_mode | stat.S_IEXEC)
     return d
 
@@ -309,3 +318,107 @@ def test_on_a_pull_only_node_the_real_gh_is_never_run(tmp_path):
     assert p.returncode == 1
     assert "REAL GH RAN" not in p.stdout and "gh auth login" not in p.stderr
     assert "reads GitHub only through the Mini" in p.stderr
+
+
+# ── label healing (bin/gh label healing, marvin#???)) ───────────────────────
+
+def _fake_gh_with_label_creation(tmp_path, missing_label="", label_create_ok=True):
+    """A fake gh that simulates missing label errors and successful label creation."""
+    d = tmp_path / "realbin"
+    d.mkdir(exist_ok=True)
+    f = d / "gh"
+    labels_file = tmp_path / "created_labels"
+
+    if missing_label and label_create_ok:
+        # Succeed on label create (and record it), fail on other commands that reference an uncreated label
+        script = f"""#!/bin/sh
+LABELS_FILE="{labels_file}"
+mkdir -p "$(dirname "$LABELS_FILE")"
+
+# If this is a label create command, record the label and succeed
+if [ "$1" = "label" ] && [ "$2" = "create" ]; then
+  echo "$3" >> "$LABELS_FILE"
+  exit 0
+fi
+
+# Check if the missing label appears in any argument (strict equality, not substring match)
+for arg in "$@"; do
+  if [ "$arg" = "{missing_label}" ]; then
+    # Check if the label has been created
+    if [ -f "$LABELS_FILE" ] && grep -q "^{missing_label}$" "$LABELS_FILE"; then
+      exit 0
+    fi
+    echo "Error: could not add label: '{missing_label}' not found" >&2
+    exit 1
+  fi
+done
+exit 0
+"""
+    elif missing_label and not label_create_ok:
+        # Always fail if the missing label appears in arguments; succeed otherwise
+        script = f"""#!/bin/sh
+# Check if the missing label appears in any argument (strict equality, not substring match)
+for arg in "$@"; do
+  if [ "$arg" = "{missing_label}" ]; then
+    echo "Error: could not remove label: '{missing_label}' not found" >&2
+    exit 1
+  fi
+done
+exit 0
+"""
+    else:
+        script = f"#!/bin/sh\nexit 0\n"
+
+    f.write_text(script)
+    f.chmod(f.stat().st_mode | stat.S_IEXEC)
+    return d
+
+
+def test_label_healing_creates_catalogued_labels_on_missing_error(tmp_path):
+    # When adding a catalogued label that doesn't exist, the gate creates it and retries
+    realbin = _fake_gh_with_label_creation(tmp_path, missing_label="bug", label_create_ok=True)
+    p = _run(tmp_path, realbin, "issue", "create", "-l", "bug", "--title", "test",
+             env_extra={"GH_GATE_NO_BUDGET": "1"})
+    # First attempt fails with missing label, but gate creates it and retries successfully
+    assert p.returncode == 0
+    log = [json.loads(l) for l in (tmp_path / ".claude" / "logs" / "gh-calls.jsonl").read_text().splitlines()]
+    # The call should be recorded with label_heal=1 (one heal attempt)
+    assert any(e.get("label_heal") == 1 for e in log), "Should have healing recorded in log"
+
+
+def test_label_healing_removes_uncatalogued_labels_from_remove_list(tmp_path):
+    # When removing an uncatalogued label that doesn't exist, the gate removes it and retries
+    realbin = _fake_gh_with_label_creation(tmp_path, missing_label="nonexistent-label", label_create_ok=False)
+    p = _run(tmp_path, realbin, "issue", "edit", "123", "--remove-label", "nonexistent-label",
+             env_extra={"GH_GATE_NO_BUDGET": "1"})
+    # The gate should retry without the nonexistent label in the remove list
+    assert p.returncode == 0
+    log = [json.loads(l) for l in (tmp_path / ".claude" / "logs" / "gh-calls.jsonl").read_text().splitlines()]
+    # Should have a healing entry
+    assert any(e.get("label_heal") == 1 for e in log), "Should have removed the label and retried"
+
+
+def test_label_healing_stops_on_uncatalogued_add_label(tmp_path):
+    # When adding an uncatalogued label that doesn't exist, the gate refuses to create it
+    realbin = _fake_gh_with_label_creation(tmp_path, missing_label="unknown-label", label_create_ok=False)
+    p = _run(tmp_path, realbin, "pr", "create", "-l", "unknown-label", "--title", "test",
+             env_extra={"GH_GATE_NO_BUDGET": "1"})
+    # The gate should refuse to create uncatalogued labels, so the call fails
+    assert p.returncode == 1
+    # The error should contain the label missing error plus the hint
+    assert "unknown-label" in p.stderr
+    log = [json.loads(l) for l in (tmp_path / ".claude" / "logs" / "gh-calls.jsonl").read_text().splitlines()]
+    # Should have label_refused set
+    assert any(e.get("label_refused") for e in log), "Should have refused to heal uncatalogued label"
+
+
+def test_label_healing_logs_healing_outcomes(tmp_path):
+    # Healing outcomes are logged to gh-calls.jsonl
+    realbin = _fake_gh_with_label_creation(tmp_path, missing_label="bug", label_create_ok=True)
+    p = _run(tmp_path, realbin, "issue", "create", "-l", "bug", "--title", "test",
+             env_extra={"GH_GATE_NO_BUDGET": "1"})
+    log = [json.loads(l) for l in (tmp_path / ".claude" / "logs" / "gh-calls.jsonl").read_text().splitlines()]
+    # Check if any entry has label_heal (should be 1 for one successful healing)
+    heal_entries = [e for e in log if e.get("label_heal")]
+    assert len(heal_entries) > 0, "Should have at least one healing entry"
+    assert all(isinstance(e.get("label_heal"), int) for e in heal_entries), "label_heal should be an integer"

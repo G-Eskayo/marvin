@@ -247,6 +247,79 @@ def _say(msg: str) -> None:
     sys.stderr.write(f"gh-gate: {msg}\n")
 
 
+# ── label healing ───────────────────────────────────────────────────────────
+
+def _heal_missing_label(argv: list[str], stderr: str, real: str, env: dict) -> tuple[list[str], bool, str | None]:
+    """Attempt to heal a missing-label error. Returns (new_argv, was_healed, hint).
+
+    Returns the modified argv (or original if no heal), whether healing was attempted, and a hint message.
+    Only called for issue/pr create/edit and when label_catalog imports successfully (fail-open).
+    """
+    try:
+        sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "lib"))
+        import label_catalog as lc
+    except ImportError:
+        return argv, False, None
+
+    missing_name = lc.missing_label(stderr)
+    if not missing_name:
+        return argv, False, None
+
+    call = lc.parse_label_call(argv)
+    if not call:
+        return argv, False, None
+
+    repo = lc.resolve_repo(call, env)
+    if not repo:
+        return argv, False, f"could not determine target repo for label healing"
+
+    def create_label(name: str, r: str) -> None:
+        try:
+            env_with_inside = {**env, "MARVIN_GH_GATE_INSIDE": "1"}
+            p = subprocess.run([real, "label", "create", name, "--repo", r, "--force"],
+                             capture_output=True, text=True, timeout=30, env=env_with_inside)
+            if p.returncode != 0 and "already exists" not in (p.stderr or p.stdout).lower():
+                raise RuntimeError((p.stderr or p.stdout).strip()[-200:])
+        except subprocess.TimeoutExpired:
+            raise RuntimeError("timeout creating label")
+
+    step = lc.heal_step(call, missing_name, lambda name: create_label(name, repo))
+
+    if step["action"] == "stop":
+        return argv, False, step.get("hint")
+    elif step["action"] == "retry":
+        # Remove the missing label from --remove-label (or -l/--label/--add-label if it's in remove list)
+        new_argv = []
+        skip_next = False
+        for i, a in enumerate(argv):
+            if skip_next:
+                skip_next = False
+                continue
+            if a == "--remove-label" and i + 1 < len(argv):
+                labels = argv[i + 1].split(",")
+                labels = [l.strip() for l in labels if l.strip() != missing_name]
+                if labels:
+                    new_argv.append(a)
+                    new_argv.append(",".join(labels))
+                skip_next = True
+            elif a.startswith("--remove-label="):
+                labels = a.split("=", 1)[1].split(",")
+                labels = [l.strip() for l in labels if l.strip() != missing_name]
+                if labels:
+                    new_argv.append("--remove-label=" + ",".join(labels))
+            else:
+                new_argv.append(a)
+        return new_argv, True, step.get("hint")
+    elif step["action"] == "create-then-retry":
+        try:
+            create_label(missing_name, repo)
+        except Exception as e:
+            return argv, False, f"could not create label '{missing_name}': {str(e)[:100]}"
+        return argv, True, step.get("hint")
+
+    return argv, False, None
+
+
 # ── UI PRs carry current, working images (marvin #735) ─────────────────────
 # A PR opened, readied or merged from a chat came straight through here with nothing checking the owner's rule that a
 # look change shows images (the dashboard's Approve checks, chats never press it). The rules live in lib/pr_images.py.
@@ -408,20 +481,71 @@ def main(argv: list[str]) -> int:
     slot = _background_slot() if prio == "background" else None
     os.environ[INSIDE_ENV] = "1"  # inherited by the real gh and anything it runs
     t0 = time.time()
+
+    # Capture stdin once ONLY if argv explicitly uses '-F -' or '--body-file -' (stdin as body)
+    stdin_bytes = None
+    should_capture_stdin = False
+    if "-F" in argv:
+        idx = argv.index("-F")
+        if idx + 1 < len(argv) and argv[idx + 1] == "-":
+            should_capture_stdin = True
+    if not should_capture_stdin and "--body-file" in argv:
+        idx = argv.index("--body-file")
+        if idx + 1 < len(argv) and argv[idx + 1] == "-":
+            should_capture_stdin = True
+    if not (sys.stdin.isatty() and sys.stderr.isatty()) and should_capture_stdin:
+        try:
+            stdin_bytes = sys.stdin.buffer.read()
+        except Exception:  # noqa: BLE001
+            pass
+
+    # Label healing retry loop (only for issue/pr create/edit with label_catalog available)
+    should_try_heal = len(argv) >= 2 and argv[0] in ("issue", "pr") and argv[1] in ("create", "edit")
+    heal_outcomes = {}
+    label_refused = False
+    max_heals = 5
+    heals_done = 0
+    current_argv = argv
+
     try:
-        if sys.stdin.isatty() and sys.stderr.isatty():
-            # a person at a terminal: no capturing, prompts and colours work as usual
-            rc = subprocess.call([real, *argv])
-            err = ""
-        else:
-            p = subprocess.Popen([real, *argv], stderr=subprocess.PIPE)
-            _, raw = p.communicate()
-            rc = p.returncode
-            err = raw.decode("utf-8", "replace")
-            sys.stderr.write(err)
+        while True:
+            if sys.stdin.isatty() and sys.stderr.isatty():
+                # a person at a terminal: no capturing, prompts and colours work as usual
+                rc = subprocess.call([real, *current_argv])
+                err = ""
+                break
+            else:
+                # For non-terminal: only capture stderr (for healing detection), pass stdout through
+                if should_capture_stdin:
+                    p = subprocess.Popen([real, *current_argv], stdin=subprocess.PIPE, stderr=subprocess.PIPE, stdout=None)
+                    raw_err = p.communicate(input=stdin_bytes)[1]
+                else:
+                    p = subprocess.Popen([real, *current_argv], stderr=subprocess.PIPE, stdout=None)
+                    raw_err = p.communicate()[1]
+                rc = p.returncode
+                err = raw_err.decode("utf-8", "replace") if raw_err else ""
+
+                # Only attempt healing on this specific error and only once per error type
+                if (should_try_heal and rc != 0 and heals_done < max_heals and
+                    "not found" in err and "label" in err):
+                    new_argv, was_healed, hint = _heal_missing_label(current_argv, err, real, os.environ)
+                    if was_healed:
+                        heals_done += 1
+                        heal_outcomes[f"heal_{heals_done}"] = hint or "healed"
+                        current_argv = new_argv
+                        continue
+                    elif hint:
+                        # heal_step returned stop, so label is uncatalogued
+                        label_refused = True
+                        err = err.rstrip() + f"\ngh-gate: {hint}\n"
+
+                # No healing happened or healing is not applicable: use this result
+                sys.stderr.write(err)
+                break
     finally:
         if slot:
             slot.close()
+
     ms = int((time.time() - t0) * 1000)
     kind = classify_refusal(err) if rc else None
     with _State() as st:
@@ -439,7 +563,12 @@ def main(argv: list[str]) -> int:
     where = {"cwd": os.getcwd().replace(os.environ.get("HOME", "~"), "~")[-80:]}
     if os.environ.get("PYTEST_CURRENT_TEST"):  # a test reaching real GitHub is a bug: say which one
         where["test"] = os.environ["PYTEST_CURRENT_TEST"][:160]
-    _log({"t": now, "caller": caller, "priority": prio, "cmd": cmd, "rc": rc, "ms": ms, **where, **({"refused": kind, "said": err.strip()[-200:]} if kind else {})})
+    log_entry = {"t": now, "caller": caller, "priority": prio, "cmd": cmd, "rc": rc, "ms": ms, **where, **({"refused": kind, "said": err.strip()[-200:]} if kind else {})}
+    if heals_done > 0:
+        log_entry["label_heal"] = heals_done
+    if label_refused:
+        log_entry["label_refused"] = True
+    _log(log_entry)
     return rc
 
 
