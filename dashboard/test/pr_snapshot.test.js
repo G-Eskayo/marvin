@@ -2,7 +2,7 @@ import { describe, it, expect, vi } from 'vitest'
 import { snapshotExec, SNAPSHOT_FIELDS } from '../webhook-server/pr_snapshot.js'
 
 const URL = 'https://github.com/G-Eskayo/marvin/pull/569'
-const PR = { baseRefName: 'main', body: 'Closes #560', isDraft: false, files: [{ path: 'a.js' }], headRefName: 'feat/x', statusCheckRollup: [{ __typename: 'CheckRun', name: 'ci', status: 'COMPLETED', conclusion: 'SUCCESS' }] }
+const PR = { baseRefName: 'main', body: 'Closes #560', isDraft: false, files: [{ path: 'a.js' }], headRefName: 'feat/x', statusCheckRollup: [{ __typename: 'CheckRun', name: 'ci', status: 'COMPLETED', conclusion: 'SUCCESS' }], state: 'OPEN' }
 
 function fakeExec(pr = PR, { fail = false } = {}) {
   return vi.fn(async (cmd, args) => {
@@ -75,7 +75,7 @@ describe('snapshotExec: the approve preflight reads the PR once', () => {
     const wrapped = snapshotExec(URL, exec)
     await wrapped('gh', view('body', 'https://github.com/G-Eskayo/marvin/pull/1'))
     await wrapped('gh', ['pr', 'view', URL, '--json', 'files', '--jq', '.files[].path'])
-    await wrapped('gh', view('state'))
+    await wrapped('gh', view('locked')) // locked is not in SNAPSHOT_FIELDS, so it passes straight through
     expect(exec).toHaveBeenCalledTimes(3)
     expect(exec.mock.calls.every((c) => !String(c[1][4]).includes('isDraft'))).toBe(true)
   })
@@ -104,5 +104,16 @@ describe('snapshotExec: the approve preflight reads the PR once', () => {
   it('not a PR url: no snapshot at all', async () => {
     const exec = fakeExec()
     expect(snapshotExec('nonsense', exec)).toBe(exec)
+  })
+
+  it('state is included in the snapshot fields for preflight race condition fix', async () => {
+    const exec = fakeExec()
+    const wrapped = snapshotExec(URL, exec)
+    // Verify that 'state' is in SNAPSHOT_FIELDS
+    expect(SNAPSHOT_FIELDS).toContain('state')
+    // Verify that a read including state gets it from the snapshot
+    await wrapped('gh', view('state'))
+    expect(exec).toHaveBeenCalledTimes(1)
+    expect(exec.mock.calls[0][1][4].split(',').sort()).toContain('state')
   })
 })

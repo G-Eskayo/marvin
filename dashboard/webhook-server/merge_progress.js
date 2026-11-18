@@ -341,3 +341,38 @@ export function alreadyMergingBody(machineId) {
   const where = machineId ? `the ${machineLabel(machineId)}` : 'this Mac'
   return { merged: false, code: 'ALREADY_MERGING', stage: 'queued', action: 'wait', message: `This PR is already being merged on ${where}. Its result shows when that merge finishes` }
 }
+
+// marvin#1223: multiple probes for the same PR (a retry from a dashboard, a memory queue) join the single merge running,
+// receiving its events and result without starting duplicate merges. Each joins with a reply object, receives events
+// as they come, and gets the final status/body when it finishes. O(1) per join, event, and finish.
+export function createMergeJoin() {
+  const joined = new Map() // url -> Set of { reply, probe }
+  return {
+    join(url, reply, isRunning = null, probe = false) {
+      // Double-check: if the merge is no longer running, refuse to join (caller falls back to 409).
+      // This catches the race between isRunning check and join call: if the merge finished between those two,
+      // isRunning(url) will be false and we refuse instead of joining a dead merge.
+      if (isRunning && !isRunning(url)) {
+        try { reply?.result(409, alreadyMergingBody(null)) } catch { /* listener gone */ }
+        return
+      }
+      if (!joined.has(url)) joined.set(url, new Set())
+      joined.get(url).add({ reply, probe })
+    },
+    event(url, ev) {
+      const waiters = joined.get(url)
+      if (!waiters) return
+      for (const { reply } of waiters) {
+        try { reply?.event(ev) } catch { /* a listener gone never stops the merge */ }
+      }
+    },
+    finish(url, status, body) {
+      const waiters = joined.get(url)
+      if (!waiters) return
+      for (const { reply } of waiters) {
+        try { reply?.result(status, body) } catch { /* a listener gone never stops the cleanup */ }
+      }
+      joined.delete(url)
+    }
+  }
+}

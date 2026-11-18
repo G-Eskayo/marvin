@@ -1,4 +1,4 @@
-import { describe, it, expect, afterEach, beforeEach } from 'vitest'
+import { describe, it, expect, afterEach, beforeEach, vi } from 'vitest'
 import { createServer } from 'http'
 import { EventEmitter } from 'events'
 import { mkdtempSync, rmSync, readFileSync, writeFileSync } from 'fs'
@@ -540,5 +540,28 @@ describe('createMergeLatch: one merge of a PR at a time on a webhook', () => {
     const body = alreadyMergingBody('mac-mini-1')
     expect(body).toMatchObject({ merged: false, code: 'ALREADY_MERGING' })
     expect(describeApproveFailure(409, body)).toBe('ALREADY_MERGING at queued: This PR is already being merged on the Mac mini. Its result shows when that merge finishes.')
+  })
+})
+
+describe('regression: approve flow probe parameter', () => {
+  let dir, ledger
+  beforeEach(() => { dir = mkdtempSync(path.join(tmpdir(), 'probe-')); ledger = createApprovalLedger(path.join(dir, 'a.json')) })
+  afterEach(() => rmSync(dir, { recursive: true, force: true }))
+
+  it('send() gets the retry variable as probe parameter, not the string "retry"', async () => {
+    const calls = []
+    const mockSend = vi.fn(async (prUrl, target, opts) => {
+      calls.push({ prUrl, opts })
+      return { merged: true }
+    })
+    const approve = createApproveFlow({ mergeOps: createMergeOps(), ledger, machines: () => [MINI('http://example.com:7878')], send: mockSend })
+    // Non-retry: probe should be falsy (not passed or false)
+    await approve(PR, { number: 900, retry: false })
+    expect(calls[0].opts.probe).toBe(false)
+    // Retry: probe should be true (the retry variable)
+    await approve(PR2, { number: 901, retry: true })
+    expect(calls[1].opts.probe).toBe(true)
+    // Never the string 'retry'
+    expect(calls.every((c) => c.opts.probe !== 'retry')).toBe(true)
   })
 })

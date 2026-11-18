@@ -91,13 +91,13 @@ export function createApproveFlow({ mergeOps, ledger, machines, send, push = () 
 
     let outcome
     try {
-      outcome = await approveOnAnyMachine(url, targets, { send: (prUrl, target) => send(prUrl, target, { onEvent }), onSwitch })
+      outcome = await approveOnAnyMachine(url, targets, { send: (prUrl, target) => send(prUrl, target, { onEvent, probe: retry }), onSwitch })
     } catch (err) {
       const busy = err?.machine
       const later = busy && !pin && ready && forget ? targets.slice(targets.indexOf(busy) + 1) : []
       if (err?.payload?.code === 'MEMORY_PRESSURE' && err.payload.action === 'retry' && later.length) {
         try {
-          outcome = await backupForMemory(url, busy, later, { ready, forget, send: (prUrl, m) => send(prUrl, m.url, { onEvent }), onSwitch })
+          outcome = await backupForMemory(url, busy, later, { ready, forget, send: (prUrl, m) => send(prUrl, m.url, { onEvent, probe: retry }), onSwitch })
         } catch (err2) {
           return refused(err2)
         }

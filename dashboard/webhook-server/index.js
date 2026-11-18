@@ -7,7 +7,7 @@ import { createMergeQueue, createQueueStore } from './merge_queue.js'
 import { createUnbuiltCache, createFixTicketsCache, createQueueLoader, createBaseLookup, createFollowUpRequester, readMainHealth, readRepairFailures } from './merge_facts.js'
 import { pendingCheckHeads } from '../electron/main/mr_repos.js'
 import { snapshotExec } from './pr_snapshot.js'
-import { createMergeTracker, createInflightStore, takeInterruptedMerges, recordMergeDuration, estimateMergeMs, machineLoad, approveResponder, wantsStream, createMergeLatch, alreadyMergingBody } from './merge_progress.js'
+import { createMergeTracker, createInflightStore, takeInterruptedMerges, recordMergeDuration, estimateMergeMs, machineLoad, approveResponder, wantsStream, createMergeLatch, alreadyMergingBody, createMergeJoin } from './merge_progress.js'
 import { resolveDeviceId, peerHosts, isPrimaryHost } from '../electron/main/device_identity.js'
 import { sendFeedback, dropEntirely, handleDenyRequest } from './deny.js'
 import { forwardRefreshPing } from './refresh_relay.js'
@@ -282,9 +282,16 @@ const server = createServer(async (req, res) => {
       reply.result(status, body)
       return
     }
-    // marvin#766: a PR this process is already merging is not started again (a retry after a dropped stream).
+    // marvin#766: a PR this process is already merging. A probe gets the fast 409 response (a retry after a dropped stream);
+    // an ordinary Approve joins the running merge to get its result.
+    const probe = payload?.probe === true || payload?.by === 'memory-queue'
     if (mergeQueue.isRunning(prUrl)) {
-      reply.result(409, alreadyMergingBody(machineId))
+      if (probe) {
+        reply.result(409, alreadyMergingBody(machineId))
+        return
+      }
+      // Pass isRunning check to join so it can detect the race: merge finishing between our check and the join call.
+      mergeJoin.join(prUrl, reply, (url) => mergeQueue.isRunning(url))
       return
     }
     // marvin#231: Approve queues the merge. The queue merges in the order it works out (stacked PRs base first, only the
@@ -340,6 +347,7 @@ const rebuildCheck = createRebuildCheckTrigger()
 const machineId = resolveDeviceId()
 const inflight = createInflightStore()
 const mergeLatch = createMergeLatch()
+const mergeJoin = createMergeJoin()
 // marvin#231 follow-up: each merge's progress, kept for GET /merge-progress, and its stage events sent to the other Macs.
 const liveMerges = createLiveMerges()
 const relayStage = createStageRelay({
@@ -356,6 +364,7 @@ const repoOfPr = (url) => (String(url).match(/github\.com\/([^/]+\/[^/]+)\/pull\
 async function runMerge(prUrl, { by = 'you', reply = null } = {}) {
   const valid = typeof prUrl === 'string' && prUrl.startsWith('https://github.com/')
   if (valid && !mergeLatch.take(prUrl)) return { status: 409, body: alreadyMergingBody(machineId) }
+  let ret = null
   try {
     const tracker = valid ? createMergeTracker({
       url: prUrl,
@@ -377,6 +386,7 @@ async function runMerge(prUrl, { by = 'you', reply = null } = {}) {
         })
         return (event, progress) => {
           reply?.event(event)
+          mergeJoin.event(prUrl, event)
           fanOut(event, progress)
         }
       })()
@@ -400,7 +410,7 @@ async function runMerge(prUrl, { by = 'you', reply = null } = {}) {
       tracker?.finish(result)
       if (result?.merged) appendMerge(prUrl, by === 'auto' ? 'auto' : 'you')
       else if (result?.reengaged) console.error(approveErrorLine(prUrl, { error: `${result.code || 'SENT_BACK'} at ${result.stage || 'gate'}: ${String(result.reason || 'sent back for rework').split('\n')[0].slice(0, 200)}` }))
-      return { status: 200, body: result }
+      ret = { status: 200, body: result }
     } catch (err) {
       // Structured: code, stage, retryable, action, remediation -- so the dashboard can say what broke and the pipeline
       // can act on it (see failure.js). Recorded in the refusal log (#215) and the error log.
@@ -409,11 +419,19 @@ async function runMerge(prUrl, { by = 'you', reply = null } = {}) {
       console.error(approveErrorLine(prUrl, body))
       await recordApproveError(prUrl, body)
       appendError({ source: 'webhook:approve', message: `Approve refused for ${prUrl}`, raw: body.error })
-      return { status, body }
+      ret = { status, body }
     }
   } finally {
-    if (valid) mergeLatch.release(prUrl)
+    if (valid) {
+      mergeLatch.release(prUrl)
+      // Always finish, even if ret is null (something threw without setting ret). Use a 500 fallback
+      // so joined requests don't hang forever waiting for a result that will never come.
+      const status = ret?.status ?? 500
+      const body = ret?.body ?? { code: 'INTERNAL_ERROR', message: 'no result' }
+      mergeJoin.finish(prUrl, status, body)
+    }
   }
+  return ret || { status: 500, body: { code: 'INTERNAL_ERROR', message: 'no result' } }
 }
 
 // What an Approve that is not run straight away is told: it is in the queue, where, and what it waits for.

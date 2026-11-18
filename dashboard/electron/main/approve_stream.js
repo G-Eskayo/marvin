@@ -23,12 +23,14 @@ function unreachable(err, code = err?.code) {
   return Object.assign(err instanceof Error ? err : new Error(String(err)), { unreachable: true, code })
 }
 
-export function approveMrStream(prUrl, webhookUrl, { onEvent = () => {}, request = null, connectTimeoutMs = CONNECT_TIMEOUT_MS } = {}) {
+export function approveMrStream(prUrl, webhookUrl, { onEvent = () => {}, request = null, connectTimeoutMs = CONNECT_TIMEOUT_MS, probe = null } = {}) {
   return new Promise((resolve, reject) => {
     let target
     try { target = new URL(webhookUrl) } catch { reject(new Error(`Not a webhook URL: ${webhookUrl}`)); return }
     const send = request || (target.protocol === 'https:' ? https.request : http.request)
-    const body = JSON.stringify({ pr_url: prUrl })
+    const bodyObj = { pr_url: prUrl }
+    if (probe === true) bodyObj.probe = true
+    const body = JSON.stringify(bodyObj)
     let answered = false, started = false, connected = false, connectTimer = null
     const interrupted = () => done(resolve, { merged: false, interrupted: true, reason: 'The merge was interrupted when the webhook restarted. Approve again.' })
     const done = (fn, v) => { clearTimeout(connectTimer); if (!answered) { answered = true; fn(v) } }

@@ -1,5 +1,6 @@
-import { describe, it, expect } from 'vitest'
+import { describe, it, expect, vi } from 'vitest'
 import { MERGE_STAGES, emptyProgress, applyMergeEvent, mergeRuns, closeRunning, machineLabel, estimateLine, busyLine, opForHead } from '../src/lib/merge_progress.js'
+import { createMergeJoin } from '../webhook-server/merge_progress.js'
 
 // marvin#568: the merge's stage events, pushed from the webhook, folded into one progress object. The same reducer runs
 // in the webhook (its own record), the main process (what a card reads on mount) and so the card sees what both saw.
@@ -155,5 +156,124 @@ describe('closeRunning (a merge that ended without its own last event)', () => {
     expect(closeRunning(c, 'failed', 'x', 100)).toBe(c)
     expect(closeRunning(null, 'failed')).toBe(null)
     expect(closeRunning(p, 'skipped', 'merged on GitHub', 5).outcome).toBe(null)
+  })
+})
+
+describe('createMergeJoin: marvin#1223 + race condition fixes', () => {
+  const URL = 'https://github.com/G-Eskayo/marvin/pull/900'
+
+  it('join adds a reply to the set of joiners for a URL', () => {
+    const join = createMergeJoin()
+    const reply1 = { event: vi.fn(), result: vi.fn() }
+    const reply2 = { event: vi.fn(), result: vi.fn() }
+    join.join(URL, reply1)
+    join.join(URL, reply2)
+    join.finish(URL, 200, { merged: true })
+    expect(reply1.result).toHaveBeenCalledWith(200, { merged: true })
+    expect(reply2.result).toHaveBeenCalledWith(200, { merged: true })
+  })
+
+  it('event sends to all joined replies', () => {
+    const join = createMergeJoin()
+    const reply1 = { event: vi.fn(), result: vi.fn() }
+    const reply2 = { event: vi.fn(), result: vi.fn() }
+    join.join(URL, reply1)
+    join.join(URL, reply2)
+    const ev = { id: 'm1', seq: 1, stage: 'queued', state: 'running', at: Date.now() }
+    join.event(URL, ev)
+    expect(reply1.event).toHaveBeenCalledWith(ev)
+    expect(reply2.event).toHaveBeenCalledWith(ev)
+  })
+
+  it('finish clears the URL so later joins for that URL start fresh', () => {
+    const join = createMergeJoin()
+    const reply1 = { event: vi.fn(), result: vi.fn() }
+    const reply2 = { event: vi.fn(), result: vi.fn() }
+    join.join(URL, reply1)
+    join.finish(URL, 200, { merged: true })
+    // Later join for the same URL (race condition scenario)
+    join.join(URL, reply2, () => false) // isRunning says merge is done
+    expect(reply1.result).toHaveBeenCalledWith(200, { merged: true })
+    expect(reply2.result).toHaveBeenCalledWith(409, expect.objectContaining({ code: 'ALREADY_MERGING' }))
+  })
+
+  it('join refuses if isRunning returns false (race condition: merge already finished)', () => {
+    const join = createMergeJoin()
+    const reply = { event: vi.fn(), result: vi.fn() }
+    const isRunning = vi.fn(() => false)
+    join.join(URL, reply, isRunning)
+    expect(isRunning).toHaveBeenCalledWith(URL)
+    expect(reply.result).toHaveBeenCalledWith(409, expect.objectContaining({ code: 'ALREADY_MERGING' }))
+    expect(reply.event).not.toHaveBeenCalled()
+  })
+
+  it('join accepts if isRunning returns true (merge still running)', () => {
+    const join = createMergeJoin()
+    const reply = { event: vi.fn(), result: vi.fn() }
+    const isRunning = vi.fn(() => true)
+    join.join(URL, reply, isRunning)
+    expect(isRunning).toHaveBeenCalledWith(URL)
+    // reply.result should not be called yet; this is a successful join
+    expect(reply.result).not.toHaveBeenCalled()
+    // Now finish the merge
+    join.finish(URL, 200, { merged: true })
+    expect(reply.result).toHaveBeenCalledWith(200, { merged: true })
+  })
+
+  it('join with no isRunning check works (backwards compat)', () => {
+    const join = createMergeJoin()
+    const reply = { event: vi.fn(), result: vi.fn() }
+    join.join(URL, reply) // no isRunning, no probe
+    join.finish(URL, 200, { merged: true })
+    expect(reply.result).toHaveBeenCalledWith(200, { merged: true })
+  })
+
+  it('a reply that throws on event does not stop other replies from receiving events', () => {
+    const join = createMergeJoin()
+    const reply1 = { event: vi.fn(() => { throw new Error('reply1 error') }), result: vi.fn() }
+    const reply2 = { event: vi.fn(), result: vi.fn() }
+    join.join(URL, reply1)
+    join.join(URL, reply2)
+    const ev = { id: 'm1', seq: 1, stage: 'queued', state: 'running', at: Date.now() }
+    join.event(URL, ev)
+    expect(reply2.event).toHaveBeenCalledWith(ev)
+  })
+
+  it('a reply that throws on result does not stop other replies from receiving result', () => {
+    const join = createMergeJoin()
+    const reply1 = { event: vi.fn(), result: vi.fn(() => { throw new Error('reply1 error') }) }
+    const reply2 = { event: vi.fn(), result: vi.fn() }
+    join.join(URL, reply1)
+    join.join(URL, reply2)
+    join.finish(URL, 200, { merged: true })
+    expect(reply2.result).toHaveBeenCalledWith(200, { merged: true })
+  })
+
+  it('finish for a URL with no joiners is safe (already cleared)', () => {
+    const join = createMergeJoin()
+    join.finish(URL, 200, { merged: true })
+    // Should not throw
+    join.finish(URL, 200, { merged: true })
+  })
+
+  it('event for a URL with no joiners is safe (already cleared)', () => {
+    const join = createMergeJoin()
+    const ev = { id: 'm1', seq: 1, stage: 'queued', state: 'running', at: Date.now() }
+    join.event(URL, ev)
+    // Should not throw
+  })
+
+  it('multiple URLs are independent', () => {
+    const join = createMergeJoin()
+    const URL2 = 'https://github.com/G-Eskayo/marvin/pull/901'
+    const reply1 = { event: vi.fn(), result: vi.fn() }
+    const reply2 = { event: vi.fn(), result: vi.fn() }
+    join.join(URL, reply1)
+    join.join(URL2, reply2)
+    join.finish(URL, 200, { merged: true })
+    expect(reply1.result).toHaveBeenCalledWith(200, { merged: true })
+    expect(reply2.result).not.toHaveBeenCalled()
+    join.finish(URL2, 200, { merged: true })
+    expect(reply2.result).toHaveBeenCalledWith(200, { merged: true })
   })
 })

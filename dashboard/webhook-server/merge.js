@@ -794,6 +794,28 @@ export async function readyIfDraft(prUrl, exec) {
   return true
 }
 
+// The PR must still be open: already merged or closed means a concurrent merge won or the queue stale-checked it.
+// Fail open on any read/parse error -- a hiccup never blocks, same policy as assertTargetsBase.
+export async function assertStillOpen(prUrl, exec) {
+  let state = null
+  try {
+    const { stdout } = await exec('gh', ['pr', 'view', prUrl, '--json', 'state'])
+    state = JSON.parse(stdout).state
+  } catch {
+    return
+  }
+  if (state === 'MERGED') {
+    throw new MergeFailure(refusal('ALREADY_MERGED', 'request',
+      'this PR was already merged (possibly by another Approve)',
+      'The PR was not changed. The work is already on its target branch.'))
+  }
+  if (state === 'CLOSED') {
+    throw new MergeFailure(refusal('PR_CLOSED', 'request',
+      'this PR was closed without merging',
+      'The PR was not changed. Reopen it to merge this work, or check that it got merged instead.'))
+  }
+}
+
 // What GitHub says about the PR right now, waiting out "UNKNOWN" (it recomputes a PR's mergeability after every
 // push, including the merge gate's own rebase push, and answers UNKNOWN or a stale "not mergeable" meanwhile).
 export async function mergeableNow(prUrl, exec, sleep = (ms) => new Promise((r) => setTimeout(r, ms)), tries = 6, delayMs = 5000) {
@@ -867,6 +889,8 @@ async function mergePrUnqueued(
     if (state === 'output' || extra?.count) lastOutputAt = now()
     try { report(stage, state, extra) } catch { /* a progress reader never breaks the merge */ }
   }
+
+  await assertStillOpen(prUrl, exec)
   progress('fetching', 'running')
 
   // marvin's own PRs use the built-in gate. Any other project needs its profile to say it may be
