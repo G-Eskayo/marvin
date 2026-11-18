@@ -1,0 +1,10 @@
+1. Add `_repo_pipeline_prs(repo)` (REST, paginated, `head.ref`/`merged_at`) and rewrite `_merged_pipeline_prs(repos)` to sum per-repo results, `None` on any repo failure.
+2. Wire `gather()` to call `_merged_pipeline_prs(ticket_agents.board_repos())`, with the `board_repos()` call itself wrapped so a corrupt board registry only blanks the PR figure.
+3. Add `_py_tests_collected`, `_js_tests_listed`, `_site_tests_run` helpers (whole-repo `pytest --collect-only -q`, `npx vitest list` in `dashboard/`, `node --test --test-reporter=tap` over `site/scripts/*.test.mjs`).
+4. Add `_previous()` (read `brain-map/snapshot/facts.json`, tolerate anything unreadable) and `_resolve(key, fresh, previous, today)`.
+5. Extend `compute_facts()` with `previous: dict | None = None`; emit `tests`, `tests_python`, `tests_js`, `tests_site`, `prs_merged`, and their `_counted_on` siblings per `_resolve`; leave `skills`/`agents`/`decisions`/`machines` behaviour untouched.
+6. Update `gather()` to pass the three test-part results, the new PR total, and `_previous()`'s output into `compute_facts`.
+7. Make `facts.json`'s write atomic (tmp file + `os.replace`) in `export_snapshot.write_facts`, reusing `project_catalog.write_catalog`'s pattern — no other change to `export_snapshot.py`.
+8. Update the module docstring to describe each number's new source (REST pagination across board repos; three-part collected test count; last-good-value-and-date fallback).
+9. Write the tests listed above in `brain-map/scripts/test_facts.py` first; run them red, then implement 1–7 to green.
+10. On the day of shipping: hand-count merged `pipeline/*` PRs across the current board repos and run the three collect commands on `main` by hand; put both the hand count and the computed count in the PR description (acceptance criterion #1).

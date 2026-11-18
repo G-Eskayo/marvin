@@ -285,7 +285,11 @@ def write_facts(out_dir: Path, gather=None) -> list[str]:
     text = json.dumps(data, indent=2, ensure_ascii=False)
     leaks = scan_for_leaks(text)
     if not leaks:
-        (Path(out_dir) / "facts.json").write_text(text + "\n", encoding="utf-8")
+        out_dir = Path(out_dir)
+        out_dir.mkdir(parents=True, exist_ok=True)
+        tmp = out_dir / "facts.json.tmp"
+        tmp.write_text(text + "\n", encoding="utf-8")
+        tmp.replace(out_dir / "facts.json")
     return leaks
 
 
