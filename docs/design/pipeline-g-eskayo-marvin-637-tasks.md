@@ -1,0 +1,4 @@
+1. Edit `skills/to-issues/SKILL.md` lines 97-100: replace the four literal-value lines with the four bracketed-placeholder lines given verbatim in the ticket (`[name registered in lib/purpose_metrics.py]`, `[value you measured, with date]`, `[absolute value or % change]`, `[YYYY-MM-DD, after the slice can have shipped]`).
+2. Insert the format-only example/delete-instruction sentence immediately after those four lines, worded exactly as given in the ticket.
+3. Re-read the edited section to confirm no stray real values remain and the `## Recurrence check` heading/content directly below is untouched.
+4. No code, test, or other file changes — confirmed during planning that nothing else reads this template text and no stale copies or missing guards exist elsewhere.
