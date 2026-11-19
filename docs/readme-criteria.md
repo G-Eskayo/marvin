@@ -69,21 +69,11 @@ screenshots with no way to run the thing fails Goal 3.
 
 ## Profiles (what "good" looks like by kind of repo)
 
-- **App / desktop or iOS:** one-line purpose, a screenshot above the fold, install or build, a short "how it works" diagram,
-  status and platform support, link to docs and issues.
-- **Library / CLI:** one-liner, install, a real usage example with output, API link, contributing, license.
-- **Claude Code skill / agent tooling:** what it does for the user in plain words, a transcript or output sample, how to
-  install it, what it touches, limits.
-- **Research or coursework project:** the question, the method in a diagram, the result figure with one sentence, how to
-  reproduce, the report link.
-- **Infrastructure / system (MARVIN):** what problem it solves, an architecture diagram, a quickstart that works on a clean
-  machine, a map of the docs (CONTEXT.md, ADRs), current status and what is not built.
+Playbook by kind of project in [`skills/readme/TEMPLATES.md`](../skills/readme/TEMPLATES.md).
 
 ## What a program cannot judge
 
-The audit never says a README is good. A reviewer (the skill's review step) still asks: Is the one-liner specific, or could it
-describe a hundred repos? Does the diagram explain, or decorate? Does the quickstart really work on a clean machine (run it)?
-Is every number still true (check it against the repository)? Is the tone one a stranger would trust?
+See the review step in [`skills/readme/SKILL.md`](../skills/readme/SKILL.md).
 
 ## Re-audit cadence
 

@@ -1,0 +1,6 @@
+1. In `skills/readme/TEMPLATES.md`'s App template (around line 25), fold in the App profile's "platform support" and "link to...issues" details from `docs/readme-criteria.md`'s `## Profiles` App bullet, without disturbing the other four templates (already complete).
+2. In `docs/readme-criteria.md`, replace the `## Profiles` section body (lines 70-80) with a one-line pointer to `skills/readme/TEMPLATES.md`, matching the pointer style SKILL.md already uses for the criteria doc.
+3. In `docs/readme-criteria.md`, replace the `## What a program cannot judge` section body (lines 82-86) with a one-line pointer to the review step in `skills/readme/SKILL.md`.
+4. In `skills/readme/SKILL.md` step 3 (lines 37-38), change "from the criteria doc and start from TEMPLATES.md" to cite only `TEMPLATES.md` for profile selection.
+5. Run `lib/tests/test_readme_audit.py` and the repo-wide greps from the test list above to confirm no regression and nothing is left dangling.
+6. In the PR description, list the diff-checked-by-hand profile comparison (step 1's findings) as required by acceptance criterion 2.
