@@ -18,7 +18,7 @@ vi.mock('../webhook-server/rebase_status.js', () => ({ writeRebaseStatus: vi.fn(
 // Its own tests, including mergePr refusing a UI change with no image, are in ui_evidence.test.js.
 vi.mock('../webhook-server/ui_evidence.js', () => ({ assertUiEvidence: vi.fn(async () => {}) }))
 // Same for the decisions gate (its own tests are in decisions.test.js).
-vi.mock('../webhook-server/decisions_gate.js', () => ({ assertDecisions: vi.fn(async () => {}) }))
+vi.mock('../webhook-server/decisions_gate.js', () => ({ assertDecisions: vi.fn(async () => {}), assertDecisionsBuilt: vi.fn(async () => {}) }))
 // Versioning (changelog) is tested separately; mock it here to avoid needing real git repos in merge tests.
 vi.mock('../webhook-server/changelog.js', () => ({ applyVersionBump: vi.fn().mockResolvedValue(undefined) }))
 
@@ -1448,5 +1448,30 @@ describe('rebaseAndRetest on a branch whose base PR was squash-merged (#1183)', 
     } finally {
       rmSync(root, { recursive: true, force: true })
     }
+  })
+
+  it('mergePr calls assertDecisionsBuilt before merging', async () => {
+    const mockAssertDecisionsBuilt = vi.mocked((await import('../webhook-server/decisions_gate.js')).assertDecisionsBuilt)
+    mockAssertDecisionsBuilt.mockClear()
+    // Use execWithCodeReviewDefaults to ensure code review and other defaults pass
+    const exec = execWithCodeReviewDefaults(vi.fn().mockResolvedValue({ stdout: '', stderr: '' }))
+    // Note: assertDecisionsBuilt is mocked in this test file, so it won't actually call owner_decisions.py
+    const { mergePr } = await import('../webhook-server/merge.js')
+    const shouldGateFn = vi.fn().mockResolvedValue({ gate: true, behind: true, headRefName: 'main', body: '', shared: [], rules: [] })
+    await mergePr('https://github.com/G-Eskayo/marvin/pull/99', exec, () => Promise.resolve(), () => {}, shouldGateFn)
+    expect(mockAssertDecisionsBuilt).toHaveBeenCalledWith('https://github.com/G-Eskayo/marvin/pull/99', exec)
+  })
+
+  it('mergePr is blocked when owner decisions are unbuilt', async () => {
+    const exec = execWithCodeReviewDefaults(vi.fn().mockResolvedValue({ stdout: '', stderr: '' }))
+    const { mergePr } = await import('../webhook-server/merge.js')
+    const shouldGateFn = vi.fn().mockResolvedValue({ gate: true, behind: true, headRefName: 'main', body: '', shared: [], rules: [] })
+    const mockAssertDecisionsBuilt = vi.mocked((await import('../webhook-server/decisions_gate.js')).assertDecisionsBuilt)
+    mockAssertDecisionsBuilt.mockClear()
+    mockAssertDecisionsBuilt.mockRejectedValueOnce(new Error('DECISIONS_UNBUILT'))
+    await expect(mergePr('https://github.com/G-Eskayo/marvin/pull/99', exec, () => Promise.resolve(), () => {}, shouldGateFn)).rejects.toBeDefined()
+    expect(mockAssertDecisionsBuilt).toHaveBeenCalledWith('https://github.com/G-Eskayo/marvin/pull/99', exec)
+    // Verify that gh pr merge was not called (the merge was blocked before reaching that stage)
+    expect(exec).not.toHaveBeenCalledWith('gh', expect.arrayContaining(['pr', 'merge']))
   })
 })

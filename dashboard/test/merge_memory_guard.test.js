@@ -7,7 +7,7 @@ vi.mock('../webhook-server/ticket_stages.js', () => ({ recordStage: vi.fn() }))
 vi.mock('../webhook-server/failure_log.js', () => ({ recordFailure: vi.fn() }))
 vi.mock('../webhook-server/rebase_status.js', () => ({ writeRebaseStatus: vi.fn(), readRebaseStatus: vi.fn(() => ({})) }))
 vi.mock('../webhook-server/ui_evidence.js', () => ({ assertUiEvidence: vi.fn(async () => {}) }))
-vi.mock('../webhook-server/decisions_gate.js', () => ({ assertDecisions: vi.fn(async () => {}) }))
+vi.mock('../webhook-server/decisions_gate.js', () => ({ assertDecisions: vi.fn(async () => {}), assertDecisionsBuilt: vi.fn(async () => {}) }))
 vi.mock('../webhook-server/changelog.js', () => ({ applyVersionBump: vi.fn().mockResolvedValue(undefined) }))
 
 import { mergePr, memoryGuardCheck, kickMemoryGuard } from '../webhook-server/merge.js'

@@ -133,8 +133,10 @@ def test_grace_hours_is_configurable_and_rejects_nonsense():
 # ── GitHub: a fake gh that behaves like the real one (shared state across "Macs") ──────────────────────────────
 
 class FakeGitHub:
-    def __init__(self, prs, issues=None, fail=()):
+    def __init__(self, prs, issues=None, fail=(), all_prs=None):
         self.prs, self.issues, self.fail, self.calls = prs, issues or [], set(fail), []
+        # all_prs: for single-PR fallback queries; includes prs not in open search (merged/closed)
+        self.all_prs = all_prs if all_prs is not None else {}
         self.next_number = 900
 
     def node(self, p):
@@ -151,12 +153,40 @@ class FakeGitHub:
         if kind in self.fail:
             return subprocess.CompletedProcess(cmd, 1, "", "boom")
         if kind == "api graphql":
-            fu = [{"number": i["number"], "title": i["title"], "url": "", "state": i["state"],
-                   "stateReason": i.get("stateReason"), "body": i["body"], "repository": {"nameWithOwner": i["repo"]}}
-                  for i in self.issues]
-            data = {"prs": {"pageInfo": {"hasNextPage": False, "endCursor": None}, "nodes": [self.node(p) for p in self.prs]},
-                    "followups": {"nodes": fu}}
-            return subprocess.CompletedProcess(cmd, 0, json.dumps({"data": data}), "")
+            # Distinguish between search query (fetch) and single-PR query (_fetch_one).
+            # Search queries have "-f q=" (search query), single-PR queries have "-F" followed by "pr=".
+            is_single_pr = "-F" in args and any("pr=" in str(a) for a in args)
+            if is_single_pr:
+                # _fetch_one: search all_prs (includes merged/closed PRs)
+                pr_num = None
+                for i, a in enumerate(args):
+                    if "pr=" in str(a):
+                        try:
+                            pr_num = int(str(a).split("=")[1])
+                        except (ValueError, IndexError):
+                            pass
+                        break
+                if pr_num and pr_num in self.all_prs:
+                    pr_data = self.all_prs[pr_num]
+                    data = {"repository": {"pullRequest": {"number": pr_data["number"], "title": pr_data["title"],
+                                                          "url": pr_data["url"], "headRefName": pr_data["headRefName"],
+                                                          "body": pr_data.get("body"),
+                                                          "commits": {"nodes": pr_data.get("commit_nodes", [])
+                                                                     if "commit_nodes" in pr_data else
+                                                                     [{"commit": {"committedDate": pr_data["last_commit_at"]}}]
+                                                                     if pr_data.get("last_commit_at") else []},
+                                                          "comments": {"nodes": pr_data["comments"]}}}}
+                    return subprocess.CompletedProcess(cmd, 0, json.dumps({"data": data}), "")
+                # PR not found
+                return subprocess.CompletedProcess(cmd, 0, json.dumps({"data": {"repository": {"pullRequest": None}}}), "")
+            else:
+                # fetch: search only open PRs in self.prs
+                fu = [{"number": i["number"], "title": i["title"], "url": "", "state": i["state"],
+                       "stateReason": i.get("stateReason"), "body": i["body"], "repository": {"nameWithOwner": i["repo"]}}
+                      for i in self.issues]
+                data = {"prs": {"pageInfo": {"hasNextPage": False, "endCursor": None}, "nodes": [self.node(p) for p in self.prs]},
+                        "followups": {"nodes": fu}}
+                return subprocess.CompletedProcess(cmd, 0, json.dumps({"data": data}), "")
         if kind == "issue list":
             repo = args[args.index("--repo") + 1]
             rows = [{"number": i["number"], "state": i["state"], "body": i["body"]} for i in self.issues if i["repo"] == repo]
@@ -254,7 +284,7 @@ def test_follow_up_closes_itself_when_the_reply_lands_not_on_a_bare_commit():
     assert gh.open_followups() == [] and "addressed" in r["closed"][0]["why"]
 
 
-def test_follow_up_closes_when_the_pr_closes_but_not_when_the_list_was_cut_short():
+def test_follow_up_does_not_close_on_truncated_pr_list():
     gh = FakeGitHub([pr([decisions()])])
     od.sync([REPO], now=LATE, run=gh, grace=4)
     gh.prs = []
@@ -269,8 +299,9 @@ def test_follow_up_closes_when_the_pr_closes_but_not_when_the_list_was_cut_short
         return out
     od.sync([REPO], now=LATE, run=truncated, grace=4)
     assert len(gh.open_followups()) == 1
+    # Even with a complete fetch later, without a fallback read, the follow-up stays open.
     od.sync([REPO], now=LATE, run=gh, grace=4)
-    assert gh.open_followups() == []
+    assert len(gh.open_followups()) == 1
 
 
 def test_github_failing_files_and_closes_nothing():
@@ -439,3 +470,86 @@ def test_an_as_built_pr_files_no_follow_up_and_closes_an_open_one():
     finally:
         od._as_built = real
     assert gh.open_followups() == [] and r["closed"]
+
+
+# ── merged/closed PRs: fallback reads for request() and sync() ───────────────────────────────────────────────────
+
+def test_request_on_a_merged_pr_with_decisions_uses_the_fallback_read():
+    """request() falls back to _fetch_one when the PR isn't in the open-PR search."""
+    gh = FakeGitHub([])  # No open PRs in the search results
+    # Set up the merged PR data for the fallback _fetch_one to find.
+    merged_pr = pr([decisions()], number=577)
+    gh.all_prs[577] = merged_pr
+    r = od.request(REPO, 577, now=LATE, run=gh)
+    assert r.startswith("filed")
+    assert len(gh.open_followups()) == 1
+
+
+def test_request_fallback_reads_nothing_when_pr_does_not_exist():
+    """If _fetch_one returns None, request() says no decisions on the PR."""
+    gh = FakeGitHub([])  # No open PRs
+    # PR 999 is not in all_prs, so _fetch_one will find nothing.
+    r = od.request(REPO, 999, now=LATE, run=gh)
+    assert r.startswith("nothing to request")
+
+
+def test_sync_closes_a_follow_up_when_a_merged_pr_was_addressed():
+    """When a PR is no longer open, sync() fetches it, rechecks status, and closes if addressed."""
+    gh = FakeGitHub([pr([decisions()])])
+    od.sync([REPO], now=LATE, run=gh, grace=4)
+    assert len(gh.open_followups()) == 1
+    # Simulate the PR merging: remove it from open PRs and add it to all_prs with an addressed comment.
+    gh.prs = []
+    addressed_pr = pr([decisions(), comment(f"Done.\n{od.ADDRESSED_MARKER}", LATE + timedelta(hours=1))])
+    gh.all_prs[577] = addressed_pr
+    r = od.sync([REPO], now=LATE + timedelta(hours=2), run=gh, grace=4)
+    assert gh.open_followups() == [] and len(r["closed"]) == 1
+
+
+def test_sync_leaves_a_follow_up_open_when_a_merged_pr_was_not_addressed():
+    """If a PR merged but was never addressed, the follow-up stays open."""
+    gh = FakeGitHub([pr([decisions()])])
+    od.sync([REPO], now=LATE, run=gh, grace=4)
+    assert len(gh.open_followups()) == 1
+    # PR is gone from open list; recomputation shows it was never addressed.
+    gh.prs = []
+    unaddressed_pr = pr([decisions()])  # Still no addressing comment
+    gh.all_prs[577] = unaddressed_pr
+    r = od.sync([REPO], now=LATE + timedelta(hours=2), run=gh, grace=4)
+    assert len(gh.open_followups()) == 1 and r["closed"] == []
+
+
+def test_sync_leaves_a_follow_up_open_if_the_fallback_read_fails():
+    """If _fetch_one fails (GitHub unreadable), the follow-up stays open to avoid data loss."""
+    gh = FakeGitHub([pr([decisions()])])
+    od.sync([REPO], now=LATE, run=gh, grace=4)
+    assert len(gh.open_followups()) == 1
+    gh.prs = []  # Simulate PR being gone from search results
+    # Don't add to all_prs, so the fallback read will find nothing (simulates GitHub unreadable).
+    r = od.sync([REPO], now=LATE + timedelta(hours=2), run=gh, grace=4)
+    # The follow-up should still be open because the read failed / returned nothing.
+    assert len(gh.open_followups()) == 1 and r["closed"] == []
+
+
+def test_sync_respects_complete_flag_when_deciding_to_close():
+    """sync() only closes follow-ups when the PR list is complete (data["complete"]=True)."""
+    p = pr([decisions()])
+    gh = FakeGitHub([p])
+    od.sync([REPO], now=LATE, run=gh, grace=4)
+    assert len(gh.open_followups()) == 1
+    # Simulate a complete fetch where the PR has been addressed.
+    marked = pr([decisions(), comment(f"Merged.\n{od.ADDRESSED_MARKER}", LATE + timedelta(hours=1))])
+    gh.prs = [marked]
+    r = od.sync([REPO], now=LATE + timedelta(hours=2), run=gh, grace=4)
+    # With complete=True and PR addressed, the follow-up is closed.
+    assert gh.open_followups() == [] and len(r["closed"]) == 1
+
+
+def test_request_idempotent_after_fallback_read_files_the_follow_up():
+    """request() idempotent: second call after fallback-filed follow-up says "already filed"."""
+    gh = FakeGitHub([])
+    gh.prs = [pr([decisions()])]
+    first = od.request(REPO, 577, now=LATE, run=gh)
+    assert first.startswith("filed")
+    second = od.request(REPO, 577, now=LATE + timedelta(hours=1), run=gh)
+    assert second == "already filed"

@@ -1,6 +1,7 @@
 import { mkdtemp, writeFile, rm } from 'fs/promises'
 import { tmpdir } from 'os'
-import { join } from 'path'
+import { join, dirname } from 'path'
+import { fileURLToPath } from 'url'
 import { parseDecisions, applyAnswers, pendingDecisions, decisionsComment } from '../../webhook-server/decisions.js'
 
 // Submitting the owner's answers to a Decisions section (PR or ticket), from the dashboard. The description is the
@@ -9,6 +10,9 @@ import { parseDecisions, applyAnswers, pendingDecisions, decisionsComment } from
 // the answers; the result says what happened.
 
 const REPO_RE = /^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/
+const __dirname = dirname(fileURLToPath(import.meta.url))
+const VENV_PYTHON = join(__dirname, '..', '..', '..', 'venv', 'bin', 'python')
+const OWNER_DECISIONS_SCRIPT = join(__dirname, '..', '..', '..', 'lib', 'owner_decisions.py')
 
 async function writeTempJson(value) {
   const dir = await mkdtemp(join(tmpdir(), 'marvin-decisions-'))
@@ -62,7 +66,12 @@ async function recordAnswers({ repo, n, issue, parsed, answers, pending }, exec)
       .then(() => { out.labelsChanged = true })
       .catch((error) => { out.labelError = `answers saved, but moving the ticket to ready-for-agent failed: ${String(error?.stderr || error?.message || error).split('\n')[0]}` })
     : null
-  await Promise.all([comment, move])
+  // For a closed/merged PR, file its owner-decisions follow-up if answers aren't built yet. This is best-effort:
+  // ignore errors (GitHub may be temporarily slow, but the answers are saved either way).
+  const decisionsClosed = issue.pull_request && String(issue.state || '').toUpperCase() !== 'OPEN'
+    ? exec('bash', ['-c', `${VENV_PYTHON} ${OWNER_DECISIONS_SCRIPT} request --repo ${repo} --pr ${n} 2>/dev/null || true`]).catch(() => {})
+    : null
+  await Promise.all([comment, move, decisionsClosed])
   return out
 }
 

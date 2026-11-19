@@ -9,7 +9,7 @@ import { describePrState } from '../src/lib/prState.js'
 import {
   parseDecisions, pendingDecisions, summarizeDecisions, vagueness, applyAnswers, decisionsComment, isAnswered
 } from '../webhook-server/decisions.js'
-import { assertDecisions } from '../webhook-server/decisions_gate.js'
+import { assertDecisions, assertDecisionsBuilt } from '../webhook-server/decisions_gate.js'
 
 // The owner's rule (2026-10-09): a PR or ticket that asks him to choose must give him options to answer, and can't be
 // approved until the required ones are answered; asking in prose is "too vague".
@@ -304,5 +304,51 @@ describe('mergePr and the review card', () => {
   it('a stale DECISIONS_ refusal is not shown as an error once the state explains it', () => {
     const s = describePrState({ decisions: { present: true, questions: [], problems: [], pending: [] } }, { status: 'error', errorMessage: 'DECISIONS_PENDING at request: x' })
     expect(s.kind).not.toBe('error')
+  })
+})
+
+describe('assertDecisionsBuilt (merge queue recheck)', () => {
+  const PR = 'https://github.com/G-Eskayo/marvin/pull/99'
+
+  it('passes when the owner_decisions.py request says nothing to request', async () => {
+    const exec = vi.fn(async () => ({ stdout: 'nothing to request: already addressed (reply)', stderr: '' }))
+    await expect(assertDecisionsBuilt(PR, exec)).resolves.toBeUndefined()
+  })
+
+  it('files a follow-up and throws DECISIONS_UNBUILT when answers are not built', async () => {
+    const exec = vi.fn(async () => ({ stdout: 'filed https://github.com/G-Eskayo/marvin/issues/900\n', stderr: '' }))
+    await expect(assertDecisionsBuilt(PR, exec)).rejects.toMatchObject({ payload: { code: 'DECISIONS_UNBUILT' } })
+  })
+
+  it('passes when already filed', async () => {
+    const exec = vi.fn(async () => ({ stdout: 'already filed', stderr: '' }))
+    await expect(assertDecisionsBuilt(PR, exec)).rejects.toMatchObject({ payload: { code: 'DECISIONS_UNBUILT' } })
+  })
+
+  it('fails closed when the script cannot be run', async () => {
+    const exec = vi.fn(async () => { throw Object.assign(new Error('no python'), { stderr: 'skipped: Python not available' }) })
+    await expect(assertDecisionsBuilt(PR, exec)).rejects.toMatchObject({ payload: { code: 'DECISIONS_UNCHECKED' } })
+  })
+
+  it('fails closed when the script returns an error', async () => {
+    const exec = vi.fn(async () => { throw Object.assign(new Error('script error'), { stderr: 'skipped: could not read GitHub' }) })
+    await expect(assertDecisionsBuilt(PR, exec)).rejects.toMatchObject({ payload: { code: 'DECISIONS_UNCHECKED' } })
+  })
+
+  it('handles URL parsing edge cases gracefully', async () => {
+    // Invalid URL format: should not throw, just return
+    const exec = vi.fn()
+    await expect(assertDecisionsBuilt('not a url', exec)).resolves.toBeUndefined()
+    expect(exec).not.toHaveBeenCalled()
+  })
+
+  it('interprets owner_decisions.py skipped responses as unchecked', async () => {
+    const exec = vi.fn(async () => ({ stdout: 'skipped: GitHub timeout', stderr: '' }))
+    await expect(assertDecisionsBuilt(PR, exec)).rejects.toMatchObject({ payload: { code: 'DECISIONS_UNCHECKED' } })
+  })
+
+  it('interprets owner_decisions.py error responses as unchecked', async () => {
+    const exec = vi.fn(async () => ({ stdout: 'could not list follow-ups', stderr: '' }))
+    await expect(assertDecisionsBuilt(PR, exec)).rejects.toMatchObject({ payload: { code: 'DECISIONS_UNCHECKED' } })
   })
 })

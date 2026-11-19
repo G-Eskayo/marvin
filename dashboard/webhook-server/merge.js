@@ -7,7 +7,7 @@ import path from 'path'
 import { classifyFailure, summarizeGateFailure, withRetry, MergeFailure, refusal } from './failure.js'
 import { recordFailure, recordFlaky } from './failure_log.js'
 import { assertUiEvidence } from './ui_evidence.js'
-import { assertDecisions } from './decisions_gate.js'
+import { assertDecisions, assertDecisionsBuilt } from './decisions_gate.js'
 import { fileURLToPath } from 'url'
 import { sendFeedback } from './deny.js'
 import { parseTicketRef } from '../electron/main/mr_review.js'
@@ -1012,6 +1012,8 @@ async function mergePrUnqueued(
 
   // No code review here: it runs in the build loop before the PR opens (sandbox_orchestration.execute_ticket).
   // Approve only checks the PR merges cleanly: CI, conflicts, retest after a rebase.
+
+  await assertDecisionsBuilt(prUrl, exec)
 
   stage('merging', 'started', '')
   progress('merging', 'running')

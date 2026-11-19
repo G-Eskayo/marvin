@@ -72,6 +72,18 @@ query($q: String!, $f: String!, $after: String) {
 }
 """ % (COMMITS_PER_PR, COMMENTS_PER_PR)
 
+_QUERY_ONE = """
+query($repo: String!, $pr: Int!) {
+  repository(owner: "", name: "") {
+    pullRequest(number: $pr) {
+      number title url headRefName body
+      commits(last: %d) { nodes { commit { committedDate authoredDate parents { totalCount } } } }
+      comments(last: %d) { nodes { databaseId url createdAt body author { login } } }
+    }
+  }
+}
+""" % (COMMITS_PER_PR, COMMENTS_PER_PR)
+
 
 def grace_hours(env=None) -> float:
     """MARVIN_DECISIONS_GRACE_HOURS when it is a sane number of hours (0 < h <= 168), else the default."""
@@ -189,6 +201,46 @@ def pr_status(pr: dict, now: datetime, grace: float, completed_comments: set[int
 
 def _gh(args, run=subprocess.run):
     return run(["gh", *args], capture_output=True, text=True, timeout=60)
+
+
+def _fetch_one(repo: str, number: int, run=subprocess.run) -> dict | None:
+    """A single PR by number, or None if GitHub could not be read or the PR does not exist."""
+    owner, name = repo.split("/", 1) if "/" in repo else ("", "")
+    query = f"""
+query($pr: Int!) {{
+  repository(owner: "{owner}", name: "{name}") {{
+    pullRequest(number: $pr) {{
+      number title url headRefName body
+      commits(last: {COMMITS_PER_PR}) {{ nodes {{ commit {{ committedDate authoredDate parents {{ totalCount }} }} }} }}
+      comments(last: {COMMENTS_PER_PR}) {{ nodes {{ databaseId url createdAt body author {{ login }} }} }}
+    }}
+  }}
+}}
+"""
+    args = ["api", "graphql", "-f", f"query={query}", "-F", f"pr={number}"]
+    out = _gh(args, run)
+    if out.returncode != 0:
+        return None
+    try:
+        data = json.loads(out.stdout)
+        repo_data = data.get("data")
+        if not isinstance(repo_data, dict):
+            return None
+        pr_data = repo_data.get("repository")
+        if not isinstance(pr_data, dict):
+            return None
+        pr_data = pr_data.get("pullRequest")
+        if not pr_data:
+            return None
+        commits = pr_data.get("commits", {}).get("nodes") or []
+        return {"repo": repo, "number": pr_data["number"], "title": pr_data.get("title") or "",
+                "url": pr_data.get("url") or "", "headRefName": pr_data.get("headRefName"),
+                "body": pr_data.get("body") or "",
+                "last_commit_at": commits[-1]["commit"]["committedDate"] if commits else None,
+                "last_work_at": last_work_at(commits),
+                "comments": pr_data.get("comments", {}).get("nodes") or []}
+    except (ValueError, KeyError, TypeError, AttributeError):
+        return None
 
 
 def fetch(repos, run=subprocess.run) -> dict | None:
@@ -406,7 +458,18 @@ def sync(repos, now: datetime | None = None, run=subprocess.run, dry_run: bool =
         if s and s["addressed_by"] in ("reply", "as-built"):
             why = f"PR #{pr} was addressed (a {s['addressed_by']} after the decisions)."
         elif (repo, pr) not in open_prs and data["complete"]:
-            why = f"PR #{pr} is no longer open."
+            # PR is no longer open: fetch it and recompute status to check if it was addressed.
+            pr_data = _fetch_one(repo, pr, run)
+            if pr_data:
+                s = pr_status(pr_data, now, grace)
+                if s and s["addressed_by"] in ("reply", "as-built"):
+                    why = f"PR #{pr} was addressed (a {s['addressed_by']} after the decisions)."
+                else:
+                    # PR is closed but not addressed: leave the follow-up open (may need manual action).
+                    continue
+            else:
+                # Could not read the PR: leave the follow-up open to avoid silently losing track.
+                continue
         else:
             continue
         for x in items:
@@ -422,13 +485,21 @@ def request(repo: str, number: int, now: datetime | None = None, run=subprocess.
     data = fetch([repo], run)
     if data is None:
         return "skipped: could not read GitHub"
-    s = next((x for x in statuses(data, now or datetime.now(timezone.utc), 0.0) if x["number"] == number), None)
+    now_dt = now or datetime.now(timezone.utc)
+    s = next((x for x in statuses(data, now_dt, 0.0) if x["number"] == number), None)
     if s is None:
-        return "nothing to request: no owner Decisions on this PR"
+        # Fallback: PR not in open-PR search (may be merged or closed); fetch it directly.
+        pr = _fetch_one(repo, number, run)
+        if pr is None:
+            return "skipped: could not read GitHub"
+        data = {"prs": [pr], "followups": data["followups"]} if data else {"prs": [pr], "followups": []}
+        s = pr_status(pr, now_dt, 0.0)
+        if s is None:
+            return "nothing to request: no owner Decisions on this PR"
     if s["addressed_by"]:
         return f"nothing to request: already addressed ({s['addressed_by']})"
     if any((followup_marker(x.get("body")) or {}).get("comment") == s["comment_id"] and x.get("state") == "OPEN"
-           for x in data["followups"]):
+           for x in data.get("followups", [])):
         return "already filed"
     return _file(s, run, dry_run)
 

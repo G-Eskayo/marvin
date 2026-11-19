@@ -924,6 +924,13 @@ unbounded: any chat, either machine, raw `gh`, the GitHub UI). Polling stays onl
   repo's open PRs (last commit, last 30 comments) and the follow-up tickets (2 points). An unanswered owner Decisions
   comment becomes one `ready-for-agent` follow-up ticket after 4 h; the dashboard ranks it first from the issue list it
   already caches. Rules in `docs/agents/decisions-format.md`.
+  
+  **Merge-time recheck** (marvin#231): when a PR is approved for merge, the merge server calls `lib/owner_decisions.py
+  request` to file the follow-up now (no grace hours) if answers aren't built yet, blocking the merge. Once the PR is
+  merged or closed, the scan's fallback read (`_fetch_one` via GraphQL) rechecks its status: closes the follow-up if the
+  PR was addressed, leaves it open if closed but unaddressed (needs manual review). The fallback read lets merged PRs
+  be handled even when the initial search is complete: a PR that was just merged still shows up in `closed` state, so
+  the follow-up can close automatically without a second scan cycle.
 
 ### Dashboard actions render their true result locally at once, and confirm in the background (decided 2026-10-21)
 

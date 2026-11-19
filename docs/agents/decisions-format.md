@@ -66,7 +66,15 @@ A PR whose latest *Decisions from the owner* comment has no commit after it, no 
 After 4 hours (`MARVIN_DECISIONS_GRACE_HOURS`) the hourly ticket scan files one follow-up ticket *Act on owner decisions
 on PR #N* (`ready-for-agent`, `owner-decisions`), flagged when the notes ask a question, and closes it once the PR is
 addressed or closes. It shows at the top of the dashboard's ranked attention list. Whoever acts replies on the PR with
-the marker. Code: `lib/owner_decisions.py`.
+the marker.
+
+**Merge-time recheck (marvin#231):** when a PR is approved for merge, the merge server checks whether its owner's
+answers are built yet (commit + addressed reply after the answers, or answers that picked only built options). If not,
+it files the follow-up at merge time (no grace hours) and blocks the merge with `DECISIONS_UNBUILT`. Once the PR is
+merged or closed, the follow-up's status is rechecked: it closes if the PR was addressed, stays open if it was closed
+but unaddressed (needs manual review).
+
+Code: `lib/owner_decisions.py`.
 
 Code: `dashboard/webhook-server/decisions.js` (the one parser, pure; `decisions_cli.js` runs it for `lib/decisions_check.py`, the `bin/gh` rule), `decisions_gate.js` (merge-server check),
 `dashboard/electron/main/decisions_submit.js` (submit), `dashboard/src/components/Decisions.jsx` (the form).

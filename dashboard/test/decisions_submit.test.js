@@ -18,7 +18,7 @@ const BODY = `Images above.
 `
 
 // A fake gh: answers the issue read, records PATCH bodies (read from the --input file) and comments.
-function fakeGh({ body = BODY, labels = [], pullRequest = true, failPatch = false, failComment = false, patchAnswer = null, commentGate = null } = {}) {
+function fakeGh({ body = BODY, labels = [], pullRequest = true, state: issueState = 'open', failPatch = false, failComment = false, patchAnswer = null, commentGate = null } = {}) {
   const state = { patched: null, comments: [], labelEdits: [] }
   const exec = vi.fn(async (cmd, args) => {
     if (args[0] === 'api' && args[1] === '-X' && args[2] === 'PATCH') {
@@ -35,7 +35,7 @@ function fakeGh({ body = BODY, labels = [], pullRequest = true, failPatch = fals
       return { stdout: 'https://github.com/o/r/pull/9#issuecomment-1\n' }
     }
     if (args[0] === 'api') {
-      return { stdout: JSON.stringify({ body, labels: labels.map((name) => ({ name })), ...(pullRequest ? { pull_request: {} } : {}) }) }
+      return { stdout: JSON.stringify({ body, labels: labels.map((name) => ({ name })), state: issueState, ...(pullRequest ? { pull_request: {} } : {}) }) }
     }
     if (args[0] === 'issue' && args[1] === 'edit') { state.labelEdits.push(args); return { stdout: '' } }
     if (args[0] === 'pr' && args[1] === 'comment') { state.comments.push(args[args.indexOf('--body') + 1]); return { stdout: '' } }
@@ -210,5 +210,74 @@ describe('submitDecisions: GitHub\'s answer to the write, and the record off the
     expect(state.labelEdits).toHaveLength(1) // moved to ready-for-agent while the comment is still held
     release()
     expect((await r.recorded).labelsChanged).toBe(true)
+  })
+
+  it('when a closed PR gets answers, calls owner_decisions.py request to file a follow-up', async () => {
+    const execCalls = []
+    const exec = vi.fn(async (cmd, args) => {
+      execCalls.push([cmd, args])
+      if (cmd === 'bash') return { stdout: 'filed follow-up', stderr: '' }
+      return fakeGh({ state: 'closed' }).exec(cmd, args)
+    })
+    const result = await submitDecisions(
+      { repo: 'G-Eskayo/marvin', number: 577, answers: { dance: { choices: ['A: Clap & wiggle'] }, handoff: { choices: ['Glide'] } } },
+      { exec }
+    )
+    expect(result.ok).toBe(true)
+    // Should have called owner_decisions.py request
+    expect(execCalls.some((c) => c[0] === 'bash' && c[1][1]?.includes('owner_decisions.py'))).toBe(true)
+  })
+
+  it('when a merged PR gets answers, calls owner_decisions.py request to file a follow-up', async () => {
+    const execCalls = []
+    const exec = vi.fn(async (cmd, args) => {
+      execCalls.push([cmd, args])
+      if (cmd === 'bash') return { stdout: 'filed follow-up', stderr: '' }
+      return fakeGh({ state: 'closed' }).exec(cmd, args)
+    })
+    await submitDecisions(
+      { repo: 'G-Eskayo/marvin', number: 577, answers: { dance: { choices: ['A: Clap & wiggle'] }, handoff: { choices: ['Glide'] } } },
+      { exec }
+    )
+    expect(execCalls.some((c) => c[0] === 'bash' && c[1][1]?.includes('owner_decisions.py'))).toBe(true)
+  })
+
+  it('open PR answers do not call owner_decisions.py', async () => {
+    const execCalls = []
+    const exec = vi.fn(async (cmd, args) => {
+      execCalls.push([cmd, args])
+      return fakeGh().exec(cmd, args)
+    })
+    await submitDecisions(
+      { repo: 'o/r', number: 9, answers: { handoff: { choices: ['Glide'] } } },
+      { exec }
+    )
+    expect(execCalls.some((c) => c[0] === 'bash' && c[1][1]?.includes('owner_decisions.py'))).toBe(false)
+  })
+
+  it('closed PR with no decisions does not call owner_decisions.py', async () => {
+    const execCalls = []
+    const exec = vi.fn(async (cmd, args) => {
+      execCalls.push([cmd, args])
+      if (cmd === 'bash') return { stdout: '', stderr: '' }
+      return fakeGh({ state: 'closed', body: 'No decisions here' }).exec(cmd, args)
+    })
+    await submitDecisions(
+      { repo: 'o/r', number: 9, answers: {} },
+      { exec }
+    )
+    expect(execCalls.some((c) => c[0] === 'bash' && c[1][1]?.includes('owner_decisions.py'))).toBe(false)
+  })
+
+  it('owner_decisions.py errors are ignored (best-effort)', async () => {
+    const exec = vi.fn(async (cmd, args) => {
+      if (cmd === 'bash') throw new Error('script failed')
+      return fakeGh({ state: 'closed' }).exec(cmd, args)
+    })
+    const result = await submitDecisions(
+      { repo: 'o/r', number: 9, answers: { handoff: { choices: ['Glide'] } } },
+      { exec }
+    )
+    expect(result.ok).toBe(true)
   })
 })
