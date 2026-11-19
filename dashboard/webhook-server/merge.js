@@ -7,7 +7,7 @@ import path from 'path'
 import { classifyFailure, summarizeGateFailure, withRetry, MergeFailure, refusal } from './failure.js'
 import { recordFailure, recordFlaky } from './failure_log.js'
 import { assertUiEvidence } from './ui_evidence.js'
-import { assertDecisions } from './decisions_gate.js'
+import { assertDecisions, assertAnswersBuilt } from './decisions_gate.js'
 import { fileURLToPath } from 'url'
 import { sendFeedback } from './deny.js'
 import { parseTicketRef } from '../electron/main/mr_review.js'
@@ -855,7 +855,7 @@ async function mergePrUnqueued(
   recordStageFn = recordStage,
   deps = {}
 ) {
-  const { sleep, recordFailureFn = recordFailure, gateContext = defaultGateContext, baselineFails = null, gateTimeoutMs = GATE_TIMEOUT_MS, rebaseOpen = checkOpenPrs, uiEvidence = assertUiEvidence, decisions = assertDecisions,
+  const { sleep, recordFailureFn = recordFailure, gateContext = defaultGateContext, baselineFails = null, gateTimeoutMs = GATE_TIMEOUT_MS, rebaseOpen = checkOpenPrs, uiEvidence = assertUiEvidence, decisions = assertDecisions, answersBuilt = assertAnswersBuilt,
     progress: report = noProgress, loadNow = () => machineLoad(), now = Date.now, diskFirstAid = null, memoryCheck = null } = deps
   if (typeof prUrl !== 'string' || !prUrl.startsWith('https://github.com/')) {
     throw new MergeFailure(classifyFailure({ stage: 'request', error: new Error(`Not a GitHub PR URL: ${prUrl}`) }))
@@ -881,6 +881,8 @@ async function mergePrUnqueued(
   await uiEvidence(prUrl, exec, ctx ? ctx.uiPaths : [])
   // A PR that asks the owner to choose merges only once he has answered, in its Decisions section (2026-10-09).
   await decisions(prUrl, exec)
+  // A PR whose owner has answered Decisions merges only once that work is built (marvin#1261).
+  await answersBuilt(prUrl, exec)
 
   const { gate, behind = false, headRefName, body, shared = [], rules = [] } = ctx ? await shouldGateMerge(prUrl, exec, ctx) : await shouldGateMerge(prUrl, exec)
   const ticketNumber = parseTicketRef(body)

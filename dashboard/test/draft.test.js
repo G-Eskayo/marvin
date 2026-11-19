@@ -3,6 +3,7 @@ import { describe, it, expect, vi } from 'vitest'
 vi.mock('../webhook-server/ticket_stages.js', () => ({ recordStage: vi.fn() }))
 vi.mock('../webhook-server/failure_log.js', () => ({ recordFailure: vi.fn() }))
 vi.mock('../webhook-server/rebase_status.js', () => ({ writeRebaseStatus: vi.fn(), readRebaseStatus: vi.fn(() => ({})) }))
+vi.mock('../webhook-server/decisions_gate.js', () => ({ assertDecisions: vi.fn(async () => {}), assertAnswersBuilt: vi.fn(async () => {}) }))
 
 import { readyIfDraft, mergePr } from '../webhook-server/merge.js'
 import { classifyFailure } from '../webhook-server/failure.js'

@@ -3,13 +3,14 @@ import { describe, it, expect, vi } from 'vitest'
 vi.mock('../webhook-server/ticket_stages.js', () => ({ recordStage: vi.fn() }))
 vi.mock('../webhook-server/failure_log.js', () => ({ recordFailure: vi.fn() }))
 vi.mock('../webhook-server/rebase_status.js', () => ({ writeRebaseStatus: vi.fn(), readRebaseStatus: vi.fn(() => ({})) }))
+vi.mock('../webhook-server/ui_evidence.js', () => ({ assertUiEvidence: vi.fn(async () => {}) }))
 
 import { mergePr } from '../webhook-server/merge.js'
 import { describePrState } from '../src/lib/prState.js'
 import {
   parseDecisions, pendingDecisions, summarizeDecisions, vagueness, applyAnswers, decisionsComment, isAnswered
 } from '../webhook-server/decisions.js'
-import { assertDecisions } from '../webhook-server/decisions_gate.js'
+import { assertDecisions, assertAnswersBuilt } from '../webhook-server/decisions_gate.js'
 
 // The owner's rule (2026-10-09): a PR or ticket that asks him to choose must give him options to answer, and can't be
 // approved until the required ones are answered; asking in prose is "too vague".
@@ -263,9 +264,37 @@ describe('assertDecisions (merge server)', () => {
   })
 })
 
+describe('assertAnswersBuilt (merge gate checks if answers are built)', () => {
+  const PR = 'https://github.com/G-Eskayo/marvin/pull/999'
+  const statusOf = (answered, built) => vi.fn().mockResolvedValue({ stdout: JSON.stringify({ addressed_by: answered ? 'reply' : null, built_since: built }) })
+
+  it('passes when answers are built or addressed', async () => {
+    await expect(assertAnswersBuilt(PR, statusOf(false, true))).resolves.toBeUndefined()
+    await expect(assertAnswersBuilt(PR, statusOf(true, false))).resolves.toBeUndefined()
+  })
+
+  it('refuses when answers are unaddressed and not built', async () => {
+    await expect(assertAnswersBuilt(PR, statusOf(false, false))).rejects.toMatchObject({ payload: { code: 'DECISIONS_UNBUILT' } })
+  })
+
+  it('fails closed when status cannot be read', async () => {
+    await expect(assertAnswersBuilt(PR, vi.fn().mockRejectedValue(new Error('boom')))).rejects.toMatchObject({ payload: { code: 'DECISIONS_UNCHECKED' } })
+  })
+
+  it('fails closed on invalid PR URL', async () => {
+    await expect(assertAnswersBuilt('not-a-url', vi.fn())).rejects.toMatchObject({ payload: { code: 'DECISIONS_UNCHECKED' } })
+  })
+})
+
 describe('mergePr and the review card', () => {
   it('mergePr refuses open decisions before any gate work or merge', async () => {
-    const exec = vi.fn(async () => ({ stdout: JSON.stringify({ body: SEAL, baseRefName: 'main', isDraft: false, files: [] }), stderr: '' }))
+    const exec = vi.fn(async (cmd, args) => {
+      if (cmd === 'gh' && args[1] === 'view') {
+        return { stdout: JSON.stringify({ body: SEAL, baseRefName: 'main', isDraft: false, files: [] }), stderr: '' }
+      }
+      // For Python status calls (assertAnswersBuilt), return null (no decisions)
+      return { stdout: 'null', stderr: '' }
+    })
     const shouldGate = vi.fn()
     await expect(mergePr('https://github.com/G-Eskayo/marvin/pull/99', exec, () => Promise.resolve(), () => {}, shouldGate))
       .rejects.toMatchObject({ payload: { code: 'DECISIONS_PENDING' } })

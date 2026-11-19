@@ -52,7 +52,7 @@ The diagram dates from 2026-10-09. Since then the gate gained the screenshot, de
 1. **Queue.** Approve adds the PR to its repo's merge queue (`merge_queue.js`), which runs one merge at a time per repo through the gate below.
 2. **Cheap refusals first.** Before any machine work: another project needs a profile that allows merging from the dashboard (`NO_MERGE_PROFILE`, `ENV_MISSING`); the PR must target its base (`WRONG_BASE`); its ticket must not be sent back (`SENT_BACK`); a draft is marked ready or refused (`PR_DRAFT`).
 3. **Screenshots.** A PR that changes how an app looks must show images (`NO_UI_EVIDENCE`), pinned to a full commit SHA (`IMAGES_UNPINNED`), and taken after the last UI change (`IMAGES_STALE`). `bin/pr-shots` writes them that way. If GitHub can't be asked, it fails closed (`UI_EVIDENCE_UNCHECKED`).
-4. **Decisions.** Open questions to you block the merge (`DECISIONS_PENDING`, `DECISIONS_UNSTRUCTURED`). See [Decisions](/docs/features/decisions/).
+4. **Decisions.** Open questions to you block the merge (`DECISIONS_PENDING`, `DECISIONS_UNSTRUCTURED`). Your answers must be acted on before the PR merges (`DECISIONS_UNBUILT`). See [Decisions](/docs/features/decisions/).
 5. **GitHub CI.** Still running means wait (`CI_PENDING`). Failing sends the PR back to its ticket with the check names (`CI_FAILED`).
 6. **Retest or not** (ADR 0061, amended 2026-10-26). Up to date with main, or behind but main changed none of the PR's files and no test or guard rule: merge directly. Shared files, a changed rule, or an overlap it can't read: retest.
 7. **Machine checks.** Memory pressure at warn or critical queues the Approve to run when it drops (`MEMORY_PRESSURE`). Under 5 GB free, it clears rebuildable files once, then refuses.

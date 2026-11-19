@@ -31,6 +31,7 @@ every duplicate for the same comment except the lowest-numbered one, so a race s
     owner_decisions.py waiting [--json]   # PRs whose decisions are in and not yet acted on (not "Needs Gil")
     owner_decisions.py scan [--dry-run]   # what the hourly scan runs: file / close follow-ups
     owner_decisions.py request --repo R --pr N   # the merge queue (marvin#231): file this PR's follow-up now
+    owner_decisions.py status --repo R --pr N   # the merge gate (marvin#1261): whether answers are built for this PR
 """
 from __future__ import annotations
 
@@ -275,6 +276,37 @@ def waiting(repos, now: datetime | None = None, run=subprocess.run) -> list[dict
     return [s for s in statuses(data, now or datetime.now(timezone.utc), grace_hours()) if not s["addressed_by"]]
 
 
+def _closed_pr_status(repo: str, number: int, run=subprocess.run) -> dict | None:
+    """Status of a closed/merged PR's owner Decisions (single gh call, no fetch needed). None if no Decisions found."""
+    out = _gh(["pr", "view", str(number), "--repo", repo, "--json", "comments,body"], run)
+    if out.returncode != 0:
+        raise RuntimeError(f"Could not read PR {repo}#{number}: {out.stderr.strip()[:200]}")
+    try:
+        data = json.loads(out.stdout)
+        p = {"repo": repo, "number": number, "title": "", "url": f"https://github.com/{repo}/pull/{number}",
+             "headRefName": "", "body": data.get("body") or "", "last_commit_at": None,
+             "last_work_at": None, "comments": data.get("comments") or []}
+        return pr_status(p, datetime.now(timezone.utc), grace_hours())
+    except (ValueError, KeyError, TypeError):
+        raise RuntimeError(f"Could not parse PR {repo}#{number} response")
+
+
+def status_for(repo: str, number: int, now: datetime | None = None, run=subprocess.run) -> dict | None:
+    """Status of one PR's owner Decisions (open or closed), or None if it has none. Raises RuntimeError when unreadable."""
+    if not isinstance(repo, str) or not isinstance(number, int) or repo.count("/") != 1:
+        raise ValueError(f"Invalid repo {repo} or number {number}")
+    data = fetch([repo], run)
+    if data is None:
+        raise RuntimeError(f"Could not read GitHub for {repo}")
+    for p in data["prs"]:
+        if p.get("number") == number:
+            st = pr_status(p, now or datetime.now(timezone.utc), grace_hours())
+            return st
+    if not data["complete"]:
+        raise RuntimeError(f"Could not read GitHub for {repo}: PR list was truncated")
+    return _closed_pr_status(repo, number, run)
+
+
 # ── the follow-up ticket ───────────────────────────────────────────────────────────────────────────────────────
 
 def followup_title(number: int) -> str:
@@ -406,6 +438,13 @@ def sync(repos, now: datetime | None = None, run=subprocess.run, dry_run: bool =
         if s and s["addressed_by"] in ("reply", "as-built"):
             why = f"PR #{pr} was addressed (a {s['addressed_by']} after the decisions)."
         elif (repo, pr) not in open_prs and data["complete"]:
+            if s is None:
+                try:
+                    merged_status = _closed_pr_status(repo, pr, run)
+                except RuntimeError:
+                    continue
+                if merged_status and merged_status["addressed_by"] is None:
+                    continue
             why = f"PR #{pr} is no longer open."
         else:
             continue
@@ -476,7 +515,20 @@ def main(argv=None) -> int:
             return 2
         print(request(repo, number, dry_run="--dry-run" in argv))
         return 0
-    print("usage: owner_decisions.py waiting [--json] | scan [--dry-run] | request --repo R --pr N [--dry-run]", file=sys.stderr)
+    if argv[:1] == ["status"] and "--repo" in argv and "--pr" in argv:
+        try:
+            repo, number = argv[argv.index("--repo") + 1], int(argv[argv.index("--pr") + 1])
+        except (IndexError, ValueError):
+            print("usage: owner_decisions.py status --repo OWNER/NAME --pr N", file=sys.stderr)
+            return 2
+        try:
+            s = status_for(repo, number)
+            print(json.dumps(s))
+            return 0
+        except RuntimeError as e:
+            print(str(e), file=sys.stderr)
+            return 1
+    print("usage: owner_decisions.py waiting [--json] | scan [--dry-run] | request --repo R --pr N [--dry-run] | status --repo R --pr N", file=sys.stderr)
     return 2
 
 

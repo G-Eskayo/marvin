@@ -135,6 +135,7 @@ def test_grace_hours_is_configurable_and_rejects_nonsense():
 class FakeGitHub:
     def __init__(self, prs, issues=None, fail=()):
         self.prs, self.issues, self.fail, self.calls = prs, issues or [], set(fail), []
+        self.all_prs = {(p["repo"], p["number"]): p for p in prs}
         self.next_number = 900
 
     def node(self, p):
@@ -176,6 +177,17 @@ class FakeGitHub:
                     i["state"] = "CLOSED"
                     i["stateReason"] = "NOT_PLANNED" if "not planned" in args else "COMPLETED"
             return subprocess.CompletedProcess(cmd, 0, "", "")
+        if kind == "pr view":
+            repo = args[args.index("--repo") + 1]
+            try:
+                number = int(args[2])
+            except (IndexError, ValueError):
+                return subprocess.CompletedProcess(cmd, 1, "", "invalid PR number")
+            p = self.all_prs.get((repo, number))
+            if p:
+                data = {"body": p.get("body", ""), "comments": p.get("comments", [])}
+                return subprocess.CompletedProcess(cmd, 0, json.dumps(data), "")
+            return subprocess.CompletedProcess(cmd, 1, "", "not found")
         return subprocess.CompletedProcess(cmd, 0, "", "")
 
     def open_followups(self):
@@ -254,7 +266,7 @@ def test_follow_up_closes_itself_when_the_reply_lands_not_on_a_bare_commit():
     assert gh.open_followups() == [] and "addressed" in r["closed"][0]["why"]
 
 
-def test_follow_up_closes_when_the_pr_closes_but_not_when_the_list_was_cut_short():
+def test_follow_up_stays_open_when_unaddressed_pr_closes_but_not_when_the_list_was_cut_short():
     gh = FakeGitHub([pr([decisions()])])
     od.sync([REPO], now=LATE, run=gh, grace=4)
     gh.prs = []
@@ -269,8 +281,9 @@ def test_follow_up_closes_when_the_pr_closes_but_not_when_the_list_was_cut_short
         return out
     od.sync([REPO], now=LATE, run=truncated, grace=4)
     assert len(gh.open_followups()) == 1
-    od.sync([REPO], now=LATE, run=gh, grace=4)
-    assert gh.open_followups() == []
+    # Now with a complete list, unaddressed merged PR still keeps its follow-up open (marvin#1261)
+    r = od.sync([REPO], now=LATE, run=gh, grace=4)
+    assert len(gh.open_followups()) == 1 and not any("is no longer open" in c["why"] for c in r["closed"])
 
 
 def test_github_failing_files_and_closes_nothing():
@@ -309,6 +322,105 @@ def test_the_scan_step_never_breaks_dispatch(monkeypatch):
     monkeypatch.setattr(od, "sync", lambda repos: {"ok": True, "filed": [{"repo": REPO, "pr": 577, "result": "filed x"}],
                                                    "closed": [], "waiting": [1]})
     assert ticket_pipeline._owner_decisions() == "1 PR(s) waiting on MARVIN; marvin PR #577: filed x"
+
+
+# ── status_for and the status CLI (marvin#1261: merge gate checks if answers are built) ────────────────────────
+
+def test_status_for_finds_unaddressed_decisions_on_an_open_pr():
+    gh = FakeGitHub([pr([decisions()])])
+    s = od.status_for(REPO, 577, now=LATE, run=gh)
+    assert s is not None and s["addressed_by"] is None
+
+
+def test_status_for_returns_none_for_a_pr_with_no_decisions():
+    gh = FakeGitHub([pr([], number=578)])
+    s = od.status_for(REPO, 578, now=LATE, run=gh)
+    assert s is None
+
+
+def test_status_for_raises_when_github_cannot_be_read():
+    gh = FakeGitHub([], fail={"api graphql"})
+    try:
+        od.status_for(REPO, 577, now=LATE, run=gh)
+        assert False, "should have raised"
+    except RuntimeError as e:
+        assert "Could not read GitHub" in str(e)
+
+
+def test_status_for_reads_a_closed_pr_with_unaddressed_decisions():
+    gh = FakeGitHub([pr([decisions()])], fail=set())
+    gh.all_prs[(REPO, 577)] = pr([decisions()])
+    gh.prs = []
+    s = od.status_for(REPO, 577, now=LATE, run=gh)
+    assert s is not None and s["addressed_by"] is None
+
+
+def test_status_for_raises_when_fetch_is_incomplete_and_pr_missing():
+    # Open PR missing from truncated list should raise, not fall back to closed-PR lookup
+    # which would hard-code commit times to None, causing false DECISIONS_UNBUILT refusals
+    gh = FakeGitHub([pr([decisions()])], fail=set())
+    gh.all_prs[(REPO, 577)] = pr([decisions()])
+    # Simulate a truncated fetch: PR not in prs list, but fetch says it's incomplete
+    orig_fetch = od.fetch
+    def truncated_fetch(repos, run):
+        d = orig_fetch(repos, run)
+        d["complete"] = False  # list was cut short
+        d["prs"] = []  # but this PR isn't in it
+        return d
+    try:
+        od.fetch = truncated_fetch
+        try:
+            od.status_for(REPO, 577, now=LATE, run=gh)
+            assert False, "should have raised"
+        except RuntimeError as e:
+            assert "truncated" in str(e)
+    finally:
+        od.fetch = orig_fetch
+
+
+def test_status_cli_prints_json(monkeypatch):
+    gh = FakeGitHub([pr([decisions()])])
+    monkeypatch.setattr(od, "status_for", lambda repo, number, now=None, run=od.subprocess.run: od.pr_status(pr([decisions()]), LATE, 4))
+    exit_code = od.main(["status", "--repo", REPO, "--pr", "577"])
+    assert exit_code == 0
+
+
+def test_status_cli_exits_1_when_unreadable(monkeypatch):
+    monkeypatch.setattr(od, "status_for", lambda repo, number, now=None, run=od.subprocess.run: (_ for _ in ()).throw(RuntimeError("boom")))
+    exit_code = od.main(["status", "--repo", REPO, "--pr", "577"])
+    assert exit_code == 1
+
+
+def test_merged_unaddressed_pr_keeps_its_follow_up_open():
+    p = pr([decisions()])
+    gh = FakeGitHub([p])
+    od.sync([REPO], now=LATE, run=gh, grace=4)
+    assert len(gh.open_followups()) == 1
+    gh.prs = []
+    r = od.sync([REPO], now=LATE, run=gh, grace=4)
+    assert len(gh.open_followups()) == 1 and not r["closed"]
+
+
+def test_merged_addressed_pr_closes_its_follow_up():
+    p = pr([decisions()])
+    gh = FakeGitHub([p])
+    od.sync([REPO], now=LATE, run=gh, grace=4)
+    assert len(gh.open_followups()) == 1
+    p["comments"].append(comment(f"Done.\n{od.ADDRESSED_MARKER}", LATE))
+    gh.prs = []
+    r = od.sync([REPO], now=LATE, run=gh, grace=4)
+    assert gh.open_followups() == [] and len(r["closed"]) == 1
+
+
+def test_merged_pr_with_unreadable_lookup_keeps_follow_up_open():
+    p = pr([decisions()])
+    gh = FakeGitHub([p])
+    od.sync([REPO], now=LATE, run=gh, grace=4)
+    assert len(gh.open_followups()) == 1
+    gh.prs = []
+    gh.fail.add("pr view")
+    r = od.sync([REPO], now=LATE, run=gh, grace=4)
+    assert len(gh.open_followups()) == 1 and not r["closed"]
 
 
 # ── the real gh, outside any git repo (launchd runs the hourly scan from /) ──────────────────────────────────────

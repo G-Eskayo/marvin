@@ -158,3 +158,15 @@ export function createFollowUpRequester({ exec, python = VENV_PYTHON, script = O
       .catch((e) => { asked.delete(key); log(`[merge-queue] ${key}: could not request the follow-up: ${String(e?.message || e).slice(0, 200)}`); return false })
   }
 }
+
+// Is this PR's owner Decisions answered but not yet built? (lib/owner_decisions.py status_for). The merge gate uses this
+// to refuse merging until answers are acted on; marvin#1261.
+export async function freshlyUnbuilt(repo, number, { exec, python = VENV_PYTHON, script = OWNER_DECISIONS } = {}) {
+  try {
+    const { stdout } = await exec(python, [script, 'status', '--repo', repo, '--pr', String(number)], { timeout: 60_000 })
+    const status = JSON.parse(String(stdout || 'null'))
+    return !!(status && !status.addressed_by && !status.built_since)
+  } catch {
+    return false
+  }
+}

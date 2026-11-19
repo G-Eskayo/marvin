@@ -1,10 +1,10 @@
-import { describe, it, expect, beforeEach, afterEach } from 'vitest'
+import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest'
 import { mkdtempSync, rmSync, readFileSync, writeFileSync } from 'fs'
 import { tmpdir } from 'os'
 import path from 'path'
 import { createMergeQueue, createQueueStore, outcomeFor } from '../webhook-server/merge_queue.js'
 import { enrichForOrder, mainStateFrom } from '../webhook-server/merge_order.js'
-import { unbuiltFrom, createUnbuiltCache } from '../webhook-server/merge_facts.js'
+import { unbuiltFrom, createUnbuiltCache, freshlyUnbuilt } from '../webhook-server/merge_facts.js'
 
 // marvin#231: the queue runner against a small fake GitHub that behaves like the real one: a merge closes the PR, and
 // the post-merge step moves PRs stacked on it onto main (post_merge_rebase.js does that for real). Real store on disk.
@@ -61,6 +61,39 @@ const make = (w, extra = {}) => {
   const store = createQueueStore(file, { now: () => ++t })
   return { store, queue: createMergeQueue({ store, load: w.load, run: w.run, afterRun: w.afterRun, ...extra }) }
 }
+
+describe('freshlyUnbuilt (marvin#1261)', () => {
+  it('returns true when owner has answered but answers are not built', async () => {
+    const exec = vi.fn().mockResolvedValue({ stdout: JSON.stringify({ addressed_by: null, built_since: false }) })
+    const result = await freshlyUnbuilt(REPO, 123, { exec })
+    expect(result).toBe(true)
+    expect(exec).toHaveBeenCalled()
+  })
+
+  it('returns false when answers are built', async () => {
+    const exec = vi.fn().mockResolvedValue({ stdout: JSON.stringify({ addressed_by: null, built_since: true }) })
+    const result = await freshlyUnbuilt(REPO, 123, { exec })
+    expect(result).toBe(false)
+  })
+
+  it('returns false when answers are addressed', async () => {
+    const exec = vi.fn().mockResolvedValue({ stdout: JSON.stringify({ addressed_by: 'reply', built_since: false }) })
+    const result = await freshlyUnbuilt(REPO, 123, { exec })
+    expect(result).toBe(false)
+  })
+
+  it('returns false when the lookup throws', async () => {
+    const exec = vi.fn().mockRejectedValue(new Error('boom'))
+    const result = await freshlyUnbuilt(REPO, 123, { exec })
+    expect(result).toBe(false)
+  })
+
+  it('returns false for null status (no decisions)', async () => {
+    const exec = vi.fn().mockResolvedValue({ stdout: 'null' })
+    const result = await freshlyUnbuilt(REPO, 123, { exec })
+    expect(result).toBe(false)
+  })
+})
 
 describe('merge queue runner', () => {
   it('the stacked chain #936 -> #941 -> #942, approved in reverse order, merges base first, each by itself', async () => {
@@ -325,7 +358,7 @@ describe('temporary refusals hold, they never drop the PR', () => {
     expect(outcomeFor(refuse('CI_PENDING'))).toMatchObject({ kind: 'hold', until: 'checks' })
     expect(outcomeFor(refuse('MAIN_RED'))).toMatchObject({ kind: 'hold', until: 'main' })
     for (const c of ['NO_UI_EVIDENCE', 'IMAGES_STALE', 'IMAGES_UNPINNED']) expect(outcomeFor(refuse(c))).toMatchObject({ kind: 'hold', until: 'head' })
-    expect(outcomeFor(refuse('GATE_INFRA'))).toMatchObject({ kind: 'hold', until: 'later' })
+    for (const c of ['GATE_INFRA', 'DECISIONS_UNCHECKED', 'DECISIONS_UNBUILT']) expect(outcomeFor(refuse(c))).toMatchObject({ kind: 'hold', until: 'later' })
     expect(outcomeFor(refuse('MEMORY_PRESSURE')).kind).toBe('failed')   // the memory queue resumes it (#940)
     for (const c of ['GATE_TESTS_FAILED', 'CI_FAILED', 'SENT_BACK', 'DECISIONS_PENDING', 'WRONG_BASE', 'PR_DRAFT']) expect(outcomeFor(refuse(c)).kind).toBe('failed')
     expect(outcomeFor({ result: { merged: false, code: 'GATE_TESTS_FAILED', reason: 'x' } }).kind).toBe('failed')

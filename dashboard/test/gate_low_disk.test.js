@@ -3,6 +3,10 @@ import { mergePr, rebaseAndRetest, runDiskFirstAid, MIN_GATE_FREE_BYTES, DISK_FI
 import { summarizeGateFailure } from '../webhook-server/failure.js'
 
 vi.mock('../webhook-server/ticket_stages.js', () => ({ recordStage: vi.fn() }))
+vi.mock('../webhook-server/failure_log.js', () => ({ recordFailure: vi.fn() }))
+vi.mock('../webhook-server/rebase_status.js', () => ({ writeRebaseStatus: vi.fn(), readRebaseStatus: vi.fn(() => ({})) }))
+vi.mock('../webhook-server/ui_evidence.js', () => ({ assertUiEvidence: vi.fn(async () => {}) }))
+vi.mock('../webhook-server/decisions_gate.js', () => ({ assertDecisions: vi.fn(async () => {}), assertAnswersBuilt: vi.fn(async () => {}) }))
 
 // 2026-10-28: Approve on two PRs was refused within 3-4 s at "rebasing" with the generic GATE_INFRA line while the Mac
 // mini had 1.6 GB free; macOS's aerial wallpaper had refilled the disk since the daily sweep. Now the gate first runs the
