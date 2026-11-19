@@ -133,8 +133,24 @@ def test_partition_alive_separates_alive_and_dead_processes():
         {"task_id": "a", "pid": 1, "machine": "m1"},  # init, always alive
         {"task_id": "b", "pid": 999999, "machine": "m1"},  # very unlikely to exist
     ]
-    def is_alive(pid):
+    def is_alive(pid, started_at=None):
         return pid == 1
+    alive, dead = dc.partition_alive(records, is_alive)
+    assert [r["task_id"] for r in alive] == ["a"]
+    assert [r["task_id"] for r in dead] == ["b"]
+
+
+def test_partition_alive_checks_start_time_when_present():
+    from datetime import datetime, timezone
+    now = datetime.now(timezone.utc).isoformat()
+    old = (datetime.now(timezone.utc) - __import__("datetime").timedelta(hours=1)).isoformat()
+    records = [
+        {"task_id": "a", "pid": 1, "machine": "m1", "started_at": now},  # Recent start
+        {"task_id": "b", "pid": 1, "machine": "m1", "started_at": old},  # Old start (PID reused)
+    ]
+    def is_alive(pid, started_at=None):
+        # Only alive if started_at is recent
+        return started_at is not None and started_at == now
     alive, dead = dc.partition_alive(records, is_alive)
     assert [r["task_id"] for r in alive] == ["a"]
     assert [r["task_id"] for r in dead] == ["b"]
@@ -145,63 +161,115 @@ def test_partition_alive_handles_missing_pid():
         {"task_id": "a", "machine": "m1"},  # no pid key
         {"task_id": "b", "pid": None, "machine": "m1"},
     ]
-    def is_alive(pid):
+    def is_alive(pid, started_at=None):
         return True  # should never be called
     alive, dead = dc.partition_alive(records, is_alive)
     assert not alive and len(dead) == 2
 
 
-def test_read_task_records_globs_json_files_and_skips_malformed():
-    tmp = Path(__import__("tempfile").mkdtemp())
-    try:
-        (tmp / "task1.json").write_text('{"task_id": "t1", "pid": 123}')
-        (tmp / "task2.json").write_text('{"task_id": "t2", "pid": 456}')
-        (tmp / "broken.json").write_text('{not json}')
-        records = dc._read_task_records(tmp)
-        assert len(records) == 2
-        assert {r["task_id"] for r in records} == {"t1", "t2"}
-    finally:
-        import shutil
-        shutil.rmtree(tmp)
+def test_read_task_records_globs_json_files_and_quarantines_malformed(tmp_path, monkeypatch):
+    tasks_dir = tmp_path / "tasks"
+    tasks_dir.mkdir()
+    stale_dir = tmp_path / "stale"
+    stale_dir.mkdir()
+    monkeypatch.setattr(dc, "STALE_RECORDS_DIR", stale_dir)
+
+    (tasks_dir / "task1.json").write_text('{"task_id": "t1", "pid": 123}')
+    (tasks_dir / "task2.json").write_text('{"task_id": "t2", "pid": 456}')
+    (tasks_dir / "broken.json").write_text('{not json}')
+    records = dc._read_task_records(tasks_dir)
+    assert len(records) == 2
+    assert {r["task_id"] for r in records} == {"t1", "t2"}
+    # Malformed file should be quarantined to stale_dir
+    assert (stale_dir / "broken.json").exists(), "Malformed file should be quarantined"
+    assert not (tasks_dir / "broken.json").exists(), "Malformed file should be removed from tasks_dir"
 
 
-def test_reap_unlinks_dead_record_files():
-    tmp = Path(__import__("tempfile").mkdtemp())
-    try:
-        (tmp / "t1.json").write_text('{"task_id": "t1"}')
-        (tmp / "t2.json").write_text('{"task_id": "t2"}')
-        dead = [{"task_id": "t1"}, {"task_id": "t2"}]
-        dc._reap(dead, tmp)
-        assert not (tmp / "t1.json").exists()
-        assert not (tmp / "t2.json").exists()
-    finally:
-        import shutil
-        shutil.rmtree(tmp)
+def test_reap_quarantines_dead_record_files(tmp_path, monkeypatch):
+    tasks_dir = tmp_path / "tasks"
+    tasks_dir.mkdir()
+    stale_dir = tmp_path / "stale"
+    stale_dir.mkdir()
+    monkeypatch.setattr(dc, "STALE_RECORDS_DIR", stale_dir)
+
+    (tasks_dir / "t1.json").write_text('{"task_id": "t1"}')
+    (tasks_dir / "t2.json").write_text('{"task_id": "t2"}')
+    dead = [{"task_id": "t1"}, {"task_id": "t2"}]
+    dc._reap(dead, tasks_dir)
+    # Dead records should be quarantined, not deleted
+    assert not (tasks_dir / "t1.json").exists(), "Dead record should be quarantined from tasks_dir"
+    assert not (tasks_dir / "t2.json").exists(), "Dead record should be quarantined from tasks_dir"
+    assert (stale_dir / "t1.json").exists(), "Dead record should be in stale_dir"
+    assert (stale_dir / "t2.json").exists(), "Dead record should be in stale_dir"
 
 
-def test_slots_in_use_reads_and_reaps_dead_and_filters_by_machine():
-    tmp = Path(__import__("tempfile").mkdtemp())
-    try:
-        records = [
-            {"task_id": "a", "pid": 1, "machine": "m1"},
-            {"task_id": "b", "pid": 999999, "machine": "m1"},
-            {"task_id": "c", "pid": 1, "machine": "m2"},
-        ]
-        for r in records:
-            (tmp / f"{r['task_id']}.json").write_text(json.dumps(r))
+def test_slots_in_use_reads_and_reaps_dead_and_filters_by_machine(monkeypatch, tmp_path):
+    tasks_dir = tmp_path / "tasks"
+    tasks_dir.mkdir()
+    stale_dir = tmp_path / "stale"
+    stale_dir.mkdir()
 
-        def fake_is_alive(pid):
-            return pid == 1
+    # Monkeypatch the stale records directory
+    monkeypatch.setattr(dc, "STALE_RECORDS_DIR", stale_dir)
 
-        alive = dc.slots_in_use("m1", is_alive=fake_is_alive, tasks_dir=tmp)
-        assert [r["task_id"] for r in alive] == ["a"]
+    records = [
+        {"task_id": "a", "pid": 1, "machine": "m1"},
+        {"task_id": "b", "pid": 999999, "machine": "m1"},
+        {"task_id": "c", "pid": 1, "machine": "m2"},
+    ]
+    for r in records:
+        (tasks_dir / f"{r['task_id']}.json").write_text(json.dumps(r))
 
-        assert not (tmp / "b.json").exists()  # reaped
-        assert (tmp / "a.json").exists()
-        assert (tmp / "c.json").exists()  # filtered out, not reaped
-    finally:
-        import shutil
-        shutil.rmtree(tmp)
+    def fake_is_alive(pid, started_at=None):
+        return pid == 1
+
+    alive = dc.slots_in_use("m1", is_alive=fake_is_alive, tasks_dir=tasks_dir)
+    assert [r["task_id"] for r in alive] == ["a"]
+
+    # Dead records are quarantined to stale_dir, not deleted
+    assert not (tasks_dir / "b.json").exists(), "Dead record should be quarantined"
+    assert (stale_dir / "b.json").exists(), "Dead record should be in stale directory"
+    assert (tasks_dir / "a.json").exists()
+    assert (tasks_dir / "c.json").exists()  # filtered out, not reaped
+
+
+def test_process_start_time_uses_etimes():
+    """Test that _process_start_time correctly parses etimes (elapsed seconds since start)."""
+    from datetime import datetime, timezone, timedelta
+    from unittest.mock import MagicMock
+
+    # Mock subprocess.run to return 60 seconds elapsed
+    mock_run = MagicMock()
+    mock_run.return_value.returncode = 0
+    mock_run.return_value.stdout = "60\n"
+
+    # Note: We can't easily test the actual result without mocking time, but we can at least
+    # verify the etimes format is parsed correctly
+    result = dc._process_start_time(1234, run=mock_run)
+
+    # Verify ps was called with etimes format, not lstart
+    mock_run.assert_called_once()
+    call_args = mock_run.call_args
+    assert "etimes=" in call_args[0][0], "Should use ps -o etimes="
+
+    # Result should be approximately 60 seconds ago
+    now = datetime.now(timezone.utc)
+    if result:
+        diff = (now - result).total_seconds()
+        assert 59 <= diff <= 61, f"Expected ~60 seconds difference, got {diff}"
+
+
+def test_process_start_time_handles_bad_etimes():
+    """Test that _process_start_time handles invalid etimes output."""
+    from unittest.mock import MagicMock
+
+    # Mock subprocess.run to return non-numeric etimes
+    mock_run = MagicMock()
+    mock_run.return_value.returncode = 0
+    mock_run.return_value.stdout = "not_a_number\n"
+
+    result = dc._process_start_time(1234, run=mock_run)
+    assert result is None, "Should return None for invalid etimes"
 
 
 def test_refresh_dispatch_state_summary_busy_when_records_exist(tmp_path, monkeypatch):
@@ -216,7 +284,7 @@ def test_refresh_dispatch_state_summary_busy_when_records_exist(tmp_path, monkey
     for r in records:
         (tasks_dir / f"{r['task_id']}.json").write_text(json.dumps(r))
 
-    def fake_is_alive(pid):
+    def fake_is_alive(pid, started_at=None):
         return True  # all PIDs are alive for this test
 
     monkeypatch.setattr(dc, "_pid_alive", fake_is_alive)

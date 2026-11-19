@@ -29,6 +29,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from machine_profile import registry_id, remote_devices, _load_registry  # noqa: E402
 import host_os  # noqa: E402
+import dispatch_concurrency as dc  # noqa: E402
 from hook_errors import log_hook_error  # noqa: E402
 
 
@@ -156,6 +157,19 @@ def accepts(info: dict, need: str) -> bool:
     return need in {str(t).strip().lower() for t in tags}
 
 
+def _locally_busy() -> bool:
+    """Check if the local machine is busy."""
+    machine = registry_id()
+    alive = dc.slots_in_use(machine=machine)
+    return len(alive) > 0
+
+
+def _remotely_busy(host: str, device_id: str) -> bool:
+    """Check if a remote machine is busy."""
+    alive = dc.slots_in_use_remote(host, device_id)
+    return alive is not None and len(alive) > 0
+
+
 def select_machine(explicit_target: str | None = None, need: str | None = None) -> tuple[str, dict] | None:
     """Pick a device to run on. Explicit target skips liveness/load checks
     on OTHER machines but still validates the target itself is usable.
@@ -173,8 +187,7 @@ def select_machine(explicit_target: str | None = None, need: str | None = None) 
         online = _tailscale_online_hosts()
         if info["tailscale_hostname"] not in online:
             return None
-        state = _read_remote_dispatch_state(info["tailscale_hostname"])
-        if state.get("busy"):
+        if _remotely_busy(info["tailscale_hostname"], explicit_target):
             return None
         return explicit_target, info
 
@@ -185,14 +198,12 @@ def select_machine(explicit_target: str | None = None, need: str | None = None) 
     for device_id in ordered_ids:
         info = devices[device_id]
         if info["is_self"]:
-            state = _read_local_dispatch_state()
-            if not state.get("busy"):
+            if not _locally_busy():
                 return device_id, info
             continue
         if info["tailscale_hostname"] not in online:
             continue
-        state = _read_remote_dispatch_state(info["tailscale_hostname"])
-        if not state.get("busy"):
+        if not _remotely_busy(info["tailscale_hostname"], device_id):
             return device_id, info
 
     return None
@@ -405,14 +416,16 @@ mkdir -p "$HOME/.claude"
 # The cleanup is armed before the record exists: a SIGTERM between writing the record and setting the trap left the
 # record behind and the machine looked busy for ever (main red at 4af4de6, #992). rm -f of a record not yet written is
 # harmless.
-trap 'rm -f "$0" {tasks_dir}/{task_id}.json; cat > {state} << 'DISPATCH_IDLE_EOF'
+_tmp_record=""
+trap 'rm -f "$0" {tasks_dir}/{task_id}.json "$_tmp_record"; cat > {state} << 'DISPATCH_IDLE_EOF'
 {idle_json}
 DISPATCH_IDLE_EOF
 (cd "$HOME/.agents" && "$HOME/.agents/venv/bin/python" -m lib.dispatch_concurrency refresh-summary)
 "$HOME/.agents/venv/bin/python" "$HOME/.agents/lib/memory_guard.py" kick >/dev/null 2>&1
 "$HOME/.agents/venv/bin/python" "$HOME/.agents/lib/job_hooks.py" stop >/dev/null 2>&1' EXIT
 # $$, not $BASHPID: macOS's /bin/bash is 3.2, which has no BASHPID, and an empty pid made every record unreadable.
-printf '%s, "pid": %s}}' '{record_prefix}' "$$" > {tasks_dir}/{task_id}.json
+_tmp_record="$(mktemp {tasks_dir}/{task_id}.XXXXXX)"
+printf '%s, "pid": %s}}' '{record_prefix}' "$$" > "$_tmp_record" && mv "$_tmp_record" {tasks_dir}/{task_id}.json
 cat > {state} << 'DISPATCH_STATE_EOF'
 {busy_json}
 DISPATCH_STATE_EOF

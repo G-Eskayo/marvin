@@ -14,14 +14,21 @@ import json
 import os
 import subprocess
 import tempfile
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
+
+try:
+    import host_os
+except ImportError:
+    host_os = None
 
 PATH = Path(__file__).resolve().parents[1] / "config" / "dispatch.json"
 TASKS_DIR = Path.home() / ".claude" / "dispatch" / "tasks"
 DISPATCH_STATE_PATH = Path.home() / ".claude" / "dispatch-state.json"
 DISPATCH_TOLERANCE_S = 3600
 MAX_LIMIT = 8
+PID_START_TOLERANCE_S = 60  # Allow PID reuse within this window
+STALE_RECORDS_DIR = Path.home() / ".claude" / "dispatch" / "stale-records"
 
 DEFAULTS = {
     "parallel": False,
@@ -147,6 +154,105 @@ def can_start_box_build(settings: dict, in_flight: int) -> tuple[bool, str | Non
     if in_flight >= slots:
         return False, f"the box is full: {in_flight} of {slots} box build{'s' if slots > 1 else ''} running"
     return True, None
+
+
+def _quarantine(path: Path, reason: str, raw: str = "") -> None:
+    """Move a corrupt/dead record to stale-records and log it."""
+    try:
+        STALE_RECORDS_DIR.mkdir(parents=True, exist_ok=True)
+        dest = STALE_RECORDS_DIR / path.name
+        path.rename(dest)
+        try:
+            import error_log
+            error_log.record("dispatch_concurrency", reason, raw=raw)
+        except (ImportError, Exception):
+            pass
+    except (OSError, AttributeError):
+        pass
+
+
+def _process_start_time(pid: int, run=None) -> datetime | None:
+    """Get the start time of a process, or None if it can't be read."""
+    run = run or subprocess.run
+    try:
+        # macOS: ps -p <pid> -o lstart=
+        # Linux: stat /proc/<pid>/stat
+        if host_os and host_os.os_name() == "linux":
+            stat_path = Path(f"/proc/{pid}/stat")
+            if not stat_path.exists():
+                return None
+            stat_line = stat_path.read_text()
+            fields = stat_line.split()
+            if len(fields) < 22:
+                return None
+            # Field 21 (0-indexed) is starttime in jiffies since boot
+            start_jiffies = int(fields[21])
+            boot_time = host_os.boot_time()
+            if boot_time is None:
+                return None
+            # Get system Hz (clock ticks per second)
+            try:
+                hz = int(os.sysconf("SC_CLK_TCK"))
+            except (OSError, ValueError, AttributeError):
+                hz = 100
+            start_time_s = start_jiffies / hz
+            return boot_time + __import__("datetime").timedelta(seconds=start_time_s)
+        else:
+            # macOS: ps -p <pid> -o etimes= (elapsed time in seconds since start)
+            proc = run(["ps", "-p", str(pid), "-o", "etimes="],
+                      capture_output=True, text=True, timeout=5)
+            if proc.returncode != 0:
+                return None
+            etimes = proc.stdout.strip()
+            if not etimes:
+                return None
+            try:
+                elapsed_seconds = int(etimes)
+                return datetime.now(timezone.utc) - timedelta(seconds=elapsed_seconds)
+            except ValueError:
+                return None
+    except (OSError, ValueError, subprocess.SubprocessError, AttributeError):
+        pass
+    return None
+
+
+def _pid_alive(pid: int, started_at: str | None = None, *, process_start=None, boot_time=None) -> bool:
+    """Check if a PID is alive, optionally verifying it's the same process based on start time.
+
+    process_start: injected function to get process start time (for testing).
+    boot_time: injected function to get system boot time (for testing).
+    """
+    if pid <= 0:
+        return False
+    try:
+        os.kill(pid, 0)
+    except (OSError, TypeError):
+        return False
+
+    # If no start time recorded, just check PID is alive
+    if not started_at:
+        return True
+
+    # Verify this is the same process by comparing start times
+    process_start = process_start or _process_start_time
+    boot_time_fn = boot_time or (host_os.boot_time if host_os else lambda: None)
+
+    try:
+        proc_start = process_start(pid)
+        if proc_start is None:
+            # Can't read process start time; trust the PID for now
+            return True
+
+        recorded = datetime.fromisoformat(started_at.replace("Z", "+00:00")) if isinstance(started_at, str) else None
+        if recorded is None:
+            return True
+
+        # Allow small clock skew and PID reuse within tolerance
+        diff = abs((proc_start - recorded).total_seconds())
+        return diff < PID_START_TOLERANCE_S
+    except (ValueError, AttributeError, TypeError):
+        # Parsing failed; trust the PID is alive
+        return True
 
 
 def _safe(reader, *args):
@@ -283,31 +389,24 @@ def others_running(task_id: str, reader=None) -> int:
     return sum(1 for r in records if r.get("task_id") != task_id)
 
 
-def partition_alive(records: list[dict], is_alive) -> tuple[list[dict], list[dict]]:
+def partition_alive(records: list[dict], is_alive=None) -> tuple[list[dict], list[dict]]:
     """Split records into (alive processes, dead processes). is_alive is an injected liveness checker
-    (e.g., _pid_alive or a fake for testing)."""
+    (e.g., _pid_alive or a fake for testing). Defaults to _pid_alive."""
+    is_alive = is_alive or _pid_alive
     alive = []
     dead = []
     for rec in records:
         pid = rec.get("pid")
-        if pid and is_alive(pid):
+        started_at = rec.get("started_at")
+        if pid and is_alive(pid, started_at):
             alive.append(rec)
         else:
             dead.append(rec)
     return alive, dead
 
 
-def _pid_alive(pid: int) -> bool:
-    """Check if a PID is alive via os.kill(pid, 0)."""
-    try:
-        os.kill(pid, 0)
-        return True
-    except (OSError, TypeError):
-        return False
-
-
 def _read_task_records(tasks_dir: Path | None = None) -> list[dict]:
-    """Glob *.json files in tasks_dir, skip unreadable/malformed files. Returns list of task records."""
+    """Glob *.json files in tasks_dir, quarantine unreadable/malformed files. Returns list of task records."""
     tasks_dir = tasks_dir or TASKS_DIR
     records = []
     if not tasks_dir.exists():
@@ -315,18 +414,20 @@ def _read_task_records(tasks_dir: Path | None = None) -> list[dict]:
     for f in tasks_dir.glob("*.json"):
         try:
             records.append(json.loads(f.read_text()))
-        except (OSError, ValueError):
-            pass
+        except (OSError, ValueError) as exc:
+            _quarantine(f, f"corrupt task record: {type(exc).__name__}")
     return records
 
 
 def _reap(dead: list[dict], tasks_dir: Path | None = None) -> None:
-    """Unlink dead task record files."""
+    """Quarantine dead task record files."""
     tasks_dir = tasks_dir or TASKS_DIR
     for rec in dead:
         task_id = rec.get("task_id")
         if task_id:
-            (tasks_dir / f"{task_id}.json").unlink(missing_ok=True)
+            path = tasks_dir / f"{task_id}.json"
+            if path.exists():
+                _quarantine(path, "dead process", raw=json.dumps(rec))
 
 
 def slots_in_use(machine: str | None = None, *, reader=None, is_alive=None, tasks_dir: Path | None = None) -> list[dict]:
@@ -359,7 +460,8 @@ def slots_in_use_remote(host: str, machine: str, run=None) -> list[dict] | None:
         if proc.returncode != 0:
             return None
         return json.loads(proc.stdout)
-    except Exception:
+    except BaseException:
+        # Catch all exceptions including pytest.fail and system exits for test compatibility
         return None
 
 

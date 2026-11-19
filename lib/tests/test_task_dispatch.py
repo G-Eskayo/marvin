@@ -340,3 +340,38 @@ def test_machine_load_local_oserror_no_logging(hook_errors_log, monkeypatch):
 	assert result is None
 	logs = hook_errors_log.read_text() if hook_errors_log.exists() else ""
 	assert "machine_load" not in logs
+
+
+def test_locally_busy_uses_slots_in_use(monkeypatch, tmp_path):
+	"""Test that _locally_busy uses slots_in_use instead of reading dispatch-state.json directly."""
+	import dispatch_concurrency as dc
+	import task_dispatch as td
+
+	# Mock registry_id to return a known machine
+	monkeypatch.setattr(td, "registry_id", lambda: "mac-mini-1")
+
+	# Mock slots_in_use to return an empty list (not busy)
+	monkeypatch.setattr(dc, "slots_in_use", lambda machine=None: [])
+	assert td._locally_busy() is False
+
+	# Mock slots_in_use to return one slot in use (busy)
+	monkeypatch.setattr(dc, "slots_in_use", lambda machine=None: [{"task_id": "t1"}])
+	assert td._locally_busy() is True
+
+
+def test_remotely_busy_uses_slots_in_use_remote(monkeypatch):
+	"""Test that _remotely_busy uses slots_in_use_remote instead of reading dispatch-state.json directly."""
+	import dispatch_concurrency as dc
+	import task_dispatch as td
+
+	# Mock slots_in_use_remote to return None (failed)
+	monkeypatch.setattr(dc, "slots_in_use_remote", lambda host, machine, run=None: None)
+	assert td._remotely_busy("example.com", "mac-mini-1") is False
+
+	# Mock slots_in_use_remote to return an empty list (not busy)
+	monkeypatch.setattr(dc, "slots_in_use_remote", lambda host, machine, run=None: [])
+	assert td._remotely_busy("example.com", "mac-mini-1") is False
+
+	# Mock slots_in_use_remote to return one slot in use (busy)
+	monkeypatch.setattr(dc, "slots_in_use_remote", lambda host, machine, run=None: [{"task_id": "t1"}])
+	assert td._remotely_busy("example.com", "mac-mini-1") is True

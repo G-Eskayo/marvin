@@ -106,3 +106,64 @@ def test_memory_dir_falls_back_to_claude_codes_own_default_when_the_setting_is_m
     claude = _settings(tmp_path, monkeypatch, body)
     home = str(tmp_path / "home")
     assert host_os.memory_dir() == claude / "projects" / home.replace("/", "-") / "memory"
+
+
+def test_boot_time_on_macos(monkeypatch):
+    from datetime import datetime, timezone
+    monkeypatch.setattr(host_os, "os_name", lambda: "macos")
+
+    def mock_run(cmd, **kwargs):
+        import types
+        result = types.SimpleNamespace()
+        result.returncode = 0
+        result.stdout = "1700000000"  # Fixed timestamp
+        return result
+
+    result = host_os.boot_time(run=mock_run)
+    assert result == datetime.fromtimestamp(1700000000, tz=timezone.utc)
+
+
+def test_boot_time_on_linux(monkeypatch):
+    from datetime import datetime, timedelta, timezone
+    monkeypatch.setattr(host_os, "os_name", lambda: "linux")
+
+    uptime_seconds = 86400.0  # 1 day
+
+    def mock_read_uptime():
+        return f"{uptime_seconds} 123456789"
+
+    result = host_os.boot_time(read_uptime=mock_read_uptime)
+    assert result is not None
+    # Check that it's roughly 1 day in the past
+    now = datetime.now(tz=timezone.utc)
+    diff = (now - result).total_seconds()
+    assert 86390 < diff < 86410  # Within 10 seconds of 1 day
+
+
+def test_boot_time_on_unknown_os_returns_none(monkeypatch):
+    monkeypatch.setattr(host_os, "os_name", lambda: "unknown")
+    assert host_os.boot_time() is None
+
+
+def test_boot_time_on_macos_with_sysctl_failure_returns_none(monkeypatch):
+    monkeypatch.setattr(host_os, "os_name", lambda: "macos")
+
+    def mock_run(cmd, **kwargs):
+        import types
+        result = types.SimpleNamespace()
+        result.returncode = 1
+        result.stdout = ""
+        return result
+
+    result = host_os.boot_time(run=mock_run)
+    assert result is None
+
+
+def test_boot_time_on_linux_with_missing_uptime_returns_none(monkeypatch):
+    monkeypatch.setattr(host_os, "os_name", lambda: "linux")
+
+    def mock_read_uptime():
+        raise OSError("File not found")
+
+    result = host_os.boot_time(read_uptime=mock_read_uptime)
+    assert result is None

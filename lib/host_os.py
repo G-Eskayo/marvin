@@ -9,7 +9,9 @@ from __future__ import annotations
 import json
 import os
 import shutil
+import subprocess
 import sys
+from datetime import datetime, timezone
 from pathlib import Path
 
 MAC_TAILSCALE = "/Applications/Tailscale.app/Contents/MacOS/Tailscale"
@@ -69,3 +71,32 @@ def memory_dir(home: Path | None = None) -> Path:
     if rel.is_absolute() or ".." in rel.parts:
         return default
     return claude / rel
+
+
+def boot_time(run=None, read_uptime=None) -> datetime | None:
+    """System boot time, or None when it can't be read.
+
+    macOS: `sysctl -n kern.boottime` returns seconds since epoch.
+    Linux: `/proc/uptime` returns uptime seconds; boot_time = now - uptime.
+    Other OS: returns None."""
+    run = run or subprocess.run
+    if os_name() == "macos":
+        try:
+            proc = run(["sysctl", "-n", "kern.boottime"], capture_output=True, text=True, timeout=5)
+            if proc.returncode == 0:
+                timestamp = int(proc.stdout.strip())
+                return datetime.fromtimestamp(timestamp, tz=timezone.utc)
+        except (OSError, ValueError, subprocess.SubprocessError):
+            pass
+        return None
+    if os_name() == "linux":
+        read_uptime = read_uptime or (lambda: Path("/proc/uptime").read_text())
+        try:
+            uptime_str = read_uptime()
+            uptime_seconds = float(uptime_str.split()[0])
+            now = datetime.now(tz=timezone.utc)
+            return now - __import__("datetime").timedelta(seconds=uptime_seconds)
+        except (OSError, ValueError, IndexError):
+            pass
+        return None
+    return None

@@ -91,6 +91,57 @@ def test_check_dispatch_lock_green_shortly_after_start():
     assert result["severity"] == "green"
 
 
+def test_check_dispatch_lock_remote_returns_unknown_on_ssh_failure(monkeypatch):
+	"""Test that SSH failure is reported as unknown, not green (idle)."""
+	import machine_profile
+	import health_checks as hc
+
+	# Mock remote_devices to return a test device
+	def mock_remote_devices():
+		return {"mac-mini-2": {"tailscale_hostname": "example.com"}}
+	monkeypatch.setattr(machine_profile, "remote_devices", mock_remote_devices)
+
+	# Mock _run_dispatch_state_remote to return None (SSH failure)
+	def mock_remote(host):
+		return None
+
+	# Mock _reachable to return True
+	monkeypatch.setattr(hc, "_reachable", lambda r, d: True)
+
+	results = hc.check_dispatch_lock_remote(remote=mock_remote)
+	assert len(results) == 1
+	result = results[0]
+	assert result["id"] == "dispatch:lock-age@mac-mini-2"
+	assert result["severity"] == "unknown"
+	assert "SSH failed" in result["detail"]
+	assert result.get("measured") is False
+
+
+def test_check_dispatch_lock_remote_green_when_idle(monkeypatch):
+	"""Test that empty dispatch state is reported as green (idle)."""
+	import machine_profile
+	import health_checks as hc
+
+	# Mock remote_devices to return a test device
+	def mock_remote_devices():
+		return {"mac-mini-2": {"tailscale_hostname": "example.com"}}
+	monkeypatch.setattr(machine_profile, "remote_devices", mock_remote_devices)
+
+	# Mock _run_dispatch_state_remote to return empty dict (no lock file)
+	def mock_remote(host):
+		return {}
+
+	# Mock _reachable to return True
+	monkeypatch.setattr(hc, "_reachable", lambda r, d: True)
+
+	results = hc.check_dispatch_lock_remote(remote=mock_remote)
+	assert len(results) == 1
+	result = results[0]
+	assert result["id"] == "dispatch:lock-age@mac-mini-2"
+	assert result["severity"] == "green"
+	assert "no lock file" in result["detail"]
+
+
 # ── coverage / auto-discovery ────────────────────────────────────────────
 
 def test_coverage_flags_jobs_with_no_registered_check(monkeypatch):
