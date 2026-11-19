@@ -46,11 +46,12 @@ OPENALEX_WORKS_BASE = "https://api.openalex.org/works"
 
 
 def ollama_chat(model: str, messages: list[dict], timeout: int = 60) -> str:
-    payload = json.dumps({"model": model, "messages": messages, "stream": False}).encode()
-    req = urllib.request.Request(OLLAMA_URL, data=payload, headers={"Content-Type": "application/json"})
-    with urllib.request.urlopen(req, timeout=timeout) as resp:
-        data = json.loads(resp.read())
-    return data["message"]["content"]
+    import sys
+    from pathlib import Path
+    sys.path.insert(0, str(Path.home() / ".agents" / "lib"))
+    import model_calls
+    result = model_calls.chat(messages, model=model, num_ctx=4096, timeout=timeout, caller="argument_mapper")
+    return result.get("message", {}).get("content", "")
 
 
 CLAIM_PROMPT = """Below is an academic paper's title and abstract. State its single core claim or finding in ONE crisp sentence -- what did they actually show or argue, not what topic they cover. No preamble, no "This paper...", just the claim itself.

@@ -18,11 +18,11 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path.home() / ".agents" / "lib"))
 import model_scope  # noqa: E402
+import model_calls  # noqa: E402
 
 HOME = Path.home()
 MANIFEST_PATH = HOME / ".claude" / "manifest.json"
 CHROMA_PATH = HOME / ".claude" / "chroma"
-OLLAMA_URL = "http://localhost:11434/api/embed"
 EMBED_MODEL = "nomic-embed-text"
 ALL_COLLECTIONS = ["skills", "knowledge", "general"]
 TOP_K = 5
@@ -50,14 +50,16 @@ def get_threshold(intent):
 
 def embed_query(query):
     try:
-        import requests
-        resp = requests.post(
-            OLLAMA_URL,
-            json={"model": EMBED_MODEL, "input": f"search_query: {query}"},
+        embeddings = model_calls.embed(
+            query,
+            model=EMBED_MODEL,
+            task="query",
+            num_ctx=2048,
             timeout=10,
+            caller="retrieve",
+            on_overflow="trim",
         )
-        resp.raise_for_status()
-        return resp.json()["embeddings"][0]
+        return embeddings[0] if embeddings else None
     except Exception:
         return None
 

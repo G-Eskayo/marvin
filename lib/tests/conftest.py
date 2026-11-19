@@ -288,6 +288,13 @@ def _isolate_error_log(tmp_path_factory, monkeypatch):
 
 
 @pytest.fixture(autouse=True)
+def _isolate_model_calls_log(tmp_path_factory, monkeypatch):
+    # marvin#1210: model calls are logged for token accounting; no test may write the real ~/.claude/logs one.
+    import model_calls
+    monkeypatch.setattr(model_calls, "LOG_PATH", tmp_path_factory.mktemp("model-calls") / "model_calls.jsonl")
+
+
+@pytest.fixture(autouse=True)
 def _isolate_github_usage(tmp_path_factory, monkeypatch):
     # github_usage keeps an hourly cache beside the gate's logs; no test may write the real ~/.claude/logs.
     import github_usage

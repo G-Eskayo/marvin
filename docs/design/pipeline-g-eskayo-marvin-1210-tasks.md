@@ -1,0 +1,11 @@
+1. Decide the `bench-scope` question above (blocks whether the coverage test's allowlist includes `bench/`).
+2. Write `lib/model_calls.py`: `estimate_tokens()`, `PromptTooLong`/`ModelCallError` exceptions, `chat()`, `embed()`, the error_log-style `_append()`/rotation (`MAX_LINES`, `MAX_AGE_DAYS`), `_machine()`, and `summary()` + CLI (`model_calls.py summary [--days N] [--caller X] [--model X] [--json]`).
+3. Add `lib/tests/test_model_calls.py` covering tests 1–16 above, using a real `http.server.HTTPServer` fixture (mirroring `test_health_merge_service.py`'s `webhook` fixture) for the network-facing cases.
+4. Add `_isolate_model_calls_log` autouse fixture to `lib/tests/conftest.py` (mirrors `_isolate_error_log`), monkeypatching `model_calls.LOG_PATH` to a tmp path.
+5. Migrate `lib/intent_classify.py`'s `embed_text()` to call `model_calls.embed(..., num_ctx=2048, caller="intent_classify")`; update the 3 tests in `lib/tests/test_intent_classify.py` that currently monkeypatch `ic.requests.post` directly.
+6. Migrate `skills/self-improve/scripts/retrieve.py`'s `embed_query()` and `rebuild-embeddings.py`'s `embed()` to `model_calls.embed(..., num_ctx=2048, caller=<script name>)`.
+7. Migrate `skills/paper-dive/scripts/paper_graph.py`'s `_real_nomic_embed()` to `model_calls.embed(...)`, dropping the deprecated `/api/embeddings` singular endpoint and its `"embedding"` response key in favor of the wrapper's normalized return shape.
+8. Migrate the four paper-dive scripts' private `ollama_chat()` bodies (`logic_auditor.py`, `argument_mapper.py`, `continuity_checker.py`, `competing_ideas.py`) to delegate to `model_calls.chat(..., num_ctx=4096, caller=<script name>)`, keeping each file's existing `ollama_chat(model, messages, timeout=60)` signature unchanged so the `chat_fn` injection seams in their tests keep working untouched.
+9. If decision `bench-scope` = A: add the three `bench/` files to the coverage test's explicit allowlist with a one-line comment pointing at this ticket. If B: migrate them too and drop the allowlist.
+10. Run every test in `lib/tests/` and the touched `skills/*/scripts/tests/` directories; fix any regression before considering this done (per the "full suites before a hand-merge" rule).
+11. `marvin-show` the final `lib/model_calls.py` and the diff for Gil's review.

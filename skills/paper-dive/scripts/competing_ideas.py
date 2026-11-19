@@ -40,11 +40,12 @@ STANCES = {"supports", "refutes", "mixed", "unrelated"}
 
 
 def ollama_chat(model: str, messages: list[dict], timeout: int = 60) -> str:
-    payload = json.dumps({"model": model, "messages": messages, "stream": False}).encode()
-    req = urllib.request.Request(OLLAMA_URL, data=payload, headers={"Content-Type": "application/json"})
-    with urllib.request.urlopen(req, timeout=timeout) as resp:
-        data = json.loads(resp.read())
-    return data["message"]["content"]
+    import sys
+    from pathlib import Path
+    sys.path.insert(0, str(Path.home() / ".agents" / "lib"))
+    import model_calls
+    result = model_calls.chat(messages, model=model, num_ctx=4096, timeout=timeout, caller="competing_ideas")
+    return result.get("message", {}).get("content", "")
 
 
 def semantic_search(collection, hypothesis: str, n_results: int = 10, search_fn=None) -> list[dict]:

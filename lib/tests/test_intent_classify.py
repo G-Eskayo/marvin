@@ -14,48 +14,41 @@ import intent_classify as ic  # noqa: E402
 # ── embed_text: task-prefix convention ──────────────────────────────────────
 
 def test_embed_text_uses_search_query_prefix_for_queries(monkeypatch):
+    import model_calls
     captured = {}
 
-    class _FakeResp:
-        def raise_for_status(self):
-            pass
+    def fake_embed(text, model="nomic-embed-text", task="query", num_ctx=2048, timeout=10, caller="", on_overflow="trim"):
+        captured["text"] = text
+        captured["task"] = task
+        return [[0.1, 0.2, 0.3]]
 
-        def json(self):
-            return {"embeddings": [[0.1, 0.2, 0.3]]}
-
-    def fake_post(url, json, timeout):
-        captured["input"] = json["input"]
-        return _FakeResp()
-
-    monkeypatch.setattr(ic.requests, "post", fake_post)
+    monkeypatch.setattr(model_calls, "embed", fake_embed)
     ic.embed_text("fix the bug", task="query")
-    assert captured["input"] == "search_query: fix the bug"
+    assert captured["text"] == "fix the bug"
+    assert captured["task"] == "query"
 
 
 def test_embed_text_uses_search_document_prefix_for_documents(monkeypatch):
+    import model_calls
     captured = {}
 
-    class _FakeResp:
-        def raise_for_status(self):
-            pass
+    def fake_embed(text, model="nomic-embed-text", task="query", num_ctx=2048, timeout=10, caller="", on_overflow="trim"):
+        captured["text"] = text
+        captured["task"] = task
+        return [[0.1, 0.2, 0.3]]
 
-        def json(self):
-            return {"embeddings": [[0.1, 0.2, 0.3]]}
-
-    def fake_post(url, json, timeout):
-        captured["input"] = json["input"]
-        return _FakeResp()
-
-    monkeypatch.setattr(ic.requests, "post", fake_post)
+    monkeypatch.setattr(model_calls, "embed", fake_embed)
     ic.embed_text("fix the date validator bug", task="document")
-    assert captured["input"] == "search_document: fix the date validator bug"
+    assert captured["text"] == "fix the date validator bug"
+    assert captured["task"] == "document"
 
 
 def test_embed_text_returns_none_on_request_failure(monkeypatch):
-    def fake_post(*a, **k):
-        raise ConnectionError("ollama not running")
+    import model_calls
+    def fake_embed(*a, **k):
+        raise model_calls.ModelCallError("ollama not running")
 
-    monkeypatch.setattr(ic.requests, "post", fake_post)
+    monkeypatch.setattr(model_calls, "embed", fake_embed)
     assert ic.embed_text("anything", task="query") is None
 
 
@@ -385,29 +378,29 @@ def test_classify_fast_is_unavailable_on_bad_query_vectors(tmp_path, monkeypatch
 def test_embed_text_passes_its_timeout_to_ollama(monkeypatch):
     seen = {}
 
-    class _R:
-        def raise_for_status(self):
-            pass
+    def mock_embed(text, **kwargs):
+        seen.update(timeout=kwargs.get("timeout"))
+        return [[0.1]]
 
-        def json(self):
-            return {"embeddings": [[0.1]]}
+    sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+    import model_calls
+    monkeypatch.setattr(model_calls, "embed", mock_embed)
 
-    monkeypatch.setattr(ic.requests, "post", lambda url, json, timeout: seen.update(t=timeout) or _R())
     ic.embed_text("x", timeout=0.5)
-    assert seen["t"] == 0.5
+    assert seen["timeout"] == 0.5
     ic.embed_text("x")
-    assert seen["t"] == 10       # the default for every other caller is unchanged
+    assert seen["timeout"] == 10       # the default for every other caller is unchanged
 
 
 def test_embed_text_returns_none_on_a_malformed_reply(monkeypatch):
-    class _R:
-        def raise_for_status(self):
-            pass
+    def mock_embed(text, **kwargs):
+        # Return empty embeddings list to trigger the None case
+        return []
 
-        def json(self):
-            return {"embeddings": []}
+    sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+    import model_calls
+    monkeypatch.setattr(model_calls, "embed", mock_embed)
 
-    monkeypatch.setattr(ic.requests, "post", lambda url, json, timeout: _R())
     assert ic.embed_text("x") is None
 
 

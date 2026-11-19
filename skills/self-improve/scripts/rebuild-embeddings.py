@@ -11,10 +11,12 @@ import json
 import sys
 from pathlib import Path
 
+sys.path.insert(0, str(Path.home() / ".agents" / "lib"))
+import model_calls  # noqa: E402
+
 HOME = Path.home()
 MANIFEST_PATH = HOME / ".claude" / "manifest.json"
 CHROMA_PATH = HOME / ".claude" / "chroma"
-OLLAMA_URL = "http://localhost:11434/api/embed"
 EMBED_MODEL = "nomic-embed-text"
 
 
@@ -51,14 +53,16 @@ def content_hash(text):
 
 def embed(text):
     try:
-        import requests
-        resp = requests.post(
-            OLLAMA_URL,
-            json={"model": EMBED_MODEL, "input": f"search_document: {text}"},
+        embeddings = model_calls.embed(
+            text,
+            model=EMBED_MODEL,
+            task="document",
+            num_ctx=2048,
             timeout=30,
+            caller="rebuild-embeddings",
+            on_overflow="trim",
         )
-        resp.raise_for_status()
-        return resp.json()["embeddings"][0]
+        return embeddings[0] if embeddings else None
     except Exception as e:
         print(f"  WARN: embed failed: {e}", file=sys.stderr)
         return None

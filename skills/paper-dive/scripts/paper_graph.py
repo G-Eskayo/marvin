@@ -207,15 +207,21 @@ def _real_specter2_embed(text: str) -> list[float]:
 
 
 def _real_nomic_embed(text: str) -> list[float]:
-    import requests
+    import sys
+    from pathlib import Path
+    sys.path.insert(0, str(Path.home() / ".agents" / "lib"))
+    import model_calls
 
-    resp = requests.post(
-        "http://localhost:11434/api/embeddings",
-        json={"model": "nomic-embed-text", "prompt": text},
+    embeddings = model_calls.embed(
+        text,
+        model="nomic-embed-text",
+        task="document",
+        num_ctx=2048,
         timeout=30,
+        caller="paper_graph",
+        on_overflow="trim",
     )
-    resp.raise_for_status()
-    return resp.json()["embedding"]
+    return embeddings[0] if embeddings else []
 
 
 def embed_paper(text: str, specter2_fn=None, nomic_fn=None) -> dict:
