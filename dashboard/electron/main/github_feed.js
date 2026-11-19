@@ -21,10 +21,11 @@ export const STALE_MS = 10 * 60_000
 // Errors from here say where the data comes from and never use words that read as "sign in again" (pr_fetch_status.js
 // maps /auth|credentials|401/ to "GitHub sign-in expired", which is the message this replaces).
 export class FeedError extends Error {
-  constructor(message) {
+  constructor(message, state = null) {
     super(message)
     this.name = 'FeedError'
     this.fromFeed = true
+    this.state = state // 'fresh', 'stale', 'missing', or 'direct' (Mini-unreachable fallback)
   }
 }
 
@@ -134,6 +135,12 @@ export function createFeedSource({ path = FEED_PATH, now = Date.now, read, mtime
       const e = entry(repo, 'prs')
       if (!Array.isArray(e.value)) throw new FeedError(`${repo}'s PR list in the Mini's feed is unreadable.`)
       return light ? e.value.map((p) => Object.fromEntries(LIGHT.map((f) => [f, p?.[f]]))) : e.value
+    },
+    // `gh issue list --json ...` as the Mini read it.
+    openIssues(repo) {
+      const e = entry(repo, 'issues')
+      if (!Array.isArray(e.value)) throw new FeedError(`${repo}'s issue list in the Mini's feed is unreadable.`)
+      return e.value
     },
     board(repo) {
       const v = entry(repo, 'board').value

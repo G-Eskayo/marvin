@@ -1895,3 +1895,220 @@ def test_a_pr_closed_without_merging_makes_ticket_ready_again(monkeypatch):
     monkeypatch.setattr(tp, "_evidence_facts", lambda repo: pr_facts_without_pr)
     result_second = tp._unclaimed_ready_tickets()
     assert [i["number"] for i in result_second] == [7]
+
+
+# ── GitHub feed reading: Phase 1 & 2 test coverage (ADR 0063) ──
+
+def test_read_issues_from_feed_returns_issues_when_feed_is_fresh(monkeypatch, tmp_path):
+    """Test 4: _read_issues_from_feed returns issues from a fresh feed."""
+    import time
+    now_ms = time.time() * 1000
+    feed_data = {
+        "version": 1,
+        "host": "mac-mini-1",
+        "alive_at": now_ms - 60 * 1000,  # 1 min ago, well within tolerance
+        "repos": {
+            tp.REPO: {
+                "issues": {
+                    "at": now_ms - 30 * 1000,  # 30 sec ago
+                    "value": [
+                        {"number": 1, "title": "First issue", "labels": [], "createdAt": "2026-01-01T00:00:00Z", "updatedAt": "2026-01-01T00:00:00Z"},
+                        {"number": 2, "title": "Second issue", "labels": [{"name": "ready-for-agent"}], "createdAt": "2026-01-02T00:00:00Z", "updatedAt": "2026-01-02T00:00:00Z"}
+                    ]
+                }
+            }
+        }
+    }
+    feed_path = tmp_path / "github-feed.json"
+    feed_path.write_text(json.dumps(feed_data))
+    monkeypatch.setattr(tp, "GITHUB_FEED_PATH", feed_path)
+
+    result = tp._read_issues_from_feed(tp.REPO)
+    assert result is not None
+    assert len(result) == 2
+    assert result[0]["number"] == 1
+    assert result[1]["number"] == 2
+
+
+def test_read_issues_from_feed_returns_none_when_feed_is_stale(monkeypatch, tmp_path):
+    """Test 2: _read_issues_from_feed returns None when feed is older than tolerance."""
+    import time
+    now_ms = time.time() * 1000
+    feed_data = {
+        "version": 1,
+        "host": "mac-mini-1",
+        "alive_at": now_ms - 15 * 60 * 1000,  # 15 min ago, beyond the 10 min tolerance
+        "repos": {
+            tp.REPO: {
+                "issues": {
+                    "at": now_ms - 15 * 60 * 1000,
+                    "value": [{"number": 1, "title": "Old issue", "labels": []}]
+                }
+            }
+        }
+    }
+    feed_path = tmp_path / "github-feed.json"
+    feed_path.write_text(json.dumps(feed_data))
+    monkeypatch.setattr(tp, "GITHUB_FEED_PATH", feed_path)
+
+    result = tp._read_issues_from_feed(tp.REPO)
+    assert result is None
+
+
+def test_read_issues_from_feed_returns_none_when_feed_missing(monkeypatch, tmp_path):
+    """_read_issues_from_feed returns None when the feed file doesn't exist."""
+    feed_path = tmp_path / "nonexistent-feed.json"
+    monkeypatch.setattr(tp, "GITHUB_FEED_PATH", feed_path)
+
+    result = tp._read_issues_from_feed(tp.REPO)
+    assert result is None
+
+
+def test_read_issues_from_feed_handles_malformed_json(monkeypatch, tmp_path):
+    """_read_issues_from_feed gracefully handles corrupted feed files."""
+    feed_path = tmp_path / "github-feed.json"
+    feed_path.write_text("{malformed json")
+    monkeypatch.setattr(tp, "GITHUB_FEED_PATH", feed_path)
+
+    result = tp._read_issues_from_feed(tp.REPO)
+    assert result is None
+
+
+def test_open_issues_uses_feed_when_standby_and_feed_fresh(monkeypatch, tmp_path):
+    """Test 4: _open_issues uses feed instead of calling gh when standby with fresh feed.
+    This test verifies zero gh calls are made."""
+    import time
+    import scanner_role
+
+    now_ms = time.time() * 1000
+    feed_data = {
+        "version": 1,
+        "host": "mac-mini-1",
+        "alive_at": now_ms - 60 * 1000,
+        "repos": {
+            tp.REPO: {
+                "issues": {
+                    "at": now_ms - 30 * 1000,
+                    "value": [
+                        {"number": 10, "title": "Feed issue", "labels": [], "createdAt": "2026-01-01T00:00:00Z", "updatedAt": "2026-01-01T00:00:00Z"}
+                    ]
+                }
+            }
+        }
+    }
+    feed_path = tmp_path / "github-feed.json"
+    feed_path.write_text(json.dumps(feed_data))
+    monkeypatch.setattr(tp, "GITHUB_FEED_PATH", feed_path)
+
+    # Mock scanner_role to report we're a standby
+    monkeypatch.setattr(scanner_role, "should_scan", lambda: (False, "standby: primary is running"))
+
+    # Mock subprocess to fail if called (proving we don't call gh)
+    def fail_on_gh(*args, **kwargs):
+        raise AssertionError(f"Should not call gh, but got: {args}")
+    monkeypatch.setattr(tp.subprocess, "run", fail_on_gh)
+
+    result = tp._open_issues(tp.REPO)
+    # Should return the feed's issues, not an error
+    assert result is not None
+    assert len(result) == 1
+    assert result[0]["number"] == 10
+
+
+def test_open_issues_calls_gh_when_primary_scanner(monkeypatch, tmp_path):
+    """Test 15: _open_issues calls gh directly when this is the primary scanner."""
+    import time
+    import scanner_role
+    import json
+
+    # Create a feed file (should be ignored when primary)
+    now_ms = int(time.time() * 1000)
+    feed_path = tmp_path / "github-feed.json"
+    feed_path.write_text(json.dumps({"version": 1, "repos": {}}))
+    monkeypatch.setattr(tp, "GITHUB_FEED_PATH", feed_path)
+
+    # Mock scanner_role to report we're the primary
+    monkeypatch.setattr(scanner_role, "should_scan", lambda: (True, "primary"))
+
+    # Mock subprocess to succeed with some issues
+    expected_issues = [
+        {"number": 20, "title": "Primary issue", "labels": [], "createdAt": "2026-01-01T00:00:00Z", "updatedAt": "2026-01-01T00:00:00Z"}
+    ]
+    monkeypatch.setattr(tp.subprocess, "run", lambda *a, **kw: SimpleNamespace(
+        returncode=0, stdout=json.dumps(expected_issues), stderr=""))
+
+    result = tp._open_issues(tp.REPO)
+    assert result is not None
+    assert len(result) == 1
+    assert result[0]["number"] == 20
+
+
+def test_open_issues_falls_back_to_gh_when_standby_and_feed_missing(monkeypatch, tmp_path):
+    """Test 16: _open_issues falls back to gh when standby and feed is missing (defects 1 & 2).
+    When a standby machine has no feed file (e.g., laptop with no Mini sync), it should
+    still call gh directly instead of returning an empty list."""
+    import time
+    import scanner_role
+
+    # Set up an empty/missing feed
+    feed_path = tmp_path / "github-feed.json"
+    monkeypatch.setattr(tp, "GITHUB_FEED_PATH", feed_path)
+
+    # Mock scanner_role to report we're a standby
+    monkeypatch.setattr(scanner_role, "should_scan", lambda: (False, "standby: primary is running"))
+
+    # Mock subprocess to return some issues
+    expected_issues = [
+        {"number": 30, "title": "Fallback issue", "labels": [], "createdAt": "2026-01-01T00:00:00Z", "updatedAt": "2026-01-01T00:00:00Z"}
+    ]
+    monkeypatch.setattr(tp.subprocess, "run", lambda *a, **kw: SimpleNamespace(
+        returncode=0, stdout=json.dumps(expected_issues), stderr=""))
+
+    result = tp._open_issues(tp.REPO)
+    # Should return the fallback gh results, not an empty list
+    assert result is not None
+    assert len(result) == 1
+    assert result[0]["number"] == 30
+
+
+def test_open_issues_falls_back_to_gh_when_standby_and_feed_stale(monkeypatch, tmp_path):
+    """Test 17: _open_issues falls back to gh when standby and feed is stale (defects 1 & 2).
+    When a standby machine has a stale feed file, it should call gh directly instead of
+    returning an empty list."""
+    import time
+    import scanner_role
+
+    # Create a stale feed
+    old_time_ms = int((time.time() - 20 * 60) * 1000)  # 20 minutes old, stale_ms is 10 min
+    feed_data = {
+        "version": 1,
+        "host": "mac-mini-1",
+        "alive_at": old_time_ms,
+        "repos": {
+            tp.REPO: {
+                "issues": {
+                    "at": old_time_ms,
+                    "value": [{"number": 1, "title": "Old issue", "labels": [], "createdAt": "2026-01-01T00:00:00Z", "updatedAt": "2026-01-01T00:00:00Z"}]
+                }
+            }
+        }
+    }
+    feed_path = tmp_path / "github-feed.json"
+    feed_path.write_text(json.dumps(feed_data))
+    monkeypatch.setattr(tp, "GITHUB_FEED_PATH", feed_path)
+
+    # Mock scanner_role to report we're a standby
+    monkeypatch.setattr(scanner_role, "should_scan", lambda: (False, "standby: primary is running"))
+
+    # Mock subprocess to return fresh issues
+    fresh_issues = [
+        {"number": 40, "title": "Fresh issue from fallback", "labels": [], "createdAt": "2026-01-01T00:00:00Z", "updatedAt": "2026-01-01T00:00:00Z"}
+    ]
+    monkeypatch.setattr(tp.subprocess, "run", lambda *a, **kw: SimpleNamespace(
+        returncode=0, stdout=json.dumps(fresh_issues), stderr=""))
+
+    result = tp._open_issues(tp.REPO)
+    # Should return the fresh gh results, not the stale feed
+    assert result is not None
+    assert len(result) == 1
+    assert result[0]["number"] == 40

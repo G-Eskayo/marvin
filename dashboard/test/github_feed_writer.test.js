@@ -128,6 +128,29 @@ describe('github feed writer (the Mini side of marvin#954)', () => {
     atomicWrite(join(dir, 'a.json'), '{}')
     expect(readdirSync(dir)).toEqual(['a.json'])
   })
+
+  it('refresh writes the issues section from gh issue list', async () => {
+    const s = setup({ issues: [
+      { number: 1, title: 'Issue one', labels: [], createdAt: '2026-01-01T00:00:00Z', updatedAt: '2026-01-01T00:00:00Z' },
+      { number: 2, title: 'Issue two', labels: [{ name: 'bug' }], createdAt: '2026-01-02T00:00:00Z', updatedAt: '2026-01-02T00:00:00Z' }
+    ] })
+    await s.w.refresh(REPO)
+    const feed = JSON.parse(readFileSync(s.path, 'utf-8'))
+    expect(feed.repos[REPO].issues).toBeDefined()
+    expect(feed.repos[REPO].issues.value).toEqual([
+      { number: 1, title: 'Issue one', labels: [], createdAt: '2026-01-01T00:00:00Z', updatedAt: '2026-01-01T00:00:00Z' },
+      { number: 2, title: 'Issue two', labels: [{ name: 'bug' }], createdAt: '2026-01-02T00:00:00Z', updatedAt: '2026-01-02T00:00:00Z' }
+    ])
+    expect(feed.repos[REPO].issues.at).toBeDefined()
+  })
+
+  it('refresh writes both prs and issues when not prsOnly', async () => {
+    const s = setup()
+    await s.w.refresh(REPO)
+    const feed = JSON.parse(readFileSync(s.path, 'utf-8'))
+    expect(feed.repos[REPO].prs.value).toHaveLength(1)
+    expect(feed.repos[REPO].issues.value).toHaveLength(1)
+  })
 })
 
 describe('change watch: how many repos GitHub answered, for alive_at', () => {

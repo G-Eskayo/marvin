@@ -115,3 +115,107 @@ def test_all_duplicate_tickets_across_multiple_identical_repos():
     assert len(q) == 2
     assert [r["number"] for r in q] == [7, 3]  # sorted by score descending
     assert [r["position"] for r in q] == [1, 2]
+
+
+# ── GitHub feed reading: Phase 1 & 2 test coverage (ADR 0063) ──
+
+def test_read_issues_from_feed_returns_issues_when_feed_fresh(tmp_path, monkeypatch):
+    """Test 4: _read_issues_from_feed returns issues from a fresh feed."""
+    import time
+    import json
+
+    repo = "o/clarity"
+    now_ms = time.time() * 1000
+    feed_data = {
+        "version": 1,
+        "host": "mac-mini-1",
+        "alive_at": now_ms - 60 * 1000,  # 1 min ago, well within tolerance
+        "repos": {
+            repo: {
+                "issues": {
+                    "at": now_ms - 30 * 1000,  # 30 sec ago
+                    "value": [
+                        {"number": 1, "title": "First issue", "labels": [], "createdAt": "2026-01-01T00:00:00Z", "updatedAt": "2026-01-01T00:00:00Z"},
+                        {"number": 2, "title": "Second issue", "labels": [{"name": "ready"}], "createdAt": "2026-01-02T00:00:00Z", "updatedAt": "2026-01-02T00:00:00Z"}
+                    ]
+                }
+            }
+        }
+    }
+    feed_path = tmp_path / "github-feed.json"
+    feed_path.write_text(json.dumps(feed_data))
+    monkeypatch.setattr(tq, "GITHUB_FEED_PATH", feed_path)
+
+    result = tq._read_issues_from_feed(repo)
+    assert result is not None
+    assert len(result) == 2
+    assert result[0]["number"] == 1
+    assert result[1]["number"] == 2
+
+
+def test_read_issues_from_feed_returns_none_when_stale(tmp_path, monkeypatch):
+    """Test 2: _read_issues_from_feed returns None when feed is older than tolerance."""
+    import time
+    import json
+
+    repo = "o/clarity"
+    now_ms = time.time() * 1000
+    feed_data = {
+        "version": 1,
+        "host": "mac-mini-1",
+        "alive_at": now_ms - 15 * 60 * 1000,  # 15 min ago, beyond the 10 min tolerance
+        "repos": {
+            repo: {
+                "issues": {
+                    "at": now_ms - 15 * 60 * 1000,
+                    "value": [{"number": 1, "title": "Old issue", "labels": []}]
+                }
+            }
+        }
+    }
+    feed_path = tmp_path / "github-feed.json"
+    feed_path.write_text(json.dumps(feed_data))
+    monkeypatch.setattr(tq, "GITHUB_FEED_PATH", feed_path)
+
+    result = tq._read_issues_from_feed(repo)
+    assert result is None
+
+
+def test_fetch_open_uses_feed_when_available(tmp_path, monkeypatch):
+    """Test 4: _fetch_open returns issues from feed without calling gh."""
+    import time
+    import json
+    import subprocess
+
+    repo = "o/clarity"
+    now_ms = time.time() * 1000
+    feed_data = {
+        "version": 1,
+        "host": "mac-mini-1",
+        "alive_at": now_ms - 60 * 1000,
+        "repos": {
+            repo: {
+                "issues": {
+                    "at": now_ms - 30 * 1000,
+                    "value": [
+                        {"number": 10, "title": "Feed issue", "labels": [{"name": "ready"}], "createdAt": "2026-01-01T00:00:00Z", "updatedAt": "2026-01-01T00:00:00Z"}
+                    ]
+                }
+            }
+        }
+    }
+    feed_path = tmp_path / "github-feed.json"
+    feed_path.write_text(json.dumps(feed_data))
+    monkeypatch.setattr(tq, "GITHUB_FEED_PATH", feed_path)
+
+    # Mock subprocess to fail if called (proving we don't call gh)
+    def fail_on_subprocess(*args, **kwargs):
+        raise AssertionError(f"Should not call subprocess, but got: {args}")
+    monkeypatch.setattr(subprocess, "run", fail_on_subprocess)
+
+    result = tq._fetch_open(repo)
+    # Should return the feed's issues, not an error
+    assert result is not None
+    assert len(result) == 1
+    assert result[0]["number"] == 10
+    assert result[0]["title"] == "Feed issue"

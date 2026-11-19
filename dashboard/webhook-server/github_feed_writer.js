@@ -17,6 +17,7 @@ import { fetchBoardData } from '../electron/main/boards.js'
 
 const ALIVE_EVERY_MS = 60_000
 const BOARD_PR_FIELDS = ['number', 'title', 'url', 'isDraft', 'body', 'files']
+const ISSUE_FIELDS = ['number', 'title', 'labels', 'createdAt', 'updatedAt']
 
 export function emptyFeed(host) {
   return { version: 1, host: host || null, alive_at: null, repos: {} }
@@ -62,6 +63,16 @@ export function createGithubFeedWriter({
         return gh(args)
       }
       entry.board = { at: now(), value: await fetchBoardData(repo, boardGh) }
+      // Fetch issues for the ticket pipeline and other readers (number, title, labels, createdAt, updatedAt).
+      // Wrap in try-catch so a failure keeps the previous issues entry and doesn't block the prs/board data.
+      try {
+        const issuesStr = await gh(['issue', 'list', '--repo', repo, '--state', 'open', '--limit', '1000',
+          '--json', ISSUE_FIELDS.join(',')])
+        const issues = JSON.parse(issuesStr)
+        entry.issues = { at: now(), value: issues }
+      } catch (err) {
+        log(`[github-feed] could not read issues for ${repo}: ${String(err?.message || err).split('\n')[0].slice(0, 160)}`)
+      }
     }
     feed.repos[repo] = entry
     feed.alive_at = now()

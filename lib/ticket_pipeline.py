@@ -57,6 +57,7 @@ import project_catalog  # noqa: E402
 import ticket_evidence  # noqa: E402
 import project_onboard  # noqa: E402
 import dispatch_concurrency  # noqa: E402
+import scanner_role  # noqa: E402
 
 VENV_PYTHON = str(Path.home() / ".agents" / "venv" / "bin" / "python")
 RUN_TICKET_SCRIPT = str(Path.home() / ".agents" / "lib" / "run_ticket.py")
@@ -115,12 +116,52 @@ def _label_for_device(device_id: str) -> str:
 HOLD_LABELS = frozenset({"pinned", "hold", "held"})  # a person's hands off: never dispatched, never sent back (#387)
 UNSCORED_RANK = 2  # a ticket the prioritizer hasn't scored yet counts as middle priority
 
+GITHUB_FEED_PATH = Path.home() / ".claude" / "logs" / "github-feed.json"
+GITHUB_FEED_STALE_MS = 10 * 60_000  # 10 min; same as github_feed.js STALE_MS
+
+
+def _read_issues_from_feed(repo: str) -> list[dict] | None:
+    """Read issues from the Mini's github-feed.json if fresh, None if missing or stale."""
+    if not GITHUB_FEED_PATH.exists():
+        return None
+    try:
+        with open(GITHUB_FEED_PATH) as f:
+            feed = json.load(f)
+        repo_data = feed.get("repos", {}).get(repo, {})
+        issues_entry = repo_data.get("issues", {})
+        if not issues_entry.get("value"):
+            return None
+        # Check if the feed is fresh: compare both the read time and alive_at.
+        at = issues_entry.get("at")
+        alive_at = feed.get("alive_at")
+        now_ms = time.time() * 1000
+        # Feed is stale if either the repo's data or the Mini's last check is too old.
+        if at and now_ms - at > GITHUB_FEED_STALE_MS:
+            return None
+        if alive_at and now_ms - alive_at > GITHUB_FEED_STALE_MS:
+            return None
+        return issues_entry.get("value")
+    except Exception as e:
+        print(f"{LOG_PREFIX} could not read issues from feed: {e}", file=sys.stderr)
+        return None
+
 
 def _open_issues(repo: str = REPO) -> list[dict] | None:
-    """Every open ticket in `repo`, in one call (None when GitHub can't be read)."""
+    """Every open ticket in `repo`, in one call (None when GitHub can't be read).
+    Uses the Mini's feed if fresh and available; falls back to direct gh call."""
+    # Try to read from the feed first if this is not the primary scanner.
+    should_scan, reason = scanner_role.should_scan()
+    if not should_scan:
+        # This is a standby and the primary is running: use the feed if available.
+        issues = _read_issues_from_feed(repo)
+        if issues is not None:
+            return issues
+        # Feed is not available/fresh; fall back to direct gh call.
+        print(f"{LOG_PREFIX} {reason}: no issues data from feed, falling back to direct GitHub call", file=sys.stderr)
+    # This is the primary scanner, or the feed was unavailable: read from GitHub.
     proc = subprocess.run(
         ["gh", "issue", "list", "--repo", repo, "--state", "open", "--limit", "1000",
-         "--json", "number,title,labels,createdAt,updatedAt,body"],
+         "--json", "number,title,labels,createdAt,updatedAt"],
         capture_output=True, text=True, timeout=30,
     )
     if proc.returncode != 0:

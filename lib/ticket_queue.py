@@ -7,9 +7,39 @@ from __future__ import annotations
 
 import json
 import sys
+import time
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
+
+
+GITHUB_FEED_PATH = Path.home() / ".claude" / "logs" / "github-feed.json"
+GITHUB_FEED_STALE_MS = 10 * 60_000  # 10 min; same as github_feed.js STALE_MS
+
+
+def _read_issues_from_feed(repo: str) -> list[dict] | None:
+    """Read issues from the Mini's github-feed.json if fresh, None if missing or stale."""
+    if not GITHUB_FEED_PATH.exists():
+        return None
+    try:
+        with open(GITHUB_FEED_PATH) as f:
+            feed = json.load(f)
+        repo_data = feed.get("repos", {}).get(repo, {})
+        issues_entry = repo_data.get("issues", {})
+        if not issues_entry.get("value"):
+            return None
+        # Check if the feed is fresh: compare both the read time and alive_at.
+        at = issues_entry.get("at")
+        alive_at = feed.get("alive_at")
+        now_ms = time.time() * 1000
+        # Feed is stale if either the repo's data or the Mini's last check is too old.
+        if at and now_ms - at > GITHUB_FEED_STALE_MS:
+            return None
+        if alive_at and now_ms - alive_at > GITHUB_FEED_STALE_MS:
+            return None
+        return issues_entry.get("value")
+    except Exception:
+        return None
 
 
 def _priority(issue: dict):
@@ -64,6 +94,13 @@ def running_tickets(processes, fetch) -> list[dict]:
 
 
 def _fetch_open(repo: str) -> list[dict]:
+    """Fetch open issues from the feed if available, otherwise call gh directly."""
+    # Try feed first (read-only, fast).
+    issues = _read_issues_from_feed(repo)
+    if issues is not None:
+        # Feed has the full data; just extract number, title, labels for this use.
+        return [{"number": i["number"], "title": i["title"], "labels": i.get("labels", [])} for i in issues]
+    # Feed not available; call GitHub directly.
     import subprocess
     p = subprocess.run(["gh", "issue", "list", "--repo", repo, "--state", "open", "--limit", "200", "--json", "number,title,labels"],
                        capture_output=True, text=True, timeout=30)

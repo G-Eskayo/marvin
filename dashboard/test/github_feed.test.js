@@ -146,6 +146,33 @@ describe('createFeedSource: the box answers the MR list and boards from the copy
   })
 })
 
+describe('openIssues: reading issues from the feed', () => {
+  const now = 1_800_000_000_000
+  it('serves the issues list from the feed', () => {
+    const feedWithIssues = goodFeed(now)
+    feedWithIssues.repos[REPO].issues = {
+      at: now - 30 * MIN,
+      value: [
+        { number: 10, title: 'Issue 10', labels: [], createdAt: '2026-01-01T00:00:00Z', updatedAt: '2026-01-01T00:00:00Z' },
+        { number: 11, title: 'Issue 11', labels: [{ name: 'bug' }], createdAt: '2026-01-02T00:00:00Z', updatedAt: '2026-01-02T00:00:00Z' }
+      ]
+    }
+    const src = createFeedSource({ path: feedFile(feedWithIssues, { mtimeMs: now - MIN }), now: () => now })
+    expect(src.openIssues(REPO)).toEqual([
+      { number: 10, title: 'Issue 10', labels: [], createdAt: '2026-01-01T00:00:00Z', updatedAt: '2026-01-01T00:00:00Z' },
+      { number: 11, title: 'Issue 11', labels: [{ name: 'bug' }], createdAt: '2026-01-02T00:00:00Z', updatedAt: '2026-01-02T00:00:00Z' }
+    ])
+  })
+  it('a repo with no issues entry is a FeedError, not a crash', () => {
+    const feedWithoutIssues = goodFeed(now)
+    // goodFeed has prs and board but not issues
+    const src = createFeedSource({ path: feedFile(feedWithoutIssues), now: () => now })
+    expect(() => src.openIssues(REPO)).toThrow(FeedError)
+    // When issues section is missing, it says repo isn't in feed yet
+    expect(() => src.openIssues(REPO)).toThrow(/isn't in the Mini's GitHub feed/)
+  })
+})
+
 describe('feedOnlyGh and the MR banner on the box', () => {
   it('anything the feed does not carry is refused plainly, with no login wording', async () => {
     await expect(feedOnlyGh(['issue', 'view', '5'])).rejects.toThrow(FeedError)
