@@ -48,12 +48,15 @@ import host_os  # noqa: E402
 
 CONFIG_PATH = HERE.parent / "config" / "peer_care.json"
 STATE_DIR = HERE.parent / "var" / "peer-care"            # gitignored; per machine, never synced
+RELAY_QUEUE_PATH = HERE.parent / "var" / "relay-queue.json"  # queued relay reads waiting for hub to come back
 UNLOCK_SCRIPT = Path("/usr/local/libexec/marvin-peer-unlock")
 UNLOCK_SETUP = "sudo ~/.agents/bin/marvin-peer-unlock-setup"
 SSH_OPTS = ["-o", "BatchMode=yes", "-o", "ConnectTimeout=5", "-o", "StrictHostKeyChecking=accept-new"]
 TAILSCALE_CANDIDATES = host_os.TAILSCALE_CANDIDATES  # one list (marvin#889)
 WEBHOOK_LABEL = "com.marvin.dashboard-webhook"
 WEBHOOK_PORT = 7878
+RELAY_BACKOFF_MIN_S = 60  # 1 minute initial backoff
+RELAY_BACKOFF_MAX_S = 30 * 60  # 30 minutes max backoff
 
 
 def _now() -> datetime:
@@ -552,10 +555,82 @@ def watch_ipn(me: str, cfg: dict) -> int:
     return proc.wait()
 
 
+# ── relay coordination ──────────────────────────────────────────────────────────────────────────────────────────
+
+def load_relay_queue() -> dict:
+    """Load queued relay read requests. Format: {repo: {queued_at, backoff_s, last_failed_at}}."""
+    try:
+        if RELAY_QUEUE_PATH.exists():
+            return json.loads(RELAY_QUEUE_PATH.read_text())
+    except (OSError, ValueError):
+        pass
+    return {}
+
+
+def save_relay_queue(queue: dict) -> None:
+    """Atomically save relay queue."""
+    RELAY_QUEUE_PATH.parent.mkdir(parents=True, exist_ok=True)
+    tmp = RELAY_QUEUE_PATH.with_name(f".{RELAY_QUEUE_PATH.name}.{os.getpid()}.tmp")
+    tmp.write_text(json.dumps(queue))
+    os.replace(tmp, RELAY_QUEUE_PATH)
+
+
+def queue_relay_read(repo: str) -> None:
+    """Box queues a relay read request while the hub is offline. Backoff grows if hub stays offline."""
+    queue = load_relay_queue()
+    now = _now().timestamp()
+    if repo not in queue:
+        queue[repo] = {"queued_at": now, "backoff_s": RELAY_BACKOFF_MIN_S, "last_failed_at": None}
+    save_relay_queue(queue)
+
+
+def flush_relay_queue(hub_device: str, cfg: dict) -> dict:
+    """When hub comes back online, execute queued relay reads and clear completed entries.
+    Returns {repo: (success, detail)}. Entries that fail keep their backoff for retry.
+    Only increases backoff if the backoff wait time has elapsed since last attempt."""
+    queue = load_relay_queue()
+    if not queue:
+        return {}
+    results = {}
+    now = _now().timestamp()
+
+    for repo, entry in list(queue.items()):
+        # TODO: execute relay reads through hub_device (step 5: webhook wiring)
+        # For now, skip executing and keep the entry queued with updated backoff
+        last_attempted = entry.get("last_attempt")
+        backoff_s = entry.get("backoff_s", RELAY_BACKOFF_MIN_S)
+
+        # Only increase backoff if the previous backoff period has elapsed
+        if last_attempted is not None and (now - last_attempted) < backoff_s:
+            # Still in backoff period, don't retry yet
+            results[repo] = (False, f"backoff: retry after {backoff_s:.0f}s (since {last_attempted})")
+            continue
+
+        # Backoff period has elapsed (or no last_attempt), so retry
+        # Gradually increase backoff on each retry (exponential, capped at RELAY_BACKOFF_MAX_S)
+        new_backoff = min(backoff_s * 2, RELAY_BACKOFF_MAX_S)
+        queue[repo].update({
+            "backoff_s": new_backoff,
+            "last_failed_at": now,
+            "last_attempt": now
+        })
+        results[repo] = (False, "relay execution not yet wired (ADR 0082 step 5)")
+
+    # Only save queue if there are still entries (keep retrying)
+    if queue:
+        save_relay_queue(queue)
+    return results
+
+
 def im_back(me: str, cfg: dict) -> None:
-    """At boot: tell each watcher. It closes any open incident by probing (a healthy probe closes it)."""
+    """At boot: tell each watcher. It closes any open incident by probing (a healthy probe closes it).
+    If this machine is the hub, relay reads queued by the box will resume (ADR 0082 step 5)."""
     for w in watched_by(me, cfg):
         _ssh(ts_host(w), f"~/.agents/venv/bin/python ~/.agents/lib/peer_care.py check {me} --trigger back", 60)
+
+    # Note: Hub detection happens here but actual relay execution is not yet wired (ADR 0082 step 5).
+    # The box queues relay reads while hub is offline; when hub comes back, it resumes reading.
+    # For now, don't attempt to flush the queue since relay execution isn't implemented yet.
 
 
 def expect_back(peer: str, cfg: dict, minutes: float | None = None, *, sleep: Callable = time.sleep,

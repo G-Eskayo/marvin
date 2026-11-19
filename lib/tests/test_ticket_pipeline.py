@@ -54,6 +54,12 @@ def _parallel_dispatch_off_unless_a_test_says_otherwise(monkeypatch):
     monkeypatch.setattr(tp.dispatch_concurrency, "load", lambda path=None: json.loads(json.dumps(tp.dispatch_concurrency.DEFAULTS)))
 
 
+@pytest.fixture(autouse=True)
+def _clear_issue_cache(monkeypatch, tmp_path):
+    """Clear the issue cache for each test so cached results don't interfere."""
+    monkeypatch.setattr(tp, "ISSUE_CACHE_PATH", tmp_path / "issue-cache.json")
+
+
 def _issue(number, created, labels=(), title="a ticket", body=""):
     return {"number": number, "title": title, "createdAt": created, "body": body,
             "labels": [{"name": l} for l in labels]}

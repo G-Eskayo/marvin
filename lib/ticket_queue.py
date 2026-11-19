@@ -7,9 +7,14 @@ from __future__ import annotations
 
 import json
 import sys
+import time
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
+
+# Simple cache for open issues to avoid repeated fetches within 5 minutes
+_OPEN_ISSUE_CACHE = {}
+_CACHE_MAX_AGE_S = 300
 
 
 def _priority(issue: dict):
@@ -65,11 +70,32 @@ def running_tickets(processes, fetch) -> list[dict]:
 
 def _fetch_open(repo: str) -> list[dict]:
     import subprocess
+
+    # Check cache first
+    now = time.time()
+    if repo in _OPEN_ISSUE_CACHE:
+        cached = _OPEN_ISSUE_CACHE[repo]
+        if now - cached["cached_at"] < _CACHE_MAX_AGE_S:
+            return list(cached["issues"])  # Return a copy to prevent cache corruption
+
+    # Fetch from GitHub
     p = subprocess.run(["gh", "issue", "list", "--repo", repo, "--state", "open", "--limit", "200", "--json", "number,title,labels"],
                        capture_output=True, text=True, timeout=30)
     if p.returncode != 0:
         raise RuntimeError(p.stderr[:200])
-    return json.loads(p.stdout)
+
+    issues = json.loads(p.stdout)
+    _OPEN_ISSUE_CACHE[repo] = {"issues": issues, "cached_at": now}
+    return list(issues)  # Return a copy to prevent cache corruption
+
+
+def _clear_cache(repo: str | None = None) -> None:
+    """Clear cached issues for a repo, or all repos if repo is None."""
+    global _OPEN_ISSUE_CACHE
+    if repo is None:
+        _OPEN_ISSUE_CACHE.clear()
+    elif repo in _OPEN_ISSUE_CACHE:
+        del _OPEN_ISSUE_CACHE[repo]
 
 
 def current_queue() -> list[dict]:

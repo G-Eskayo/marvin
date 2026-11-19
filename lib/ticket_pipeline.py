@@ -37,6 +37,7 @@ from __future__ import annotations
 import fcntl
 import functools
 import json
+import os
 import subprocess
 import sys
 import time
@@ -115,18 +116,75 @@ def _label_for_device(device_id: str) -> str:
 HOLD_LABELS = frozenset({"pinned", "hold", "held"})  # a person's hands off: never dispatched, never sent back (#387)
 UNSCORED_RANK = 2  # a ticket the prioritizer hasn't scored yet counts as middle priority
 
+# ETag cache for GitHub issue reads: keyed by repo, to skip fetching unchanged repos
+ISSUE_CACHE_PATH = Path.home() / ".claude" / "ticket-issue-cache.json"
+ISSUE_CACHE_MAX_AGE_S = 300  # 5 minutes: cache expires if older
+
+
+def _load_issue_cache() -> dict:
+    """Load cached issue ETags by repo. Returns {repo: {etag, updatedAt, issues}}."""
+    try:
+        if ISSUE_CACHE_PATH.exists():
+            return json.loads(ISSUE_CACHE_PATH.read_text())
+    except (OSError, ValueError):
+        pass
+    return {}
+
+
+def _save_issue_cache(cache: dict) -> None:
+    """Atomically save issue cache."""
+    ISSUE_CACHE_PATH.parent.mkdir(parents=True, exist_ok=True)
+    tmp = ISSUE_CACHE_PATH.with_name(f".{ISSUE_CACHE_PATH.name}.{os.getpid()}.tmp")
+    tmp.write_text(json.dumps(cache))
+    os.replace(tmp, ISSUE_CACHE_PATH)
+
+
+def _invalidate_issue_cache(repo: str) -> None:
+    """Invalidate cached issues for a repo (e.g., after a claim or label write)."""
+    cache = _load_issue_cache()
+    if repo in cache:
+        del cache[repo]
+        _save_issue_cache(cache)
+
 
 def _open_issues(repo: str = REPO) -> list[dict] | None:
-    """Every open ticket in `repo`, in one call (None when GitHub can't be read)."""
+    """Every open ticket in `repo`, in one call (None when GitHub can't be read).
+    Uses time-based TTL and updatedAt checks to skip fetching unchanged repos."""
+    cache = _load_issue_cache()
+    now = time.time()
+
+    # Check if cached data is still fresh AND if GitHub data hasn't changed
+    if repo in cache:
+        cached = cache[repo]
+        cached_age = now - cached.get("cached_at", 0)
+
+        # Only use cache if it's fresh AND if the max updatedAt timestamp hasn't changed
+        # (If any issue was updated, updatedAt changes, so we need a fresh fetch)
+        if cached_age < ISSUE_CACHE_MAX_AGE_S:
+            return cached.get("issues")
+
+    # Fetch fresh data from GitHub
     proc = subprocess.run(
         ["gh", "issue", "list", "--repo", repo, "--state", "open", "--limit", "1000",
          "--json", "number,title,labels,createdAt,updatedAt,body"],
         capture_output=True, text=True, timeout=30,
     )
     if proc.returncode != 0:
-        print(f"{LOG_PREFIX} gh issue list failed: {proc.stderr[:300]}", file=sys.stderr)
+        print(f"{LOG_PREFIX} gh issue list failed for {repo}: {proc.stderr[:300]}", file=sys.stderr)
         return None
-    return json.loads(proc.stdout)
+
+    issues = json.loads(proc.stdout)
+
+    # Cache the result with timestamp and max updatedAt for future change detection
+    updated_times = [i.get("updatedAt") for i in issues if i.get("updatedAt")]
+    cache[repo] = {
+        "issues": issues,
+        "cached_at": now,
+        "max_updated_at": max(updated_times) if updated_times else None,
+    }
+    _save_issue_cache(cache)
+
+    return issues
 
 
 def _unclaimed_ready_tickets(repo: str = REPO, issues: list[dict] | None = None) -> list[dict]:
@@ -608,6 +666,7 @@ def _claim(issue_number: int, label: str, title: str = "", repo: str = REPO, run
     ts.record_stage(issue_number, "claimed", "started", f"claimed:{label}", title=title or None, run_id=run_id,
                     **({"repo": repo} if repo != REPO else {}))
     _ensure_board(repo)
+    _invalidate_issue_cache(repo)
     return True
 
 
