@@ -134,6 +134,93 @@ class TestResolveCapability:
                 model_registry.resolve_capability("unknown-capability-xyz", reg=reg)
 
 
+# ── normalize_model_name and model_present functions ───────────────────────
+
+class TestNormalizeModelName:
+    """Test normalize_model_name() for model name normalization."""
+
+    def test_normalize_model_name_identity(self):
+        """normalize_model_name should return the model name unchanged (currently identity)."""
+        assert model_registry.normalize_model_name("qwen2.5:7b") == "qwen2.5:7b"
+        assert model_registry.normalize_model_name("nomic-embed-text") == "nomic-embed-text"
+
+
+class TestModelPresent:
+    """Test model_present() for checking if a model is in a list."""
+
+    def test_model_present_exact_match(self):
+        """model_present should return True for an exact match."""
+        available = ["qwen2.5:7b", "qwen2.5:14b", "nomic-embed-text"]
+        assert model_registry.model_present(available, "qwen2.5:7b") is True
+        assert model_registry.model_present(available, "qwen2.5:14b") is True
+
+    def test_model_present_variant_match(self):
+        """model_present should return True for a variant (starts with model- for tagged names)."""
+        available = ["qwen2.5:7b-instruct-q4_K_M", "qwen2.5:14b-gguf"]
+        assert model_registry.model_present(available, "qwen2.5:7b") is True
+        assert model_registry.model_present(available, "qwen2.5:14b") is True
+
+    def test_model_present_bare_name_no_hyphen_matching(self):
+        """model_present should NOT match repo-name hyphens as variants for bare names.
+
+        Bare names (without ':') should not use startswith matching, only exact
+        and :latest. This prevents false positives like nomic-embed-text matching
+        nomic-embed-text-v2:latest.
+        """
+        # nomic-embed-text should NOT match nomic-embed-text-v2:latest
+        available = ["nomic-embed-text-v2:latest"]
+        assert model_registry.model_present(available, "nomic-embed-text") is False
+
+        # qwen2.5 should NOT match qwen2.5-coder:7b
+        available = ["qwen2.5-coder:7b"]
+        assert model_registry.model_present(available, "qwen2.5") is False
+
+        # llama3 should NOT match llama3-gradient:latest
+        available = ["llama3-gradient:latest"]
+        assert model_registry.model_present(available, "llama3") is False
+
+    def test_model_present_no_match(self):
+        """model_present should return False when model is not in the list."""
+        available = ["qwen2.5:7b", "qwen2.5:14b"]
+        assert model_registry.model_present(available, "qwen2.5:3b") is False
+        assert model_registry.model_present(available, "unknown-model") is False
+
+    def test_model_present_empty_list(self):
+        """model_present should return False for an empty available list."""
+        assert model_registry.model_present([], "qwen2.5:7b") is False
+
+    def test_model_present_untagged_as_latest(self):
+        """model_present should match 'name:latest' for untagged names.
+
+        Ollama reports untagged pulls as 'name:latest' in /api/tags,
+        so a registry entry 'nomic-embed-text' should match 'nomic-embed-text:latest'.
+        Tagged names like 'qwen2.5:7b' are already tagged, so they'd be reported
+        as 'qwen2.5:7b', not 'qwen2.5:7b:latest'.
+        """
+        available = ["nomic-embed-text:latest"]
+        assert model_registry.model_present(available, "nomic-embed-text") is True
+
+        # Bare names should also match exact names if present
+        available = ["nomic-embed-text"]
+        assert model_registry.model_present(available, "nomic-embed-text") is True
+
+    def test_model_present_latest_not_matched_for_tagged_names(self):
+        """model_present should not match ':latest' for names that already have a tag.
+
+        Only bare names (without ':') should match ':latest' appended.
+        Tagged names like 'qwen2.5:7b' should use the existing variant matching,
+        not the ':latest' rule. So 'qwen2.5:7b' should not match 'qwen2.5:7b:latest'
+        (which is not a real Ollama name anyway).
+        """
+        # Tagged model in registry should not match :latest rule
+        available = ["qwen2.5:7b:latest"]  # Not a real Ollama name
+        assert model_registry.model_present(available, "qwen2.5:7b") is False
+
+        # Bare model in registry should not match another tagged variant via :latest
+        available = ["nomic-embed-text:v2"]
+        assert model_registry.model_present(available, "nomic-embed-text") is False
+
+
 # ── is_heavy function ──────────────────────────────────────────────────────
 
 class TestIsHeavy:
@@ -245,6 +332,66 @@ class TestPaperDiveModelResolution:
             models = reg.all().get("models", {})
             found = [name for name in models.keys() if "qwen" in name and "7b" in name]
             assert found, "Should have a qwen 7b model for stance classification"
+
+
+# ── Bootstrap dict vs real config agreement (test 16) ───────────────────
+
+class TestBootstrapDictVsRealConfig:
+    """Test that the bootstrap dictionary in _ensure_exists matches real config/models.json."""
+
+    def test_bootstrap_matches_real_config_models(self):
+        """The models AND capabilities in _ensure_exists should match config/models.json.
+
+        This ensures the bootstrap dict is in sync with the real config, including
+        both the models dict keys and the capabilities dict.
+        """
+        from pathlib import Path
+        import pytest
+        config_path = Path(__file__).resolve().parents[2] / "config" / "models.json"
+        if not config_path.exists():
+            pytest.skip("config/models.json not found")
+
+        import json
+        real_config = json.loads(config_path.read_text())
+
+        with TemporaryRegistry() as reg:
+            bootstrap = reg._read()
+
+        # Both should have the same model names
+        bootstrap_models = set(bootstrap.get("models", {}).keys())
+        real_models = set(real_config.get("models", {}).keys())
+        assert bootstrap_models == real_models, \
+            f"Bootstrap models {bootstrap_models} should match real config models {real_models}"
+
+        # Both should have the same capabilities
+        bootstrap_caps = set(bootstrap.get("capabilities", {}).keys())
+        real_caps = set(real_config.get("capabilities", {}).keys())
+        assert bootstrap_caps == real_caps, \
+            f"Bootstrap capabilities {bootstrap_caps} should match real config capabilities {real_caps}"
+
+
+# ── Capability-points-at-available-model regression guard (test 17) ────────
+
+class TestCapabilityPointsToAvailableModel:
+    """Regression test: every capability must point to a registered model."""
+
+    def test_all_capabilities_reference_registered_models(self):
+        """Every capability in the registry should point only to registered models."""
+        from pathlib import Path
+        config_path = Path(__file__).resolve().parents[2] / "config" / "models.json"
+        if not config_path.exists():
+            pytest.skip("config/models.json not found")
+
+        import json
+        config = json.loads(config_path.read_text())
+
+        models = config.get("models", {})
+        capabilities = config.get("capabilities", {})
+
+        for cap_name, model_list in capabilities.items():
+            for model_name in model_list:
+                assert model_name in models, \
+                    f"Capability '{cap_name}' references unknown model '{model_name}'"
 
 
 if __name__ == "__main__":
