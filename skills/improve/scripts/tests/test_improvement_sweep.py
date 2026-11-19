@@ -284,3 +284,45 @@ def test_extract_project_prioritizes_longer_project_names_in_ambiguous_text():
     """
     result = isw.extract_project(text)
     assert result == "marvin-bench", "Should match 'marvin-bench' even though 'marvin' also appears"
+
+
+# ── rank_by integration in sort_key ─────────────────────────────────────────
+
+def test_top_issues_sorts_by_kind_priority_using_rank_by():
+    """top_issues should sort anti-pattern entries by KIND_PRIORITY using rank_by."""
+    entries = [
+        {"metadata": {"category": "anti-pattern"}, "document": "[COMMENT] unnecessary comment (file: a.py)"},
+        {"metadata": {"category": "anti-pattern"}, "document": "[LOGIC] infinite loop (file: b.py)"},
+        {"metadata": {"category": "anti-pattern"}, "document": "[NAMING] bad var name (file: c.py)"},
+        {"metadata": {"category": "other"}, "document": "[LOGIC] should be ignored (file: d.py)"},
+    ]
+    result = isw.top_issues(entries, limit=5)
+    # Should be sorted: LOGIC (index 0), NAMING (index 1), COMMENT (index 7)
+    assert len(result) == 3
+    assert "[LOGIC]" in result[0]["document"]
+    assert "[NAMING]" in result[1]["document"]
+    assert "[COMMENT]" in result[2]["document"]
+
+
+def test_top_issues_missing_kind_sorts_last():
+    """Entries without a [KIND] tag should sort last (get len(KIND_PRIORITY))."""
+    entries = [
+        {"metadata": {"category": "anti-pattern"}, "document": "[LOGIC] has kind (file: a.py)"},
+        {"metadata": {"category": "anti-pattern"}, "document": "no kind tag (file: b.py)"},
+    ]
+    result = isw.top_issues(entries, limit=5)
+    assert len(result) == 2
+    assert "[LOGIC]" in result[0]["document"]
+    assert "no kind tag" in result[1]["document"]
+
+
+def test_top_issues_first_matching_kind_wins():
+    """When document has multiple kinds, the first one in KIND_PRIORITY should match."""
+    entries = [
+        {"metadata": {"category": "anti-pattern"}, "document": "[COMMENT] [LOGIC] both kinds (file: a.py)"},
+        {"metadata": {"category": "anti-pattern"}, "document": "[NAMING] single kind (file: b.py)"},
+    ]
+    result = isw.top_issues(entries, limit=5)
+    # LOGIC is at index 0, NAMING is at index 1, so [COMMENT] [LOGIC] should match LOGIC and sort first
+    assert "[COMMENT] [LOGIC] both kinds" in result[0]["document"]
+    assert "[NAMING] single kind" in result[1]["document"]

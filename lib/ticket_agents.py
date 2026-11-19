@@ -423,7 +423,7 @@ def run(snapshot, gh, cfg, now, audit_path=AUDIT_PATH, proposals_path=PROPOSALS_
 
     # Unfreezing the queue goes first: claims, re-queues and lifted holds before labels. With a backlog (12 days of
     # crashed passes left 100+ label changes) the per-pass budget would otherwise hold claim releases back for hours.
-    planned.sort(key=lambda a: APPLY_ORDER.index(a["agent"]) if a["agent"] in APPLY_ORDER else len(APPLY_ORDER))
+    planned.sort(key=lambda a: pol.rank_by(a["agent"], APPLY_ORDER))
     by_agent = {a: {"mode": modes[a], "planned": sum(1 for p in planned if p["agent"] == a)} for a in AGENTS}
     applied = failed = deferred = 0
     rows, proposals = [], []
