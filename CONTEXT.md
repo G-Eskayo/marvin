@@ -642,6 +642,12 @@ ever been closed unmerged. Gil approves almost everything; the wait is the cost.
   generically, without anyone having pre-written a rule naming the specific failure shape — how a
   ticket retry storm's comment-velocity spike would be caught without a "storm detector" ever
   having been written.
+- **Resource and health parity rule**: a config entry that names a resource has a health row that
+  probes it. Example: `config/models.json` names AI models by capability; `models:installed` check
+  verifies they exist. `config/profiles/*.json` name machines; `profile:unknown-machines` check
+  verifies the machines exist. This rule surfaces mismatches between what the config says and what
+  the system actually has, so a stale config never silently becomes a source of hard-to-debug
+  failures.
 
 ## Entity IDs (ADR 0079, accepted 2026-10-27, marvin#697)
 

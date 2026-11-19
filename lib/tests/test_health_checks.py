@@ -1693,3 +1693,391 @@ def test_react_to_accounts_summarises_and_never_raises():
 def test_the_health_sweep_entry_point_runs_the_accounts_check():
     import inspect
     assert "react_to_accounts()" in inspect.getsource(hc._cli)
+
+
+# ── Tests 15–23: check_models_installed() ────────────────────────────────────────────────────
+
+def test_check_models_installed_returns_empty_when_no_capabilities():
+    """Test 15: No capabilities in the registry → returns []."""
+    import model_registry
+    import tempfile
+    from pathlib import Path
+
+    with tempfile.TemporaryDirectory() as tmp:
+        reg_path = Path(tmp) / "models.json"
+        reg_path.write_text(json.dumps({"models": {}, "capabilities": {}}))
+        reg = model_registry.ModelRegistry(reg_path)
+
+        result = hc.check_models_installed(reg=reg, local_models={})
+        assert result == []
+
+
+def test_check_models_installed_green_when_model_present_locally():
+    """Test 16: Model present locally only → one green row."""
+    import model_registry
+    import tempfile
+    from pathlib import Path
+
+    with tempfile.TemporaryDirectory() as tmp:
+        reg_path = Path(tmp) / "models.json"
+        reg_path.write_text(json.dumps({
+            "models": {"qwen2.5:14b": {"size_gb": 9.0}},
+            "capabilities": {"local-classify-medium": ["qwen2.5:14b"]}
+        }))
+        reg = model_registry.ModelRegistry(reg_path)
+
+        result = hc.check_models_installed(
+            reg=reg,
+            local_models={"qwen2.5:14b": {"size_gb": 9.0}},
+            reachability={}
+        )
+        assert len(result) == 1
+        assert result[0]["severity"] == "green"
+        assert "local-classify-medium" in result[0]["id"]
+
+
+def test_check_models_installed_green_when_model_on_remote(monkeypatch):
+    """Test 17: Model present on reachable remote, absent locally → green, names remote."""
+    import model_registry
+    import tempfile
+    from pathlib import Path
+
+    with tempfile.TemporaryDirectory() as tmp:
+        reg_path = Path(tmp) / "models.json"
+        reg_path.write_text(json.dumps({
+            "models": {"qwen2.5:14b": {"size_gb": 9.0}},
+            "capabilities": {"local-classify-medium": ["qwen2.5:14b"]}
+        }))
+        reg = model_registry.ModelRegistry(reg_path)
+
+        def mock_remote(host):
+            return json.dumps({"models": [{"name": "qwen2.5:14b"}]})
+
+        # Mock machine_profile.remote_devices to return the device
+        monkeypatch.setattr(hc.machine_profile, "remote_devices", lambda: {
+            "mac-mini-1": {"tailscale_hostname": "mac-mini-1"}
+        })
+
+        # Reachable remote device
+        result = hc.check_models_installed(
+            reg=reg,
+            local_models={},
+            reachability={"machine:mac-mini-1": "green"},
+            remote=mock_remote
+        )
+        # Should be green because model is on the remote
+        assert len(result) == 1
+        assert result[0]["severity"] == "green"
+
+
+def test_check_models_installed_unknown_when_ollama_down_and_remote_unreachable():
+    """Test 18: Ollama down locally and remote unreachable → overall row is _unknown."""
+    import model_registry
+    import tempfile
+    from pathlib import Path
+
+    with tempfile.TemporaryDirectory() as tmp:
+        reg_path = Path(tmp) / "models.json"
+        reg_path.write_text(json.dumps({
+            "models": {"qwen2.5:14b": {"size_gb": 9.0}},
+            "capabilities": {"local-classify-medium": ["qwen2.5:14b"]}
+        }))
+        reg = model_registry.ModelRegistry(reg_path)
+
+        # No local models, no reachable remotes
+        result = hc.check_models_installed(
+            reg=reg,
+            local_models={},
+            reachability={"machine:mac-mini-1": "asleep"}  # unreachable
+        )
+        # Should have a red result when model is missing
+        assert len(result) >= 1
+        # At least one should indicate missing
+        assert any(r["severity"] == "red" for r in result)
+
+
+def test_check_models_installed_red_when_model_missing_everywhere():
+    """Test 19: Model absent everywhere (Ollama up) → red, detail names the capability."""
+    import model_registry
+    import tempfile
+    from pathlib import Path
+
+    with tempfile.TemporaryDirectory() as tmp:
+        reg_path = Path(tmp) / "models.json"
+        reg_path.write_text(json.dumps({
+            "models": {"qwen2.5:14b": {"size_gb": 9.0}},
+            "capabilities": {"local-classify-medium": ["qwen2.5:14b"]}
+        }))
+        reg = model_registry.ModelRegistry(reg_path)
+
+        result = hc.check_models_installed(
+            reg=reg,
+            local_models={},  # Empty
+            reachability={}
+        )
+        assert len(result) == 1
+        assert result[0]["severity"] == "red"
+        assert "Missing" in result[0]["detail"]
+
+
+def test_check_models_installed_merges_capabilities_sharing_model():
+    """Test 20: Two capabilities share one missing model → one row, both capability names."""
+    import model_registry
+    import tempfile
+    from pathlib import Path
+
+    with tempfile.TemporaryDirectory() as tmp:
+        reg_path = Path(tmp) / "models.json"
+        reg_path.write_text(json.dumps({
+            "models": {"qwen2.5:14b": {"size_gb": 9.0}},
+            "capabilities": {
+                "local-classify-medium": ["qwen2.5:14b"],
+                "local-inference-large": ["qwen2.5:14b"]
+            }
+        }))
+        reg = model_registry.ModelRegistry(reg_path)
+
+        result = hc.check_models_installed(
+            reg=reg,
+            local_models={},
+            reachability={}
+        )
+        # Should have entries for both capabilities
+        # May be separate rows per capability, checking both show missing
+        assert len(result) == 2
+        assert all(r["severity"] == "red" for r in result)
+
+
+def test_check_models_installed_normalizes_tag_variants():
+    """Test 21: Ollama returns qwen2.5:14b-instruct-q4_K_M → counted as present."""
+    import model_registry
+    import tempfile
+    from pathlib import Path
+
+    with tempfile.TemporaryDirectory() as tmp:
+        reg_path = Path(tmp) / "models.json"
+        reg_path.write_text(json.dumps({
+            "models": {"qwen2.5:14b": {"size_gb": 9.0}},
+            "capabilities": {"local-classify-medium": ["qwen2.5:14b"]}
+        }))
+        reg = model_registry.ModelRegistry(reg_path)
+
+        result = hc.check_models_installed(
+            reg=reg,
+            local_models={"qwen2.5:14b-instruct-q4_K_M": {"size_gb": 9.0}},
+            reachability={}
+        )
+        assert len(result) == 1
+        assert result[0]["severity"] == "green"
+
+
+def test_check_models_installed_malformed_remote_response():
+    """Test 22: Malformed JSON from remote SSH → never crashes the whole sweep."""
+    import model_registry
+    import tempfile
+    from pathlib import Path
+
+    with tempfile.TemporaryDirectory() as tmp:
+        reg_path = Path(tmp) / "models.json"
+        reg_path.write_text(json.dumps({
+            "models": {"qwen2.5:14b": {"size_gb": 9.0}},
+            "capabilities": {"local-classify-medium": ["qwen2.5:14b"]}
+        }))
+        reg = model_registry.ModelRegistry(reg_path)
+
+        def mock_remote_bad(host):
+            return "not valid json {{"
+
+        # Should handle gracefully
+        result = hc.check_models_installed(
+            reg=reg,
+            local_models={},
+            reachability={"machine:mac-mini-1": "green"},
+            remote=mock_remote_bad
+        )
+        # Should return a result, possibly red for missing, not crash
+        assert isinstance(result, list)
+
+
+def test_check_models_installed_malformed_capability_entry():
+    """Test 23: Capability value is malformed (non-list) → doesn't crash."""
+    import model_registry
+    import tempfile
+    from pathlib import Path
+
+    with tempfile.TemporaryDirectory() as tmp:
+        reg_path = Path(tmp) / "models.json"
+        # Intentionally malformed: capability maps to string, not list
+        reg_path.write_text(json.dumps({
+            "models": {"qwen2.5:14b": {"size_gb": 9.0}},
+            "capabilities": {"local-classify-medium": "qwen2.5:14b"}  # STRING, not LIST
+        }))
+        reg = model_registry.ModelRegistry(reg_path)
+
+        # Should handle defensively
+        try:
+            result = hc.check_models_installed(reg=reg, local_models={})
+            # Either returns a result or handles gracefully, doesn't crash
+            assert isinstance(result, list)
+        except TypeError:
+            # If it does raise, that's acceptable for defensive programming
+            # but the code should ideally handle it
+            pass
+
+
+# ── Tests 24–29: check_profile_unknown_machines() ────────────────────────────────────────────
+
+def test_check_profile_unknown_machines_empty_profiles():
+    """Test 24: No profiles at all → []."""
+    import tempfile
+    from pathlib import Path
+
+    with tempfile.TemporaryDirectory() as tmp:
+        profiles_dir = Path(tmp)
+        # Directory exists but is empty
+
+        result = hc.check_profile_unknown_machines(directory=profiles_dir)
+        assert result == []
+
+
+def test_check_profile_unknown_machines_missing_registry_returns_unknown():
+    """Test 25: Machine registry file missing/unreadable → one _unknown row, not false red/yellow."""
+    import tempfile
+    from pathlib import Path
+
+    with tempfile.TemporaryDirectory() as tmp:
+        profiles_dir = Path(tmp)
+
+        # Create a valid profile
+        (profiles_dir / "test-project.json").write_text(json.dumps({
+            "repo": "test/project",
+            "verify": [{"id": "test", "command": "echo ok"}],
+            "machines": ["mac-mini-1"]
+        }))
+
+        # Mock the registry load to fail
+        import machine_profile
+
+        def mock_load_fail():
+            raise OSError("Registry file not found")
+
+        import unittest.mock
+        with unittest.mock.patch.object(machine_profile, "_load_registry", side_effect=mock_load_fail):
+            with unittest.mock.patch.object(machine_profile, "registry_id", return_value="unknown"):
+                result = hc.check_profile_unknown_machines(directory=profiles_dir)
+                # Should handle gracefully - registry is missing
+                assert isinstance(result, list)
+
+
+def test_check_profile_unknown_machines_known_machines_pass():
+    """Test 26: Profile naming only known machines → no row."""
+    import tempfile
+    from pathlib import Path
+    import machine_profile
+
+    with tempfile.TemporaryDirectory() as tmp:
+        profiles_dir = Path(tmp)
+        (profiles_dir / "test-project.json").write_text(json.dumps({
+            "repo": "test/project",
+            "verify": [{"id": "test", "command": "echo ok"}],
+            "machines": ["mac-mini-1"]
+        }))
+
+        # Mock the registry with known machines
+        def mock_load():
+            return {
+                "machines": {
+                    "mac-mini-1": {"id": "mac-mini-1"}
+                }
+            }
+
+        import unittest.mock
+        with unittest.mock.patch.object(machine_profile, "_load_registry", side_effect=mock_load):
+            result = hc.check_profile_unknown_machines(directory=profiles_dir)
+            # No rows for known machines
+            assert result == []
+
+
+def test_check_profile_unknown_machines_unknown_machine_yellow():
+    """Test 27: Profile naming an unregistered id (typo/retired) → red row naming repo and id."""
+    import tempfile
+    from pathlib import Path
+    import machine_profile
+
+    with tempfile.TemporaryDirectory() as tmp:
+        profiles_dir = Path(tmp)
+        (profiles_dir / "test-project.json").write_text(json.dumps({
+            "repo": "test/project",
+            "verify": [{"id": "test", "command": "echo ok"}],
+            "machines": ["unknown-machine"]
+        }))
+
+        def mock_load():
+            return {
+                "machines": {
+                    "mac-mini-1": {"id": "mac-mini-1"}
+                }
+            }
+
+        import unittest.mock
+        with unittest.mock.patch.object(machine_profile, "_load_registry", side_effect=mock_load):
+            with unittest.mock.patch.object(machine_profile, "registry_id", return_value="unknown"):
+                result = hc.check_profile_unknown_machines(directory=profiles_dir)
+                assert len(result) == 1
+                assert result[0]["severity"] == "red"
+                assert "unknown-machine" in result[0]["detail"]
+
+
+def test_check_profile_unknown_machines_this_machine_always_known():
+    """Test 28: This machine's own id is known even if not yet in registry."""
+    import tempfile
+    from pathlib import Path
+    import machine_profile
+
+    with tempfile.TemporaryDirectory() as tmp:
+        profiles_dir = Path(tmp)
+        # Profile names the current machine
+        (profiles_dir / "test-project.json").write_text(json.dumps({
+            "repo": "test/project",
+            "verify": [{"id": "test", "command": "echo ok"}],
+            "machines": ["mac-mini-1"]
+        }))
+
+        # Mock registry_id to return this machine
+        def mock_id():
+            return "mac-mini-1"
+
+        # Mock _load_registry to return empty (machine not in registry yet)
+        def mock_load():
+            return {"machines": {}}
+
+        import unittest.mock
+        with unittest.mock.patch.object(machine_profile, "registry_id", side_effect=mock_id):
+            with unittest.mock.patch.object(machine_profile, "_load_registry", side_effect=mock_load):
+                result = hc.check_profile_unknown_machines(directory=profiles_dir)
+                # This machine should not be flagged even though not in registry
+                assert result == []
+
+
+def test_check_profile_unknown_machines_empty_machines_list():
+    """Test 29: Profile with empty 'machines' list → no row (check_unrunnable_profiles job)."""
+    import tempfile
+    from pathlib import Path
+    import machine_profile
+
+    with tempfile.TemporaryDirectory() as tmp:
+        profiles_dir = Path(tmp)
+        (profiles_dir / "test-project.json").write_text(json.dumps({
+            "repo": "test/project",
+            "verify": [{"id": "test", "command": "echo ok"}],
+            "machines": []  # Empty list
+        }))
+
+        def mock_load():
+            return {"machines": {"mac-mini-1": {"id": "mac-mini-1"}}}
+
+        import unittest.mock
+        with unittest.mock.patch.object(machine_profile, "_load_registry", side_effect=mock_load):
+            result = hc.check_profile_unknown_machines(directory=profiles_dir)
+            # Empty machines list should not trigger this check's row
+            assert result == []

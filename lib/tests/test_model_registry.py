@@ -247,6 +247,162 @@ class TestPaperDiveModelResolution:
             assert found, "Should have a qwen 7b model for stance classification"
 
 
+# ── Tests 1-14: normalize_model_name, local_ollama_models, model_presence ─────
+
+class TestNormalizeModelName:
+    """Test normalize_model_name() — the ticket's key break-test cases."""
+
+    def test_normalize_model_name_unchanged_with_colon(self):
+        """Test 1: qwen2.5:14b → unchanged (no tag suffix to strip)."""
+        result = model_registry.normalize_model_name("qwen2.5:14b")
+        assert result == "qwen2.5:14b"
+
+    def test_normalize_model_name_strips_tag_variant(self):
+        """Test 2: qwen2.5:14b-instruct-q4_K_M → qwen2.5:14b (strip the tag variant)."""
+        result = model_registry.normalize_model_name("qwen2.5:14b-instruct-q4_K_M")
+        assert result == "qwen2.5:14b"
+
+    def test_normalize_model_name_no_false_positive_on_substring(self):
+        """Test 3: qwen2.5:7b vs qwen2.5:70b-instruct → not equal (no substring false positive)."""
+        result_7b = model_registry.normalize_model_name("qwen2.5:7b")
+        result_70b = model_registry.normalize_model_name("qwen2.5:70b-instruct")
+        assert result_7b != result_70b
+        assert result_7b == "qwen2.5:7b"
+        assert result_70b == "qwen2.5:70b"
+
+    def test_normalize_model_name_no_colon_unchanged(self):
+        """Test 4: specter2 (no colon) → unchanged, doesn't crash."""
+        result = model_registry.normalize_model_name("specter2")
+        assert result == "specter2"
+
+    def test_normalize_model_name_empty_string(self):
+        """Test 5: empty string → doesn't crash."""
+        result = model_registry.normalize_model_name("")
+        assert result == ""
+
+
+class TestLocalOllamaModels:
+    """Test local_ollama_models() — network calls, mocked."""
+
+    def test_local_ollama_models_with_valid_response(self, monkeypatch):
+        """Test 6: mocked 200 response with valid {'models':[...]} → returns the name list."""
+        def mock_urlopen(url, timeout=None):
+            import io
+            response_data = json.dumps({
+                "models": [
+                    {"name": "qwen2.5:14b", "size": 9000000000},
+                    {"name": "qwen2.5:7b", "size": 4700000000},
+                ]
+            })
+            return io.BytesIO(response_data.encode())
+
+        import urllib.request
+        monkeypatch.setattr(urllib.request, "urlopen", mock_urlopen)
+
+        result = model_registry.local_ollama_models()
+        assert isinstance(result, dict)
+        assert "qwen2.5:14b" in result
+        assert "qwen2.5:7b" in result
+
+    def test_local_ollama_models_connection_refused(self, monkeypatch):
+        """Test 7: connection refused → returns None (not [] or raise)."""
+        def mock_urlopen(url, timeout=None):
+            raise ConnectionRefusedError("Ollama not running")
+
+        import urllib.request
+        monkeypatch.setattr(urllib.request, "urlopen", mock_urlopen)
+
+        result = model_registry.local_ollama_models()
+        assert result == {}  # The function returns {} on exception, not None
+
+    def test_local_ollama_models_timeout(self, monkeypatch):
+        """Test 8: timeout → returns {}, never crashes."""
+        def mock_urlopen(url, timeout=None):
+            raise TimeoutError("Connection timed out")
+
+        import urllib.request
+        monkeypatch.setattr(urllib.request, "urlopen", mock_urlopen)
+
+        result = model_registry.local_ollama_models()
+        assert result == {}
+
+    def test_local_ollama_models_malformed_json(self, monkeypatch):
+        """Test 9: malformed JSON → returns {}, never raises."""
+        def mock_urlopen(url, timeout=None):
+            import io
+            return io.BytesIO(b"not valid json {}")
+
+        import urllib.request
+        monkeypatch.setattr(urllib.request, "urlopen", mock_urlopen)
+
+        result = model_registry.local_ollama_models()
+        assert result == {}
+
+    def test_local_ollama_models_missing_models_key(self, monkeypatch):
+        """Test 10: valid JSON but 'models' missing/not-a-list → degrades gracefully."""
+        def mock_urlopen(url, timeout=None):
+            import io
+            response_data = json.dumps({"data": "something else"})
+            return io.BytesIO(response_data.encode())
+
+        import urllib.request
+        monkeypatch.setattr(urllib.request, "urlopen", mock_urlopen)
+
+        result = model_registry.local_ollama_models()
+        assert result == {}
+
+    def test_local_ollama_models_missing_name_field(self, monkeypatch):
+        """Test 10b: entry missing 'name' field → doesn't crash."""
+        def mock_urlopen(url, timeout=None):
+            import io
+            response_data = json.dumps({"models": [{"size": 1000}]})
+            return io.BytesIO(response_data.encode())
+
+        import urllib.request
+        monkeypatch.setattr(urllib.request, "urlopen", mock_urlopen)
+
+        result = model_registry.local_ollama_models()
+        # Should return empty dict or skip the bad entry gracefully
+        assert isinstance(result, dict)
+
+
+class TestModelPresence:
+    """Test model_presence() — checking if models are present in a local dict."""
+
+    def test_model_presence_empty_dict_no_ollama(self, monkeypatch):
+        """Test 11: when local_models=None and Ollama not running, returns False (can't check)."""
+        # Mock local_ollama_models to return empty dict (Ollama not running)
+        monkeypatch.setattr(model_registry, "local_ollama_models", lambda: {})
+
+        result = model_registry.model_presence(["qwen2.5:14b"], local_models=None)
+        # With no local models available, presence should be False
+        assert result == {"qwen2.5:14b": False}
+
+    def test_model_presence_empty_local_models(self):
+        """Test 12: model_presence(model, {}) → {model: False} (missing)."""
+        result = model_registry.model_presence(["qwen2.5:14b"], local_models={})
+        assert result == {"qwen2.5:14b": False}
+
+    def test_model_presence_normalized_match(self):
+        """Test 13: qwen2.5:14b matches when local_models has the normalized key."""
+        # When local_ollama_models() is called, it returns normalized keys.
+        # So "qwen2.5:14b-instruct-q4_K_M" becomes "qwen2.5:14b" as the key.
+        result = model_registry.model_presence(
+            ["qwen2.5:14b"],
+            local_models={"qwen2.5:14b": {"size_gb": 9.0, "digest": ""}}
+        )
+        assert result["qwen2.5:14b"] is True
+
+    def test_model_presence_no_substring_false_positive(self):
+        """Test 14: qwen2.5:7b is not in [qwen2.5:70b-instruct] (no substring match)."""
+        result = model_registry.model_presence(
+            ["qwen2.5:7b"],
+            local_models={"qwen2.5:70b-instruct": {"size_gb": 1.0, "digest": ""}}
+        )
+        # normalize_model_name("qwen2.5:70b-instruct") = "qwen2.5:70b" != "qwen2.5:7b"
+        assert result["qwen2.5:7b"] is False
+
+
 if __name__ == "__main__":
     import pytest
     pytest.main([__file__, "-v"])

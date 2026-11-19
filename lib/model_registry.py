@@ -16,6 +16,7 @@ from pathlib import Path
 
 HOME = Path.home()
 REGISTRY_PATH = Path(__file__).resolve().parents[1] / "config" / "models.json"
+OLLAMA_TAGS_URL = "http://localhost:11434/api/tags"
 
 
 class ModelRegistry:
@@ -239,6 +240,76 @@ def check_consistency(reg: ModelRegistry | None = None) -> dict[str, list[str]]:
             soft_warnings.append(f"Model {model_name!r} has empty reason field")
 
     return {"hard_errors": hard_errors, "soft_warnings": soft_warnings}
+
+
+def normalize_model_name(name: str) -> str:
+    """Normalize a model name to match registry keys. Strips tag variants (e.g., quantization).
+
+    Examples:
+      "qwen2.5:14b" → "qwen2.5:14b" (unchanged)
+      "qwen2.5:14b-instruct-q4_K_M" → "qwen2.5:14b" (strips variant after size)
+      "specter2" → "specter2" (no colon, unchanged)
+    """
+    name = name.replace("/", ":").lower()
+
+    # If the name contains a colon, strip everything after the base model specification.
+    # The base is name:size (e.g., "qwen2.5:14b"). Strip variants like "-instruct-q4_K_M".
+    if ":" in name:
+        prefix, tag = name.rsplit(":", 1)
+        # Keep the prefix and tag up to the size specifier (e.g., "14b")
+        # Match digits followed by 'b' and keep everything up to and including that
+        import re
+        match = re.match(r"(\d+b)", tag)
+        if match:
+            size_part = match.group(1)
+            return f"{prefix}:{size_part}"
+
+    return name
+
+
+def local_ollama_models() -> dict[str, dict]:
+    """Fetch models from local Ollama instance. Returns dict of {normalized_model_name: metadata}.
+
+    Makes an HTTP request to OLLAMA_TAGS_URL.
+    Models are normalized (variants stripped) so that qwen2.5:14b and qwen2.5:14b-instruct
+    both become qwen2.5:14b as the key. Only the first (or one) variant is kept per model.
+    """
+    try:
+        import urllib.request
+        resp = urllib.request.urlopen(OLLAMA_TAGS_URL, timeout=5)
+        data = json.loads(resp.read())
+        models = {}
+        for model in data.get("models", []):
+            name = normalize_model_name(model.get("name", ""))
+            if name and name not in models:  # Keep the first variant
+                models[name] = {
+                    "size_gb": model.get("size", 0) / (1024**3),
+                    "digest": model.get("digest", ""),
+                }
+        return models
+    except Exception:
+        return {}
+
+
+def model_presence(model_names: list[str], reg: ModelRegistry | None = None,
+                   local_models: dict[str, dict] | None = None) -> dict[str, bool]:
+    """Check which models are present. Returns {model_name: is_present}.
+
+    - If local_models is provided, uses it (for testing).
+    - Otherwise fetches from local Ollama.
+    - Checks registry for reference if model is in registry.
+    """
+    if reg is None:
+        reg = ModelRegistry()
+    if local_models is None:
+        local_models = local_ollama_models()
+
+    result = {}
+    for name in model_names:
+        normalized = normalize_model_name(name)
+        result[name] = normalized in local_models
+
+    return result
 
 
 if __name__ == "__main__":

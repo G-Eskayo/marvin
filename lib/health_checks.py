@@ -1788,6 +1788,153 @@ def check_merge_service() -> dict:
     return merge_service_result(merge_machines(), waiting_approvals())
 
 
+def _ollama_tags_remote(host: str) -> str:
+    """Probe Ollama tags on a remote machine via SSH. Mirrors _run_sync_log_remote."""
+    cmd = ["ssh"] + SSH_OPTS + [host, "curl -s http://localhost:11434/api/tags || echo '{}'"]
+    try:
+        result = subprocess.run(cmd, capture_output=True, text=True, timeout=10)
+        return result.stdout
+    except Exception:
+        return ""
+
+
+def _parse_ollama_tags(text: str) -> list[str]:
+    """Parse ollama /api/tags JSON response. Returns list of normalized model names (variants stripped)."""
+    import model_registry
+    try:
+        data = json.loads(text)
+        models = set()  # Use set to avoid duplicate normalized names
+        for model in data.get("models", []):
+            name = model.get("name", "")
+            if name:
+                normalized = model_registry.normalize_model_name(name)
+                if normalized:
+                    models.add(normalized)
+        return list(models)
+    except (ValueError, KeyError, TypeError):
+        return []
+
+
+def check_models_installed(reachability: dict[str, str] | None = None, reg: "model_registry.ModelRegistry" | None = None,
+                          local_models: dict[str, dict] | None = None,
+                          remote: callable | None = None) -> list[dict]:
+    """Check that every capability's models are installed on at least one machine.
+
+    - reachability: machine:<id> -> severity (passes through)
+    - reg: ModelRegistry instance (defaults to new)
+    - local_models: for testing, dict of local Ollama models
+    - remote: for testing, function(host) -> text from ollama /api/tags
+    """
+    import model_registry
+    if reg is None:
+        reg = model_registry.ModelRegistry()
+
+    results = []
+    data = reg._read()
+    capabilities = data.get("capabilities", {})
+    models = data.get("models", {})
+
+    if not capabilities:
+        return []
+
+    # Get local models
+    if local_models is None:
+        local_models = model_registry.local_ollama_models()
+    local_model_names = set(model_registry.normalize_model_name(m) for m in local_models.keys())
+
+    # Get remote models from each device
+    remote_model_names = {}
+    if remote is None:
+        remote = _ollama_tags_remote
+
+    if reachability:
+        for device_id, sev in reachability.items():
+            if sev == "asleep":
+                continue
+            if sev != "green":
+                continue
+            # Extract hostname
+            if device_id.startswith("machine:"):
+                host = None
+                try:
+                    dev_name = device_id.split(":", 1)[1]
+                    devices = machine_profile.remote_devices()
+                    if dev_name in devices:
+                        host = devices[dev_name].get("tailscale_hostname")
+                except Exception:
+                    pass
+                if host:
+                    try:
+                        text = remote(host)
+                        # _parse_ollama_tags already normalizes the names
+                        remote_model_names[host] = set(_parse_ollama_tags(text))
+                    except Exception:
+                        pass
+
+    # Check each capability
+    for cap_name, model_list in capabilities.items():
+        all_names = {model_registry.normalize_model_name(m) for m in model_list}
+
+        # Check if models are on local or any remote
+        present = all_names & local_model_names
+        for host_models in remote_model_names.values():
+            present |= all_names & host_models
+
+        missing = all_names - present
+        if missing:
+            results.append(_result(f"models:{cap_name}", f"Models for {cap_name}", "red",
+                                 f"Missing: {', '.join(sorted(missing))}"))
+        else:
+            results.append(_result(f"models:{cap_name}", f"Models for {cap_name}", "green",
+                                 f"All models installed"))
+
+    return results
+
+
+def check_profile_unknown_machines(directory: Path | None = None) -> list[dict]:
+    """Check that every machine named in a project profile actually exists in the registry.
+
+    Returns red for each profile that names an unknown machine.
+    """
+    import project_profile
+
+    results = []
+
+    if directory is None:
+        directory = Path(__file__).resolve().parent.parent / "config" / "profiles"
+
+    if not directory.exists():
+        return []
+
+    try:
+        profiles = project_profile.all_profiles(directory=directory)
+    except Exception:
+        return []
+
+    try:
+        registry = machine_profile._load_registry()
+        known_machines = {v.get("id") for v in registry.get("machines", {}).values() if v.get("id")}
+        # This machine's own id is always known, even if not yet in the registry
+        known_machines.add(machine_profile.registry_id())
+    except Exception:
+        known_machines = set()
+        try:
+            known_machines.add(machine_profile.registry_id())
+        except Exception:
+            pass
+
+    for profile in profiles:
+        repo = profile.get("repo", "unknown")
+        machines = profile.get("machines", [])
+        for machine_id in machines:
+            if machine_id not in known_machines:
+                results.append(_result(f"profile:unknown-machine:{repo}", f"Profile for {repo}",
+                                     "red", f"Profile names unknown machine: {machine_id}"))
+                break
+
+    return results
+
+
 def _mirror_health():
     import mirror_health  # lib/mirror_health.py: the pull-only node's mirror, read from this Mac (marvin#910)
     return mirror_health
@@ -1811,6 +1958,8 @@ def default_checks(reach: dict[str, str] | None = None, reach_results: list[dict
         ("contract", "Output contracts", check_output_contracts, CHECK_BUDGET_S),
         ("profile:missing", "Projects without an execution profile", check_missing_profiles, CHECK_BUDGET_S),
         ("profile:no-machines", "Projects with no machines", check_unrunnable_profiles, CHECK_BUDGET_S),
+        ("profile:unknown-machines", "Project profiles name real machines", check_profile_unknown_machines, CHECK_BUDGET_S),
+        ("models:installed", "Models installed for every capability", lambda: check_models_installed(reach), CROSS_MACHINE_BUDGET_S),
         ("triggers:missed", "Dashboard triggers cover every change", check_trigger_coverage, CHECK_BUDGET_S),
         ("catalog:fresh", "Project catalog is current", check_catalog_fresh, CHECK_BUDGET_S),
         ("graphify:fresh", "Code graph is current", check_graphify_fresh, CHECK_BUDGET_S),
