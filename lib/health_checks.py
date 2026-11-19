@@ -110,6 +110,123 @@ def check_intent_routing_collection() -> dict:
     return _result(cid, label, "green", f"{count} reference examples indexed", value=count)
 
 
+# ── model availability (ollama runtime) ──────────────────────────────────
+
+def _query_ollama_models_local() -> list[str] | None:
+    """Query localhost:11434/api/tags and return list of model names. Returns None on error."""
+    try:
+        import urllib.request
+        with urllib.request.urlopen("http://localhost:11434/api/tags", timeout=5) as resp:
+            data = json.loads(resp.read())
+            return [m["name"] for m in data.get("models", [])]
+    except Exception:
+        return None
+
+
+def _query_ollama_models_remote(host: str) -> list[str] | None:
+    """Query ollama models on a remote machine over SSH. Returns None on error."""
+    script = "python3 -c \"import json,urllib.request; resp=urllib.request.urlopen('http://localhost:11434/api/tags', timeout=5); print(json.dumps([m['name'] for m in json.loads(resp.read()).get('models', [])]))\""
+    cmd = ["ssh", *SSH_OPTS, host, script]
+    try:
+        proc = subprocess.run(cmd, capture_output=True, text=True, timeout=10)
+        if proc.returncode == 0:
+            return json.loads(proc.stdout)
+    except Exception:
+        pass
+    return None
+
+
+def check_model_availability(reachability: dict[str, str] | None = None) -> dict:
+    """Check that all ollama models in the registry are available on at least one machine.
+
+    For each (capability, model) pair where the model's runtime is "ollama", query the
+    local machine and each reachable remote Mac to see if the model is installed.
+    Green if present on ≥1 machine, yellow if absent everywhere but every machine answered,
+    unknown if any machine's listing couldn't be read.
+    """
+    import model_registry as mr
+    cid, label = "model:availability", "Model registry matches what's installed"
+
+    registry = mr.ModelRegistry()
+    data = registry.all()
+    capabilities = data.get("capabilities", {})
+    models = data.get("models", {})
+
+    # Check for config drift: empty capabilities or unregistered models
+    config_errors = []
+    ollama_pairs = []
+    for cap_name, model_list in capabilities.items():
+        if not model_list:
+            config_errors.append(f"capability '{cap_name}' is empty")
+        for model_name in model_list:
+            if model_name not in models:
+                config_errors.append(f"capability '{cap_name}' references unregistered model '{model_name}'")
+            else:
+                model_meta = models[model_name]
+                if model_meta.get("runtime") == "ollama":
+                    ollama_pairs.append((cap_name, model_name))
+
+    if config_errors:
+        return _result(cid, label, "red",
+                       f"Config drift: {'; '.join(config_errors[:3])}",
+                       value=len(config_errors))
+
+    if not ollama_pairs:
+        return _result(cid, label, "green", "no ollama models in registry", value=0)
+
+    # Gather available models from all reachable machines, tracking failures
+    machines_queried = []
+    machines_failed = []
+    all_available = set()
+
+    # Query local machine
+    local_models = _query_ollama_models_local()
+    if local_models is not None:
+        machines_queried.append("local")
+        all_available.update(local_models)
+    else:
+        machines_failed.append("local")
+
+    # Query remote machines
+    for device_id, info in machine_profile.remote_devices().items():
+        host = info.get("tailscale_hostname")
+        if not host or not _reachable(reachability, device_id):
+            continue
+        try:
+            remote_models = _query_ollama_models_remote(host)
+            if remote_models is not None:
+                machines_queried.append(device_id)
+                all_available.update(remote_models)
+            else:
+                machines_failed.append(device_id)
+        except Exception:
+            machines_failed.append(device_id)
+
+    if not machines_queried:
+        return _unknown(cid, label, "couldn't reach any machine to check ollama models")
+
+    # Check each required model
+    missing = []
+    for cap_name, model_name in ollama_pairs:
+        if not mr.model_present(list(all_available), model_name):
+            missing.append(f"{model_name} (for {cap_name})")
+
+    if not missing:
+        machines_str = ", ".join(machines_queried)
+        return _result(cid, label, "green", f"all {len(ollama_pairs)} ollama models present on {machines_str}", value=len(ollama_pairs))
+
+    # Models are missing. If any machine couldn't be queried, we have incomplete evidence.
+    if machines_failed:
+        return _unknown(cid, label,
+                       f"missing on {', '.join(machines_queried)} but couldn't verify {', '.join(machines_failed)}: "
+                       f"{'; '.join(missing[:3])}")
+
+    # All machines answered and the models are still missing
+    return _result(cid, label, "yellow",
+                   f"Missing on all queried machines ({', '.join(machines_queried)}): {'; '.join(missing[:3])}",
+                   value=len(missing))
+
+
 # ── dispatch lock ───────────────────────────────────────────────────────
 
 MAX_DISPATCH_MINUTES_YELLOW = 45  # plan+exec timeouts sum to ~40min worst case per iteration
@@ -1800,6 +1917,7 @@ def default_checks(reach: dict[str, str] | None = None, reach_results: list[dict
     return [
         ("token", "Auth tokens", check_token_files, CHECK_BUDGET_S),
         ("route:intent-routing-collection", "route.py embedding classifier (ChromaDB)", check_intent_routing_collection, CHECK_BUDGET_S),
+        ("model:availability", "Model registry matches what's installed", lambda: check_model_availability(reach), CROSS_MACHINE_BUDGET_S),
         ("dispatch:lock-age", "Local dispatch lock", check_dispatch_lock, CHECK_BUDGET_S),
         ("pipeline:breaker", "Ticket pipeline circuit breaker", lambda: check_pipeline_breaker(reach), CROSS_MACHINE_BUDGET_S),
         ("sync:stuck", "Code sync", lambda: check_sync_stuck(reach), CROSS_MACHINE_BUDGET_S),

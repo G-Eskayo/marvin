@@ -202,6 +202,43 @@ def resolve_capability(name: str, reg: ModelRegistry | None = None) -> list[str]
     return capabilities[name]
 
 
+def normalize_model_name(model: str) -> str:
+    """Normalize a model name for matching. Currently returns as-is; future: strip variants."""
+    return model
+
+
+def model_present(available: list[str], model: str) -> bool:
+    """Check if a model is in the available list.
+
+    Returns True if either an exact match is found, or a variant of the model
+    (e.g. "qwen2.5:7b-instruct-q4_K_M" for "qwen2.5:7b"), or the model with
+    :latest tag appended (Ollama reports untagged pulls as "name:latest").
+
+    Matching rules:
+    - Exact match: a == model
+    - Tagged variant (model contains ':'): a starts with "{model}-"
+      (e.g., "qwen2.5:7b" matches "qwen2.5:7b-instruct")
+    - Bare name (model has no ':'): a == "{model}:latest"
+      (e.g., "nomic-embed-text" matches "nomic-embed-text:latest")
+    """
+    for a in available:
+        # Exact match
+        if a == model:
+            return True
+
+        # For models with a tag (contain ':'), check for tag variants
+        # e.g., model="qwen2.5:7b", a="qwen2.5:7b-instruct" should match
+        if ":" in model and a.startswith(f"{model}-"):
+            return True
+
+        # For bare names (no ':'), check for :latest (Ollama convention)
+        # e.g., model="nomic-embed-text", a="nomic-embed-text:latest" should match
+        if ":" not in model and a == f"{model}:latest":
+            return True
+
+    return False
+
+
 def is_heavy(model_name: str, reg: ModelRegistry | None = None) -> bool:
     """Check if a model is marked as heavy (long-running, needs queue coordination)."""
     if reg is None:
