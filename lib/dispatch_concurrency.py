@@ -17,6 +17,8 @@ import tempfile
 from datetime import datetime, timezone
 from pathlib import Path
 
+from hook_errors import log_safe
+
 PATH = Path(__file__).resolve().parents[1] / "config" / "dispatch.json"
 TASKS_DIR = Path.home() / ".claude" / "dispatch" / "tasks"
 DISPATCH_STATE_PATH = Path.home() / ".claude" / "dispatch-state.json"
@@ -283,17 +285,59 @@ def others_running(task_id: str, reader=None) -> int:
     return sum(1 for r in records if r.get("task_id") != task_id)
 
 
-def partition_alive(records: list[dict], is_alive) -> tuple[list[dict], list[dict]]:
-    """Split records into (alive processes, dead processes). is_alive is an injected liveness checker
-    (e.g., _pid_alive or a fake for testing)."""
+TASK_RECORD_TIME_TOLERANCE_S = 30  # allow clock skew / timestamp variance up to this much
+
+
+def partition_alive(raw_records: list[tuple[Path, dict | None, str | None]], is_alive, boot_time_fn=None, process_start_time_fn=None) -> tuple[list[dict], list[tuple[Path, dict | None, str | None]]]:
+    """Split valid records into (alive processes, dead/stale/malformed).
+    is_alive: liveness checker (e.g., _pid_alive).
+    boot_time_fn, process_start_time_fn: injected for demotion pass (testing, or boot-time-based stale detection).
+    Returns (list of alive dicts, list of (path, record, error) tuples for reaping)."""
+    from datetime import datetime
     alive = []
     dead = []
-    for rec in records:
+    boot_t = boot_time_fn() if boot_time_fn else None
+    for path, rec, err in raw_records:
+        if err is not None:
+            # Malformed file: mark for reaping.
+            dead.append((path, rec, err))
+            continue
+        if rec is None:
+            # Should not happen (err is None but rec is None), but guard against it.
+            dead.append((path, rec, "unexpected: no record"))
+            continue
         pid = rec.get("pid")
-        if pid and is_alive(pid):
-            alive.append(rec)
-        else:
-            dead.append(rec)
+        if not pid or not is_alive(pid):
+            dead.append((path, rec, None))
+            continue
+        # Process is alive. Check if it's stale (started before boot, or process start time doesn't match).
+        started_at = rec.get("started_at")
+        if started_at and boot_t is not None:
+            try:
+                record_start = datetime.fromisoformat(started_at)
+                # Convert boot_t (seconds since epoch) to datetime for comparison.
+                boot_dt = datetime.fromtimestamp(boot_t, tz=record_start.tzinfo)
+                if record_start < boot_dt:
+                    # Record started before the last boot: genuinely dead.
+                    dead.append((path, rec, f"started_at {started_at} before boot at {boot_dt}"))
+                    continue
+            except (ValueError, TypeError, OSError):
+                pass  # bad timestamp or timezone issue: continue to next check
+        # Cross-check: if process_start_time_fn is provided, verify the actual start time matches the record.
+        if started_at and process_start_time_fn:
+            try:
+                proc_start = process_start_time_fn(pid)
+                if proc_start is not None:
+                    record_start_dt = datetime.fromisoformat(started_at)
+                    record_start_ts = record_start_dt.timestamp()
+                    time_diff = abs(proc_start - record_start_ts)
+                    if time_diff > TASK_RECORD_TIME_TOLERANCE_S:
+                        # Actual start time doesn't match record: PID likely reused.
+                        dead.append((path, rec, f"pid {pid} actual start {proc_start} differs from record {record_start_ts} by {time_diff}s"))
+                        continue
+            except (ValueError, TypeError, OSError):
+                pass  # failed to read actual start time: keep as alive (guard must not block)
+        alive.append(rec)
     return alive, dead
 
 
@@ -306,27 +350,49 @@ def _pid_alive(pid: int) -> bool:
         return False
 
 
-def _read_task_records(tasks_dir: Path | None = None) -> list[dict]:
-    """Glob *.json files in tasks_dir, skip unreadable/malformed files. Returns list of task records."""
+def _read_task_records(tasks_dir: Path | None = None) -> list[tuple[Path, dict | None, str | None]]:
+    """Glob *.json files in tasks_dir. Returns [(path, record, error), ...] where:
+    - record is the parsed dict (non-None only on success)
+    - error is the reason (non-None only on failure)
+    Caller can filter to .ok records, log failures via hook_errors.log_safe(), and reap malformed ones."""
     tasks_dir = tasks_dir or TASKS_DIR
     records = []
     if not tasks_dir.exists():
         return records
     for f in tasks_dir.glob("*.json"):
         try:
-            records.append(json.loads(f.read_text()))
-        except (OSError, ValueError):
-            pass
+            record = json.loads(f.read_text())
+            records.append((f, record, None))
+        except OSError as e:
+            records.append((f, None, f"unreadable: {e}"))
+        except ValueError as e:
+            records.append((f, None, f"invalid JSON: {e}"))
     return records
 
 
-def _reap(dead: list[dict], tasks_dir: Path | None = None) -> None:
-    """Unlink dead task record files."""
+def _reap(dead: list[tuple[Path, dict | None, str | None]], tasks_dir: Path | None = None) -> None:
+    """Move or delete dead/malformed task records to stale-records/ directory with error logs.
+    Records are only deleted if they can't be moved (permission denied, etc.)."""
     tasks_dir = tasks_dir or TASKS_DIR
-    for rec in dead:
-        task_id = rec.get("task_id")
-        if task_id:
-            (tasks_dir / f"{task_id}.json").unlink(missing_ok=True)
+    stale_dir = tasks_dir.parent / "stale-records"
+    stale_dir.mkdir(parents=True, exist_ok=True)
+    for path, rec, err in dead:
+        try:
+            if path.exists():
+                # Move to stale-records directory, preserving filename.
+                stale_path = stale_dir / path.name
+                path.replace(stale_path)
+                # Log what we did.
+                reason = err or (f"stale: {rec.get('task_id') if rec else 'malformed'}")
+                log_safe(f"reaped {path.name}", reason)
+        except Exception:
+            # Permission denied or other move error: try to delete.
+            try:
+                path.unlink(missing_ok=True)
+                reason = err or "deleted (move failed)"
+                log_safe(f"reaped {path.name}", reason)
+            except Exception:
+                pass  # Last-resort failure: file stays, next reap attempt will try again.
 
 
 def slots_in_use(machine: str | None = None, *, reader=None, is_alive=None, tasks_dir: Path | None = None) -> list[dict]:
@@ -335,8 +401,8 @@ def slots_in_use(machine: str | None = None, *, reader=None, is_alive=None, task
     reader and is_alive are injected for testing; defaults are _read_task_records and _pid_alive."""
     reader = reader or _read_task_records
     is_alive_fn = is_alive or _pid_alive
-    records = reader(tasks_dir)
-    alive, dead = partition_alive(records, is_alive_fn)
+    raw_records = reader(tasks_dir)
+    alive, dead = partition_alive(raw_records, is_alive_fn)
     if dead:
         _reap(dead, tasks_dir)
     if machine:
@@ -386,7 +452,8 @@ def refresh_dispatch_state_summary(tasks_dir: Path | None = None) -> None:
 def _cli(argv: list[str]) -> int:
     """`dispatch_concurrency.py get` prints the settings; `set '<json>'` validates and saves them (the dashboard's
     control), exiting 1 with the reasons on stderr if any field is invalid. `slots-in-use [--machine ID]` prints
-    alive task records as JSON. `refresh-summary` updates dispatch-state.json."""
+    alive task records as JSON. `refresh-summary` updates dispatch-state.json. `refresh-then-read-state` refreshes and
+    reads dispatch-state.json. `refresh-then-count-slots` refreshes and returns alive task count."""
     import sys
     if argv[:1] == ["get"]:
         print(json.dumps(load()))
@@ -416,7 +483,18 @@ def _cli(argv: list[str]) -> int:
     if argv[:1] == ["refresh-summary"]:
         refresh_dispatch_state_summary()
         return 0
-    print("usage: dispatch_concurrency.py get | set '<json>' | slots-in-use [--machine ID] | refresh-summary", file=sys.stderr)
+    if argv[:1] == ["refresh-then-read-state"]:
+        refresh_dispatch_state_summary()
+        import stamped
+        state = stamped.read(DISPATCH_STATE_PATH).value or {"busy": False}
+        print(json.dumps(state))
+        return 0
+    if argv[:1] == ["refresh-then-count-slots"]:
+        refresh_dispatch_state_summary()
+        print(str(len(slots_in_use())))
+        return 0
+    print("usage: dispatch_concurrency.py get | set '<json>' | slots-in-use [--machine ID] | credit-ready | plan-limited | "
+          "others-running --exclude TASK_ID | refresh-summary | refresh-then-read-state | refresh-then-count-slots", file=sys.stderr)
     return 2
 
 

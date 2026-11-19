@@ -18,7 +18,8 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 def probe_remote(host: str):
     import task_dispatch as td
     try:
-        p = subprocess.run(["ssh", *td.SSH_OPTS, host, f"cat {td.SHELL_STATE_PATH}"],
+        # Use the shared refresh-then-read-state command to ensure stale records are reaped before reading.
+        p = subprocess.run(["ssh", *td.SSH_OPTS, host, 'cd "$HOME/.agents" && "$HOME/.agents/venv/bin/python" -m lib.dispatch_concurrency refresh-then-read-state'],
                            capture_output=True, text=True, timeout=10)
     except Exception:
         return None

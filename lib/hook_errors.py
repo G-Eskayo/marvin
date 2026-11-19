@@ -29,3 +29,15 @@ def log_hook_error(hook_name: str, context: str, exc: BaseException) -> None:
         error_log.record(f"hook:{hook_name}", context, raw=f"{type(exc).__name__}: {exc}")
     except Exception:
         pass
+
+
+def log_safe(context: str, reason: str) -> None:
+    """Log a safe/non-error condition (e.g., expected stale state, reaping a dead record).
+    Writes to hook-errors.log for visibility, not error_log (this isn't a hook failure)."""
+    try:
+        LOG_PATH.parent.mkdir(parents=True, exist_ok=True)
+        ts = datetime.now(timezone.utc).isoformat()
+        with LOG_PATH.open("a", encoding="utf-8") as f:
+            f.write(f"{ts} [dispatch] {context}: {reason}\n")
+    except Exception:
+        pass

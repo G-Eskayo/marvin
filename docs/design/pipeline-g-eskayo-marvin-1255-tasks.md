@@ -1,0 +1,10 @@
+1. Add `host_os.boot_time()` and `host_os.process_start_time(pid)`, with tests for sysctl/ps-output parsing and "unreadable → None".
+2. Rework `dispatch_concurrency._read_task_records` to surface `(path, record, error)` instead of silently dropping malformed files; update its tests.
+3. Add the process-start-time/boot-time demotion pass and wire it into `slots_in_use`; add `hook_errors.log_safe()` and the `stale-records/` move-or-delete-and-log `_reap`; update/replace `test_reap_unlinks_dead_record_files`.
+4. Unify `task_dispatch._live_task_count` onto `dispatch_concurrency.slots_in_use`; verify `_fallback_runs_in_progress` still works with path-keyed reaping (no `task_id` on fallback markers).
+5. Make `task_dispatch._read_local_dispatch_state` call `refresh_dispatch_state_summary()` before reading; add the matching remote "refresh then read/count" ssh helper and use it from `_read_remote_dispatch_state` and `machine_load`'s remote branch.
+6. Make task-record and dispatch-state writes in `_build_wrapper_script`, and the fallback marker write in `_fall_back`, atomic (temp file + `mv`); add the wrapper-script subprocess tests that assert no `.tmp` leftovers and no record without a `pid`.
+7. Update `device_status.probe_remote` to use the shared remote refresh-then-read command.
+8. Extend `health_checks.check_dispatch_lock` to the cross-machine `check_sync_stuck` shape; add its tests (reachable-and-stuck, reachable-and-fine, unreachable).
+9. Run the full misuse list above (items 8–15) as tests, not just the ticket's four ACs, before calling this done.
+10. Full local test suite (Python + dispatch-specific) green; manual smoke: run the real wrapper script end-to-end once, confirm `~/.claude/dispatch/tasks/*.json` and `~/.claude/dispatch-state.json` round-trip correctly on this machine.

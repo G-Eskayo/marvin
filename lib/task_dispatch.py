@@ -29,6 +29,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from machine_profile import registry_id, remote_devices, _load_registry  # noqa: E402
 import host_os  # noqa: E402
+import dispatch_concurrency  # noqa: E402
 from hook_errors import log_hook_error  # noqa: E402
 
 
@@ -106,6 +107,7 @@ def _tailscale_online_hosts() -> set[str]:
 
 
 def _read_local_dispatch_state() -> dict:
+    dispatch_concurrency.refresh_dispatch_state_summary()
     import stamped
     return stamped.read(DISPATCH_STATE_PATH).value or {"busy": False}
 
@@ -113,7 +115,7 @@ def _read_local_dispatch_state() -> dict:
 def _read_remote_dispatch_state(host: str) -> dict:
     try:
         proc = subprocess.run(
-            ["ssh", *SSH_OPTS, host, f"cat {SHELL_STATE_PATH}"],
+            ["ssh", *SSH_OPTS, host, 'cd "$HOME/.agents" && "$HOME/.agents/venv/bin/python" -m lib.dispatch_concurrency refresh-then-read-state'],
             capture_output=True, text=True, timeout=10,
         )
         if proc.returncode != 0:
@@ -207,7 +209,8 @@ def machine_load(device_id: str, info: dict) -> tuple[float, int, int] | None:
         except OSError:
             return None
         return load1, os.cpu_count() or 0, _live_task_count(Path.home() / ".claude" / "dispatch" / "tasks")
-    cmd = f"sysctl -n vm.loadavg hw.ncpu; ls {SHELL_TASKS_DIR} 2>/dev/null | grep -c '\\.json$'"
+    # Remote: get load and cpu count from sysctl, slot count from dispatch_concurrency's refresh-then-count-slots.
+    cmd = 'sysctl -n vm.loadavg hw.ncpu; cd "$HOME/.agents" && "$HOME/.agents/venv/bin/python" -m lib.dispatch_concurrency refresh-then-count-slots'
     try:
         proc = subprocess.run(["ssh", *SSH_OPTS, info["tailscale_hostname"], cmd],
                               capture_output=True, text=True, timeout=10)
@@ -220,14 +223,8 @@ def machine_load(device_id: str, info: dict) -> tuple[float, int, int] | None:
 
 
 def _live_task_count(tasks_dir: Path) -> int:
-    n = 0
-    for f in tasks_dir.glob("*.json") if tasks_dir.is_dir() else []:
-        try:
-            if _pid_alive(int(json.loads(f.read_text()).get("pid", 0))):
-                n += 1
-        except Exception:
-            continue
-    return n
+    # Use the unified slots_in_use path: reaps dead records, includes all alive ones (no task_id filtering).
+    return len(dispatch_concurrency.slots_in_use(machine=None, tasks_dir=tasks_dir))
 
 
 def load_score(reading: tuple[float, int, int] | None) -> float | None:
@@ -309,7 +306,10 @@ def _fall_back(command: str, need: str, reason: str, box: str | None, box_error:
             return DispatchResult(ok=False, device_id=device_id, error=held["message"], fell_back_from=box)
     FALLBACK_RUNS_DIR.mkdir(parents=True, exist_ok=True)
     slot = FALLBACK_RUNS_DIR / f"{uuid.uuid4().hex[:12]}.json"
-    slot.write_text(json.dumps({"pid": os.getpid(), "need": need, "label": label, "to": device_id}))
+    # Atomic write: temp file + rename
+    slot_tmp = slot.parent / f"{slot.name}.tmp"
+    slot_tmp.write_text(json.dumps({"pid": os.getpid(), "need": need, "label": label, "to": device_id}))
+    slot_tmp.replace(slot)
     started = time.monotonic()
     try:
         script = _build_wrapper_script(command, str(uuid.uuid4())[:8], label, device_id, ticket=ticket, repo=repo,
@@ -405,17 +405,21 @@ mkdir -p "$HOME/.claude"
 # The cleanup is armed before the record exists: a SIGTERM between writing the record and setting the trap left the
 # record behind and the machine looked busy for ever (main red at 4af4de6, #992). rm -f of a record not yet written is
 # harmless.
-trap 'rm -f "$0" {tasks_dir}/{task_id}.json; cat > {state} << 'DISPATCH_IDLE_EOF'
+trap 'rm -f "$0" {tasks_dir}/{task_id}.json {tasks_dir}/{task_id}.json.tmp; rm -f {state}.tmp; cat > {state} << 'DISPATCH_IDLE_EOF'
 {idle_json}
 DISPATCH_IDLE_EOF
 (cd "$HOME/.agents" && "$HOME/.agents/venv/bin/python" -m lib.dispatch_concurrency refresh-summary)
 "$HOME/.agents/venv/bin/python" "$HOME/.agents/lib/memory_guard.py" kick >/dev/null 2>&1
 "$HOME/.agents/venv/bin/python" "$HOME/.agents/lib/job_hooks.py" stop >/dev/null 2>&1' EXIT
 # $$, not $BASHPID: macOS's /bin/bash is 3.2, which has no BASHPID, and an empty pid made every record unreadable.
-printf '%s, "pid": %s}}' '{record_prefix}' "$$" > {tasks_dir}/{task_id}.json
-cat > {state} << 'DISPATCH_STATE_EOF'
+# Atomic write: temp file + mv
+printf '%s, "pid": %s}}' '{record_prefix}' "$$" > {tasks_dir}/{task_id}.json.tmp
+mv {tasks_dir}/{task_id}.json.tmp {tasks_dir}/{task_id}.json
+# Atomic state write
+cat > {state}.tmp << 'DISPATCH_STATE_EOF'
 {busy_json}
 DISPATCH_STATE_EOF
+mv {state}.tmp {state}
 (cd "$HOME/.agents" && "$HOME/.agents/venv/bin/python" -m lib.dispatch_concurrency refresh-summary)
 # Job hooks (#931): on mac-mini-2012 the live display stops while jobs run. A hook never changes the job's outcome.
 "$HOME/.agents/venv/bin/python" "$HOME/.agents/lib/job_hooks.py" start >/dev/null 2>&1 || true

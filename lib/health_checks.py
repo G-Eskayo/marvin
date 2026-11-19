@@ -150,6 +150,69 @@ def check_dispatch_lock(state_path: Path | None = None) -> dict:
     return _result(cid, label, "green", f"busy {age_min:.0f}min on '{task}' — normal range", value=age_min)
 
 
+def check_dispatch_lock_cross_machine(reachability: dict[str, str] | None = None, remote=None) -> list[dict]:
+    """Check dispatch lock age on this machine and all reachable remote devices. Similar to check_sync_stuck:
+    remote devices that can't be reached are skipped (they have their own machine:<id> unreachable card).
+    Returns a list of results, one per machine that could be checked."""
+    remote = remote or _read_dispatch_state_remote
+    results = []
+    me = machine_profile.registry_id()
+    # Always check local.
+    results.append(check_dispatch_lock())
+    # Check each reachable remote device.
+    for dev, info in machine_profile.remote_devices().items():
+        if not _reachable(reachability, dev):
+            continue
+        host = info.get("tailscale_hostname")
+        if not host:
+            continue
+        try:
+            state = remote(host)
+            if state is None:
+                results.append(_unknown(f"dispatch:lock@{dev}", f"Dispatch lock — {dev}", "couldn't read state"))
+                continue
+            # Evaluate the state using similar logic as check_dispatch_lock.
+            cid = f"dispatch:lock-age@{dev}"
+            label = f"Dispatch lock — {dev}"
+            if not state.get("busy"):
+                results.append(_result(cid, label, "green", "idle"))
+            else:
+                started_at = state.get("started_at")
+                if not started_at:
+                    results.append(_result(cid, label, "yellow", "busy with no started_at timestamp — can't judge age"))
+                else:
+                    try:
+                        started = datetime.fromisoformat(started_at)
+                        age_min = (_now() - started).total_seconds() / 60
+                        task = state.get("task", "unknown task")
+                        if age_min >= MAX_DISPATCH_MINUTES_RED:
+                            results.append(_result(cid, label, "red", f"busy {age_min:.0f}min on '{task}' — almost certainly stuck", value=age_min))
+                        elif age_min >= MAX_DISPATCH_MINUTES_YELLOW:
+                            results.append(_result(cid, label, "yellow", f"busy {age_min:.0f}min on '{task}' — longer than expected", value=age_min))
+                        else:
+                            results.append(_result(cid, label, "green", f"busy {age_min:.0f}min on '{task}' — normal", value=age_min))
+                    except ValueError:
+                        results.append(_result(cid, label, "yellow", f"busy, unparseable started_at: {started_at}"))
+        except (subprocess.SubprocessError, OSError, ValueError) as exc:
+            results.append(_unknown(f"dispatch:lock@{dev}", f"Dispatch lock — {dev}", f"couldn't read: {type(exc).__name__}"))
+    return results
+
+
+def _read_dispatch_state_remote(host: str) -> dict | None:
+    """Read dispatch-state.json from a remote machine via ssh after refreshing (reaped dead records)."""
+    try:
+        proc = subprocess.run(
+            ["ssh", "-o", "ConnectTimeout=5", "-o", "BatchMode=yes", "-o", "StrictHostKeyChecking=accept-new",
+             host, 'cd "$HOME/.agents" && "$HOME/.agents/venv/bin/python" -m lib.dispatch_concurrency refresh-then-read-state'],
+            capture_output=True, text=True, timeout=10
+        )
+        if proc.returncode != 0:
+            return None
+        return json.loads(proc.stdout) if proc.stdout.strip() else {"busy": False}
+    except Exception:
+        return None
+
+
 # ── cron jobs (absorbed from cron_health.py -- literally the same
 # check_job() + persistent offset-tracking state, not a reimplementation,
 # per ADR 0033. Reimplementing the log-scan naively (whole-tail regex, no

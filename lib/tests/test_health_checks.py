@@ -91,6 +91,85 @@ def test_check_dispatch_lock_green_shortly_after_start():
     assert result["severity"] == "green"
 
 
+# ── cross-machine dispatch lock ──────────────────────────────────────────
+
+def test_check_dispatch_lock_cross_machine_reachable_and_fine(monkeypatch):
+    """Remote machine is reachable and dispatch lock is idle."""
+    def mock_remote(host):
+        return {"busy": False}
+
+    def mock_remote_devices():
+        return {"remote1": {"tailscale_hostname": "remote1.local"}}
+
+    monkeypatch.setattr(hc.machine_profile, "registry_id", lambda: "local")
+    monkeypatch.setattr(hc.machine_profile, "remote_devices", mock_remote_devices)
+
+    results = hc.check_dispatch_lock_cross_machine(remote=mock_remote)
+    # Should have one result for local (always checked) and one for remote1.
+    assert len(results) >= 1
+    # At least one result should be green (the idle one).
+    assert any(r["severity"] == "green" for r in results)
+
+
+def test_check_dispatch_lock_cross_machine_reachable_and_stuck(monkeypatch):
+    """Remote machine is reachable and dispatch lock is stuck (old)."""
+    stale = (datetime.now(timezone.utc) - timedelta(days=20)).isoformat()
+
+    def mock_remote(host):
+        return {"busy": True, "task": "old task", "started_at": stale}
+
+    def mock_remote_devices():
+        return {"remote1": {"tailscale_hostname": "remote1.local"}}
+
+    monkeypatch.setattr(hc.machine_profile, "registry_id", lambda: "local")
+    monkeypatch.setattr(hc.machine_profile, "remote_devices", mock_remote_devices)
+
+    results = hc.check_dispatch_lock_cross_machine(remote=mock_remote)
+    # Should have results for local and remote1.
+    remote_results = [r for r in results if "@remote1" in r["id"]]
+    assert len(remote_results) >= 1
+    # The remote result should be red (stuck).
+    assert any(r["severity"] == "red" for r in remote_results)
+
+
+def test_check_dispatch_lock_cross_machine_unreachable_skipped(monkeypatch):
+    """Remote machine marked as unreachable in reachability dict is skipped."""
+    def mock_remote(host):
+        raise RuntimeError("Should not be called")
+
+    def mock_remote_devices():
+        return {"remote1": {"tailscale_hostname": "remote1.local"}}
+
+    reachability = {"machine:remote1": "red"}  # Mark remote1 as unreachable.
+
+    monkeypatch.setattr(hc.machine_profile, "registry_id", lambda: "local")
+    monkeypatch.setattr(hc.machine_profile, "remote_devices", mock_remote_devices)
+
+    results = hc.check_dispatch_lock_cross_machine(reachability=reachability, remote=mock_remote)
+    # Should have only local result, remote1 is skipped due to reachability.
+    remote_results = [r for r in results if "@remote1" in r["id"]]
+    assert len(remote_results) == 0
+
+
+def test_check_dispatch_lock_cross_machine_remote_read_failure_marked_unknown(monkeypatch):
+    """Remote machine fails to respond, marked as unknown."""
+    def mock_remote(host):
+        return None  # Failed to read.
+
+    def mock_remote_devices():
+        return {"remote1": {"tailscale_hostname": "remote1.local"}}
+
+    monkeypatch.setattr(hc.machine_profile, "registry_id", lambda: "local")
+    monkeypatch.setattr(hc.machine_profile, "remote_devices", mock_remote_devices)
+
+    results = hc.check_dispatch_lock_cross_machine(remote=mock_remote)
+    # Should have results for local and remote1 (even though remote failed).
+    remote_results = [r for r in results if "@remote1" in r["id"]]
+    assert len(remote_results) >= 1
+    # The remote result should be unknown (couldn't measure).
+    assert any("couldn't measure" in r.get("detail", "") or r.get("measured") is False for r in remote_results)
+
+
 # ── coverage / auto-discovery ────────────────────────────────────────────
 
 def test_coverage_flags_jobs_with_no_registered_check(monkeypatch):

@@ -9,6 +9,7 @@ from __future__ import annotations
 import json
 import os
 import shutil
+import subprocess
 import sys
 from pathlib import Path
 
@@ -69,3 +70,59 @@ def memory_dir(home: Path | None = None) -> Path:
     if rel.is_absolute() or ".." in rel.parts:
         return default
     return claude / rel
+
+
+def boot_time() -> float | None:
+    """Boot time in seconds since epoch, or None if unreadable.
+    macOS: via sysctl kern.boottime; Linux: via /proc/stat or who -b."""
+    try:
+        if os_name() == "macos":
+            proc = subprocess.run(["sysctl", "-n", "kern.boottime"], capture_output=True, text=True, timeout=5)
+            if proc.returncode == 0:
+                output = proc.stdout.strip()
+                if output.startswith("{ sec = "):
+                    sec_str = output.split("sec = ")[1].split(",")[0]
+                    return float(sec_str)
+        elif os_name() == "linux":
+            proc = subprocess.run(["who", "-b"], capture_output=True, text=True, timeout=5)
+            if proc.returncode == 0:
+                from datetime import datetime
+                lines = [l for l in proc.stdout.splitlines() if "system boot" in l]
+                if lines:
+                    parts = lines[0].split()
+                    if len(parts) >= 3:
+                        date_str = " ".join(parts[-2:])
+                        dt = datetime.strptime(date_str, "%Y-%m-%d %H:%M")
+                        return dt.timestamp()
+    except Exception:
+        pass
+    return None
+
+
+def process_start_time(pid: int) -> float | None:
+    """Start time (seconds since epoch) for a process, or None if unreadable or dead.
+    macOS: via ps; Linux: via /proc/<pid>/stat."""
+    if not isinstance(pid, int) or pid <= 0:
+        return None
+    try:
+        if os_name() == "macos":
+            proc = subprocess.run(["ps", "-o", "lstart=", "-p", str(pid)], capture_output=True, text=True, timeout=5)
+            if proc.returncode == 0 and proc.stdout.strip():
+                from datetime import datetime
+                dt = datetime.strptime(proc.stdout.strip(), "%a %b %d %H:%M:%S %Y")
+                return dt.timestamp()
+        elif os_name() == "linux":
+            with open(f"/proc/{pid}/stat", "r") as f:
+                parts = f.read().split()
+                if len(parts) > 21:
+                    from datetime import datetime
+                    uptime_seconds = float(open("/proc/uptime").read().split()[0])
+                    jiffies = int(parts[21])
+                    tick = os.sysconf("SC_CLK_TCK")
+                    process_start_jiffies = jiffies / tick
+                    boot_t = boot_time()
+                    if boot_t is not None:
+                        return boot_t + (uptime_seconds - process_start_jiffies)
+    except Exception:
+        pass
+    return None
