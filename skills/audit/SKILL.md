@@ -54,8 +54,8 @@ Report back: what you found, what you fixed (if anything, via auto_fix.py), what
 
 No new dedicated findings file — reuse what already exists, split by risk tier:
 
-- **Low-risk, auto-fixable** (matches `auto_fix.py`'s existing narrow scope exactly): triggered via `auto_fix.py`, not fixed directly. Lands in `~/.claude/auto-fix-log.md`, same as any other auto-fix run. Session Start step 8 already surfaces this.
-- **Needs real judgment** (a design decision, a logic change, anything auto_fix.py's safety boundary doesn't cover — the shape of all three fixes in ADR 0015): queued in the inbox's suggestions pile (`lib/inbox.py`, ADR 0083) in `architecture-review`'s exact format, unimplemented, queued for the user's review. Session Start step 2 already surfaces the pending count.
+- **Low-risk, auto-fixable** (matches `auto_fix.py`'s existing narrow scope exactly): triggered via `auto_fix.py`, not fixed directly. Lands in `~/.claude/auto-fix-log.md`, same as any other auto-fix run. The session-start report's auto-fix-log check (`check_auto_fix_log` in `lib/session_start_report.py`) already surfaces this.
+- **Needs real judgment** (a design decision, a logic change, anything auto_fix.py's safety boundary doesn't cover — the shape of all three fixes in ADR 0015): queued in the inbox's suggestions pile (`lib/inbox.py`, ADR 0083) in `architecture-review`'s exact format, unimplemented, queued for the user's review. The session-start report's suggestions check (`check_suggestions` in `lib/session_start_report.py`) already surfaces the pending count.
 
 If the investigation finds nothing — intent and reality actually match — don't write anything anywhere. A clean result isn't a finding.
 
