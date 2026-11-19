@@ -17,6 +17,22 @@ This describes a capability ("a result-intent candidate bypasses the cap") and w
 if `select_candidates`'s internals were rewritten entirely — sorting algorithm, data structure,
 whatever — as long as the behavior held.
 
+**Good** — exercises failure path as behavior, survives refactors:
+
+```python
+def test_select_candidates_rejects_malformed_input():
+    # Malformed input is a behavior test, not an edge case afterthought
+    with pytest.raises(ValueError, match="candidates must be a list"):
+        select_candidates(None, top_k=2, relevance_floor=0.65)
+    
+    # Empty input is handled without raising
+    result = select_candidates([], top_k=2, relevance_floor=0.65)
+    assert result == []
+```
+
+Failure paths are behavior too: how the system rejects bad input, how it handles empty state,
+how it fails gracefully when a dependency is unavailable.
+
 **Bad** — coupled to implementation, breaks on refactor even when behavior is unchanged:
 
 ```python
