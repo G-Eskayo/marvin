@@ -1,0 +1,5 @@
+1. Write the three tests above (`tests/test_to_prd_skill_prd_label.py`, `tests/test_triage_labels_doc_prd_exception.py`), confirm they fail against current doc content.
+2. Edit `skills/to-prd/SKILL.md` step 3: after `...not ready-for-agent — a PRD is a spec, not a single unit of work)`, add the sentence specified in the ticket — title it `PRD: <name>`, apply `enhancement` + project label + priority label, apply none of the five triage-role labels, note the `PRD:` prefix is how triage knows to leave it alone.
+3. Edit `docs/agents/triage-labels.md`'s Consumer rules bullet list: add one line stating a parent PRD (title `PRD: ...`) carries no triage-role label.
+4. Run the new tests plus the existing `lib/tests/test_ticket_policy.py` suite (unchanged, just confirming no regression) and `tests/test_skill_doc_links.py` to confirm nothing else that greps `SKILL.md` content broke.
+5. Re-read both edited files in full to confirm the acceptance criteria are satisfied verbatim (prefix present, labels named, no triage-role label stated, prefix matches `lib/ticket_policy.py`'s regex).

@@ -19,7 +19,7 @@ A deep module (as opposed to a shallow module) is one which encapsulates a lot o
 
 When interactive, confirm the modules with the user; when headless, skip confirmation and record your module-sketch decision in the PRD's Implementation Decisions section in the format: choice / options considered / why.
 
-3. Write the PRD using the template below, then publish it to the project issue tracker as a reference issue (not `ready-for-agent` — a PRD is a spec, not a single unit of work). Its own template demands a LONG, extensive user-story list, which will essentially always fail `to-issues`'s granularity self-check if published as one issue.
+3. Write the PRD using the template below, then publish it to the project issue tracker as a reference issue (not `ready-for-agent` — a PRD is a spec, not a single unit of work). Its own template demands a LONG, extensive user-story list, which will essentially always fail `to-issues`'s granularity self-check if published as one issue. Title it `PRD: <name>`, apply `enhancement` + project label + priority label, apply none of the five triage-role labels (the `PRD:` prefix is how triage knows to leave it alone).
 
 4. Invoke `to-issues` with this PRD issue as the source (already declared via `calls: [to-issues]` above) to break it into the actual vertical-slice implementation issues, each referencing this PRD via the `## Parent` field. Do not skip this step or hand-apply `ready-for-agent` to the PRD issue itself.
 
