@@ -259,10 +259,14 @@ BREAKER_EXEMPT = {
 
 def _feed_breaker(issue_number: int, reason: str, repo: str = REPO) -> None:
     """Record a non-success for the cross-ticket breaker. Never raises: a full disk or unwritable log must not stop the
-    run from releasing its claim (the breaker then reads as before, and Health shows its own state)."""
+    run from releasing its claim (the breaker then reads as before, and Health shows its own state). Routes through guard_reading."""
     try:
         failure_breaker.record_failure(issue_number, reason, **({"project": repo} if repo != REPO else {}))
+    except OSError as exc:
+        print(f"[run_ticket] could not record #{issue_number} for the breaker: {exc}", file=sys.stderr)
     except Exception as exc:
+        import guard_reading
+        guard_reading.reading("breaker:record_failure", exc)
         print(f"[run_ticket] could not record #{issue_number} for the breaker: {exc}", file=sys.stderr)
 
 

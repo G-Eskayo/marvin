@@ -138,11 +138,13 @@ def preflight(what: str, floor: int = FLOOR_BYTES, free: Callable[[], int | None
               reclaim: Callable[[], dict] | None = None) -> dict:
     """Before heavy work starts. Above the floor: go, touching nothing. Below it: reclaim once (no retry loop), then
     go if that was enough, else refuse with a message a person can act on. Free space that can't be read never blocks
-    (as #690). Returns {"ok", "free_before", "free_after", "reclaimed", "message"}."""
+    (as #690). Routes through guard_reading. Returns {"ok", "free_before", "free_after", "reclaimed", "message"}."""
+    import guard_reading  # noqa: E402
     free = free or free_bytes
     reclaim = reclaim or globals()["reclaim"]
     before = free()
     if before is None or before >= floor:
+        guard_reading.reading("disk:preflight", "ok")
         return {"ok": True, "free_before": before, "free_after": before, "reclaimed": None, "message": ""}
     try:
         r = reclaim() or {}
@@ -154,6 +156,10 @@ def preflight(what: str, floor: int = FLOOR_BYTES, free: Callable[[], int | None
     message = "" if ok else (
         f"Not starting {what}: the disk has {GB(after)} free and work needs {GB(floor)}. "
         f"Cleanup already ran ({detail}). Free up space on this Mac (Health shows what is using it), then start it again.")
+    if ok:
+        guard_reading.reading("disk:preflight", "ok")
+    else:
+        guard_reading.reading("disk:preflight", RuntimeError(f"insufficient disk space: {GB(after)} free, need {GB(floor)}"), detail=detail)
     record("preflight", freed, detail, what=what, ok=ok, free_before=before)
     return {"ok": ok, "free_before": before, "free_after": after, "reclaimed": detail, "message": message}
 

@@ -367,3 +367,11 @@ def _no_real_alerts(tmp_path_factory, monkeypatch):
     monkeypatch.setattr(mr_notification, "desktop_notify", lambda *a, **k: None)
     monkeypatch.setattr(mr_notification, "dashboard_refresh_ping", lambda: None)
     monkeypatch.setattr(mr_notification, "phone_notify", None)
+
+
+@pytest.fixture(autouse=True)
+def _isolate_guard_reading(tmp_path, monkeypatch):
+    # Intermittent read failures are tracked in guard_reading.STATE_PATH (~/.claude/logs/guard-state.json);
+    # tests must not access the real file. Each test gets its own tmp_path, avoiding fcntl lock contention.
+    import guard_reading
+    monkeypatch.setattr(guard_reading, "STATE_PATH", tmp_path / "guard-state.json")

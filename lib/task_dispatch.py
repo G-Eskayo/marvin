@@ -102,28 +102,49 @@ def tailscale_online_hosts_or_none() -> set[str] | None:
 
 def _tailscale_online_hosts() -> set[str]:
     """For dispatch: an unanswerable Tailscale means no remote machine to send work to (stay local)."""
-    return tailscale_online_hosts_or_none() or set()
+    import guard_reading  # noqa: E402
+    try:
+        result = tailscale_online_hosts_or_none() or set()
+        guard_reading.reading("task_dispatch:tailscale", "ok")
+        return result
+    except Exception as exc:
+        guard_reading.reading("task_dispatch:tailscale", exc)
+        return set()
 
 
 def _read_local_dispatch_state() -> dict:
     import stamped
-    return stamped.read(DISPATCH_STATE_PATH).value or {"busy": False}
+    import guard_reading  # noqa: E402
+    try:
+        result = stamped.read(DISPATCH_STATE_PATH).value or {"busy": False}
+        guard_reading.reading("task_dispatch:local_state", "ok")
+        return result
+    except Exception as exc:
+        guard_reading.reading("task_dispatch:local_state", exc)
+        return {"busy": False}
 
 
 def _read_remote_dispatch_state(host: str) -> dict:
+    import guard_reading  # noqa: E402
     try:
         proc = subprocess.run(
             ["ssh", *SSH_OPTS, host, f"cat {SHELL_STATE_PATH}"],
             capture_output=True, text=True, timeout=10,
         )
         if proc.returncode != 0:
-            _log_hook_error_safe("_read_remote_dispatch_state", RuntimeError(f"ssh to {host} exited {proc.returncode}: {proc.stderr[:300]}"))
+            err = RuntimeError(f"ssh to {host} exited {proc.returncode}: {proc.stderr[:300]}")
+            _log_hook_error_safe("_read_remote_dispatch_state", err)
+            guard_reading.reading("task_dispatch:remote_state", err)
             return {"busy": False}
         if not proc.stdout.strip():
+            guard_reading.reading("task_dispatch:remote_state", "ok")
             return {"busy": False}
-        return json.loads(proc.stdout)
+        result = json.loads(proc.stdout)
+        guard_reading.reading("task_dispatch:remote_state", "ok")
+        return result
     except Exception as exc:
         _log_hook_error_safe("_read_remote_dispatch_state", exc)
+        guard_reading.reading("task_dispatch:remote_state", exc)
         return {"busy": False}
 
 

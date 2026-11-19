@@ -28,6 +28,7 @@ const TICKET_PIPELINE_SCRIPT = path.resolve(__dirname, '..', '..', 'lib', 'ticke
 const MERGE_BACKUP_SCRIPT = path.resolve(__dirname, '..', '..', 'lib', 'merge_backup.py')
 const DISK_TRIGGERS_SCRIPT = path.resolve(__dirname, '..', '..', 'lib', 'disk_triggers.py')
 const MEMORY_GUARD_SCRIPT = path.resolve(__dirname, '..', '..', 'lib', 'memory_guard.py')
+const GUARD_READING_SCRIPT = path.resolve(__dirname, '..', '..', 'lib', 'guard_reading.py')
 const VENV_PYTHON = path.resolve(__dirname, '..', '..', 'venv', 'bin', 'python')
 const PROFILE_SCRIPT = path.resolve(__dirname, '..', '..', 'lib', 'project_profile.py')
 const GENERATED_SCRIPT = path.resolve(__dirname, '..', '..', 'lib', 'generated_paths.py')
@@ -524,11 +525,35 @@ export async function mergeInstead(exec, dir, headRef, base) {
   }
 }
 
+// Report disk gate results to guard_reading; best effort, never throws.
+function reportDiskGateToGuardReading(isOk, errorMsg = null) {
+  try {
+    const args = ['reading', 'disk:merge_gate']
+    if (isOk) {
+      args.push('--ok')
+    } else {
+      args.push('--error', String(errorMsg || 'disk gate check failed').slice(0, 300))
+    }
+    // Best effort: spawn asynchronously, don't wait for completion
+    spawn(VENV_PYTHON, [GUARD_READING_SCRIPT, ...args], {
+      stdio: 'ignore',
+      detached: true
+    }).unref()
+  } catch {
+    // Silently ignore any errors from reporting
+  }
+}
+
 export async function rebaseAndRetest(headRef, exec = execFileAsync, repoPath = REPO_PATH, runTests = _defaultRunTests, base = 'main', resolveConflicts = null, sleep = null, progress = noProgress, freeBytes = freeDiskBytes, firstAid = null, rerun = null) {
-  let free = await freeBytes(tmpdir()).catch(() => null) // unreadable: carry on, as before this check
+  let free = await freeBytes(tmpdir()).catch(() => null) // null: report error and refuse closed
   const gb = (n) => `${(n / 1024 ** 3).toFixed(1)} GB`
   let aidNote = ''
-  if (free !== null && free < MIN_GATE_FREE_BYTES && firstAid) {
+  if (free === null) {
+    reportDiskGateToGuardReading(false, 'unable to read free disk space')
+    return { ok: false, reason: `Disk check before rebasing onto ${base}:\n\nNo space left on device for the check: unable to read free disk space. The gate is refused as a safety measure. Free up space on this Mac, then approve again.` }
+  }
+  reportDiskGateToGuardReading(true)
+  if (free < MIN_GATE_FREE_BYTES && firstAid) {
     // Once per approve: one call here, no retry loop. Only then refuse.
     progress('rebasing', 'running', { detail: `disk nearly full (${gb(free)} free): clearing rebuildable files first`, logDetail: true })
     let aid
@@ -539,10 +564,14 @@ export async function rebaseAndRetest(headRef, exec = execFileAsync, repoPath = 
     free = await freeBytes(tmpdir()).catch(() => null)
     progress('rebasing', 'running', { detail: `first aid: ${detail}; ${free === null ? 'free space unreadable' : `${gb(free)} free now`} (was ${gb(before)})`, logDetail: true })
     aidNote = `\n\nFirst aid ran first: ${detail}; ${free === null ? 'free space unreadable' : `${gb(free)} free`} after.`
+    if (free !== null) {
+      reportDiskGateToGuardReading(free >= MIN_GATE_FREE_BYTES, free < MIN_GATE_FREE_BYTES ? `insufficient disk after first aid: ${gb(free)} free` : null)
+    }
   }
   if (free !== null && free < MIN_GATE_FREE_BYTES) {
     // Worded so summarizeGateFailure files it as GATE_INFRA (the machine, not the PR, and nothing is sent back) and
     // infraCause can name the disk and both numbers.
+    reportDiskGateToGuardReading(false, `insufficient disk: ${gb(free)} free, need ${gb(MIN_GATE_FREE_BYTES)}`)
     return { ok: false, reason: `Disk check before rebasing onto ${base}:\n\nNo space left on device for the check: ${gb(free)} free, the gate needs ${gb(MIN_GATE_FREE_BYTES)}. Free up space on this Mac, then approve again.${aidNote}` }
   }
   const scratchDir = await makeGateClone('mr-merge-gate-')

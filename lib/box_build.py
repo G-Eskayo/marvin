@@ -432,8 +432,11 @@ def run(ref: str, run_id: str, *, settings: dict | None = None, ssh=ssh_holding_
     if kind == "infra":
         try:
             record_failure(number, str(outcome["reason"]), **({"project": repo} if repo != run_ticket.REPO else {}))
-        except Exception:  # noqa: BLE001
+        except OSError:
             pass
+        except Exception as exc:  # noqa: BLE001
+            import guard_reading
+            guard_reading.reading("breaker:record_failure", exc)
     try:
         settled = settle(number, outcome, findings, repo=repo, run_id=run_id, claim_label=CLAIM_LABEL)
     except Exception as exc:  # noqa: BLE001

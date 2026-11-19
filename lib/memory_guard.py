@@ -50,6 +50,7 @@ from pathlib import Path
 from typing import Callable, Iterable, Iterator
 
 HERE = Path(__file__).resolve()
+sys.path.insert(0, str(HERE.parent))
 PY = Path.home() / ".agents" / "venv" / "bin" / "python"
 STATE_DIR = Path.home() / ".claude" / "memory-guard"
 QUEUE_DIR = STATE_DIR / "queue"
@@ -130,14 +131,21 @@ def record(event: str, **fields) -> None:
 # ── the check ───────────────────────────────────────────────────────────────────────────────────────────────────
 
 def check(what: str, level=_READ, swap=_READ) -> dict:
-    """{"ok", "level", "swap_used", "message"}. Refuses only at warn or critical."""
+    """{"ok", "level", "swap_used", "message"}. Refuses only at warn or critical. Routes through guard_reading."""
+    import guard_reading  # noqa: E402
     level = read_level() if level is _READ else level
+    if level is None:
+        guard_reading.reading("memory:pressure", RuntimeError("unable to read memory pressure level"))
+        return {"ok": False, "level": None, "swap_used": None,
+                "message": "Cannot read the Mac's memory pressure level, so work is refused as a safety measure."}
     if level not in HIGH:
+        guard_reading.reading("memory:pressure", "ok")
         return {"ok": True, "level": level, "swap_used": None, "message": ""}
     swap = read_swap_used() if swap is _READ else swap
     detail = f"Pressure: {level}" + (f", {GB(swap)} of swap in use." if swap else ".")
     message = (f"The {machine_name()}'s memory is under pressure, so {what} waits. "
                f"Nothing was stopped to make room. {detail}")
+    guard_reading.reading("memory:pressure", RuntimeError(f"memory pressure: {level}"), detail=detail)
     return {"ok": False, "level": level, "swap_used": swap, "message": message}
 
 

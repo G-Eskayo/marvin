@@ -767,6 +767,25 @@ def _free_disk_gb() -> float | None:
         return None
 
 
+def _free_disk_gb_remote(host: str) -> float | None:
+    """Free disk on a remote machine via ssh; None when it can't be read (following dispatch_concurrency.credit_ready_remote)."""
+    import guard_reading  # noqa: E402
+    try:
+        proc = subprocess.run(
+            ["ssh", "-o", "ConnectTimeout=5", "-o", "BatchMode=yes", "-o", "StrictHostKeyChecking=accept-new",
+             host, 'python3 -c "import shutil; print(shutil.disk_usage(\\"$HOME\\").free / 1e9)"'],
+            capture_output=True, text=True, timeout=10)
+        if proc.returncode != 0:
+            guard_reading.reading("disk:dispatch_remote", RuntimeError(f"remote disk check failed: ssh exit {proc.returncode}"))
+            return None
+        result = float(proc.stdout.strip())
+        guard_reading.reading("disk:dispatch_remote", "ok")
+        return result
+    except Exception as exc:
+        guard_reading.reading("disk:dispatch_remote", exc)
+        return None
+
+
 def _github_budget_pct() -> float | None:
     """Percent of this hour's GitHub allowance left; None when it cannot be read (an unreadable guard never blocks)."""
     try:
@@ -845,10 +864,25 @@ def _select_for_profile(profile: dict, settings: dict | None = None, taken: dict
                 continue
         if parallel:
             used = (local_base if is_self else 0) + taken.get(device, 0)
+            def disk_free_gb_local_or_remote(m, s=is_self):
+                import guard_reading  # noqa: E402
+                if s:
+                    try:
+                        result = _free_disk_gb()
+                        if result is not None:
+                            guard_reading.reading("disk:dispatch_local", "ok")
+                        else:
+                            guard_reading.reading("disk:dispatch_local", RuntimeError("unable to read local disk space"))
+                        return result
+                    except Exception as exc:
+                        guard_reading.reading("disk:dispatch_local", exc)
+                        return None
+                else:
+                    return _free_disk_gb_remote(m)
             ok, why = dispatch_concurrency.can_start_another(
                 device, settings, slots_in_use=lambda m, used=used: used,
                 credit_ready=lambda m: settings.get("credit_ready", {}).get(m, False),
-                disk_free_gb=lambda m, s=is_self: _free_disk_gb() if s else None,
+                disk_free_gb=disk_free_gb_local_or_remote,
                 github_budget_pct=_github_budget_pct,
                 breaker_tripped=lambda: [],   # a tripped breaker already removed that project from this scan
                 missing_tools=lambda m: [])

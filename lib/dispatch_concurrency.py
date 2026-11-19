@@ -13,6 +13,7 @@ from __future__ import annotations
 import json
 import os
 import subprocess
+import sys
 import tempfile
 from datetime import datetime, timezone
 from pathlib import Path
@@ -149,34 +150,39 @@ def can_start_box_build(settings: dict, in_flight: int) -> tuple[bool, str | Non
     return True, None
 
 
-def _safe(reader, *args):
+def _safe(name: str, reader, *args):
+    """Call reader safely, reporting failures through guard_reading. Returns None on error."""
+    import guard_reading  # noqa: E402
     try:
-        return reader(*args)
-    except Exception:  # noqa: BLE001 -- an unreadable guard must not stall dispatch
+        result = reader(*args)
+        guard_reading.reading(name, "ok")
+        return result
+    except Exception as exc:  # noqa: BLE001 -- an unreadable guard must not stall dispatch
+        guard_reading.reading(name, exc)
         return None
 
 
 def can_start_another(machine: str, settings: dict, *, slots_in_use, disk_free_gb, github_budget_pct,
                       breaker_tripped, missing_tools, credit_ready=None) -> tuple[bool, str | None]:
     # An unreadable credit state means the plan's slots only: never a block, never extra builds on a guess.
-    limit = effective_limit(settings, machine, credit_ready=bool(credit_ready and _safe(credit_ready, machine)))
+    limit = effective_limit(settings, machine, credit_ready=bool(credit_ready and _safe("dispatch:credit", credit_ready, machine)))
     used = slots_in_use(machine)
     if used >= limit:
         return False, f"{machine} is full: {used} of {limit} slots in use"
     if not settings.get("parallel"):
         return True, None  # off: exactly today's behaviour, no extra guards
     g = settings["guards"]
-    disk = _safe(disk_free_gb, machine)
+    disk = _safe("dispatch:disk_free_gb", disk_free_gb, machine)
     if disk is not None and disk < g["min_disk_gb"]:
         return False, f"disk {disk:g} GB free on {machine}, minimum {g['min_disk_gb']:g}"
-    pct = _safe(github_budget_pct)
+    pct = _safe("dispatch:github_budget_pct", github_budget_pct)
     if pct is not None and pct < g["min_github_budget_pct"]:
         return False, f"GitHub request budget {pct:g}% left, minimum {g['min_github_budget_pct']:g}%"
-    trips = _safe(breaker_tripped) or []
+    trips = _safe("dispatch:breaker_tripped", breaker_tripped) or []
     if trips:
         t = trips[0]
         return False, f"circuit breaker tripped for {str(t.get('project', '?')).split('/')[-1]}: {t.get('signature', '?')}"
-    missing = _safe(missing_tools, machine) or []
+    missing = _safe("dispatch:missing_tools", missing_tools, machine) or []
     if missing:
         return False, f"{machine} lacks tools the project needs: {', '.join(missing)}"
     return True, None
@@ -264,16 +270,21 @@ def log_billing(task: str, mode: str, why: str, home: Path | None = None) -> Non
 
 
 def credit_ready_remote(host: str, run=None) -> bool | None:
-    """credit_ready_local on another machine over ssh; None when it can't be asked."""
+    """credit_ready_local on another machine over ssh; None when it can't be asked. Reports through guard_reading."""
+    import guard_reading  # noqa: E402
     run = run or subprocess.run
     try:
         proc = run(["ssh", "-o", "ConnectTimeout=5", "-o", "BatchMode=yes", "-o", "StrictHostKeyChecking=accept-new",
                     host, 'cd "$HOME/.agents" && "$HOME/.agents/venv/bin/python" -m lib.dispatch_concurrency credit-ready'],
                    capture_output=True, text=True, timeout=10)
         if proc.returncode != 0:
+            guard_reading.reading("dispatch:credit_remote", RuntimeError(f"remote credit check failed: ssh exit {proc.returncode}"))
             return None
-        return proc.stdout.strip() == "true"
-    except Exception:
+        result = proc.stdout.strip() == "true"
+        guard_reading.reading("dispatch:credit_remote", "ok")
+        return result
+    except Exception as exc:
+        guard_reading.reading("dispatch:credit_remote", exc)
         return None
 
 
@@ -307,7 +318,8 @@ def _pid_alive(pid: int) -> bool:
 
 
 def _read_task_records(tasks_dir: Path | None = None) -> list[dict]:
-    """Glob *.json files in tasks_dir, skip unreadable/malformed files. Returns list of task records."""
+    """Glob *.json files in tasks_dir, skip unreadable/malformed files. Returns list of task records. Reports failures."""
+    import guard_reading  # noqa: E402
     tasks_dir = tasks_dir or TASKS_DIR
     records = []
     if not tasks_dir.exists():
@@ -315,8 +327,8 @@ def _read_task_records(tasks_dir: Path | None = None) -> list[dict]:
     for f in tasks_dir.glob("*.json"):
         try:
             records.append(json.loads(f.read_text()))
-        except (OSError, ValueError):
-            pass
+        except (OSError, ValueError) as exc:
+            guard_reading.reading("dispatch:task_records", exc, detail=f"failed to parse {f.name}")
     return records
 
 

@@ -625,6 +625,23 @@ def check_memory_claims() -> dict:
     return memory_lint.check_claims()
 
 
+def check_guard_readings() -> list[dict]:
+    """Guard reading episodes: once per day, alert if any reading failed 2+ times in 30 min (marvin#889, #891).
+    Returns one yellow row per open episode; severity never green."""
+    import guard_reading
+    state = guard_reading._read_state()
+    rows = []
+    for name, entry in state.items():
+        if isinstance(entry, dict) and "episode_opened_at" in entry:
+            detail = entry.get("detail") or entry.get("last_error") or "reading failed"
+            rows.append({
+                "id": f"guard:{name}",
+                "severity": "yellow",
+                "detail": f"{guard_reading.FAIL_MODE.get(name, name)}: {detail}"[:300],
+            })
+    return rows
+
+
 def check_profile_parity() -> dict | None:
     """The owner's public profile facts (instance config/public-profile.json) match every surface: the live site, the
     resume PDF, the master resume, GitHub and the product sites (marvin#1038). Amber names the surface and field that
@@ -1802,6 +1819,7 @@ def default_checks(reach: dict[str, str] | None = None, reach_results: list[dict
         ("route:intent-routing-collection", "route.py embedding classifier (ChromaDB)", check_intent_routing_collection, CHECK_BUDGET_S),
         ("dispatch:lock-age", "Local dispatch lock", check_dispatch_lock, CHECK_BUDGET_S),
         ("pipeline:breaker", "Ticket pipeline circuit breaker", lambda: check_pipeline_breaker(reach), CROSS_MACHINE_BUDGET_S),
+        ("guard:readings", "Guard reading failures", check_guard_readings, CHECK_BUDGET_S),
         ("sync:stuck", "Code sync", lambda: check_sync_stuck(reach), CROSS_MACHINE_BUDGET_S),
         ("sync:union-review", "Code sync: merged lines to check", check_union_merge_review, CHECK_BUDGET_S),
         ("dispatch:parallel", "Parallel dispatch keeping up", check_parallel_dispatch, CHECK_BUDGET_S),
@@ -1956,6 +1974,21 @@ def react_to_accounts(sweep=None) -> str:
     return ", ".join(f"{n} {k}" for k, n in sorted(counts.items()))
 
 
+def react_to_guard_readings(checks: list[dict] | None = None) -> str:
+    """Alert once per day while guard reading episodes stay open (marvin#889, #891). One-line summary for the run log.
+    Never raises: a guard reading check failure must not break the health sweep."""
+    try:
+        import guard_reading
+        guard_reading.alert_degraded()
+        if checks:
+            open_readings = [c for c in checks if c.get("id", "").startswith("guard:")]
+            if open_readings:
+                return f"alerted on {len(open_readings)} open reading episode(s)"
+        return "checked"
+    except Exception as exc:  # noqa: BLE001
+        return f"could not check guard readings: {type(exc).__name__}: {str(exc)[:160]}"
+
+
 import job_events  # noqa: E402  (run log shown in the dashboard's Health tab)
 
 HEALTH_ALERT_STATE = HOME / ".claude" / "logs" / "health-alerted.json"
@@ -1990,6 +2023,7 @@ def _cli() -> None:
         job_events.step("Disk first aid", f"{aid['device']}: {'ok' if aid['ok'] else 'failed'}, {aid['detail']}")
 
     job_events.step("Accounts", react_to_accounts())
+    job_events.step("Guard readings", react_to_guard_readings(out.get("checks", [])))
 
     if "--json" in sys.argv:
         print(json.dumps(out, indent=2))

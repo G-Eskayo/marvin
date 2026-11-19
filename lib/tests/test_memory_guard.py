@@ -71,10 +71,13 @@ def test_reads_the_kernel_pressure_level(raw, level):
     assert mg.read_level(run=run) == level
 
 
-def test_an_unreadable_level_is_none_so_it_never_blocks():
+def test_an_unreadable_level_refuses_closed():
+    """When memory pressure can't be read, fail closed (new behavior per marvin#889)."""
     run = lambda cmd, **k: subprocess.CompletedProcess(cmd, 1, stdout="")  # noqa: E731
     assert mg.read_level(run=run) is None
-    assert mg.check("#1", level=None)["ok"] is True
+    result = mg.check("#1", level=None)
+    assert result["ok"] is False
+    assert "Cannot read" in result["message"]
 
 
 def test_the_level_override_wins_over_the_kernel(monkeypatch):
