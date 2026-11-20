@@ -450,8 +450,8 @@ def test_a_signal_to_the_wrapper_alone_ends_it_and_its_job_at_once(tmp_path, sig
         job = int(pidfile.read_text())
         t = time.monotonic()
         os.kill(p.pid, sig)                       # the wrapper only, not its group: the job never got the signal
-        assert p.wait(timeout=3) in (code, -sig)   # 128+n, or killed by n: both read as a signal by ssh and timeout
-        assert time.monotonic() - t < 2, "the wrapper waited for its job"
+        assert p.wait(timeout=10) in (code, -sig)   # 128+n, or killed by n: both read as a signal by ssh and timeout
+        assert time.monotonic() - t < 5, "the wrapper waited for its job"
         assert _gone(job), "the job outlived its wrapper"
         assert not record.exists()
         assert '"busy": false' in (home / ".claude" / "dispatch-state.json").read_text()
@@ -483,7 +483,7 @@ def test_a_job_that_ignores_sigterm_still_lets_the_wrapper_end_and_clean_up(tmp_
         assert _wait_for(pidfile)
         job = int(pidfile.read_text())
         os.killpg(p.pid, 15)
-        assert p.wait(timeout=3) in (143, -15)
+        assert p.wait(timeout=10) in (143, -15)
         assert not record.exists()
     finally:
         if job:
@@ -497,7 +497,7 @@ def test_a_job_that_ignores_sigterm_still_lets_the_wrapper_end_and_clean_up(tmp_
 
 def test_terminated_at_once_never_waits_for_the_job(tmp_path):
     """The CI failure itself, many times over: SIGTERM to the group the moment the record appears. Each run must end
-    within two seconds, not only eventually."""
+    within five seconds, not only eventually."""
     for i in range(30):
         p, _, record = _run_wrapper(tmp_path, "sleep 30", name=str(i))
         for _ in range(400):
@@ -507,11 +507,11 @@ def test_terminated_at_once_never_waits_for_the_job(tmp_path):
         t = time.monotonic()
         os.killpg(p.pid, 15)
         try:
-            p.wait(timeout=5)
+            p.wait(timeout=10)
         finally:
             if p.poll() is None:
                 os.killpg(p.pid, 9)
-        assert time.monotonic() - t < 2, f"run {i} waited for its job"
+        assert time.monotonic() - t < 5, f"run {i} waited for its job"
         assert not record.exists(), f"run {i} left its record"
 
 

@@ -188,6 +188,10 @@ def measure(worktree_path: Path) -> dict:
                 )
         suite_passed = parsed.get("passed") or 0
         suite_failed = parsed.get("failed") or 0
+        outside_tests = {o["test"] for o in (parsed.get("outside") or [])}
+        failing_ids = set(parsed.get("failing_ids") or [])
+        outside_failed_count = len([t for t in failing_ids if t in outside_tests])
+        suite_failed = max(0, suite_failed - outside_failed_count)
         metrics[f"{label}_passed"] = {"value": suite_passed, "higher_is_better": True}
         metrics[f"{label}_failed"] = {"value": suite_failed, "higher_is_better": False}
         passed += suite_passed
@@ -217,12 +221,18 @@ def _changed_since(worktree: Path, base_sha: str) -> list[str]:
 
 
 def _suite_reading(label: str, parsed: dict) -> tuple[int, int]:
-    """(passed, failed) from one run, with measure()'s rule: a crash is an error, a runner's 'no tests ran' is 0."""
+    """(passed, failed) from one run, with measure()'s rule: a crash is an error, a runner's 'no tests ran' is 0.
+    Outside-state failures are excluded from the count (they don't reflect the ticket's code)."""
     if parsed.get("passed") is None and parsed.get("failed") is None:
         tail = parsed.get("output_tail") or ""
         if not any(marker in tail.lower() for marker in _NO_TESTS_MARKERS):
             raise MeasureError(f"{label} produced no test summary (crashed or never ran): ...{tail[-300:].strip()}")
-    return parsed.get("passed") or 0, parsed.get("failed") or 0
+    passed = parsed.get("passed") or 0
+    failed = parsed.get("failed") or 0
+    outside_tests = {o["test"] for o in (parsed.get("outside") or [])}
+    failing_ids = set(parsed.get("failing_ids") or [])
+    outside_failed_count = len([t for t in failing_ids if t in outside_tests])
+    return passed, max(0, failed - outside_failed_count)
 
 
 def _metrics(suites: dict[str, tuple[int, int]]) -> dict:

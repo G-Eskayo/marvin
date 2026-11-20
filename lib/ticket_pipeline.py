@@ -726,6 +726,25 @@ def _retry_not_before(repo: str, ticket: dict, now: datetime | None = None) -> d
     return nb if nb is not None and nb > now else None
 
 
+def _repeat_cap_blocked(repo: str, ticket: dict, now: datetime | None = None) -> dict | None:
+    """Park reason when a ticket fails REPEAT_CAP_FAILURES times within REPEAT_CAP_WINDOW_H, or None if below the cap.
+    Unreadable comments never block a dispatch."""
+    now = now or datetime.now(timezone.utc)
+    cutoff_window = ticket_policy.REPEAT_CAP_WINDOW_H * 3600
+    updated = ticket_policy._parse(ticket.get("updatedAt"))
+    if updated is not None and (now - updated).total_seconds() > cutoff_window:
+        return None
+    try:
+        proc = subprocess.run(["gh", "issue", "view", str(ticket["number"]), "--repo", repo, "--json", "comments"],
+                              capture_output=True, text=True, timeout=30)
+        if proc.returncode != 0:
+            return None
+        cap = ticket_policy.repeat_capped(json.loads(proc.stdout).get("comments"), now)
+    except Exception:  # noqa: BLE001
+        return None
+    return cap
+
+
 def _flag_busy() -> bool:
     try:
         from task_dispatch import _read_local_dispatch_state
@@ -1046,6 +1065,10 @@ def _dispatch_one(repo, ticket, ready_total, step, summary, fail, dry_run, setti
     not_before = _retry_not_before(repo, ticket)
     if not_before is not None:
         step("Scanning tickets", f"{where}#{issue_number} waits until {not_before.strftime('%H:%M UTC')} after a failed run")
+        return "backoff"
+    repeat_cap = _repeat_cap_blocked(repo, ticket)
+    if repeat_cap:
+        step("Scanning tickets", f"{where}#{issue_number} parked: {repeat_cap['reason']}")
         return "backoff"
     step("Scanning tickets", f"{ready_total} ready; next is {where}#{issue_number} {ticket['title']}")
 

@@ -410,18 +410,28 @@ def settle(issue_number: int, outcome: dict, findings: list[str] | tuple = (), r
             ts.record_stage(issue_number, "done", "failed", outcome["reason"][:300], **kw)
             _trigger_redispatch()
             return outcome
-        prior_streak = _consecutive_failure_streak(issue_number, **kw)
-        parking = prior_streak + 1 >= MAX_CONSECUTIVE_FAILURES
-        _comment_failure(issue_number, outcome["reason"], **kw, **({} if parking else {"retry": _retry_line(prior_streak + 1)}))
-        # Feed the cross-ticket breaker (failure_breaker.py): the SAME failure across
-        # different tickets means the system is broken, not the tickets.
+
+        try:
+            proc = subprocess.run(["gh", "issue", "view", str(issue_number), "--repo", repo, "--json", "comments"],
+                                  capture_output=True, text=True, timeout=30, check=False)
+            comments = json.loads(proc.stdout).get("comments", []) if proc.returncode == 0 else []
+        except Exception:  # noqa: BLE001
+            comments = []
+
+        repeat_cap = ticket_policy.repeat_capped(comments, include_in_flight=True)
+        if repeat_cap:
+            _comment_failure(issue_number, outcome["reason"], **kw)
+            _feed_breaker(issue_number, outcome["reason"], repo)
+            _park_stuck_ticket(issue_number, repeat_cap["streak"], **kw, **lab, reason=outcome["reason"], findings=findings)
+            ts.record_stage(issue_number, "done", "failed", f"parked by repeat cap: {repeat_cap['reason']}", **kw)
+            _trigger_redispatch()
+            return outcome
+
+        # Failure doesn't meet repeat cap threshold, comment with retry marker and release
+        _comment_failure(issue_number, outcome["reason"], **kw, **{"retry": _retry_line(1)})
         _feed_breaker(issue_number, outcome["reason"], repo)
-        if prior_streak + 1 >= MAX_CONSECUTIVE_FAILURES:
-            _park_stuck_ticket(issue_number, prior_streak + 1, **kw, **lab, reason=outcome["reason"], findings=findings)
-            ts.record_stage(issue_number, "done", "failed", f"parked after {prior_streak + 1} consecutive failures", **kw)
-        else:
-            _release_claim(issue_number, **kw, **lab, run_id=run_id)
-            ts.record_stage(issue_number, "done", "failed", outcome["reason"][:300], **kw)
+        _release_claim(issue_number, **kw, **lab, run_id=run_id)
+        ts.record_stage(issue_number, "done", "failed", outcome["reason"][:300], **kw)
     else:
         ts.record_stage(issue_number, "done", "passed", f"PR raised: {outcome['pr_url']}", **kw)
         failure_breaker.record_success(issue_number, **({"project": repo} if other else {}))  # proves this project's environment works

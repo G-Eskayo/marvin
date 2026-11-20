@@ -315,11 +315,26 @@ def test_run_parks_the_ticket_instead_of_releasing_at_the_failure_cap(monkeypatc
     # G-Eskayo/marvin#28, 2026-09-04..06: release-claim-then-immediate-
     # redispatch with no cross-call cap spun ~6,900 back-to-back headless
     # sessions in 3 days on a ticket that never once made progress. This is
-    # the guard: the 3rd consecutive identical-failure comment parks it
+    # the guard: the 2nd consecutive failure within 72h parks it
     # instead of releasing it back for another immediate re-claim.
+    from datetime import datetime, timezone
+    import json
+
+    now = datetime.now(timezone.utc)
+    # Two failures within 72h should trigger the repeat cap
+    comments = [
+        {"body": f"{rt.FAILURE_MARKER}: unchanged", "createdAt": now.isoformat()},
+        {"body": f"{rt.FAILURE_MARKER}: unchanged", "createdAt": now.isoformat()},
+    ]
+
+    class FakeResult:
+        returncode = 0
+        def __init__(self):
+            self.stdout = json.dumps({"comments": comments})
+
     monkeypatch.setattr(rt, "execute_ticket", lambda *a: _failing_result())
     monkeypatch.setattr(rt, "raise_mr", lambda *a, **kw: {"raised": False, "pr_url": None, "reason": "unchanged"})
-    monkeypatch.setattr(rt, "_consecutive_failure_streak", lambda issue_number: rt.MAX_CONSECUTIVE_FAILURES - 1)
+    monkeypatch.setattr(rt.subprocess, "run", lambda *a, **kw: FakeResult())
     monkeypatch.setattr(rt, "_comment_failure", lambda *a, **k: None)
     monkeypatch.setattr(rt, "_trigger_redispatch", lambda: None)
 
@@ -331,7 +346,7 @@ def test_run_parks_the_ticket_instead_of_releasing_at_the_failure_cap(monkeypatc
     rt.run(28)
 
     assert released == []
-    assert parked == [(28, rt.MAX_CONSECUTIVE_FAILURES)]
+    assert len(parked) == 1 and parked[0][0] == 28
 
 
 def test_run_still_releases_below_the_failure_cap(monkeypatch):
@@ -350,6 +365,46 @@ def test_run_still_releases_below_the_failure_cap(monkeypatch):
 
     assert released == [28]
     assert parked == []
+
+
+def test_repeat_cap_respects_the_72h_window_and_ignores_old_failures(monkeypatch):
+    """Regression test for design test 5: a ticket with 2 failures >72h ago and 1 new failure should NOT be parked.
+    The old MAX_CONSECUTIVE_FAILURES logic counted all failures across time; repeat_capped replaces that with a
+    72-hour window. This test ensures the window is respected and the old unbounded logic doesn't defeat it."""
+    from datetime import datetime, timezone, timedelta
+    import json
+
+    now = datetime.now(timezone.utc)
+    old_time = (now - timedelta(hours=100)).isoformat()  # >72h ago
+
+    # Comments: two failures >72h ago, then newer comments, all within the window
+    comments = [
+        {"body": "some human comment after the old failures", "createdAt": now.isoformat()},
+        {"body": f"{rt.FAILURE_MARKER}: old failure", "createdAt": old_time},
+        {"body": f"{rt.FAILURE_MARKER}: old failure", "createdAt": old_time},
+    ]
+
+    # Mock gh to return these comments
+    class FakeResult:
+        returncode = 0
+        def __init__(self):
+            self.stdout = json.dumps({"comments": comments})
+
+    monkeypatch.setattr(rt, "execute_ticket", lambda *a: _failing_result())
+    monkeypatch.setattr(rt, "raise_mr", lambda *a, **kw: {"raised": False, "pr_url": None, "reason": "unchanged"})
+    monkeypatch.setattr(rt.subprocess, "run", lambda *a, **kw: FakeResult())
+    monkeypatch.setattr(rt, "_trigger_redispatch", lambda: None)
+
+    released = []
+    monkeypatch.setattr(rt, "_release_claim", lambda issue_number, **kw: released.append(issue_number))
+    parked = []
+    monkeypatch.setattr(rt, "_park_stuck_ticket", lambda issue_number, streak, **kw: parked.append((issue_number, streak)))
+
+    rt.run(28)
+
+    # With the fix, the ticket should be released (not parked) because the window doesn't see 2 failures within 72h
+    assert released == [28], "Ticket with old failures should be released, not parked"
+    assert parked == [], "Ticket should not be parked by repeat cap when old failures are outside the window"
 
 
 def test_consecutive_failure_streak_counts_trailing_failure_comments(monkeypatch):
@@ -466,13 +521,29 @@ def test_a_failing_gh_call_never_stops_the_rest_of_the_park(monkeypatch):
 
 
 def test_run_passes_the_cause_and_the_last_must_fix_findings_to_park(monkeypatch):
+    from datetime import datetime, timezone
+    import json
+
     res = _failing_result()
     res["final_comparison"] = {**res["final_comparison"], "verdict": "code review found must-fix issues",
                                "fix_these": ["lib/a.py:3 — crashes on None"]}
     res["explanation"] = "Did not reach a passing comparison after 3 iterations. Final verdict: code review found must-fix issues."
     monkeypatch.setattr(rt, "execute_ticket", lambda *a: res)
     monkeypatch.setattr(rt, "raise_mr", lambda *a, **kw: {"raised": False, "pr_url": None, "reason": res["explanation"]})
-    monkeypatch.setattr(rt, "_consecutive_failure_streak", lambda issue_number: rt.MAX_CONSECUTIVE_FAILURES - 1)
+
+    # Mock the gh call to return comments that trigger repeat_capped
+    now = datetime.now(timezone.utc)
+    comments = [
+        {"body": f"{rt.FAILURE_MARKER}: unchanged", "createdAt": now.isoformat()},
+        {"body": f"{rt.FAILURE_MARKER}: unchanged", "createdAt": now.isoformat()},
+    ]
+
+    class FakeResult:
+        returncode = 0
+        def __init__(self):
+            self.stdout = json.dumps({"comments": comments})
+
+    monkeypatch.setattr(rt.subprocess, "run", lambda *a, **kw: FakeResult())
     monkeypatch.setattr(rt, "_comment_failure", lambda *a, **k: None)
     monkeypatch.setattr(rt, "_trigger_redispatch", lambda: None)
     got = {}
@@ -482,10 +553,26 @@ def test_run_passes_the_cause_and_the_last_must_fix_findings_to_park(monkeypatch
 
 
 def test_a_crash_before_any_result_still_parks_with_the_crash_as_the_cause(monkeypatch):
+    from datetime import datetime, timezone
+    import json
+
     def boom(*a):
         raise RuntimeError("planner timed out")
     monkeypatch.setattr(rt, "execute_ticket", boom)
-    monkeypatch.setattr(rt, "_consecutive_failure_streak", lambda issue_number: rt.MAX_CONSECUTIVE_FAILURES - 1)
+
+    # Mock the gh call to return comments that trigger repeat_capped
+    now = datetime.now(timezone.utc)
+    comments = [
+        {"body": f"{rt.FAILURE_MARKER}: unchanged", "createdAt": now.isoformat()},
+        {"body": f"{rt.FAILURE_MARKER}: unchanged", "createdAt": now.isoformat()},
+    ]
+
+    class FakeResult:
+        returncode = 0
+        def __init__(self):
+            self.stdout = json.dumps({"comments": comments})
+
+    monkeypatch.setattr(rt.subprocess, "run", lambda *a, **kw: FakeResult())
     monkeypatch.setattr(rt, "_comment_failure", lambda *a, **k: None)
     monkeypatch.setattr(rt, "_trigger_redispatch", lambda: None)
     got = {}

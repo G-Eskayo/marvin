@@ -24,10 +24,22 @@ import pytest
 PREFIX = "OUTSIDE STATE FAILED"
 _LINE = re.compile(rf"^{PREFIX} (\S+) \((.*)\)$", re.M)
 _KEY = "outside_state"
+_FAILED_LINE = re.compile(r"^(?:FAILED|ERROR) (\S+::\S+|\S+\.py)")
+_FAILED_ONLY = re.compile(r"^FAILED (\S+::\S+|\S+\.py)")
 
 
 def line(test_id: str, what: str) -> str:
     return f"{PREFIX} {test_id} ({what})\n"
+
+
+def failed_test_ids(output: str) -> list[str]:
+    """Extract test IDs from pytest output: FAILED and ERROR lines."""
+    return [m.group(1) for line in (output or "").splitlines() if (m := _FAILED_LINE.match(line.strip()))]
+
+
+def failed_test_ids_only(output: str) -> list[str]:
+    """Extract test IDs from pytest output: FAILED lines only (not ERROR)."""
+    return [m.group(1) for line in (output or "").splitlines() if (m := _FAILED_ONLY.match(line.strip()))]
 
 
 def parse(output: str) -> list[dict]:

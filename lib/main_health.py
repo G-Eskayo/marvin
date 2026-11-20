@@ -42,7 +42,8 @@ VENV_PY = REPO_DIR / "venv" / "bin" / "python"
 
 
 def failed_ids(output: str) -> list[str]:
-    return [m.group(1) for m in re.finditer(r"^FAILED\s+(\S+)", output, re.M)]
+    import outside_state
+    return outside_state.failed_test_ids(output)
 
 
 def verdict(returncode: int, output: str) -> tuple[bool, list[str], list[dict]]:

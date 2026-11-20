@@ -219,6 +219,9 @@ def capture_test_results(worktree_path: Path, test_command: list[str], timeout_s
     _rc, output = run_timed(test_command, cwd=worktree_path, env=env, timeout_s=timeout_s, slot_wait_cap_s=SLOT_WAIT_CAP_S,
                             preexec_fn=_raise_nofile_limit)
     parsed = parse_test_output(" ".join(test_command), output)
+    import outside_state
+    parsed["outside"] = outside_state.parse(output)
+    parsed["failing_ids"] = outside_state.failed_test_ids_only(output)
     parsed["output_tail"] = output[-600:]
     return parsed
 

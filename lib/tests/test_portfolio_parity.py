@@ -32,7 +32,17 @@ def test_a_missing_part_in_the_preview_is_a_difference():
 
 def _has_playwright():
     import importlib.util
-    return importlib.util.find_spec("playwright") is not None
+    if importlib.util.find_spec("playwright") is None:
+        return False
+    try:
+        from playwright.sync_api import sync_playwright
+        with sync_playwright() as p:
+            if p.chromium is None:
+                return False
+            executable = p.chromium.executable_path
+            return executable is not None and Path(executable).exists()
+    except Exception:  # noqa: BLE001
+        return False
 
 
 def _live():

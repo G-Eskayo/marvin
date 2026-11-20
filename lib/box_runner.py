@@ -47,7 +47,6 @@ REF_PREFIX = "refs/box-runs/"
 # (still your call)". A no-result run (timeout, offline, error) neither counts nor breaks the streak.
 TRUST_STREAK = 20
 PROPOSALS_ROOT = Path.home() / ".claude" / "proposals"
-FAILED_LINE = re.compile(r"^(?:FAILED|ERROR) (\S+::\S+|\S+\.py)")
 
 
 def _git(repo: str | Path, *args: str, binary: bool = False, check: bool = True):
@@ -82,8 +81,8 @@ def _lines() -> list[dict]:
 
 def failing_tests(output: str) -> list[str]:
     """Test ids from pytest's short summary (`FAILED path::name - msg`, `ERROR path::name`), sorted and unique."""
-    names = {m.group(1) for line in (output or "").splitlines() if (m := FAILED_LINE.match(line.strip()))}
-    return sorted(names)
+    import outside_state
+    return sorted(set(outside_state.failed_test_ids(output)))
 
 
 def box_command(workers: int = WORKERS) -> str:

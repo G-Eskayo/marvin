@@ -10,6 +10,8 @@ import re
 from datetime import datetime, timezone
 
 STALE_CLAIM_HOURS = 48
+REPEAT_CAP_FAILURES = 2
+REPEAT_CAP_WINDOW_H = 72
 PRIORITY_LABELS = ("priority:p0", "priority:p1", "priority:p2", "priority:p3")
 STATE_LABELS = {"ready-for-agent", "ready-for-human", "needs-info", "needs-reengagement", "wontfix"}
 SKIP_LABELS = {"pinned"}  # a person has taken the wheel: no agent touches it
@@ -154,6 +156,33 @@ def retry_not_before(comments, now: datetime | None = None) -> datetime | None:
             if t is not None and t.timestamp() <= horizon and (latest is None or t > latest):
                 latest = t
     return latest
+
+
+def repeat_capped(comments, now: datetime | None = None, include_in_flight: bool = False) -> dict | None:
+    """Park reason when a ticket fails REPEAT_CAP_FAILURES times within REPEAT_CAP_WINDOW_H, or None if below the cap.
+    Returns {reason, streak} to identify what parked it. Mirrors run_ticket._trailing_streaks: stops counting at the
+    first comment older than the window, counting only failure comments (not model-unavailable, timeouts, or other bot
+    comments). A person's comment or a successful run still stops the count.
+
+    include_in_flight: if True, counts the current in-flight failure (not yet posted to the thread)."""
+    now = now or datetime.now(timezone.utc)
+    cutoff = now - __import__("datetime").timedelta(hours=REPEAT_CAP_WINDOW_H)
+    failures = 1 if include_in_flight else 0
+    for c in reversed(comments if isinstance(comments, list) else []):
+        body = c.get("body") if isinstance(c, dict) else None
+        body = body if isinstance(body, str) else ""
+        created = _parse(c.get("createdAt"))
+        if created is None or created < cutoff:
+            break
+        if "The model service was unavailable" in body:
+            continue
+        if "Automated implementation did not pass verification" in body:
+            failures += 1
+            if failures >= REPEAT_CAP_FAILURES:
+                return {"reason": f"repeated build failures (#{REPEAT_CAP_FAILURES}+ in {REPEAT_CAP_WINDOW_H}h)", "streak": failures}
+        elif automated_comment(body) != "bot":
+            break
+    return None
 
 
 # ── priority ────────────────────────────────────────────────────────────────
