@@ -1,5 +1,7 @@
 # Changelog
 
+- Drop the VERBOSITY (filler word) category from the improvement queue ([#1397](https://github.com/G-Eskayo/marvin/pull/1397))
+
 - Skip SKILL.md's manual tag-matching replay when retrieve.py already returned tag-fallback results ([#1352](https://github.com/G-Eskayo/marvin/pull/1352))
 
 - Main is red at 5faa676: fix forward ([#1351](https://github.com/G-Eskayo/marvin/pull/1351))
