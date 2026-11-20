@@ -126,6 +126,8 @@ def improvement_queue_summary() -> str:
     root = CLAUDE_DIR / "inbox"
     if inbox.pile_exists("improvement-queue", root):  # moved into the inbox (ADR 0083)
         items = inbox.list_items("improvement-queue", root)["items"]
+        # filter out VERBOSITY items (dropped from auto-fixer scope)
+        items = [i for i in items if i["fields"].get("kind") != "VERBOSITY"]
         if not items:
             return "(improvement queue is empty)"
         waiting = sum(1 for i in items if i["status"]["state"] == "open")
@@ -138,7 +140,7 @@ def improvement_queue_summary() -> str:
     if not queue.exists():
         return "(no improvement queue)"
     text = queue.read_text(errors="ignore")
-    lines = text.splitlines()
+    lines = [line for line in text.splitlines() if "[VERBOSITY]" not in line]
     # last 20 lines (most recent entries)
     return "\n".join(lines[-20:])
 

@@ -9,7 +9,7 @@ happens in a worktree). Now, each run (com.marvin.auto-fix, daily 11:00 on the M
 1. Refreshes earlier marks: an item "in PR #n" becomes "done, PR #n merged" once n merges, or "tried" if it was closed.
 2. Stops if today's branch (auto-fix/<date>) already has a PR, if GitHub can't be read (fail closed), or if another
    run holds the lock. So two runs in a day open at most one PR.
-3. Reads ~/.claude/improvement-queue.md (oldest first, duplicates folded) and keeps pending NAMING, VERBOSITY and KISS
+3. Reads ~/.claude/improvement-queue.md (oldest first, duplicates folded) and keeps pending NAMING and KISS
    items on .py files inside the repo that aren't core infrastructure (_core_files: live hooks and launchd jobs). At
    most MAX_ITEMS items over MAX_FILES files a run; the rest wait for later days, unmarked.
 4. Waits while the 5-minute load is over LOAD_LIMIT (12), then makes a fresh worktree from origin/main on
@@ -22,7 +22,7 @@ happens in a worktree). Now, each run (com.marvin.auto-fix, daily 11:00 on the M
 7. Launches the fixer (Background analyst, Read+Edit only, cwd = the worktree, writes to ~/.agents/** denied as for
    the pipeline's executor). Afterwards: anything it wrote into the shared checkout is restored; any file it changed
    that isn't one of the queued files is reverted ("only within one file"); a queued file that no longer compiles, or
-   whose diff is over the cap (DIFF_CAP per item: VERBOSITY 6, NAMING 30, KISS 60 changed lines), is reverted.
+   whose diff is over the cap (DIFF_CAP per item: NAMING 30, KISS 60 changed lines), is reverted.
 8. Runs the same tests AFTER. Red: no PR, the failure goes in the log, the items are marked "tried". Green: one
    commit, pushed, one PR (gh via ~/.agents/bin/gh, --body-file) listing each item's queue entry and the test results.
    It goes through the normal merge gate when Gil approves; it is never merged by this job.
@@ -31,7 +31,7 @@ Queue marks are a suffix on the item's bullet (every copy of it), so the existin
     - **[NAMING]** ... (`lib/x.py`) — auto-fix: in PR #712 (2026-10-26)
     - **[NAMING]** ... (`lib/x.py`) — auto-fix: done, PR #712 merged
     - **[KISS]** ... (`lib/y.py`) — auto-fix: skipped 2026-10-26, function is 95 lines, over the 80-line cap
-    - **[VERBOSITY]** ... (`lib/z.py`) — auto-fix: tried 2026-10-26, tests failed
+    - **[KISS]** ... (`lib/z.py`) — auto-fix: tried 2026-10-26, tests failed
 Delete the suffix to put an item back in the queue.
 
 The queue moved into the inbox (lib/inbox.py, ADR 0083). Once its improvement-queue pile exists, items are read from
@@ -65,13 +65,13 @@ VENV_PYTHON = AGENTS_DIR / "venv" / "bin" / "python"
 GH = AGENTS_DIR / "bin" / "gh"
 LAUNCH_AGENTS_DIR = Path.home() / "Library" / "LaunchAgents"
 
-SCOPE = ("NAMING", "VERBOSITY", "KISS")
+SCOPE = ("NAMING", "KISS")
 MAX_ITEMS = 10
 MAX_FILES = 5
 # Changed lines (added + removed, git numstat) a file may carry, summed over its items. A rename touches the
-# definition and its uses; a comment trim one or two lines; a KISS simplification of a function up to 80 lines long
-# should come out smaller, so 60 changed lines is room for a real simplification but not a rewrite.
-DIFF_CAP = {"VERBOSITY": 6, "NAMING": 30, "KISS": 60}
+# definition and its uses; a KISS simplification of a function up to 80 lines long should come out smaller,
+# so 60 changed lines is room for a real simplification but not a rewrite.
+DIFF_CAP = {"NAMING": 30, "KISS": 60}
 KISS_MAX_FUNCTION_LINES = 80
 LOAD_LIMIT = 12.0            # CPU rule: wait while the 5-minute load is over 12
 LOAD_POLL_S = 60
@@ -180,6 +180,21 @@ def _read_queue() -> str:
 
 def _use_inbox() -> bool:
     return inbox.pile_exists(PILE)
+
+
+DROP_REASON = "VERBOSITY checks were removed from the auto-fixer scope (ADR decision to focus on NAMING and KISS only)"
+
+
+def drop_kind(kind: str, reason: str, today: str | None = None) -> None:
+    """Mark all items of a given kind as dropped (inbox or legacy markdown system)."""
+    if not kind:
+        return
+    today = today or _today()
+    marks = {}
+    for item in load_queue():
+        if item["kind"] == kind and not item["mark"]:
+            marks[item["entry"]] = f"dropped {today}, {reason}"
+    mark_items(marks)
 
 
 def load_queue() -> list[dict]:
@@ -313,7 +328,6 @@ Fix ONLY these findings, each within its own file:
 
 How to fix each kind:
 - NAMING: rename the generic variable or parameter to a descriptive name and update every reference to it in that function. Do not rename anything public that other files use.
-- VERBOSITY: tighten the comment's wording; keep its meaning.
 - KISS: simplify that one function without changing what it does (same inputs give the same outputs and the same side effects, same signature). Keep the change inside that file and small: at most {kiss_cap} changed lines. If it can't be simplified that way, leave it.
 
 Touch nothing else: no other refactoring, renames, logic changes or reformatting, and never a test file. If a finding looks wrong, already fixed, or you aren't confident the fix is safe and correct, skip it."""
@@ -426,9 +440,8 @@ def pr_body(today: str, fixed: list[dict], left_out: dict[str, str], cmd: list[s
     lines += ["", "## Test Results", "", f"Command: `{' '.join(['pytest'] + cmd[cmd.index('-q'):])}`",
               "", "### Before", "", _format_test_results(before), "", "### After", "", _format_test_results(after),
               "", "## Size caps", "",
-              f"Changed lines per item: VERBOSITY {DIFF_CAP['VERBOSITY']}, NAMING {DIFF_CAP['NAMING']}, "
-              f"KISS {DIFF_CAP['KISS']}; KISS functions longer than {KISS_MAX_FUNCTION_LINES} lines are not attempted. "
-              "Only the queued files may change."]
+              f"Changed lines per item: NAMING {DIFF_CAP['NAMING']}, KISS {DIFF_CAP['KISS']}; "
+              f"KISS functions longer than {KISS_MAX_FUNCTION_LINES} lines are not attempted. Only the queued files may change."]
     return "\n".join(lines) + "\n"
 
 
@@ -473,6 +486,7 @@ def run(today: str | None = None) -> None:
 
 
 def _run_locked(today: str) -> None:
+    drop_kind("VERBOSITY", DROP_REASON, today)
     branch = f"auto-fix/{today}"
     refresh_pr_marks(today)
     readable, pr = _todays_pr(branch)

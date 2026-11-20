@@ -74,12 +74,13 @@ def extract_project(text: str) -> str:
 
 # ── issue prioritisation ───────────────────────────────────────────────────────
 
-KIND_PRIORITY = ["logic", "naming", "verbosity", "style", "kiss", "oop",
+KIND_PRIORITY = ["logic", "naming", "style", "kiss", "oop",
                  "complexity", "comment"]
 
 
 def top_issues(entries: list[dict], limit: int = 5) -> list[dict]:
-    anti = [e for e in entries if e["metadata"]["category"] == "anti-pattern"]
+    anti = [e for e in entries if e["metadata"]["category"] == "anti-pattern"
+            and "[VERBOSITY]" not in e["document"]]
 
     def sort_key(e):
         doc = e["document"]

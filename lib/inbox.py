@@ -450,7 +450,7 @@ def render_suggestion(item: dict) -> str:
 
 QUEUE_SECTION_RE = re.compile(r"^## (\d{4}-\d{2}-\d{2}) — (.+)$")
 QUEUE_LINE_RE = re.compile(r"^- (\*\*\[([A-Z]+)\]\*\* (.+?) \(`([^`\n]+)`\))(?: — auto-fix: (.*))?$")
-QUEUE_MARK_STATES = (("in PR", "in_pr"), ("done", "done"), ("skipped", "skipped"), ("tried", "tried"))
+QUEUE_MARK_STATES = (("in PR", "in_pr"), ("done", "done"), ("skipped", "skipped"), ("tried", "tried"), ("dropped", "dropped"))
 
 
 def queue_status(mark: str | None, on: str | None = None) -> dict:
