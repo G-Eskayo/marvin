@@ -1,5 +1,7 @@
 # Changelog
 
+- Decisions answered after Approve can be lost when the PR merges first ([#1396](https://github.com/G-Eskayo/marvin/pull/1396))
+
 - Dispatch: when the Mini is held for a merge, send the ticket to the laptop instead of waiting ([#1395](https://github.com/G-Eskayo/marvin/pull/1395))
 
 - Drop the VERBOSITY (filler word) category from the improvement queue ([#1397](https://github.com/G-Eskayo/marvin/pull/1397))
