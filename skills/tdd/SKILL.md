@@ -59,7 +59,7 @@ Before writing any code:
 
 Ask: "What should the public interface look like? Which behaviors are most important to test?"
 
-**You can't test everything.** Confirm with the user exactly which behaviors matter most. Focus testing effort on critical paths and complex logic, not every possible edge case.
+**You can't test everything—but you can break it.** Confirm with the user exactly which behaviors matter most. Break-it testing requires cases for every behavior: how it fails, edge cases, adversarial inputs. See [docs/north-stars.md](../../docs/north-stars.md) (ADR 0063: "Tests try to break it") for the principle and enforcement gates.
 
 ### 2. Tracer Bullet
 
@@ -108,4 +108,6 @@ After all tests pass, look for [refactor candidates](refactoring.md):
 [ ] Test would survive internal refactor
 [ ] Code is minimal for this test
 [ ] No speculative features added
+[ ] Break-it cases included (empty/malformed/huge input, dependency failing, repeats/wrong order, stale state)
+[ ] Outward-facing adversarial cases included (injection, traversal, oversized payload, secrets in logs, fail closed)
 ```
