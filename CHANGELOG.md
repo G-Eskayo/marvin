@@ -1,5 +1,7 @@
 # Changelog
 
+- to-prd: drop "which modules get tests" question and fix self-contradiction in interview rule ([#1394](https://github.com/G-Eskayo/marvin/pull/1394))
+
 - Decisions answered after Approve can be lost when the PR merges first ([#1396](https://github.com/G-Eskayo/marvin/pull/1396))
 
 - Dispatch: when the Mini is held for a merge, send the ticket to the laptop instead of waiting ([#1395](https://github.com/G-Eskayo/marvin/pull/1395))
