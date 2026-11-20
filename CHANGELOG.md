@@ -1,5 +1,7 @@
 # Changelog
 
+- Trim academic_search.py JSON output to cut 5-9k tokens/call to ~2-3k ([#1389](https://github.com/G-Eskayo/marvin/pull/1389))
+
 - tdd skill contradicts ADR 0063 "tests try to break it" standard enforced by the merge gate ([#1390](https://github.com/G-Eskayo/marvin/pull/1390))
 
 - to-issues template hardcodes stale purpose-metric values instead of placeholders ([#1391](https://github.com/G-Eskayo/marvin/pull/1391))
