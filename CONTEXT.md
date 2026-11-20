@@ -128,7 +128,7 @@ one job, starting with the history store.
   job is discovery and classification (is this fixable within `auto_fix.py`'s existing narrow
   safety boundaries, or does it need real judgment?), not new fixing infrastructure.
 - **Output routing, by risk tier**: low-risk findings it fixes itself go through `auto_fix.py`, which
-  (since 2026-10-26) fixes queued NAMING/VERBOSITY/KISS items in its own worktree on `auto-fix/<date>`, runs the
+  (since 2026-10-26) fixes queued NAMING/KISS items in its own worktree on `auto-fix/<date>`, runs the
   covering tests before and after, and opens one PR a day for Gil's merge gate; it never edits the shared checkout.
   Each run is logged in `auto-fix-log.md`, same as any other auto-fix. Findings needing real judgment (like
   2026-07-09's rubric/prompt fixes — genuine design decisions, not mechanical pattern-matching) go

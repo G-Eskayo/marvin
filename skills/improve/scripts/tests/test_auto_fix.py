@@ -183,7 +183,7 @@ def test_the_pr_body_lists_every_item_with_its_queue_entry_and_the_test_results(
     run(env)
     [body] = env.gh.bodies
     for line in QUEUE.splitlines():
-        if line.startswith("- **["):
+        if line.startswith("- **[") and "[VERBOSITY]" not in line:
             assert line[2:] in body, f"missing queue entry: {line}"
     assert "Before" in body and "After" in body and "Passed" in body
     assert "not auto-merged" in body.lower() or "merge gate" in body.lower()
@@ -192,25 +192,25 @@ def test_the_pr_body_lists_every_item_with_its_queue_entry_and_the_test_results(
 def test_items_are_marked_in_pr_when_it_opens_and_done_once_it_merges(env):
     run(env)
     text = env.queue.read_text()
-    assert text.count("auto-fix: in PR #901") == 3
+    assert text.count("auto-fix: in PR #901") == 2
     env.gh.prs["901"] = {"number": 901, "state": "MERGED"}
     af.refresh_pr_marks()
     text = env.queue.read_text()
-    assert text.count("auto-fix: done, PR #901 merged") == 3 and "in PR #901" not in text
+    assert text.count("auto-fix: done, PR #901 merged") == 2 and "in PR #901" not in text
 
 
 def test_a_pr_closed_unmerged_marks_its_items_tried_so_they_are_not_retried_forever(env):
     run(env)
     env.gh.prs["901"] = {"number": 901, "state": "CLOSED"}
     af.refresh_pr_marks()
-    assert env.queue.read_text().count("auto-fix: tried") == 3
+    assert env.queue.read_text().count("auto-fix: tried") == 2
 
 
 def test_the_log_keeps_the_line_output_contracts_reads(env):
     run(env)
     import re
     text = env.log.read_text()
-    assert re.search(r"^## " + TODAY + r"T[^\n]*\n3 candidate\(s\) found, 3 fixed", text, re.M), text
+    assert re.search(r"^## " + TODAY + r"T[^\n]*\n2 candidate\(s\) found, 2 fixed", text, re.M), text
     assert "PR #901" in text
 
 
@@ -234,7 +234,7 @@ def test_a_fix_that_breaks_a_test_opens_no_pr_logs_why_and_marks_items_tried(env
     assert env.gh.created() == 0
     assert not env.on_origin(BRANCH)
     assert "tests failed" in env.log.read_text().lower()
-    assert env.queue.read_text().count(f"auto-fix: tried {TODAY}, tests failed") == 3
+    assert env.queue.read_text().count(f"auto-fix: tried {TODAY}, tests failed") == 2
     assert not list(so.WORKTREES_ROOT.glob("auto-fix-*")), "the failed worktree was left behind"
 
 
@@ -251,7 +251,12 @@ def test_a_red_baseline_means_nothing_is_attempted_and_nothing_marked(env):
     git(env.shared, "push", "-q", "origin", "main")
     run(env)
     assert env.launches == [] and env.gh.created() == 0
-    assert "auto-fix:" not in env.queue.read_text()
+    # VERBOSITY items are dropped at the start regardless of baseline; NAMING/KISS are not marked
+    text = env.queue.read_text()
+    assert text.count("VERBOSITY") > 0 and "auto-fix: dropped" in text
+    for line in text.splitlines():
+        if "[NAMING]" in line or "[KISS]" in line:
+            assert "auto-fix:" not in line, f"expected no mark on: {line}"
     assert "baseline" in env.log.read_text().lower()
 
 
@@ -259,7 +264,7 @@ def test_a_fixer_that_changes_nothing_opens_no_pr(env):
     env.fixer["fn"] = lambda p, cwd: None
     run(env)
     assert env.gh.created() == 0
-    assert env.queue.read_text().count(f"auto-fix: tried {TODAY}, no change made") == 3
+    assert env.queue.read_text().count(f"auto-fix: tried {TODAY}, no change made") == 2
 
 
 def test_a_fixer_that_crashes_opens_no_pr_and_marks_nothing(env):
@@ -267,7 +272,13 @@ def test_a_fixer_that_crashes_opens_no_pr_and_marks_nothing(env):
         raise subprocess.TimeoutExpired("claude", 300)
     env.fixer["fn"] = boom
     run(env)
-    assert env.gh.created() == 0 and "auto-fix:" not in env.queue.read_text()
+    assert env.gh.created() == 0
+    # VERBOSITY items are dropped at the start; NAMING/KISS are not marked
+    text = env.queue.read_text()
+    assert text.count("VERBOSITY") > 0 and "auto-fix: dropped" in text
+    for line in text.splitlines():
+        if "[NAMING]" in line or "[KISS]" in line:
+            assert "auto-fix:" not in line
     assert "fixer" in env.log.read_text().lower()
 
 
@@ -299,7 +310,7 @@ def test_a_huge_queue_is_parsed_quickly_and_only_a_capped_batch_is_taken(env):
         lines += ["---", f"## 2026-07-{(day % 28) + 1:02d} — marvin", ""]
         for i in range(100):
             lines.append(f"- **[VERBOSITY]** Filler word `just` in comment at line {i}: `x` (`lib/widget.py`)")
-            lines.append(f"- **[NAMING]** Generic parameter name `data` in `f()` at line {i}. (`tools/f{i}.py`)")
+            lines.append(f"- **[NAMING]** Generic parameter name `data` in `f()` at line {i}. (`lib/widget.py`)")
     env.queue.write_text("\n".join(lines) + "\n")
     t = time.monotonic()
     items = af.parse_queue(env.queue.read_text())
@@ -331,7 +342,12 @@ def test_an_unreadable_github_fails_closed(env):
     env.gh.fail = True
     run(env)
     assert env.launches == [] and env.gh.created() == 0
-    assert "auto-fix:" not in env.queue.read_text()
+    # VERBOSITY items are dropped at the start; NAMING/KISS are not marked
+    text = env.queue.read_text()
+    assert text.count("VERBOSITY") > 0 and "auto-fix: dropped" in text
+    for line in text.splitlines():
+        if "[NAMING]" in line or "[KISS]" in line:
+            assert "auto-fix:" not in line
 
 
 def test_a_dirty_leftover_worktree_from_earlier_today_is_preserved_then_replaced(env):
@@ -351,7 +367,12 @@ def test_a_worktree_that_cannot_be_created_logs_it_and_marks_nothing(env):
     git(env.shared, "remote", "remove", "origin")
     run(env)
     assert env.launches == [] and env.gh.created() == 0
-    assert "auto-fix:" not in env.queue.read_text()
+    # VERBOSITY items are dropped at the start; NAMING/KISS are not marked
+    text = env.queue.read_text()
+    assert text.count("VERBOSITY") > 0 and "auto-fix: dropped" in text
+    for line in text.splitlines():
+        if "[NAMING]" in line or "[KISS]" in line:
+            assert "auto-fix:" not in line
     assert "worktree" in env.log.read_text().lower()
 
 
@@ -401,7 +422,7 @@ def test_a_kiss_fix_whose_diff_is_over_the_cap_is_reverted_and_left_in_the_queue
     run(env)
     assert env.gh.created() == 0
     text = env.queue.read_text()
-    assert text.count(f"auto-fix: skipped {TODAY}, diff") == 3 and "over the" in text
+    assert text.count(f"auto-fix: skipped {TODAY}, diff") == 2 and "over the" in text
 
 
 def test_a_kiss_item_whose_function_is_gone_is_skipped(env):
@@ -477,7 +498,12 @@ def test_a_machine_that_never_calms_down_skips_the_day(env, monkeypatch):
     monkeypatch.setattr(af, "_sleep", lambda s: None)
     run(env)
     assert env.launches == [] and "load" in env.log.read_text().lower()
-    assert "auto-fix:" not in env.queue.read_text()
+    # VERBOSITY items are dropped at the start; NAMING/KISS are not marked
+    text = env.queue.read_text()
+    assert text.count("VERBOSITY") > 0 and "auto-fix: dropped" in text
+    for line in text.splitlines():
+        if "[NAMING]" in line or "[KISS]" in line:
+            assert "auto-fix:" not in line
 
 
 # ── the fixer's leash ─────────────────────────────────────────────────────────────────────────────────────────────
@@ -553,35 +579,53 @@ def _states(env):
 def test_inbox_a_good_batch_opens_one_pr_and_marks_each_item_in_pr(ienv):
     run(ienv)
     assert ienv.gh.created() == 1
-    assert _states(ienv) == [("in_pr", f"in PR #901 ({TODAY})")] * 3
+    states = _states(ienv)
+    # 2 items fixed and marked in PR, 1 VERBOSITY item marked dropped at the start
+    assert states[0][0] == "dropped" and "VERBOSITY checks were removed" in states[0][1]
+    assert states[1:] == [("in_pr", f"in PR #901 ({TODAY})")] * 2
     assert ienv.queue.read_text() == ienv.md_before
     body = ienv.gh.bodies[0]
-    assert all(e in body for e in ienv.items())  # the PR lists every item's queue entry
+    # only NAMING and KISS items are fixed (VERBOSITY is out of scope)
+    for e, item in ienv.items().items():
+        if item["fields"].get("kind") != "VERBOSITY":
+            assert e in body, f"missing queue entry in PR body: {e}"
 
 
 def test_inbox_items_become_done_once_the_pr_merges_and_tried_if_it_closes(ienv):
     run(ienv)
     ienv.gh.prs["901"] = {"number": 901, "state": "MERGED"}
     af.refresh_pr_marks()
-    assert _states(ienv) == [("done", "done, PR #901 merged")] * 3
-    assert all(len(i["history"]) == 2 for i in ienv.items().values())  # in PR, then done: both recorded
+    states = _states(ienv)
+    # 2 items fixed, marked in PR, then done; 1 VERBOSITY item dropped at start
+    assert states[0][0] == "done" and states[0][1] == "done, PR #901 merged"
+    assert states[1] == ("done", "done, PR #901 merged")
+    assert states[2][0] == "dropped" and "VERBOSITY checks were removed" in states[2][1]
+    items = ienv.items().values()
+    # 2 items have 2 history entries (in PR, then done), 1 item (VERBOSITY) has 1 (dropped)
+    assert sum(1 for i in items if len(i.get("history", [])) == 2) == 2
+    assert sum(1 for i in items if len(i.get("history", [])) == 1) == 1
 
 
 def test_inbox_a_fix_that_breaks_a_test_marks_items_tried(ienv):
     ienv.fixer["fn"] = lambda p, cwd: (cwd / "lib" / "widget.py").write_text(WIDGET.replace("result + x", "result - x"))
     run(ienv)
     assert ienv.gh.created() == 0
-    assert _states(ienv) == [("tried", f"tried {TODAY}, tests failed")] * 3
+    states = _states(ienv)
+    # VERBOSITY dropped at start, then 2 items tried (fix broke tests)
+    assert states[0][0] == "dropped" and "VERBOSITY checks were removed" in states[0][1]
+    assert states[1:] == [("tried", f"tried {TODAY}, tests failed")] * 2
 
 
 def test_inbox_done_items_are_not_picked_again_and_putting_one_back_open_makes_it_eligible(ienv):
     run(ienv)
     ienv.gh.prs["901"] = {"number": 901, "state": "MERGED"}
     af.refresh_pr_marks()
-    assert [i for i in af.load_queue() if not i["mark"]] == []
-    some = next(iter(ienv.items().values()))
+    # VERBOSITY items are dropped and never picked, non-VERBOSITY items are done and not picked again
+    assert [i for i in af.load_queue() if not i["mark"] and i["kind"] != "VERBOSITY"] == []
+    some = next(i for i in ienv.items().values() if i["fields"].get("kind") != "VERBOSITY")
     inbox.act("improvement-queue", some["id"], "open", None, ienv.root)
-    assert [i["entry"] for i in af.load_queue() if not i["mark"]] == [some["fields"]["entry"]]
+    # once put back open, the non-VERBOSITY item becomes eligible again
+    assert [i["entry"] for i in af.load_queue() if not i["mark"] and i["kind"] != "VERBOSITY"] == [some["fields"]["entry"]]
 
 
 def test_inbox_a_skipped_item_gets_its_note(ienv):
