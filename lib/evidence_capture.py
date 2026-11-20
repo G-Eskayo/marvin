@@ -34,6 +34,21 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 import test_slot  # noqa: E402  (stdlib only: the slot's own waiting/took lines, marvin#1113)
 
 
+def failing_test_ids(output: str) -> set[str]:
+    """Test ids from pytest's short summary line format.
+    Parses lines like `FAILED path::name - msg` or `ERROR path::name`.
+    Valid test ids contain :: or end with .py"""
+    import re
+    names = set()
+    # pytest's FAILED/ERROR lines: match either path::test or path.py format
+    pattern = re.compile(r"^(?:FAILED|ERROR) (\S+::\S+|\S+\.py)")
+    for line in (output or "").splitlines():
+        m = pattern.match(line.strip())
+        if m:
+            names.add(m.group(1))
+    return names
+
+
 def parse_test_output(suite: str, output: str) -> dict:
     """Extract pass/fail/total from a test runner's real stdout+stderr.
     Recognizes pytest's summary line ("11 passed in 2.72s",
@@ -220,6 +235,8 @@ def capture_test_results(worktree_path: Path, test_command: list[str], timeout_s
                             preexec_fn=_raise_nofile_limit)
     parsed = parse_test_output(" ".join(test_command), output)
     parsed["output_tail"] = output[-600:]
+
+    parsed["failed_tests"] = sorted(failing_test_ids(output))
     return parsed
 
 

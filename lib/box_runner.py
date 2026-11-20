@@ -81,9 +81,9 @@ def _lines() -> list[dict]:
 
 
 def failing_tests(output: str) -> list[str]:
-    """Test ids from pytest's short summary (`FAILED path::name - msg`, `ERROR path::name`), sorted and unique."""
-    names = {m.group(1) for line in (output or "").splitlines() if (m := FAILED_LINE.match(line.strip()))}
-    return sorted(names)
+    """Test ids from pytest's short summary, sorted and unique."""
+    import evidence_capture
+    return sorted(evidence_capture.failing_test_ids(output))
 
 
 def box_command(workers: int = WORKERS) -> str:

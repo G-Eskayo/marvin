@@ -315,11 +315,11 @@ def test_run_parks_the_ticket_instead_of_releasing_at_the_failure_cap(monkeypatc
     # G-Eskayo/marvin#28, 2026-09-04..06: release-claim-then-immediate-
     # redispatch with no cross-call cap spun ~6,900 back-to-back headless
     # sessions in 3 days on a ticket that never once made progress. This is
-    # the guard: the 3rd consecutive identical-failure comment parks it
+    # the guard: at the failure cap (MAX_FAILURES_IN_WINDOW) it parks
     # instead of releasing it back for another immediate re-claim.
     monkeypatch.setattr(rt, "execute_ticket", lambda *a: _failing_result())
     monkeypatch.setattr(rt, "raise_mr", lambda *a, **kw: {"raised": False, "pr_url": None, "reason": "unchanged"})
-    monkeypatch.setattr(rt, "_consecutive_failure_streak", lambda issue_number: rt.MAX_CONSECUTIVE_FAILURES - 1)
+    monkeypatch.setattr(rt, "_recent_failures", lambda issue_number, repo=rt.REPO: rt.MAX_FAILURES_IN_WINDOW)
     monkeypatch.setattr(rt, "_comment_failure", lambda *a, **k: None)
     monkeypatch.setattr(rt, "_trigger_redispatch", lambda: None)
 
@@ -331,13 +331,13 @@ def test_run_parks_the_ticket_instead_of_releasing_at_the_failure_cap(monkeypatc
     rt.run(28)
 
     assert released == []
-    assert parked == [(28, rt.MAX_CONSECUTIVE_FAILURES)]
+    assert parked == [(28, rt.MAX_FAILURES_IN_WINDOW + 1)]
 
 
 def test_run_still_releases_below_the_failure_cap(monkeypatch):
     monkeypatch.setattr(rt, "execute_ticket", lambda *a: _failing_result())
     monkeypatch.setattr(rt, "raise_mr", lambda *a, **kw: {"raised": False, "pr_url": None, "reason": "unchanged"})
-    monkeypatch.setattr(rt, "_consecutive_failure_streak", lambda issue_number: 0)
+    monkeypatch.setattr(rt, "_recent_failures", lambda issue_number, repo=rt.REPO: 0)
     monkeypatch.setattr(rt, "_comment_failure", lambda *a, **k: None)
     monkeypatch.setattr(rt, "_trigger_redispatch", lambda: None)
 
@@ -472,7 +472,7 @@ def test_run_passes_the_cause_and_the_last_must_fix_findings_to_park(monkeypatch
     res["explanation"] = "Did not reach a passing comparison after 3 iterations. Final verdict: code review found must-fix issues."
     monkeypatch.setattr(rt, "execute_ticket", lambda *a: res)
     monkeypatch.setattr(rt, "raise_mr", lambda *a, **kw: {"raised": False, "pr_url": None, "reason": res["explanation"]})
-    monkeypatch.setattr(rt, "_consecutive_failure_streak", lambda issue_number: rt.MAX_CONSECUTIVE_FAILURES - 1)
+    monkeypatch.setattr(rt, "_recent_failures", lambda issue_number, repo=rt.REPO: rt.MAX_FAILURES_IN_WINDOW)
     monkeypatch.setattr(rt, "_comment_failure", lambda *a, **k: None)
     monkeypatch.setattr(rt, "_trigger_redispatch", lambda: None)
     got = {}
@@ -485,7 +485,7 @@ def test_a_crash_before_any_result_still_parks_with_the_crash_as_the_cause(monke
     def boom(*a):
         raise RuntimeError("planner timed out")
     monkeypatch.setattr(rt, "execute_ticket", boom)
-    monkeypatch.setattr(rt, "_consecutive_failure_streak", lambda issue_number: rt.MAX_CONSECUTIVE_FAILURES - 1)
+    monkeypatch.setattr(rt, "_recent_failures", lambda issue_number, repo=rt.REPO: rt.MAX_FAILURES_IN_WINDOW)
     monkeypatch.setattr(rt, "_comment_failure", lambda *a, **k: None)
     monkeypatch.setattr(rt, "_trigger_redispatch", lambda: None)
     got = {}
@@ -1041,7 +1041,7 @@ def test_a_timeout_on_a_loaded_machine_waits_longer_before_the_retry(monkeypatch
 
 
 def test_timeouts_alone_end_in_needs_you_at_the_retry_cap(monkeypatch):
-    thread = _Thread([rt.TIMEOUT_MARKER] * (rt.MAX_CONSECUTIVE_RETRIES - 1))
+    thread = _Thread([rt.TIMEOUT_MARKER] * rt.MAX_FAILURES_IN_WINDOW)
     def boom(*a, **k):
         raise rt.TestTimedOut(["pytest"], 1200, "...")
     monkeypatch.setattr(rt, "execute_ticket", boom)
@@ -1051,7 +1051,7 @@ def test_timeouts_alone_end_in_needs_you_at_the_retry_cap(monkeypatch):
     monkeypatch.setattr(rt, "_release_claim", lambda *a, **k: released.append(a))
     monkeypatch.setattr(rt, "_trigger_redispatch", lambda: None)
     rt.run(563)
-    assert parked == [(563, rt.MAX_CONSECUTIVE_RETRIES)] and released == []
+    assert parked == [(563, rt.MAX_FAILURES_IN_WINDOW + 1)] and released == []
 
 
 def test_a_park_tells_gil_and_names_the_ticket(monkeypatch):
@@ -1144,10 +1144,10 @@ def test_garbage_comments_are_a_person_never_a_crash(monkeypatch):
 
 def test_the_real_81_thread_would_have_parked_at_the_third_failure(monkeypatch):
     """2026-10-22 09:50 to 15:55 UTC: two failures, a refeed loop line, then the ticket kept going. Replayed with the
-    same comment kinds (minus the hand-off, which no longer leaves it dispatchable), the third failure parks."""
+    same comment kinds (minus the hand-off, which no longer leaves it dispatchable), exceeds the failure cap."""
     thread = [CONFLICT, REQUEUE, CONFLICT, MODEL, CONFLICT, FAIL, FAIL, CONFLICT, REQUEUE, FAIL]
     failures, _ = _streaks(monkeypatch, thread)
-    assert failures >= rt.MAX_CONSECUTIVE_FAILURES
+    assert failures > rt.MAX_FAILURES_IN_WINDOW
 
 
 def test_the_park_comment_is_marked_as_a_hand_off(monkeypatch):

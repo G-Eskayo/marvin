@@ -36,8 +36,8 @@ REPO = "G-Eskayo/marvin"
 FAILURE_MARKER = "Automated implementation did not pass verification"
 TIMEOUT_MARKER = "Automated verification timed out"
 MODEL_MARKER = "The model service was unavailable"
-MAX_CONSECUTIVE_FAILURES = 3
-MAX_CONSECUTIVE_RETRIES = 5   # failures and verify timeouts together: a timeout is no strike, but retries still end
+MAX_FAILURES_IN_WINDOW = 2
+FAILURE_WINDOW_HOURS = 72
 
 
 def _machine_load() -> float | None:
@@ -93,24 +93,69 @@ def _trailing_model_failures(issue_number: int, repo: str = REPO) -> int:
     return n
 
 
+def _recent_failures(issue_number: int, repo: str = REPO, now: datetime | None = None,
+                     window_hours: int = FAILURE_WINDOW_HOURS) -> int:
+    """Count FAILURE_MARKER comments within the last window_hours on this issue. Stops early
+    if a person's comment, a passing run, or a hand-off is encountered.
+
+    This is the cross-dispatch retry counter on a time window -- deliberately not a local state file,
+    so both machines agree on it for free via the shared issue thread. A human commenting on the ticket
+    naturally resets the counter (stops the walk).
+
+    Found live 2026-09-04..06: with no cap across separate run_ticket.py invocations, a
+    release-claim-then-immediate-redispatch cycle on ticket #28 spun ~6,900 back-to-back headless
+    sessions over 3 days with every attempt reaching an identical 'unchanged' verdict."""
+    if now is None:
+        now = datetime.now(timezone.utc)
+    cutoff = now - timedelta(hours=window_hours)
+    count = 0
+    for c in reversed(_issue_comments(issue_number, repo) or []):
+        body = c.get("body") if isinstance(c, dict) else None
+        body = body if isinstance(body, str) else ""
+        created_at = c.get("createdAt") if isinstance(c, dict) else None
+        if created_at:
+            ts = ticket_policy._parse(created_at)
+            if ts and ts < cutoff:
+                break
+        if MODEL_MARKER in body:
+            continue
+        if FAILURE_MARKER in body:
+            count += 1
+        elif ticket_policy.automated_comment(body) != "bot":
+            break
+    return count
+
+
 def _consecutive_failure_streak(issue_number: int, repo: str = REPO) -> int:
-    """Count trailing automated-failure comments on this issue, most-recent
-    first, stopping at the first non-matching comment (a human reply, a
-    passing run, anything else). This is the cross-dispatch retry counter --
-    deliberately not a local state file, so both machines agree on it for
-    free via the shared issue thread, and a human commenting on the ticket
-    (to redirect it, add context, anything) naturally resets the streak.
+    """Deprecated: use _recent_failures() instead. Kept for backwards compatibility in tests."""
+    return _recent_failures(issue_number, repo)
 
-    Found live 2026-09-04..06: with no cap across separate run_ticket.py
-    invocations, a release-claim-then-immediate-redispatch cycle on a
-    genuinely-too-ambiguous ticket (#28) spun ~6,900 back-to-back headless
-    sessions over 3 days with every attempt reaching an identical
-    'unchanged' verdict -- max_iterations=3 only bounds iterations *inside*
-    one execute_ticket call, nothing bounded the outer release/redispatch
-    loop across calls.
 
-    Timeouts are not strikes, but no longer reset the count either (P6, 2026-10-21); see _trailing_streaks."""
-    return _trailing_streaks(issue_number, repo)[0]
+def _recent_retries(issue_number: int, repo: str = REPO, now: datetime | None = None,
+                    window_hours: int = FAILURE_WINDOW_HOURS) -> tuple[int, int]:
+    """(failures, timeouts) within the last window_hours on this issue. Stops early if a person's comment,
+    a passing run, or a hand-off is encountered."""
+    if now is None:
+        now = datetime.now(timezone.utc)
+    cutoff = now - timedelta(hours=window_hours)
+    failures = timeouts = 0
+    for c in reversed(_issue_comments(issue_number, repo) or []):
+        body = c.get("body") if isinstance(c, dict) else None
+        body = body if isinstance(body, str) else ""
+        created_at = c.get("createdAt") if isinstance(c, dict) else None
+        if created_at:
+            ts = ticket_policy._parse(created_at)
+            if ts and ts < cutoff:
+                break
+        if MODEL_MARKER in body:
+            continue
+        if FAILURE_MARKER in body:
+            failures += 1
+        elif TIMEOUT_MARKER in body:
+            timeouts += 1
+        elif ticket_policy.automated_comment(body) != "bot":
+            break
+    return failures, timeouts
 
 
 def _trailing_streaks(issue_number: int, repo: str = REPO) -> tuple[int, int]:
@@ -167,7 +212,7 @@ def _park_stuck_ticket(issue_number: int, streak: int, repo: str = REPO, reason:
     # ticket that kept its claim could never be revived by re-adding the label.
     shown = list(findings)[:MAX_PARK_FINDINGS]
     more = len(findings) - len(shown)
-    lines = [headline or f"**{PARKED_MARKER}** ({streak} in a row), so it stops being re-dispatched.", "",
+    lines = [headline or f"**{PARKED_MARKER}** ({streak} in the last {FAILURE_WINDOW_HOURS}h), so it stops being re-dispatched.", "",
              f"**Why it's stuck:** {(reason or 'no reason was recorded')[:500]}"]
     if shown:
         lines += ["", "**Must-fix findings the builder could not clear:**", *[f"- {f}" for f in shown]]
@@ -385,12 +430,14 @@ def settle(issue_number: int, outcome: dict, findings: list[str] | tuple = (), r
             _trigger_redispatch()
             return outcome
         if outcome.get("timed_out"):
-            tries = sum(_trailing_streaks(issue_number, **kw)) + 1
+            failures, timeouts = _recent_retries(issue_number, **kw)
+            tries = failures + timeouts + 1
             ts.record_stage(issue_number, "verifying", "failed", outcome["reason"][:300], **kw)
             _feed_breaker(issue_number, outcome["reason"], repo)   # no strike for the ticket, but counted (#881)
-            if tries >= MAX_CONSECUTIVE_RETRIES:
-                _park_stuck_ticket(issue_number, tries, **kw, **lab, reason=outcome["reason"])
-                ts.record_stage(issue_number, "done", "failed", f"parked after {tries} consecutive failed or timed-out runs", **kw)
+            if tries >= MAX_FAILURES_IN_WINDOW + 1:
+                _park_stuck_ticket(issue_number, tries, **kw, **lab, reason=outcome["reason"],
+                                  headline=f"**{PARKED_MARKER}** ({tries} in the last {FAILURE_WINDOW_HOURS}h), so it stops being re-dispatched.")
+                ts.record_stage(issue_number, "done", "failed", f"parked after {tries} failed or timed-out runs in the last {FAILURE_WINDOW_HOURS} hours", **kw)
                 _trigger_redispatch()
                 return outcome
             when, marker = _retry_line(tries)
@@ -410,15 +457,16 @@ def settle(issue_number: int, outcome: dict, findings: list[str] | tuple = (), r
             ts.record_stage(issue_number, "done", "failed", outcome["reason"][:300], **kw)
             _trigger_redispatch()
             return outcome
-        prior_streak = _consecutive_failure_streak(issue_number, **kw)
-        parking = prior_streak + 1 >= MAX_CONSECUTIVE_FAILURES
-        _comment_failure(issue_number, outcome["reason"], **kw, **({} if parking else {"retry": _retry_line(prior_streak + 1)}))
+        prior_failures = _recent_failures(issue_number, **kw)
+        parking = prior_failures >= MAX_FAILURES_IN_WINDOW
+        _comment_failure(issue_number, outcome["reason"], **kw, **({} if parking else {"retry": _retry_line(prior_failures + 1)}))
         # Feed the cross-ticket breaker (failure_breaker.py): the SAME failure across
         # different tickets means the system is broken, not the tickets.
         _feed_breaker(issue_number, outcome["reason"], repo)
-        if prior_streak + 1 >= MAX_CONSECUTIVE_FAILURES:
-            _park_stuck_ticket(issue_number, prior_streak + 1, **kw, **lab, reason=outcome["reason"], findings=findings)
-            ts.record_stage(issue_number, "done", "failed", f"parked after {prior_streak + 1} consecutive failures", **kw)
+        if prior_failures >= MAX_FAILURES_IN_WINDOW:
+            _park_stuck_ticket(issue_number, prior_failures + 1, **kw, **lab, reason=outcome["reason"], findings=findings,
+                              headline=f"**{PARKED_MARKER}** ({prior_failures + 1} in the last {FAILURE_WINDOW_HOURS}h), so it stops being re-dispatched.")
+            ts.record_stage(issue_number, "done", "failed", f"parked after {prior_failures + 1} failures in the last {FAILURE_WINDOW_HOURS} hours", **kw)
         else:
             _release_claim(issue_number, **kw, **lab, run_id=run_id)
             ts.record_stage(issue_number, "done", "failed", outcome["reason"][:300], **kw)
