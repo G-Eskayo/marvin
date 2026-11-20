@@ -37,6 +37,9 @@ import tempfile
 from collections import defaultdict, deque
 from pathlib import Path
 
+sys.path.insert(0, str(Path(__file__).resolve().parents[0]))
+import test_change_rule as tcr  # noqa: E402
+
 RULES = ["lib/tests/test_instance.py", "lib/tests/test_instance_move.py"]
 RUNS_EVERYTHING = re.compile(r"^conftest\.py$|^pytest\.ini$|^requirements-ci\.txt$|^lib/affected_tests\.py$|^\.github/")
 _TEST = re.compile(r"(^|/)(test_[^/]*|[^/]*_test)\.py$")
@@ -55,7 +58,7 @@ def _tracked(repo: Path, untracked: bool, *pattern: str) -> list[str]:
 
 
 def all_tests(repo: Path, untracked: bool = False) -> list[str]:
-    return sorted(p for p in _tracked(repo, untracked, "*.py") if _TEST.search(p))
+    return sorted(p for p in _tracked(repo, untracked, "*.py") if _TEST.search(p) and tcr.kind(p, tcr.MARVIN_RULES) != "code")
 
 
 def changed_paths(repo: Path, base: str) -> list[str]:
