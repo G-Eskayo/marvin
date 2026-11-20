@@ -1,5 +1,7 @@
 # Changelog
 
+- Dispatch: when the Mini is held for a merge, send the ticket to the laptop instead of waiting ([#1395](https://github.com/G-Eskayo/marvin/pull/1395))
+
 - Drop the VERBOSITY (filler word) category from the improvement queue ([#1397](https://github.com/G-Eskayo/marvin/pull/1397))
 
 - Skip SKILL.md's manual tag-matching replay when retrieve.py already returned tag-fallback results ([#1352](https://github.com/G-Eskayo/marvin/pull/1352))
