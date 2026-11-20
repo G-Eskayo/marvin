@@ -820,7 +820,7 @@ def _credit_readiness(settings: dict) -> dict[str, bool]:
 
 
 def _select_for_profile(profile: dict, settings: dict | None = None, taken: dict | None = None,
-                        local_base: int = 0, refusals: list | None = None):
+                        local_base: int = 0, refusals: list | None = None, exclude: set[str] | None = None):
     """A machine the profile allows, that is free, and (if it is this one) has the tools its required
     checks need. Other machines are trusted to be what the profile says they are; a ticket that proves
     otherwise is released without blame (run_ticket's EnvMissing path).
@@ -830,18 +830,27 @@ def _select_for_profile(profile: dict, settings: dict | None = None, taken: dict
     reason goes into `refusals`, and of the machines that pass the one with the fewest tickets running wins (profile order on ties). The other machine counts as one slot until ticket #193 gives it per-task records."""
     parallel = bool(settings and settings.get("parallel"))
     taken = taken if taken is not None else {}
+    exclude = exclude if exclude is not None else set()
     viable: list[tuple[int, tuple]] = []
     for device in profile.get("machines", []):
+        if device in exclude:
+            continue
         selected = select_machine(device)
         if selected is None:
+            if refusals is not None:
+                refusals.append(f"{device} not available (select_machine returned None)")
             continue
         is_self = bool(selected[1].get("is_self"))
         if is_self:
             # An explicit target skips the busy check for THIS machine (select_machine only checks other
             # machines then), so check it here: never start a second ticket on top of a running one.
             if not parallel and _local_busy():
+                if refusals is not None:
+                    refusals.append(f"{device} is busy running a ticket")
                 continue
             if pp.missing_here(profile):
+                if refusals is not None:
+                    refusals.append(f"{device} lacks tools the project needs: {'; '.join(pp.missing_here(profile))}")
                 continue
         if parallel:
             used = (local_base if is_self else 0) + taken.get(device, 0)
@@ -1058,25 +1067,49 @@ def _dispatch_one(repo, ticket, ready_total, step, summary, fail, dry_run, setti
     profile = pp.load_profile(repo) if other else None
     step("Choosing a machine")
     mine = len(refusals)
-    selected = _select_for_profile(profile if other else {"machines": list(MARVIN_MACHINES)}, settings, taken, local_base, refusals)
-    if selected is None:
+
+    tried: set[str] = set()
+    max_iterations = len(profile.get("machines", [])) + 1 if other else len(MARVIN_MACHINES) + 1
+    device_id = None
+    any_memory_held = False
+
+    for _iteration in range(max_iterations):
+        selected = _select_for_profile(profile if other else {"machines": list(MARVIN_MACHINES)}, settings, taken, local_base, refusals, exclude=tried)
+        if selected is None:
+            break
+
+        device_id, _info = selected
+
+        if _info.get("is_self"):
+            # marvin#845: before the claim, so a ticket that waits for memory stays unclaimed and ready. The queued item is
+            # this scan, run again when macOS reports pressure back at normal; nothing running is stopped.
+            import memory_guard
+            held = memory_guard.guard(f"{where}#{issue_number}", None if dry_run else [sys.executable, str(Path(__file__).resolve())],
+                                      str(Path(__file__).resolve().parents[1]), key="ticket-pipeline")
+            if not held["ok"]:
+                # Memory guard rejected this machine, add to tried and retry
+                any_memory_held = True
+                if refusals is not None:
+                    refusals.append(held["message"])
+                tried.add(device_id)
+                device_id = None
+                continue
+
+        # Success: we have a valid device_id that passed memory guard if needed
+        break
+
+    if device_id is None:
         print(f"{LOG_PREFIX} {where}#{issue_number} ready but no {'suitable ' if other else ''}machine currently available", file=sys.stderr)
-        why = "; ".join(dict.fromkeys(refusals[mine:]))
+        why_parts = dict.fromkeys(refusals[mine:])
+        why = "; ".join(why_parts)
         step("Choosing a machine", why or ("none available" if not other else f"none free that can run {repo.split('/')[-1]} ({', '.join(profile.get('machines', [])) or 'no machines listed'})"))
         summary(f"{where}#{issue_number} {ticket['title']} is ready but no suitable machine is available")
-        return "no-machine"
-    device_id, _info = selected
-    if _info.get("is_self"):
-        # marvin#845: before the claim, so a ticket that waits for memory stays unclaimed and ready. The queued item is
-        # this scan, run again when macOS reports pressure back at normal; nothing running is stopped.
-        import memory_guard
-        held = memory_guard.guard(f"{where}#{issue_number}", None if dry_run else [sys.executable, str(Path(__file__).resolve())],
-                                  str(Path(__file__).resolve().parents[1]), key="ticket-pipeline")
-        if not held["ok"]:
-            print(f"{LOG_PREFIX} {held['message']}", file=sys.stderr)
-            step("Choosing a machine", held["message"])
-            summary(held["message"])
+
+        # Determine if the failure was due to memory guard
+        if any_memory_held:
             return "memory"
+        return "no-machine"
+
     claim_label = _label_for_device(device_id)
     step("Choosing a machine", device_id)
 

@@ -484,6 +484,84 @@ def test_a_remote_machine_is_not_blocked_by_this_machines_busy_flag(monkeypatch)
     assert tp._select_for_profile({"machines": ["macbook-pro-1"]})[0] == "macbook-pro-1"  # select_machine already checked it
 
 
+def test_select_for_profile_skips_machines_in_exclude_set(monkeypatch):
+    """Excluded machines should be skipped entirely, even if they would be viable."""
+    monkeypatch.setattr(tp, "select_machine", lambda target=None: (target, {"is_self": False}))
+    monkeypatch.setattr(tp.pp, "missing_here", lambda p: [])
+    result = tp._select_for_profile(
+        {"machines": ["mac-mini-1", "macbook-pro-1"]},
+        exclude={"mac-mini-1"}
+    )
+    assert result[0] == "macbook-pro-1"
+
+
+def test_select_for_profile_records_refusal_reason_when_select_machine_returns_none(monkeypatch):
+    """When select_machine returns None, a refusal reason should be recorded."""
+    monkeypatch.setattr(tp, "select_machine", lambda target=None: None)
+    refusals = []
+    result = tp._select_for_profile({"machines": ["mac-mini-1"]}, refusals=refusals)
+    assert result is None
+    assert len(refusals) == 1
+    assert "not available" in refusals[0]
+    assert "mac-mini-1" in refusals[0]
+
+
+def test_select_for_profile_records_refusal_reason_when_local_busy(monkeypatch):
+    """When local machine is busy, a refusal reason should be recorded."""
+    monkeypatch.setattr(tp, "select_machine", lambda target=None: (target, {"is_self": True}))
+    monkeypatch.setattr(tp, "_local_busy", lambda: True)
+    monkeypatch.setattr(tp.pp, "missing_here", lambda p: [])
+    refusals = []
+    result = tp._select_for_profile({"machines": ["mac-mini-1"]}, refusals=refusals)
+    assert result is None
+    assert len(refusals) == 1
+    assert "busy" in refusals[0].lower()
+    assert "mac-mini-1" in refusals[0]
+
+
+def test_select_for_profile_records_refusal_reason_when_tools_missing(monkeypatch):
+    """When required tools are missing, a refusal reason should be recorded."""
+    monkeypatch.setattr(tp, "select_machine", lambda target=None: (target, {"is_self": True}))
+    monkeypatch.setattr(tp, "_local_busy", lambda: False)
+    monkeypatch.setattr(tp.pp, "missing_here", lambda p: ["tool1", "tool2"])
+    refusals = []
+    result = tp._select_for_profile({"machines": ["mac-mini-1"]}, refusals=refusals)
+    assert result is None
+    assert len(refusals) == 1
+    assert "lacks tools" in refusals[0].lower()
+    assert "mac-mini-1" in refusals[0]
+    assert "tool1" in refusals[0]
+
+
+def test_select_for_profile_with_exclude_records_no_refusal_for_excluded_machines(monkeypatch):
+    """Excluded machines should not add refusal reasons."""
+    monkeypatch.setattr(tp, "select_machine", lambda target=None: (target, {"is_self": False}))
+    refusals = []
+    result = tp._select_for_profile(
+        {"machines": ["mac-mini-1", "macbook-pro-1"]},
+        refusals=refusals,
+        exclude={"mac-mini-1"}
+    )
+    assert result[0] == "macbook-pro-1"
+    # mac-mini-1 was excluded, so no refusal recorded for it
+    assert len(refusals) == 0
+
+
+def test_select_for_profile_parallel_mode_with_exclude(monkeypatch):
+    """In parallel mode, excluded machines should be skipped before concurrency checks."""
+    monkeypatch.setattr(tp, "select_machine", lambda target=None: (target, {"is_self": False}))
+    monkeypatch.setattr(tp.dispatch_concurrency, "can_start_another",
+                       lambda *a, **k: (True, ""))
+    refusals = []
+    result = tp._select_for_profile(
+        {"machines": ["mac-mini-1", "macbook-pro-1"]},
+        settings={"parallel": True},
+        refusals=refusals,
+        exclude={"mac-mini-1"}
+    )
+    assert result[0] == "macbook-pro-1"
+
+
 # ── "busy" must mean a ticket is actually running, not merely that a flag file says so ─
 
 def test_local_busy_is_true_when_a_ticket_process_is_alive_even_if_the_flag_was_cleared(monkeypatch):
@@ -1269,6 +1347,133 @@ def test_dispatch_one_generates_a_run_id_and_passes_it_to_claim_and_command(monk
     assert len(calls["commands"]) == 1
     assert calls["claims"][0] is not None and len(calls["claims"][0]) == 12  # uuid hex[:12]
     assert f"MARVIN_RUN_ID={calls['claims'][0]}" in calls["commands"][0]
+
+
+def test_dispatch_one_retry_loop_skips_memory_held_machine_and_tries_next(monkeypatch, tmp_path, capsys):
+    """When memory guard rejects the first machine, dispatch_one should retry with the next machine."""
+    monkeypatch.setattr(ts, "STAGES_DIR", tmp_path / "ticket-stages")
+    monkeypatch.setattr(tp, "SCAN_LOCK_PATH", tmp_path / "scan.lock")
+    import memory_guard
+    monkeypatch.setattr(tp.subprocess, "run", lambda *a, **kw: SimpleNamespace(returncode=0, stdout="", stderr=""))
+
+    calls = {"select": [], "claim": [], "dispatch": []}
+    machine_sequence = iter([("mac-mini-1", {"is_self": True}), ("macbook-pro-1", {"is_self": False})])
+
+    def mock_select(*a, **k):
+        try:
+            machine = next(machine_sequence)
+            calls["select"].append(machine[0])
+            return machine
+        except StopIteration:
+            return None
+
+    guard_calls = []
+    def mock_memory_guard(ticket, cmd, path, key=""):
+        guard_calls.append(len(guard_calls))
+        # First call: reject mac-mini-1 (is_self)
+        # Second call: accept macbook-pro-1
+        if len(guard_calls) == 1:
+            return {"ok": False, "message": "memory pressure too high"}
+        return {"ok": True}
+
+    def mock_claim(n, l, **kw):
+        calls["claim"].append(l)
+        return True
+
+    def mock_dispatch(cmd, **kw):
+        calls["dispatch"].append(kw["target"])
+        return SimpleNamespace(ok=True)
+
+    monkeypatch.setattr(tp, "_select_for_profile", mock_select)
+    monkeypatch.setattr(memory_guard, "guard", mock_memory_guard)
+    monkeypatch.setattr(tp, "_claim", mock_claim)
+    monkeypatch.setattr(tp, "dispatch", mock_dispatch)
+
+    run = SimpleNamespace(step=lambda *a: None, summary=lambda *a: None, fail=lambda *a: None)
+    ticket = {"number": 20, "title": "t"}
+
+    result = tp._dispatch_one(tp.REPO, ticket, 1, run.step, run.summary, run.fail, False, {}, {}, 0, [])
+
+    # Should have selected both machines, claimed and dispatched on the second
+    assert calls["select"] == ["mac-mini-1", "macbook-pro-1"]
+    assert calls["dispatch"] == ["macbook-pro-1"]
+    assert result == "started"
+
+
+def test_dispatch_one_returns_memory_when_memory_guard_rejects_all_machines(monkeypatch, tmp_path, capsys):
+    """When memory guard rejects all machines, should return 'memory' not 'no-machine'."""
+    monkeypatch.setattr(ts, "STAGES_DIR", tmp_path / "ticket-stages")
+    monkeypatch.setattr(tp, "SCAN_LOCK_PATH", tmp_path / "scan.lock")
+    import memory_guard
+    monkeypatch.setattr(tp.subprocess, "run", lambda *a, **kw: SimpleNamespace(returncode=0, stdout="", stderr=""))
+
+    machine_sequence = iter([("mac-mini-1", {"is_self": True}), ("macbook-pro-1", {"is_self": True})])
+
+    def mock_select(*a, **k):
+        try:
+            return next(machine_sequence)
+        except StopIteration:
+            return None
+
+    def mock_memory_guard(*a, **k):
+        return {"ok": False, "message": "memory pressure too high"}
+
+    monkeypatch.setattr(tp, "_select_for_profile", mock_select)
+    monkeypatch.setattr(memory_guard, "guard", mock_memory_guard)
+
+    run = SimpleNamespace(step=lambda *a: None, summary=lambda *a: None, fail=lambda *a: None)
+    ticket = {"number": 20, "title": "t"}
+
+    result = tp._dispatch_one(tp.REPO, ticket, 1, run.step, run.summary, run.fail, False, {}, {}, 0, [])
+
+    assert result == "memory"
+
+
+def test_dispatch_one_returns_no_machine_when_all_machines_unavailable_for_non_memory_reasons(monkeypatch, tmp_path, capsys):
+    """When all machines are unavailable for non-memory reasons, should return 'no-machine'."""
+    monkeypatch.setattr(ts, "STAGES_DIR", tmp_path / "ticket-stages")
+    monkeypatch.setattr(tp, "SCAN_LOCK_PATH", tmp_path / "scan.lock")
+    monkeypatch.setattr(tp.subprocess, "run", lambda *a, **kw: SimpleNamespace(returncode=0, stdout="", stderr=""))
+
+    monkeypatch.setattr(tp, "_select_for_profile", lambda *a, **k: None)
+
+    run = SimpleNamespace(step=lambda *a: None, summary=lambda *a: None, fail=lambda *a: None)
+    ticket = {"number": 20, "title": "t"}
+
+    result = tp._dispatch_one(tp.REPO, ticket, 1, run.step, run.summary, run.fail, False, {}, {}, 0, [])
+
+    assert result == "no-machine"
+
+
+def test_dispatch_one_bounded_retry_loop_respects_max_iterations(monkeypatch, tmp_path):
+    """The retry loop should not exceed the number of available machines."""
+    monkeypatch.setattr(ts, "STAGES_DIR", tmp_path / "ticket-stages")
+    monkeypatch.setattr(tp, "SCAN_LOCK_PATH", tmp_path / "scan.lock")
+    monkeypatch.setattr(tp.subprocess, "run", lambda *a, **kw: SimpleNamespace(returncode=0, stdout="", stderr=""))
+
+    select_calls = []
+    expected_max_iterations = len(tp.MARVIN_MACHINES) + 1
+
+    def mock_select(*a, **k):
+        select_calls.append(1)
+        # Always return an is_self device; ignore exclude to test the bound
+        return ("mac-mini-1", {"is_self": True})
+
+    monkeypatch.setattr(tp, "_select_for_profile", mock_select)
+
+    # Mock memory guard to always reject
+    import memory_guard
+    monkeypatch.setattr(memory_guard, "guard", lambda *a, **k: {"ok": False, "message": "memory pressure too high"})
+
+    run = SimpleNamespace(step=lambda *a: None, summary=lambda *a: None, fail=lambda *a: None)
+    ticket = {"number": 20, "title": "t"}
+
+    result = tp._dispatch_one(tp.REPO, ticket, 1, run.step, run.summary, run.fail, False, {}, {}, 0, [])
+
+    # Should call select exactly max_iterations times before breaking
+    assert len(select_calls) == expected_max_iterations
+    assert len(select_calls) <= len(tp.MARVIN_MACHINES) + 1
+    assert result == "memory"
 
 
 def test_release_with_matching_run_id_releases_the_claim(monkeypatch, tmp_path, capsys):
