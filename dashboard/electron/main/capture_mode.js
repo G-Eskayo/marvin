@@ -1,3 +1,4 @@
+import { posix as pathPosix } from 'path'
 // Evidence-capture mode (G-Eskayo/marvin#384). The MR pipeline's screenshot step
 // (dashboard/scripts/capture_screenshot.mjs) launches a throwaway copy of this app
 // with MARVIN_EVIDENCE_CAPTURE=1. That copy runs unattended next to Gil's real
@@ -22,4 +23,14 @@ export function installCaptureGuard(proc = process, log = console.error) {
   }
   proc.on('uncaughtException', (err) => safeLog(`[evidence capture] uncaught main-process exception: ${describe(err)}`))
   proc.on('unhandledRejection', (err) => safeLog(`[evidence capture] unhandled rejection in main process: ${describe(err)}`))
+}
+
+// A path a capture run may point the app at instead of Gil's own (marvin#873: the Vitals mock-up's captures read the
+// worktree's generated map and the Mac mini's saved accounts sweep). Honoured only in evidence-capture mode and only as
+// an absolute path, normalised; anything else is null and the app uses its usual path.
+export function captureOverride(env, name) {
+  if (!isEvidenceCapture(env)) return null
+  const v = env?.[name]
+  if (typeof v !== 'string' || !v.startsWith('/')) return null
+  return pathPosix.normalize(v)
 }

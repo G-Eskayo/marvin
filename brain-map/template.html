@@ -1436,6 +1436,36 @@
     selected = null; selNote.classList.remove("show");
   });
 
+  // Spotlight (marvin#873): the page hosting the map (the Vitals tab) points at a part with
+  // {type: "marvin-map:spotlight", id}. The map selects it, the same selection a click makes (that part and what it
+  // connects to stay lit, the rest dims), and answers {type: "marvin-map:spotlight-ack", id, found} so the host can
+  // say "not on the map". null or an id the map doesn't have clears it. The host shows its own label, so the
+  // selection note stays hidden.
+  var SPOT_MAX_ID = 512;
+  // "project:<project id>" names a project's Work node by its registry id, so the host needs no display names.
+  function spotlightTarget(id) {
+    if (typeof id !== "string" || id.length > SPOT_MAX_ID) return null;
+    if (Object.prototype.hasOwnProperty.call(byId, id)) return id;
+    var m = /^project:(.+)$/.exec(id);
+    if (!m) return null;
+    for (var i = 0; i < allNodes.length; i++) if (allNodes[i].projectId === m[1]) return allNodes[i].id;
+    return null;
+  }
+  function spotlight(id) {
+    var target = spotlightTarget(id);
+    selected = target;
+    selNote.classList.remove("show");
+    return target !== null;
+  }
+  window.addEventListener("message", function (ev) {
+    var d = ev.data;
+    if (!d || typeof d !== "object" || d.type !== "marvin-map:spotlight") return;
+    if (d.id !== null && typeof d.id !== "string") return;
+    var found = spotlight(d.id);
+    var reply = { type: "marvin-map:spotlight-ack", id: d.id === null ? null : d.id.slice(0, SPOT_MAX_ID), found: found };
+    try { (ev.source || window.parent).postMessage(reply, "*"); } catch (e) { /* the host went away */ }
+  });
+
   // Close code layer view via Esc key or back button
   function closeCodeLayer() { openNodeId = null; }
   window.addEventListener("keydown", function (ev) {
@@ -1971,6 +2001,9 @@
     layout: function () { return LAYOUT_WORK ? "work" : "today"; },
     dismiss: dismissWorker,
     hovered: function () { return hovered ? hovered.id : null; },
+    // #873
+    selected: function () { return selected; },
+    spotlight: spotlight,
     shapeOf: function (id) { return byId[id] ? (LAYOUT_WORK ? shapeOf(byId[id]) : "circle") : null; },
     red: function () { return redWorkers().map(function (n) { return n.id; }); },
     nodeCount: function () { return allNodes.length; },

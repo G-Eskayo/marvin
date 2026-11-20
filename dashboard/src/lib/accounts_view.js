@@ -48,3 +48,36 @@ export function accountsSummary(rows = [], { thisMachine = null } = {}) {
     : count('expiring') ? `${count('expiring')} run${count('expiring') === 1 ? 's' : ''} out soon` : 'All signed in'
   return { groups, worst, severity: STATE_VIEW[worst]?.severity || 'unmonitored', headline }
 }
+
+// The Vitals Accounts card (marvin#873; owner 2026-11-11: redesigned once, here, as a Vitals card; Health's card above
+// is frozen). #974's answers kept: every account on every machine grouped by machine, "not needed here" folded into a
+// count, gh's own login (alert: false in lib/accounts.py) shown but never alerting, amber 14 days before expiry.
+export const AMBER_DAYS = 14
+
+export function accountsBoard(rows = [], { thisMachine = null, now = Date.now() } = {}) {
+  const machines = new Map()
+  for (const r of Array.isArray(rows) ? rows : []) {
+    if (!r || typeof r.id !== 'string') continue
+    const m = r.machine || 'unknown'
+    if (!machines.has(m)) machines.set(m, [])
+    const left = daysLeft(r.expires_at, now)
+    const state = r.state === 'works' && left != null && left <= AMBER_DAYS ? 'expiring' : r.state
+    machines.get(m).push({ ...r, state, daysLeft: left, quiet: r.alert === false })
+  }
+  const alerting = (x) => !x.quiet
+  const groups = [...machines.entries()].map(([machine, list]) => {
+    const shown = list.filter((x) => x.state !== 'not_needed').sort((a, b) => ORDER.indexOf(a.state) - ORDER.indexOf(b.state) || a.id.localeCompare(b.id))
+    const worst = shown.filter(alerting).map((x) => x.state).sort((a, b) => ORDER.indexOf(a) - ORDER.indexOf(b))[0] || 'works'
+    return { machine, rows: shown, hidden: list.length - shown.length, worst, here: machine === thisMachine }
+  })
+  groups.sort((a, b) => (a.here ? -1 : b.here ? 1 : ORDER.indexOf(a.worst) - ORDER.indexOf(b.worst) || a.machine.localeCompare(b.machine)))
+  const shown = groups.flatMap((g) => g.rows)
+  const loud = shown.filter(alerting)
+  const count = (s) => loud.filter((x) => x.state === s).length
+  const failed = count('failed')
+  const expiring = count('expiring')
+  const worst = loud.map((x) => x.state).sort((a, b) => ORDER.indexOf(a) - ORDER.indexOf(b))[0] || 'works'
+  const headline = failed ? `${failed} need${failed === 1 ? 's' : ''} renewing` : expiring ? `${expiring} run${expiring === 1 ? 's' : ''} out soon` : 'All signed in'
+  return { groups, headline, worst, severity: STATE_VIEW[worst]?.severity || 'unmonitored', quiet: shown.filter((x) => x.quiet && x.state !== 'works').length,
+    counts: { shown: shown.length, failed, expiring, machines: groups.length } }
+}
