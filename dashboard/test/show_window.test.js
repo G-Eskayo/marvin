@@ -522,3 +522,32 @@ describe('a new window opens where the last one was moved', () => {
     expect(bounds.save).not.toHaveBeenCalled()
   })
 })
+
+describe('show window sandbox mode (ticket #1216)', () => {
+  it('creates show windows with sandbox: true for security', async () => {
+    const a = put('agents/a.md', 'A')
+    const { sw, windows } = make()
+    await sw.show({ kind: 'file', path: a })
+    const wp = windows[0].opts.webPreferences
+    expect(wp.sandbox).toBe(true)
+    expect(wp.contextIsolation).toBe(true)
+    expect(wp.nodeIntegration).toBe(false)
+    expect(wp.nodeIntegrationInSubFrames).toBe(false)
+    expect(wp.webviewTag).toBe(false)
+    expect(wp.navigateOnDragDrop).toBe(false)
+    expect(wp.spellcheck).toBe(false)
+  })
+
+  it('two shows racing for one project still create only one window with correct sandbox settings', async () => {
+    const a = put('agents/a.md', 'A')
+    const b = put('agents/b.md', 'B')
+    const { sw, windows } = make()
+    // Race condition: both shows start at the same time
+    await Promise.all([sw.show({ kind: 'file', path: a }), sw.show({ kind: 'file', path: b })])
+    expect(windows).toHaveLength(1)
+    // Sandbox settings should be preserved even under race
+    const wp = windows[0].opts.webPreferences
+    expect(wp.sandbox).toBe(true)
+    expect(wp.contextIsolation).toBe(true)
+  })
+})

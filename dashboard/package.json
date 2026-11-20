@@ -24,8 +24,8 @@
     "@babel/parser": "^7.29.8",
     "@vitejs/plugin-react": "^4.3.1",
     "autoprefixer": "^10.4.19",
-    "electron": "^30.0.0",
-    "electron-builder": "^24.13.3",
+    "electron": "^34.0.0",
+    "electron-builder": "^25.0.0",
     "electron-vite": "^2.3.0",
     "eslint": "^10.12.0",
     "eslint-plugin-react-hooks": "^7.1.1",
@@ -59,7 +59,7 @@
     ]
   },
   "allowScripts": {
-    "electron@30.5.1": true,
+    "electron@34.0.0": true,
     "esbuild@0.21.5": true
   }
 }

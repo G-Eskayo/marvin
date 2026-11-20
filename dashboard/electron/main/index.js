@@ -384,8 +384,12 @@ function createWindow() {
     webPreferences: {
       preload: preloadPath(),
       nodeIntegration: false,
+      nodeIntegrationInSubFrames: false,
       contextIsolation: true,
-      sandbox: false
+      sandbox: true,
+      webviewTag: false,
+      navigateOnDragDrop: false,
+      spellcheck: false
     }
   })
 
