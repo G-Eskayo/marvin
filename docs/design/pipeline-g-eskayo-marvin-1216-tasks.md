@@ -1,0 +1,13 @@
+1. Resolve the exact target Electron major at implementation time (`npm view electron versions`/release notes — this planning session has no network access to pin a number itself) and read its breaking-change notes plus every major skipped since 30.
+2. Bump `electron` in `dashboard/package.json` to that version; update the `allowScripts` key (`"electron@30.5.1": true` → the new pinned version string) so a clean `npm ci` still runs Electron's install script under npm's script allowlist.
+3. Check whether `electron-builder` (currently `^24.13.3`) needs a bump for compatibility with the new Electron major; bump if its own compatibility notes say so.
+4. Check the new major's minimum Node version against `.github/workflows/ci.yml`'s `node-version: 20` for the `dashboard-tests` job; bump CI (and any local `.nvmrc`/docs that mention it) if required.
+5. Flip `dashboard/electron/main/index.js`'s `createWindow` `webPreferences.sandbox` from `false` to `true`.
+6. Flip `dashboard/electron/main/show_window.js`'s `makeWindow` `webPreferences.sandbox` from `false` to `true`; update its comment (currently explains why it's `false`).
+7. Write the new tests from the list above (sandbox-on assertions in `show_window.test.js` and a new `index.js` source-text test; the unexpected-arguments tests against 2–3 representative IPC handlers).
+8. Run the full dashboard suite (`npm test` in `dashboard/`) and fix anything the major bump broke (deprecated/removed APIs this app actually calls — `WebContentsView`, `session`, `protocol.handle`, `nativeImage`, `powerMonitor`, `screen`, per the imports in `index.js`).
+9. Run `npm install` + `npm run build:mac` locally to confirm the app still packages.
+10. Run `osv-scanner` (or equivalent) against the updated `dashboard/package-lock.json` and confirm zero critical advisories for Electron; since no `osv-scanner` config exists in this repo yet, confirm there is nothing to add that would filter out devDependencies for the future osv-scanner ticket to inherit (i.e., leave no `.osv-scanner.toml`/ignore-devDependencies setting behind).
+11. On each Mac: run `dashboard/scripts/rebuild_and_install.sh`, confirm it builds, signs (or falls back to ad-hoc signing), installs over `/Applications/MARVIN.app`, and relaunches.
+12. With the sandboxed build installed: click through every tab, run Approve and Decisions submit on a real PR, and run `marvin show` (screenshot evidence) on both Macs, per acceptance criterion 3.
+13. Update the explanatory comments at `index.js`'s `createWindow` and `show_window.js`'s `makeWindow` that currently justify `sandbox: false`, since they'll no longer be accurate.
