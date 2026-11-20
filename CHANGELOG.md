@@ -1,5 +1,7 @@
 # Changelog
 
+- to-issues template hardcodes stale purpose-metric values instead of placeholders ([#1391](https://github.com/G-Eskayo/marvin/pull/1391))
+
 - Test-pattern rule misclassifies lib/test_slot.py and lib/test_change_rule.py, letting merge-gate changes merge with no test ([#1393](https://github.com/G-Eskayo/marvin/pull/1393))
 
 - to-prd: drop "which modules get tests" question and fix self-contradiction in interview rule ([#1394](https://github.com/G-Eskayo/marvin/pull/1394))
