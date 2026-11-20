@@ -1,0 +1,43 @@
+Confirmed: `npx vitest run` in `dashboard/`. Now writing the plan.
+
+## North-star fit
+
+**Reuses:** the show/mockup/web-pane sandboxing pattern already shipped in `dashboard/electron/main/mockup_window.js` (`sandbox: true, contextIsolation: true, nodeIntegration: false, preload: undefined`) and `show_web.js:createWebPane` (same triple) — the main window (`index.js:384-389`) and the `marvin show` window (`show_window.js:255-266`) are the only two `BrowserWindow`s left with `sandbox: false`. The preload itself (`electron/preload/index.js`) already follows the "safe read-only `window.api` surface" pattern (its own header comment) and imports nothing but `contextBridge`/`ipcRenderer` from `'electron'` — no `fs`, `child_process` or other Node builtin, so turning the sandbox on costs no preload rewrite. Test style reuses `dashboard/test/csp.test.js`'s pattern of reading a bootstrap file's raw source as text and regex/string-asserting on it, because `index.js` (and the window-creation half of `show_window.js`) can't be imported under vitest without a real Electron runtime (`app.whenReady()` runs at module scope).
+
+**Simplest sufficient approach:** flip two `sandbox: false` → `true` flags and ride the existing dependency-injection seam (`show_window.js` already takes `BrowserWindow` as an injected constructor, per its own comment "Electron is injected so the rules are tested without launching the app") rather than building new test infrastructure. No native node addons in `dashboard/package.json` (no `better-sqlite3` etc., unlike finance-os), so there is no ABI rebuild step — the version bump is a pure JS/Electron-API migration, not a native-module migration.
+
+**Tokens:** spends tokens once, during the major-by-major breaking-change migration (unavoidable — Electron 30 → latest skips several majors); saves tokens going forward because 45 standing advisories stop generating osv-scanner/Health noise every run, and the sandboxed renderer removes a whole class of "did this XSS reach Node" investigation that a future PR-body-rendering bug would otherwise cost.
+
+**Capability:** this is infrastructure hardening with no user-facing behavior change (same tabs, same Approve/Decisions/`marvin show` flows) — it leaves Gil exactly as capable, just no longer exposed to Node through a GitHub-text-rendering bug. North star 1 argues for doing this now rather than letting advisories compound; north star 3 is neutral (no UX change either way).
+
+**No north star argues against it.**
+
+## Tests to write first
+
+One vitest file/suite per break-it case, following the `csp.test.js` (raw-source) and `show_window.test.js` (injected-Electron-fake) patterns already in `dashboard/test/`:
+
+1. **Main window sandbox is on** (new, text-pattern like `csp.test.js`): read `dashboard/electron/main/index.js` as text, assert the `createWindow` `webPreferences` block contains `sandbox: true` alongside the existing `contextIsolation: true` / `nodeIntegration: false`. Fails today (`sandbox: false`).
+2. **`marvin show` window sandbox is on** (extend `show_window.test.js:167-173`): add `sandbox: true` to the existing `toMatchObject` assertion on `w.opts.webPreferences`. Fails today.
+3. **PR body / comment / ticket-title HTML is rendered inert** ("A PR body with HTML or script content: rendered inert"): confirm/extend the existing `csp.test.js` "frames nothing remote" + `show_window.test.js:211-` "HTML in the sandboxed frame" coverage still holds unchanged after the bump — these already drive a `<script>`-bearing fixture through the mock-up path and assert it never executes/never reaches network. Re-run as a regression check; add one more fixture if the new major changed CSP/`srcdoc` sandboxing semantics for the Docs-tab `<iframe sandbox="" srcdoc>` path (`outbox.js`), which currently has no direct test — add one if missing, confirming it stays `srcdoc` with an empty `sandbox` attribute (no `allow-scripts`) after the bump.
+4. **A preload API called with unexpected arguments is rejected, not a crash**: `decisions_submit.test.js:104` already covers `submitDecisions` with bad repo/number/answers. Add the same shape of test for one more handler that destructures its payload without a guard (`mr:approve`'s `{ number, url, head = null }` in `index.js:1204`) via its underlying function, confirming a `null`/malformed payload rejects cleanly rather than throwing past `ipcMain.handle`'s own error-serialization. This is a regression guard, not new behavior — write it failing-is-not-expected (it should already pass); its job is to catch the sandbox/version bump breaking IPC error propagation.
+5. **Mobile backend and webhook server still run**: no new test — `dashboard/webhook-server/*.test.js` and any `mobile-backend` tests already exercise the shared plain-JS modules (`mr_review.js`, `mr_repos.js`, `device_identity.js`, etc., none of which `import 'electron'`). Run the full `vitest run` after the bump; a break here means a shared module accidentally started depending on Electron-shaped behavior, which would be a scope violation, not an expected change.
+6. **Misuse the ticket's list missed — Docs/Files iframe path, repeats/concurrency, stale state:**
+   - Empty/huge/malformed HTML through the Docs-tab `srcdoc` iframe (empty string, 10 MB blob, truncated/invalid markup): still renders inert, no crash. Extend `file_view.test.js` if it doesn't already cover size/malformed cases.
+   - Two `marvin show` calls racing for the same project while the sandbox flag is flipping in code (not at runtime — this is a one-time static config, so "repeats/concurrency" reduces to: the existing `show_window.test.js` "two shows racing" test must still pass unchanged).
+   - A `marvin show` window already open from a build on the old Electron major, then the app is replaced by `rebuild-and-install` (stale window state across an in-place app replacement) — out of scope for an automated test (no vitest harness can model an OS-level app replacement); covered instead by the manual "relaunches through `rebuild-and-install`" acceptance check.
+   - Wrong permissions: `dashboard/mobile-backend` and `webhook-server` run as plain `node`, never launching Electron — confirm (already true, per `package.json` `{"type":"module"}` with no Electron dependency) that nothing in this PR makes them `require('electron')`.
+
+## Decisions
+
+None. The ticket is prescriptive (latest supported major, sandbox on both windows "if possible" — confirmed possible since the preload has no Node dependency beyond `contextBridge`/`ipcRenderer`) and every open point above resolves from reading the code, not from an owner judgment call.
+
+## Task List
+
+1. Add/extend the five tests above in `dashboard/test/` (sandbox-on for both windows, IPC-misuse regression, Docs-tab `srcdoc` malformed-HTML case) and confirm they fail against the current code where expected.
+2. Bump `electron` in `dashboard/package.json` to the latest supported major, one major at a time; after each hop, run `npm test` (`vitest run`) and fix whatever the major's breaking-change notes require in `electron/main/*.js` (only `index.js` imports `'electron'` directly, so changes stay scoped there) and in `dashboard/package.json`'s `allowScripts` pin (update `"electron@30.5.1"` key to the new resolved version).
+3. Bump `electron-builder` (and `electron-vite` if needed) to versions compatible with the new Electron major.
+4. Flip `sandbox: false` → `true` for the main window (`electron/main/index.js:388`) and the `marvin show` window (`electron/main/show_window.js:258`); update both inline comments, which currently justify `sandbox: false` on the grounds that the preload needs it.
+5. Re-run the full dashboard suite (`npm test` in `dashboard/`) until green, including the mobile-backend/webhook-server suites that import shared `electron/main/*.js` modules.
+6. Run `osv-scanner` (CLI, `--data-source=native`, per #1218's planned config) against `dashboard/package-lock.json` by hand and confirm zero critical advisories for Electron — ticket #1218 (CI integration) isn't built yet, so this AC is verified manually for this PR.
+7. Build, sign and run `dashboard/scripts/rebuild_and_install.sh` on both Macs; manually walk every tab, submit an Approve and a Decisions answer, and run `marvin show` on a project, confirming each works and capturing screenshots for the PR.
+8. Update CONTEXT.md / add an ADR entry recording the new Electron major and that both windows now run `sandbox: true`, so the next person doesn't have to re-derive it from the diff.
