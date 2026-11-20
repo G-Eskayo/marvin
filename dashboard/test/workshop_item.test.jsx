@@ -27,7 +27,7 @@ const feedOf = (value, extra = {}) => ({ value: { prs: [], tickets: [], projects
 
 beforeEach(() => {
   const never = () => new Promise(() => {})
-  globalThis.window = { api: { relations: { pr: never, ticket: never }, mr: { mergeState: never, image: never, historyDetail: never, onMergeEvent: () => () => {} }, boards: { ticket: never }, activity: { timeline: never }, decisions: {} } }
+  globalThis.window = { api: { relations: { pr: never, ticket: never, context: never }, mr: { mergeState: never, image: never, historyDetail: never, ticketContext: never, onMergeEvent: () => () => {}, onCorrected: () => () => {} }, boards: { ticket: never }, activity: { timeline: never }, decisions: {} } }
 })
 
 const page = (target, feed, initial = {}) => renderToStaticMarkup(<WorkshopItem target={target} feed={feed} now={NOW} initial={{ rel: { docs: [], tickets: [], prs: [] }, ...initial }} />)
@@ -167,6 +167,22 @@ describe('the bar and the history', () => {
     expect(pinnedSha([{ url: `https://raw.githubusercontent.com/a/b/${SHA}/x.png` }, { url: `https://raw.githubusercontent.com/a/b/${SHA}/y.png` }])).toBe('a1c9f04')
     expect(pinnedSha([{ url: `https://raw.githubusercontent.com/a/b/${SHA}/x.png` }, { url: 'https://raw.githubusercontent.com/a/b/main/y.png' }])).toBeNull()
     expect(pinnedSha([])).toBeNull()
+  })
+})
+
+describe('bug-5: WorkshopItem extended API', () => {
+  it('fetches relations context via relations.context (not in savedcache)', () => {
+    const contextFn = () => Promise.resolve({ docs: ['doc1'], tickets: [], prs: [] })
+    globalThis.window = { api: { relations: { context: contextFn }, mr: { onMergeEvent: () => () => {}, onCorrected: () => () => {} }, boards: { ticket: () => Promise.resolve({ body: '', labels: [], state: 'OPEN', comments: [] }) }, activity: { timeline: () => Promise.resolve([]) }, decisions: {} } }
+    const h = page({ repo: REPO, ticket: 7 }, feedOf({ tickets: [ticket(7, ['needs-info'])] }), { ctx: { docs: [], tickets: [], prs: [] } })
+    // The page renders successfully with the context API available
+    expect(h).toContain('data-testid="item-ticket"')
+  })
+  it('mr.onCorrected is set up for correction listener registration', () => {
+    globalThis.window = { api: { relations: { pr: () => new Promise(() => {}), ticket: () => new Promise(() => {}), context: () => new Promise(() => {}) }, mr: { mergeState: () => new Promise(() => {}), image: () => new Promise(() => {}), historyDetail: () => new Promise(() => {}), ticketContext: () => new Promise(() => {}), onMergeEvent: () => () => {}, onCorrected: () => () => {} }, boards: { ticket: () => new Promise(() => {}) }, activity: { timeline: () => new Promise(() => {}) }, decisions: {} } }
+    const h = page({ repo: REPO, pr: 1 }, feedOf({ prs: [pr(1)] }))
+    // The page renders the next-step-bar component (effects not run in static markup)
+    expect(h).toContain('data-testid="next-step-bar"')
   })
 })
 

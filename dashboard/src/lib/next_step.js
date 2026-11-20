@@ -127,6 +127,7 @@ export function prStep(pr, ctx = {}) {
     if (n) return step('owner', `Answer ${n} decision${n === 1 ? '' : 's'}`, 'yours')
     if (mq?.unbuilt) return mine('Building your answers', 'build')
   }
+  if (pr.isDraft) return live ? mine('Draft in progress', 'build') : step('nobody', 'Draft waiting', 'waiting')
   if (kind === 'sent-back') return mine(live ? 'Being fixed' : 'Sent back', 'build')
   if (kind === 'ticket-closed') return step('owner', 'Close it', 'yours')
   if (kind === 'conflict') {
@@ -259,4 +260,10 @@ export function durationText(fromMs, now = Date.now()) {
   const h = Math.floor(m / 60)
   if (h < 48) return `${h} h`
   return `${Math.floor(h / 24)} d`
+}
+
+// Filter sections to show only items for the given repo (or all items if repo is null).
+export function filterSections(sections, repo) {
+  if (!repo) return sections
+  return Object.fromEntries(Object.entries(sections).map(([key, items]) => [key, items.filter((i) => i.repo === repo)]))
 }

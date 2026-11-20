@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest'
 import { renderToStaticMarkup } from 'react-dom/server'
-import { buildNow, nextStep, prStep, ticketStep, SECTIONS, MARVIN_STUCK_MS, projectChip } from '../src/lib/next_step.js'
+import { buildNow, nextStep, prStep, ticketStep, SECTIONS, MARVIN_STUCK_MS, projectChip, filterSections } from '../src/lib/next_step.js'
 import { readSources, loadSaved, save, SAVED_KEY } from '../src/lib/workshop_feed.js'
 import { WorkshopNow } from '../src/components/WorkshopTab.jsx'
 
@@ -66,6 +66,32 @@ function expectCoverage(src, now) {
   expect(SECTIONS.reduce((n, s) => n + sections[s].length, 0)).toBe(items.length)
   return sections
 }
+
+describe('a draft PR says "Draft in progress" (bug-2)', () => {
+  it('prStep with isDraft and live context returns Building, marvin, build phase', () => {
+    const draftPr = pr(60, { isDraft: true, ticketRef: 5 })
+    const ctx = { live: new Map([['acme/app#5', {}]]), events: new Map() }
+    expect(prStep(draftPr, ctx)).toMatchObject({ owner: 'marvin', verb: 'Draft in progress', section: 'marvin', phase: 'build' })
+  })
+  it('prStep with isDraft but no live context returns Draft waiting, nobody, waiting section', () => {
+    const draftPr = pr(60, { isDraft: true })
+    expect(prStep(draftPr)).toMatchObject({ owner: 'nobody', verb: 'Draft waiting', section: 'waiting' })
+  })
+})
+
+describe('filterSections filters items by repo (bug-1)', () => {
+  it('with no repo filter, returns all sections as-is', () => {
+    const sections = { stuck: [{ repo: 'a/x' }], yours: [{ repo: 'b/y' }, { repo: 'a/x' }] }
+    const filtered = filterSections(sections, null)
+    expect(filtered).toEqual(sections)
+  })
+  it('with a repo filter, keeps only items matching that repo', () => {
+    const sections = { stuck: [{ repo: 'a/x', key: '1' }, { repo: 'b/y', key: '2' }], yours: [{ repo: 'a/x', key: '3' }] }
+    const filtered = filterSections(sections, 'a/x')
+    expect(filtered.stuck.map((i) => i.key)).toEqual(['1'])
+    expect(filtered.yours.map((i) => i.key)).toEqual(['3'])
+  })
+})
 
 describe('nextStep (#862, the Now view\'s slice of #860)', () => {
   it('every open ticket, PR and proposal is in exactly one section: none dropped, none twice', () => {
@@ -179,9 +205,9 @@ describe('the Now view (#862)', () => {
     expect(h).toContain('Ticket 1')
     expect(h).not.toContain('Nothing waiting on you.')
     // Never read and nothing saved: an error, not an empty list.
-    const none = render({ now: null, failed: ['tickets'], loaded: true, at: null })
-    expect(none).toMatch(/Can’t reach GitHub/)
-    expect(none).not.toContain('Nothing waiting')
+    const none = render({ now: null, failed: ["tickets"], loaded: true, at: null })
+    expect(none).toMatch(/Can&#x27;t reach GitHub/)
+    expect(none).not.toContain("Nothing waiting")
   })
 
   it('the saved copy round-trips (with events) and survives junk in storage', () => {
@@ -206,6 +232,11 @@ describe('the Now view (#862)', () => {
     const cls = (row[1] || row[2]).split(' ')
     expect(cls).toEqual(expect.arrayContaining(['flex-col', 'lg:flex-row', 'min-w-0', 'w-full']))
     expect(h).not.toMatch(/\bmin-w-\[\d|\bw-\[(?:9|1\d)\d\dpx\]/)
+  })
+
+  it('the footer says what other features are on the Activity tab (bug-4)', () => {
+    const h = render(feedOf(snapshot()))
+    expect(h).toContain("Machines, helpers&#x27; health and the parallel toggle: Activity")
   })
 })
 

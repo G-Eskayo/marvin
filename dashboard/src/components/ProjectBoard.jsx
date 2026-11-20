@@ -166,7 +166,7 @@ function Column({ column, repo, onSelect, onOpenMr, activeTags, onTag, onAllComp
         <span className="text-xs text-neutral-500">{activeTags.size ? `${visible.length} / ${column.cards.length}` : column.cards.length}</span>
       </div>
       {column.id === 'review' && column.cards.length > 0 && (
-        <button onClick={() => onOpenMr?.()} className="-mt-1 mb-2 text-left text-[11px] text-amber-300 hover:text-amber-200" title="These are the same PRs MR Review lists">
+        <button onClick={() => onOpenMr?.(repo)} className="-mt-1 mb-2 text-left text-[11px] text-amber-300 hover:text-amber-200" title="These are the same PRs MR Review lists">
           {column.cards.length} waiting in MR Review →
         </button>
       )}

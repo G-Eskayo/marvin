@@ -1,0 +1,13 @@
+1. `lib/next_step.js`: add the draft branch to `prStep` (reusing `mine()`); export `filterSections(sections, repo)`.
+2. `lib/mr_link.js` (new): export `mrLinkTarget(key)`.
+3. `lib/nav_history.js`: add `keyboardNavAction(e)`, mirroring `image_zoom.js`'s typing-guard.
+4. `test/workshop_now.test.jsx`: add the bug-2 (`prStep` draft), bug-1 (`filterSections`, `WorkshopNow filterRepo`), and bug-4 (footer text) tests above.
+5. `test/mr_link.test.js` (new): the `mrLinkTarget` tests above.
+6. `test/nav_history.test.js`: add the `keyboardNavAction` tests above.
+7. `test/workshop_item.test.jsx`: add the bug-5 tests above (extend the `beforeEach` API stub with `relations.context`, `mr.ticketContext`, `mr.onCorrected`).
+8. `components/ProjectBoard.jsx`: Column's "N waiting in MR Review →" button calls `onOpenMr?.(repo)` instead of `onOpenMr?.()` (`:169`); leave `WaitingOnYou`'s cross-project "MR Review →" (`:453`) calling with no argument — it has no single project in scope, so it now resolves to "open Workshop, unfiltered" via `mrLinkTarget`.
+9. `App.jsx`: route `openPrKey` through `mrLinkTarget` (`'pr'`→open item, `'project'`→`navigate('workshop',{repo})`, `'all'`→`navigate('workshop')`); add tab-level history state (`startHistory`/`visit`) over `activeTab`, and a `keydown` listener calling `keyboardNavAction` → `back`/`forward` → `setActiveTab`.
+10. `components/WorkshopTab.jsx`: fix the footer sentence (bug 4); derive `filterRepo` from `nav.repo` (only when no item target and not dismissed) and pass it + a clear callback into `WorkshopNow`; render the "Showing <project>'s PRs · Clear" banner inside `WorkshopNow`.
+11. `components/WorkshopItem.jsx`: fetch real `ctx` via `relations.context(projectIdOf(repo))` and thread it into `TicketCard`'s `IssueBody` calls (parent PRD's ADR/doc links); add the "Docs →" button next to the item title; add the "Design & Architecture (parent PRD)" card (`LinkedIssue`, reusing `MrDetail.jsx`'s export) gated on `ticketNumber != null`; add local `notice` state via `window.api.mr.onCorrected`, rendering `CorrectionNotice` (reusing `MrReview.jsx`'s export) when it matches the open PR.
+12. Screenshots for bugs 1, 2 and 5 (including under 900 px), per the ticket's acceptance criteria.
+13. PR body: state plainly that bug 3 ships option A only (tab-level ⌘[/⌘]), and open/point at a reopened #756 for the swipe gesture + per-item history + its live-trackpad verification.

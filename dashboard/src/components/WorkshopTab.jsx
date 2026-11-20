@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
-import { buildNow, durationText, stripFor } from '../lib/next_step.js'
+import { buildNow, durationText, stripFor, filterSections } from '../lib/next_step.js'
 import { itemTarget, targetKey } from '../lib/workshop_item.js'
 import WorkshopItem from './WorkshopItem.jsx'
 import { NOW_TOPICS, SHOWN_ROWS, loadSaved, readEvents, patchSectionState, readSectionState, readSources, save, shownRows, writeSectionState } from '../lib/workshop_feed.js'
@@ -230,7 +230,9 @@ const storageOf = () => {
   try { return globalThis.localStorage } catch { return null }
 }
 
-export function WorkshopNow({ feed, onOpen, now = Date.now(), store = storageOf() }) {
+const footerText = "Machines, helpers' health and the parallel toggle: Activity"
+
+export function WorkshopNow({ feed, onOpen, now = Date.now(), store = storageOf(), filterRepo = null, onClearFilter = null }) {
   const [sectionState, setSectionState] = useState(() => readSectionState(store))
   const ui = {
     state: sectionState,
@@ -243,11 +245,13 @@ export function WorkshopNow({ feed, onOpen, now = Date.now(), store = storageOf(
   const data = feed.now
   const stale = feed.failed?.length > 0
   if (!data) {
+    const separator = ", "
     return feed.loaded
-      ? <p className="mt-6 text-sm text-red-400">Can’t reach GitHub ({feed.failed.join(', ')}), and nothing is saved from an earlier read yet.</p>
+      ? <p className="mt-6 text-sm text-red-400">Can&apos;t reach GitHub ({feed.failed.join(separator)}), and nothing is saved from an earlier read yet.</p>
       : <p className="mt-6 text-sm text-neutral-500">Loading…</p>
   }
-  const { stuck, yours, marvin, next, waiting } = data.sections
+  const displayData = filterRepo ? { ...data, sections: filterSections(data.sections, filterRepo) } : data
+  const { stuck, yours, marvin, next, waiting } = displayData.sections
   const asOf = feed.at ? new Date(feed.at).toLocaleString([], { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit', hour12: false }) : null
   const rows = (list, section) => list.map((item) => <Row key={item.key} item={item} section={section} onOpen={onOpen} now={now} />)
   const long = (list, section) => (
@@ -260,13 +264,19 @@ export function WorkshopNow({ feed, onOpen, now = Date.now(), store = storageOf(
   const waitingOpen = sectionState.waiting ? !sectionState.waiting.collapsed : false
   return (
     <div>
+      {filterRepo && (
+        <p className="mt-4 text-sm text-neutral-500">
+          Showing <span className="font-semibold text-neutral-300">{filterRepo.split("/")[1]}</span>&apos;s PRs
+          {onClearFilter && <button onClick={onClearFilter} className="ml-2 text-neutral-400 hover:text-neutral-200">· Clear</button>}
+        </p>
+      )}
       {stale && (
         <p className="mt-4 rounded-md border border-amber-900/60 bg-amber-950/30 px-3 py-2 text-xs text-amber-300" data-testid="as-of">
-          Can’t read {feed.failed.join(', ')} right now: showing the last known list{asOf ? `, as of ${asOf}` : ''}.
+          Can&apos;t read {feed.failed.join(", ")} right now: showing the last known list{asOf ? `, as of ${asOf}` : ""}.
         </p>
       )}
       {stuck.length > 0 && (
-        <Section id="stuck" ui={ui} title="Stuck" aside="nobody’s move, or over its limit (I5)" testid="now-stuck">
+        <Section id="stuck" ui={ui} title="Stuck" aside="nobody's move, or over its limit (I5)" testid="now-stuck">
           <Box tone="stuck">{long(stuck, 'stuck')}</Box>
         </Section>
       )}
@@ -276,7 +286,7 @@ export function WorkshopNow({ feed, onOpen, now = Date.now(), store = storageOf(
       <Section id="marvin" ui={ui} title="MARVIN is on it" aside={`all ${marvin.length} · everything in motion`} testid="now-marvin">
         <Box>{marvin.length ? long(marvin, 'marvin') : <Empty>Nothing in motion.</Empty>}</Box>
       </Section>
-      <Section id="next" ui={ui} title="Up next" aside="the pipeline’s queue" testid="now-next">
+      <Section id="next" ui={ui} title="Up next" aside="the pipeline's queue" testid="now-next">
         <Box>
           {next.length === 0 && <Empty>Nothing ready.</Empty>}
           {rows(nextOpen ? next : next.slice(0, 1), 'next')}
@@ -299,7 +309,7 @@ export function WorkshopNow({ feed, onOpen, now = Date.now(), store = storageOf(
           </Box>
         </section>
       )}
-      <p className="mt-3 text-xs text-neutral-500">Machines, helpers’ health and the parallel toggle: Health.</p>
+      <p className="mt-3 text-xs text-neutral-500">{footerText}</p>
     </div>
   )
 }
@@ -319,6 +329,7 @@ export function useOpenItem(nav) {
 
 export default function WorkshopTab({ feed, navigate, nav = null }) {
   const [target, setTarget] = useOpenItem(nav)
+  const filterRepo = !target && nav?.repo ? nav.repo : null
   const pick = (id) => {
     if (id === 'projects') navigate('activity')
     else if (id === 'shipped') navigate('mr-review', { view: 'merged' })
@@ -339,7 +350,7 @@ export default function WorkshopTab({ feed, navigate, nav = null }) {
   return (
     <div className="max-w-[1100px] px-4 py-5 lg:px-6" data-testid="workshop">
       <WorkshopControl onPick={pick} />
-      <WorkshopNow feed={feed} onOpen={open} />
+      <WorkshopNow feed={feed} onOpen={open} filterRepo={filterRepo} onClearFilter={filterRepo ? () => navigate('workshop') : null} />
     </div>
   )
 }

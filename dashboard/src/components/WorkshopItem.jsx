@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from 'react'
-import { ApproveDenyActions } from './MrReview.jsx'
-import { SummarySection, PrEvidenceSections, NeedsImages, DECISIONS_ANCHOR, GALLERY, GALLERY_LIMIT } from './MrDetail.jsx'
+import { ApproveDenyActions, CorrectionNotice } from './MrReview.jsx'
+import { SummarySection, PrEvidenceSections, NeedsImages, DECISIONS_ANCHOR, GALLERY, GALLERY_LIMIT, LinkedIssue } from './MrDetail.jsx'
 import { HumanTaskPanel, TicketReply } from './ProjectBoard.jsx'
 import Decisions from './Decisions.jsx'
 import PrImages, { showImage } from './PrImages.jsx'
@@ -13,6 +13,7 @@ import { summarizeDecisions } from '../../webhook-server/decisions.js'
 import { parseHumanTask } from '../lib/human_task.js'
 import { resolveItem, lifeStages, historyRows, barText, barWho, pinnedSha } from '../lib/workshop_item.js'
 import { clock } from './WorkshopTab.jsx'
+import { projectIdOf } from '../lib/projects.js'
 
 // The Workshop's item page (#863, ADR 0080): one page per unit of work, a ticket and its PRs, whichever you came from.
 // It merges the board card's ticket drill-down and MR Review's PR detail, built to the approved mock-up (marvin-instance
@@ -82,19 +83,19 @@ export function ItemHistory({ rows, now }) {
   )
 }
 
-// The ticket's own text, comments and the reply box (TicketDrilldown's, moved). A long body opens folded.
-function TicketCard({ repo, number, detail, error, stripDecisions, onLink, onSent }) {
+// The ticket’s own text, comments and the reply box (TicketDrilldown’s, moved). A long body opens folded.
+function TicketCard({ repo, number, detail, error, stripDecisions, onLink, onSent, ctx = null }) {
   const [open, setOpen] = useState(false)
   const [showComments, setShowComments] = useState(false)
   if (error) return <Card title={`Ticket #${number}`} testid="item-ticket"><p className="text-sm text-red-400">Couldn’t read the ticket: {error}</p></Card>
   if (!detail) return <Card title={`Ticket #${number}`} testid="item-ticket"><p className="text-sm text-neutral-500">Loading…</p></Card>
   const labels = detail.labels?.map((l) => l.name || l) || []
-  const long = (detail.body || '').length > 600
+  const long = (detail.body || "").length > 600
   const comments = detail.comments || []
   return (
-    <Card title={`Ticket #${number}${detail.state === 'CLOSED' ? ' · closed' : ''}`} testid="item-ticket">
-      <div className={long && !open ? 'relative max-h-[12rem] overflow-hidden' : ''}>
-        <IssueBody body={detail.body} updatedAt={detail.updatedAt} ctx={{ repo }} stripDecisions={stripDecisions} onLink={onLink} />
+    <Card title={`Ticket #${number}${detail.state === "CLOSED" ? " · closed" : ""}`} testid="item-ticket">
+      <div className={long && !open ? "relative max-h-[12rem] overflow-hidden" : ""}>
+        <IssueBody body={detail.body} updatedAt={detail.updatedAt} ctx={ctx || { repo }} stripDecisions={stripDecisions} onLink={onLink} />
         {long && !open && <div className="pointer-events-none absolute inset-x-0 bottom-0 h-10 bg-gradient-to-t from-neutral-900 to-transparent" />}
       </div>
       {long && (
@@ -148,8 +149,18 @@ export default function WorkshopItem({ target, feed, onBack, onOpenItem, onOpenD
   const ticketRead = useRead(ticketNumber != null && api?.boards?.ticket ? () => api.boards.ticket(repo, ticketNumber) : null, `${repo}#${ticketNumber}|${refresh}`, initial.ticket)
   const closedRead = useRead(item?.closedPr != null && api?.mr?.historyDetail ? () => api.mr.historyDetail(`https://github.com/${repo}/pull/${item.closedPr}`) : null, `${repo}#${item?.closedPr}`, initial.closedPr)
   const eventsRead = useRead(ticketNumber != null && api?.activity?.timeline ? () => api.activity.timeline(ticketNumber, repo) : null, `${repo}#${ticketNumber}|${refresh}`, initial.events)
+  const ctxRead = useRead(ticketNumber != null && api?.relations?.context ? () => api.relations.context(projectIdOf(repo)) : null, `${repo}|${refresh}`, initial.ctx)
+  const ticketCtxRead = useRead(ticketNumber != null && api?.mr?.ticketContext ? () => api.mr.ticketContext(ticketNumber, repo) : null, `${repo}#${ticketNumber}|${refresh}`, initial.ticketContext)
   const rel = useRelated(() => (initial.rel ? Promise.resolve(initial.rel) : target.pr != null ? api.relations.pr(repo, target.pr) : api.relations.ticket(repo, target.ticket)), [repo, target.pr, target.ticket])
   const [slot, setSlot] = useState(null)
+  const [notice, setNotice] = useState(null)
+  useEffect(() => {
+    if (!api?.mr?.onCorrected) return
+    return api.mr.onCorrected((n) => setNotice(n))
+  }, [api])
+  useEffect(() => {
+    setNotice(null)
+  }, [target.repo, target.pr, target.ticket])
   useScrollPlace('workshop-item', `${repo}|${target.pr ?? ''}|${target.ticket ?? ''}`)
 
   if (!item) {
@@ -203,7 +214,14 @@ export default function WorkshopItem({ target, feed, onBack, onOpenItem, onOpenD
       </div>
 
       <div>
-        <h2 className="break-words text-xl font-semibold text-white [overflow-wrap:anywhere]" data-testid="item-title">{title}</h2>
+        <div className="flex flex-wrap items-baseline justify-between gap-3">
+          <h2 className="break-words text-xl font-semibold text-white [overflow-wrap:anywhere]" data-testid="item-title">{title}</h2>
+          {onOpenDocs && (
+            <button onClick={() => onOpenDocs(projectIdOf(repo))} className="shrink-0 text-sm text-neutral-400 hover:text-neutral-200">
+              Docs →
+            </button>
+          )}
+        </div>
         <p className="mt-1 flex flex-wrap items-center gap-x-1.5 gap-y-1 text-xs text-neutral-500" data-testid="item-meta">
           {item.project && <span className="inline-block rounded border border-neutral-700 px-1.5 text-[11px] leading-4 text-neutral-300">{item.project}</span>}
           {ticketNumber != null && <span>ticket #{ticketNumber}</span>}
@@ -219,6 +237,20 @@ export default function WorkshopItem({ target, feed, onBack, onOpenItem, onOpenD
       </div>
 
       <LifeStrip stages={stages} />
+
+      {notice && pr && notice.url === pr.url && <CorrectionNotice notice={notice} />}
+
+      {ticketNumber != null && ticketCtxRead.value?.parent && (
+        <Card title="Design & Architecture (parent PRD)" testid="item-parent-prd">
+          <LinkedIssue
+            label="PRD"
+            issue={ticketCtxRead.value.parent}
+            repo={repo}
+            onOpenTicket={(r, n) => onOpenItem?.({ repo: r, ticket: n })}
+            onOpenDocs={onOpenDocs}
+          />
+        </Card>
+      )}
 
       {pr?.refusal && (
         <div data-refusal="1" className="rounded-lg border border-red-800 bg-red-950/40 px-4 py-3 text-sm text-red-200">
@@ -254,7 +286,7 @@ export default function WorkshopItem({ target, feed, onBack, onOpenItem, onOpenD
 
       {ticketNumber != null && (
         <TicketCard repo={repo} number={ticketNumber} detail={detail} error={ticketRead.error && !detail ? ticketRead.error : null}
-          stripDecisions={!!ticketDecisions?.present} onLink={onLink} onSent={reload} />
+          stripDecisions={!!ticketDecisions?.present} onLink={onLink} onSent={reload} ctx={ctxRead.value || { repo }} />
       )}
 
       {pr && <PrDetails pr={pr} onOpenTicket={(r, n) => onOpenItem?.({ repo: r, ticket: n })} onOpenDocs={onOpenDocs} />}

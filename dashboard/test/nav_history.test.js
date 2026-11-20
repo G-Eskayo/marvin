@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { startHistory, visit, back, forward, canGoBack, canGoForward, current, sameScreen, MAX_ENTRIES } from '../src/lib/nav_history.js'
+import { startHistory, visit, back, forward, canGoBack, canGoForward, current, sameScreen, MAX_ENTRIES, keyboardNavAction } from '../src/lib/nav_history.js'
 import { createScrollArea } from '../src/lib/scroll_places.js'
 
 const list = (tab = 'mr-review') => ({ tab, item: null })
@@ -147,5 +147,30 @@ describe('back restores the place in the list (with #755)', () => {
     scroll(400)
     const r = back(h); show(r.screen)
     expect(box.scrollTop).toBe(1800)
+  })
+})
+
+describe('keyboardNavAction: convert keyboard events to back/forward', () => {
+  it('⌘[ on macOS is back', () => {
+    expect(keyboardNavAction({ metaKey: true, key: '[', target: { tagName: 'DIV' } })).toBe('back')
+  })
+  it('⌘] on macOS is forward', () => {
+    expect(keyboardNavAction({ metaKey: true, key: ']', target: { tagName: 'DIV' } })).toBe('forward')
+  })
+  it('Alt-Left on other platforms is back', () => {
+    expect(keyboardNavAction({ altKey: true, key: 'ArrowLeft', target: { tagName: 'DIV' } })).toBe('back')
+  })
+  it('Alt-Right on other platforms is forward', () => {
+    expect(keyboardNavAction({ altKey: true, key: 'ArrowRight', target: { tagName: 'DIV' } })).toBe('forward')
+  })
+  it('the same keys in a text input are ignored, returning null', () => {
+    expect(keyboardNavAction({ metaKey: true, key: '[', target: { tagName: 'INPUT' } })).toBeNull()
+    expect(keyboardNavAction({ altKey: true, key: 'ArrowLeft', target: { tagName: 'TEXTAREA' } })).toBeNull()
+    expect(keyboardNavAction({ altKey: true, key: 'ArrowRight', target: { tagName: 'SELECT' } })).toBeNull()
+  })
+  it('other keys return null', () => {
+    expect(keyboardNavAction({ metaKey: true, key: 'a', target: { tagName: 'DIV' } })).toBeNull()
+    expect(keyboardNavAction({ key: '[', target: { tagName: 'DIV' } })).toBeNull()
+    expect(keyboardNavAction(null)).toBeNull()
   })
 })

@@ -16,6 +16,8 @@ import WorkshopTab, { useWorkshopNow } from '@components/WorkshopTab.jsx'
 import { visibleTabs } from './lib/tabs.js'
 import { ScrollArea, useScrollArea } from '@components/ScrollPlaces.jsx'
 import { reviewDotStatus } from './lib/pr_fetch_status.js'
+import { mrLinkTarget } from './lib/mr_link.js'
+import { startHistory, visit, back, forward, keyboardNavAction } from './lib/nav_history.js'
 
 
 const DOT_COLOR = {
@@ -46,18 +48,31 @@ const HEALTH_DOT_COLOR = {
 
 export default function App() {
   const [activeTab, setActiveTab] = useState('metrics')
+  const [tabHistory, setTabHistory] = useState(() => startHistory({ tab: 'metrics' }))
   // Cross-tab links by project: { tab, ...target, at } -- the target tab reads what it needs
   // (prKey for MR Review, projectId for Docs, repo for Activity) and acts once per `at`.
   const [nav, setNav] = useState(null)
   const navigate = (tab, target = {}) => {
+    setTabHistory((h) => visit(h, { tab }))
     setNav({ ...target, tab, at: Date.now() })
     setActiveTab(tab)
   }
   // The Workshop's item page (#863): every cross-tab link to a ticket or a PR opens its one page.
   const openItem = (repo, number, kind) => navigate('workshop', { item: { repo, [kind]: Number(number) } })
   const openPrKey = (prKey) => {
-    const m = /^(.+)#(\d+)$/.exec(String(prKey || ''))
-    if (m) openItem(m[1], m[2], 'pr')
+    if (!prKey) {
+      // No argument: open Workshop unfiltered via mrLinkTarget('all')
+      navigate('workshop', mrLinkTarget('all'))
+      return
+    }
+    if (typeof prKey === 'string' && prKey.includes('#')) {
+      // PR key like "acme/app#123": open the item
+      const m = /^(.+)#(\d+)$/.exec(String(prKey || ''))
+      if (m) openItem(m[1], m[2], 'pr')
+      return
+    }
+    // Otherwise treat as a repo: open Workshop filtered by that repo via mrLinkTarget('project')
+    navigate('workshop', { repo: prKey, ...mrLinkTarget('project') })
   }
   const [reviewStatus, setReviewStatus] = useState(null)
   const [healthOverall, setHealthOverall] = useState(null)
@@ -78,6 +93,30 @@ export default function App() {
     const offShow = window.api.show?.onOpenInDocs?.((target) => navigate('docs', target)) || (() => {})
     const offTrigger = window.api.triggers.on((t) => t.topic === 'support' && load())
     return () => { offFocus(); offShow(); offTrigger() }
+  }, [])
+
+  // Keyboard navigation: ⌘[ / ⌘] (macOS) or Alt-Left / Alt-Right (others) to go back / forward.
+  useEffect(() => {
+    const handleKeyDown = (e) => {
+      const action = keyboardNavAction(e)
+      if (action === 'back') {
+        e.preventDefault()
+        setTabHistory((h) => {
+          const result = back(h)
+          if (result.screen) setActiveTab(result.screen.tab)
+          return result.history
+        })
+      } else if (action === 'forward') {
+        e.preventDefault()
+        setTabHistory((h) => {
+          const result = forward(h)
+          if (result.screen) setActiveTab(result.screen.tab)
+          return result.history
+        })
+      }
+    }
+    window.addEventListener('keydown', handleKeyDown)
+    return () => window.removeEventListener('keydown', handleKeyDown)
   }, [])
 
   // Docs speed budget (#570): pdf.js and the markdown renderer are warmed once, when the app is idle after boot.

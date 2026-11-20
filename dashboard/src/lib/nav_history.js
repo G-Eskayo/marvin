@@ -56,3 +56,13 @@ export const back = (h, opts) => move(h, -1, opts)
 export const forward = (h, opts) => move(h, 1, opts)
 export const canGoBack = (h, { available = () => true } = {}) => step(h, -1, available) >= 0
 export const canGoForward = (h, { available = () => true } = {}) => step(h, 1, available) >= 0
+
+// Convert keyboard events to back/forward actions (⌘[ / ⌘] on macOS, Alt-Left/Alt-Right on others).
+export function keyboardNavAction(e) {
+  if (/^(INPUT|TEXTAREA|SELECT)$/.test(e?.target?.tagName || '')) return null
+  if (e?.metaKey && e?.key === '[') return 'back'
+  if (e?.metaKey && e?.key === ']') return 'forward'
+  if (e?.altKey && e?.key === 'ArrowLeft') return 'back'
+  if (e?.altKey && e?.key === 'ArrowRight') return 'forward'
+  return null
+}
