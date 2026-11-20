@@ -216,6 +216,7 @@ everything else calls it. The full reasoning is in [ADR 0080](adr/0080-the-work-
 | **I3 Answers are acted on** | Your answer changes the same PR, gets a reply, and earlier looks stay viewable | the owner-decisions trigger |
 | **I4 A next step, always** | Every ticket and PR has one next owner and next action, through merge and ship | `next_step()`, derived, read by every screen |
 | **I5 Nothing stuck silently** | MARVIN's stuck steps restart after 30 min, yours get one nudge after 4 h, ownerless ones and a job failing 3 runs in a row turn Health red | one liveness checker |
+| **I5 early warning (15 min)** | The pipeline job shows amber in the Workshop if it's been running over 15 minutes (softer, earlier signal than the 30-min restart) | `dashboard/src/lib/pipeline_health.js` |
 | **I6 One truth** | A replaced decision updates repo and memory together; a recurring-mistake note links to its rule (`adr:marvin/0080` + the rule's ID) | memory writes + `memory_lint` |
 
 **The loop test** walks a fake ticket from idea to shipped in a sandbox and fails if anything drops it. It is what

@@ -319,3 +319,38 @@ def test_a_crash_inside_repair_still_falls_back_to_a_rebuild(monkeypatch, tmp_pa
     monkeypatch.setattr(cr, "repair", boom)
     res = REAL_TRY_CONFLICT_REPAIR("o/r", {"number": 1, "headRefName": "h", "headRefOid": "s"})
     assert res["outcome"] == "rebuild" and "boom" in res["reason"]
+
+
+def test_default_tests_uses_run_timed_with_slot_wait_cap(monkeypatch):
+    """default_tests should call evidence_capture.run_timed with SLOT_WAIT_CAP_S, not bare subprocess.run."""
+    import evidence_capture
+    calls = []
+    def fake_run_timed(cmd, cwd=None, env=None, timeout_s=None, slot_wait_cap_s=None):
+        calls.append((cmd, timeout_s, slot_wait_cap_s))
+        return (0, "output")
+    monkeypatch.setattr(evidence_capture, "run_timed", fake_run_timed)
+    result = cr.default_tests(cr.MARVIN, "/fake/cwd", [])
+    assert result == (True, "")
+    assert len(calls) > 0
+    # pytest call should have the slot wait cap set
+    assert calls[0][2] == cr.SLOT_WAIT_CAP_S
+
+
+def test_default_tests_reraises_slot_wait_timed_out(monkeypatch):
+    """When run_timed raises SlotWaitTimedOut, default_tests should re-raise it, not catch it."""
+    import evidence_capture
+    def fake_run_timed_timeout(*a, **kw):
+        raise evidence_capture.SlotWaitTimedOut(["cmd"], 300, "waiting output")
+    monkeypatch.setattr(evidence_capture, "run_timed", fake_run_timed_timeout)
+    with pytest.raises(evidence_capture.SlotWaitTimedOut):
+        cr.default_tests(cr.MARVIN, "/fake/cwd", [])
+
+
+def test_default_tests_handles_test_timed_out(monkeypatch):
+    """When run_timed raises TestTimedOut (genuine test timeout, not slot wait), default_tests returns False."""
+    import evidence_capture
+    def fake_run_timed_timeout(*a, **kw):
+        raise evidence_capture.TestTimedOut(["cmd"], 1500, "partial output")
+    monkeypatch.setattr(evidence_capture, "run_timed", fake_run_timed_timeout)
+    result = cr.default_tests(cr.MARVIN, "/fake/cwd", [])
+    assert result == (False, "tests timed out")

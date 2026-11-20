@@ -25,6 +25,7 @@ export const ALLOWLIST = {
   'src/components/MrReview.jsx': { interval: [1, 'backstop 2 min behind mr.onRefresh push; mr:list reads github_state cache, not GitHub'] },
   'src/components/NextUpQueue.jsx': { interval: [1, TODO_558] },
   'src/components/ProjectBoard.jsx': { interval: [1, 'the 60 s backstop + coverage guard CONTEXT.md names (trigger-misses.jsonl)'] },
+  'src/components/WorkshopTab.jsx': { interval: [2, 'pipeline health monitor: 10 s tick to track elapsed time for amber status (ADR 0080 amber signal)'] },
   'src/components/ResourcesPanel.jsx': { interval: [1, 'resource samples from the 30 s collector files; no trigger exists, no GitHub'] },
   'src/components/TicketAgentsPanel.jsx': { interval: [1, 'backstop 60 s over local ticket-agent state files; no network'] },
   'src/lib/scroll_places.js': { ttl: [1, 'cutoff on a scroll restore driven by ResizeObserver events (3 s), so a late refresh never moves the page; no timer'] },

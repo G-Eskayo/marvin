@@ -36,6 +36,7 @@ STATE_PATH = HOME / ".claude" / "logs" / "conflict-repair.json"
 VENV_PYTHON = str(HOME / ".agents" / "venv" / "bin" / "python")
 MAX_PER_SCAN = 2
 TEST_TIMEOUT_S = 25 * 60
+SLOT_WAIT_CAP_S = 5 * 60  # 5 minutes (pending decision slot-wait-cap: Option A)
 
 
 def _git(cwd, *args, check=True, timeout=300):
@@ -111,15 +112,21 @@ def _other_pr(wt: str, base: str, path: str, hunk_start: int, hunk_end: int) -> 
 
 def default_tests(repo: str, cwd: str, changed: list[str]) -> tuple[bool, str]:
     """The merge gate's tests: marvin = pytest (+ vitest when the PR touches dashboard/); others = their profile's verify."""
+    import evidence_capture
     try:
         if repo.lower() == MARVIN.lower():
             env = {**os.environ, "MARVIN_MERGE_GATE": "1"}
             import cleanup_sweep
             with cleanup_sweep.disposable_basetemp() as basetemp_args:
-                p = subprocess.run([VENV_PYTHON, "-m", "pytest", "-q", "-p", "no:cacheprovider", *basetemp_args], cwd=cwd, env=env,
-                                   capture_output=True, text=True, timeout=TEST_TIMEOUT_S)
-            if p.returncode != 0:
-                return False, p.stdout[-1500:]
+                try:
+                    rc, output = evidence_capture.run_timed([VENV_PYTHON, "-m", "pytest", "-q", "-p", "no:cacheprovider", *basetemp_args],
+                                                           cwd=cwd, env=env, timeout_s=TEST_TIMEOUT_S, slot_wait_cap_s=SLOT_WAIT_CAP_S)
+                except evidence_capture.SlotWaitTimedOut:
+                    raise
+                except evidence_capture.TestTimedOut:
+                    return False, "tests timed out"
+            if rc != 0:
+                return False, output[-1500:]
             if any(f.startswith("dashboard/") for f in changed):
                 dash = Path(cwd) / "dashboard"
                 import node_modules_seed  # #687: seeded from the cache, so the install writes almost nothing
@@ -127,13 +134,25 @@ def default_tests(repo: str, cwd: str, changed: list[str]) -> tuple[bool, str]:
                                                   capture_output=True, text=True, timeout=TEST_TIMEOUT_S)
                 if p.returncode != 0:
                     return False, (p.stdout + p.stderr)[-1500:]
-                p = subprocess.run(["npx", "vitest", "run"], cwd=dash, capture_output=True, text=True, timeout=TEST_TIMEOUT_S)
-                if p.returncode != 0:
-                    return False, (p.stdout + p.stderr)[-1500:]
+                try:
+                    rc, output = evidence_capture.run_timed(["npx", "vitest", "run"], cwd=dash, timeout_s=TEST_TIMEOUT_S, slot_wait_cap_s=SLOT_WAIT_CAP_S)
+                except evidence_capture.SlotWaitTimedOut:
+                    raise
+                except evidence_capture.TestTimedOut:
+                    return False, "tests timed out"
+                if rc != 0:
+                    return False, output[-1500:]
             return True, ""
-        p = subprocess.run([VENV_PYTHON, str(HOME / ".agents" / "lib" / "project_profile.py"), "verify", repo, cwd],
-                           capture_output=True, text=True, timeout=TEST_TIMEOUT_S)
-        return p.returncode == 0, (p.stdout + p.stderr)[-1500:]
+        try:
+            rc, output = evidence_capture.run_timed([VENV_PYTHON, str(HOME / ".agents" / "lib" / "project_profile.py"), "verify", repo, cwd],
+                                                   timeout_s=TEST_TIMEOUT_S, slot_wait_cap_s=SLOT_WAIT_CAP_S)
+        except evidence_capture.SlotWaitTimedOut:
+            raise
+        except evidence_capture.TestTimedOut:
+            return False, "tests timed out"
+        return rc == 0, output[-1500:]
+    except evidence_capture.SlotWaitTimedOut:
+        raise
     except (subprocess.SubprocessError, OSError) as e:
         return False, str(e)
 

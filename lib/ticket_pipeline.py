@@ -57,6 +57,7 @@ import project_catalog  # noqa: E402
 import ticket_evidence  # noqa: E402
 import project_onboard  # noqa: E402
 import dispatch_concurrency  # noqa: E402
+import test_slot  # noqa: E402
 
 VENV_PYTHON = str(Path.home() / ".agents" / "venv" / "bin" / "python")
 RUN_TICKET_SCRIPT = str(Path.home() / ".agents" / "lib" / "run_ticket.py")
@@ -66,6 +67,7 @@ LOG_PREFIX = "[ticket-pipeline]"
 
 SCAN_LOCK_PATH = Path.home() / ".claude" / "dispatch" / "scan.lock"
 SCAN_LOCK_TIMEOUT_S = 120
+CONFLICT_STEP_BUDGET_S = 10 * 60  # 10 minutes (pending decision ac2-shape: Option A)
 
 
 @contextmanager
@@ -226,8 +228,13 @@ def _parked() -> str:
         return f"skipped ({str(exc)[:120]})"
 
 
-def _requeue_all(repos) -> list[str]:
-    return [f"{r.split('/')[-1]}#{n}" for r in repos for n in _requeue_conflicted_prs(r)]
+def _requeue_all(repos, step=None, deadline=None) -> list[str]:
+    """Process conflicted PRs for all repos, with optional step reporting and time budget.
+    If step is provided, logs progress. If deadline is provided (a time.time() value),
+    stops starting new PRs once the deadline passes."""
+    if step is None:
+        step = lambda *a: None
+    return [f"{r.split('/')[-1]}#{n}" for r in repos for n in _requeue_conflicted_prs(r, step=step, deadline=deadline)]
 
 _CLOSES = __import__("re").compile(r"Closes\s+(?:[\w.-]+/[\w.-]+)?#(\d+)")
 
@@ -266,6 +273,7 @@ def _try_conflict_repair(repo: str, pr: dict) -> dict:
     """The cheap fix before any rebuild (conflict_repair.py): rebase resolving only safe conflicts, test, push."""
     global _REPAIR_BUDGET
     import conflict_repair
+    import evidence_capture
     if _REPAIR_BUDGET is None:
         _REPAIR_BUDGET = conflict_repair.Budget()
     try:
@@ -278,6 +286,8 @@ def _try_conflict_repair(repo: str, pr: dict) -> dict:
         return conflict_repair.attempt(repo, pr, _REPAIR_BUDGET,
                                       do_repair=functools.partial(conflict_repair.repair, resolve_hunks=resolve_hunks,
                                                                   run_tests=conflict_repair.default_tests))
+    except evidence_capture.SlotWaitTimedOut:
+        return {"outcome": "later", "cost_usd": 0.0}
     except Exception as e:  # noqa: BLE001 -- a broken repair falls back to today's behaviour
         return {"outcome": "rebuild", "files": [], "reason": f"repair crashed: {e}", "cost_usd": 0.0}
 
@@ -296,6 +306,21 @@ def _mark_flagged(url: str, sha: str) -> None:
         FLAGGED_PATH.write_text(json.dumps(data, indent=1))
     except (OSError, ValueError):
         pass
+
+
+def _parse_wait_time(output: str) -> float:
+    """Extract the wait time from test slot output. Returns 0 if no wait detected."""
+    import re
+    match = test_slot.TOOK_RE.search(output)
+    if match:
+        # TOOK_RE matches "took the slot after N s" - extract the number
+        took_match = re.search(r"after (\d+)\s*s", match.group(0))
+        if took_match:
+            try:
+                return float(took_match.group(1))
+            except ValueError:
+                return 0.0
+    return 0.0
 
 
 def _still_needs_sending_back(gh, repo: str, pr: dict, red: list) -> bool:
@@ -318,13 +343,17 @@ def _still_needs_sending_back(gh, repo: str, pr: dict, red: list) -> bool:
     return cur.get("mergeable") == "CONFLICTING"
 
 
-def _requeue_conflicted_prs(repo: str) -> list[int]:
+def _requeue_conflicted_prs(repo: str, step=None, deadline=None) -> list[int]:
     """A PR that GitHub says CONFLICTS with its base can never be merged as it stands, and the first anyone
     learned was a human clicking Approve (finance-os #9, clarity #48). So the pipeline sends the ticket back
     by itself: label `needs-reengagement` + a comment saying why, and the existing sent-back loop rebuilds it
     on the current main. Tickets already sent back, protected by `pinned`/`held`, or with a person
     (ticket_policy.NEEDS_PERSON_LABELS) are left alone, and any
-    gh failure just means 'try again next scan'."""
+    gh failure just means 'try again next scan'. If deadline is provided (a time.time() value), stops starting
+    new PRs once the deadline passes."""
+    if step is None:
+        step = lambda *a: None
+
     def gh(*args):
         return subprocess.run(["gh", *args], capture_output=True, text=True, timeout=30)
 
@@ -338,7 +367,18 @@ def _requeue_conflicted_prs(repo: str) -> list[int]:
     except (ValueError, KeyError, TypeError):
         return []
     sent: list[int] = []
-    for pr in pr_list:
+    deferred: int = 0
+    processed: int = 0
+    for idx, pr in enumerate(pr_list):
+        pr_start = time.time()
+        pr_num = pr.get("number", "?")
+        pr_outcome = "skipped"
+        wait_time = 0.0
+
+        if deadline is not None and time.time() >= deadline:
+            deferred = len(pr_list) - idx
+            break
+
         m = _CLOSES.search(pr.get("body") or "")
         red = _failing_checks(pr.get("statusCheckRollup"))
         if not m or not (pr.get("mergeable") == "CONFLICTING" or red):
@@ -347,6 +387,7 @@ def _requeue_conflicted_prs(repo: str) -> list[int]:
         names = labels_of.get(n)
         if names is None or names & HOLD_LABELS or ticket_policy.needs_person(names):
             continue  # a person's: no send-back, no paid repair, no comment (#605: #81/#218 were re-sent every scan)
+        processed += 1
         if "needs-reengagement" in names:
             # Already sent back, but its PR still conflicts: the rebuild hasn't happened (#257 sat 12 hours, still
             # claimed). A repair makes the rebuild unnecessary; anything else stays the sent-back loop's business.
@@ -355,12 +396,15 @@ def _requeue_conflicted_prs(repo: str) -> list[int]:
                 ts.record_stage(n, "gate", "passed" if fix["outcome"] == "repaired" else "failed",
                                detail=fix.get("detail", fix.get("reason", "")),
                                cost_usd=fix.get("cost_usd", 0.0), repo=repo)
+                pr_outcome = fix.get("outcome", "unknown")
                 if fix["outcome"] == "repaired":
                     gh("issue", "edit", str(n), "--repo", repo, "--remove-label", "needs-reengagement")
                     gh("issue", "comment", str(n), "--repo", repo, "--body",
                        f"PR #{pr['number']}'s {ticket_policy.REPAIRED_MARKER} and pushed, so no rebuild is needed: "
                        f"the sent-back flag is cleared and the PR is ready for review.")
                     print(f"{LOG_PREFIX} {repo}#{n}: sent-back PR #{pr['number']} repaired instead of rebuilt", file=sys.stderr)
+            pr_elapsed = time.time() - pr_start
+            step(f"PR #{pr_num} (sent-back)", f"{pr_outcome} {pr_elapsed:.1f}s")
             continue
         files: list[str] = []
         if not red:
@@ -369,12 +413,17 @@ def _requeue_conflicted_prs(repo: str) -> list[int]:
             ts.record_stage(n, "gate", "passed" if fix["outcome"] == "repaired" else "failed",
                            detail=fix.get("detail", fix.get("reason", "")),
                            cost_usd=fix.get("cost_usd", 0.0), repo=repo)
+            pr_outcome = fix.get("outcome", "unknown")
             if fix["outcome"] == "repaired":
                 gh("pr", "comment", str(pr["number"]), "--repo", repo, "--body",
                    f"Conflict with main resolved automatically: {fix.get('detail', '')} Rebased onto main and pushed; nothing was rebuilt.")
                 print(f"{LOG_PREFIX} {repo}#{n}: PR #{pr['number']} conflict repaired ({fix.get('detail', '')})", file=sys.stderr)
+                pr_elapsed = time.time() - pr_start
+                step(f"PR #{pr_num}", f"{pr_outcome} {pr_elapsed:.1f}s")
                 continue
             if fix["outcome"] == "later":
+                pr_elapsed = time.time() - pr_start
+                step(f"PR #{pr_num}", f"deferred (budget) {pr_elapsed:.1f}s")
                 continue  # out of repair budget this scan: try again next scan rather than rebuild
             files = fix.get("files") or []
             if not str(pr.get("headRefName", "")).startswith("pipeline/"):
@@ -386,9 +435,13 @@ def _requeue_conflicted_prs(repo: str) -> list[int]:
                        f"(the same existing lines changed on both sides), so it could not be resolved automatically. It was made "
                        f"by hand, so it is not sent for an agent rebuild: rebase it onto main, or ask MARVIN to.")
                     _mark_flagged(url, sha)
+                pr_elapsed = time.time() - pr_start
+                step(f"PR #{pr_num}", f"not sent (hand-made) {pr_elapsed:.1f}s")
                 continue
         if not _still_needs_sending_back(gh, repo, pr, red):
             print(f"{LOG_PREFIX} {repo}#{n}: PR #{pr['number']} changed since this scan listed it; not sent back", file=sys.stderr)
+            pr_elapsed = time.time() - pr_start
+            step(f"PR #{pr_num}", f"changed {pr_elapsed:.1f}s")
             continue
         # The claim from the run that raised this PR must go too: the dispatcher only takes tickets with no claim, so a
         # sent-back ticket that kept it would never be rebuilt (clarity-captions #51).
@@ -400,6 +453,8 @@ def _requeue_conflicted_prs(repo: str) -> list[int]:
             gh("label", "create", "needs-reengagement", "--repo", repo, "--color", "d93f0b", "--description", "Sent back: rebuild on the current base branch")
             add = gh(*edit_args)
         if add.returncode != 0:
+            pr_elapsed = time.time() - pr_start
+            step(f"PR #{pr_num}", f"label failed {pr_elapsed:.1f}s")
             continue
         gh("issue", "comment", str(n), "--repo", repo, "--body",
            (f"PR #{pr['number']}'s GitHub checks failed: {', '.join(red)}. " if red else
@@ -408,6 +463,12 @@ def _requeue_conflicted_prs(repo: str) -> list[int]:
            f"{ticket_policy.SENT_BACK_MARKER} the pipeline will rebuild it on the current main and update the same PR.")
         print(f"{LOG_PREFIX} {repo}#{n}: PR #{pr['number']} {'failed its checks' if red else 'conflicts with main'}, sent back for rework", file=sys.stderr)
         sent.append(n)
+        pr_elapsed = time.time() - pr_start
+        pr_outcome = "sent-back"
+        step(f"PR #{pr_num}", f"{pr_outcome} {pr_elapsed:.1f}s")
+
+    if deferred > 0:
+        step(f"Conflicted PRs ({repo.split('/')[-1]})", f"{processed} processed, {deferred} deferred due to time budget")
     return sent
 
 
@@ -935,7 +996,8 @@ def _scan(run, dry_run: bool) -> str | None:
     if not dry_run:
         _background_checks()
         step("Conflicted PRs", "sending back PRs that no longer merge")
-        sent = _requeue_all([REPO, *pp.runnable_repos()])
+        deadline = time.time() + CONFLICT_STEP_BUDGET_S
+        sent = _requeue_all([REPO, *pp.runnable_repos()], step=step, deadline=deadline)
         step("Conflicted PRs", ", ".join(sent) + " sent back" if sent else "none")
         step("Owner decisions", "PRs whose owner decisions went unanswered (#607)")
         step("Owner decisions", _owner_decisions())

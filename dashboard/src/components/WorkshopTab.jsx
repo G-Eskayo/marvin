@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { buildNow, durationText, stripFor } from '../lib/next_step.js'
 import { itemTarget, targetKey } from '../lib/workshop_item.js'
+import { classifyPipelineHealth } from '../lib/pipeline_health.js'
 import WorkshopItem from './WorkshopItem.jsx'
 import { NOW_TOPICS, SHOWN_ROWS, loadSaved, readEvents, patchSectionState, readSectionState, readSources, save, shownRows, writeSectionState } from '../lib/workshop_feed.js'
 
@@ -54,6 +55,45 @@ export function useWorkshopNow() {
 
   const now = state.value ? buildNow({ ...state.value, events: state.events }) : null
   return { ...state, now, reload: load }
+}
+
+const PIPELINE_POLL_MS = 10000
+
+// Hook to check if the ticket-pipeline job is running too long (amber health status).
+export function usePipelineHealth() {
+  const [health, setHealth] = useState(null)
+  const [now, setNow] = useState(Date.now())
+
+  useEffect(() => {
+    let cancelled = false
+    const refresh = () =>
+      window.api.working
+        .now()
+        .then((r) => {
+          if (!cancelled) {
+            const status = classifyPipelineHealth(r?.items, Date.now())
+            setHealth(status)
+          }
+        })
+        .catch(() => {})
+    refresh()
+    const interval = setInterval(refresh, PIPELINE_POLL_MS)
+    const off = window.api.triggers.on((t) => t.topic === 'agents' && refresh())
+    return () => {
+      cancelled = true
+      clearInterval(interval)
+      off()
+    }
+  }, [])
+
+  // Tick the elapsed time once a second if pipeline is amber.
+  useEffect(() => {
+    if (!health?.amber) return
+    const tick = setInterval(() => setNow(Date.now()), 1000)
+    return () => clearInterval(tick)
+  }, [health?.amber])
+
+  return health
 }
 
 const VIEWS = [
@@ -232,6 +272,7 @@ const storageOf = () => {
 
 export function WorkshopNow({ feed, onOpen, now = Date.now(), store = storageOf() }) {
   const [sectionState, setSectionState] = useState(() => readSectionState(store))
+  const pipelineHealth = usePipelineHealth()
   const ui = {
     state: sectionState,
     set: (id, patch) => setSectionState((s) => {
@@ -244,7 +285,7 @@ export function WorkshopNow({ feed, onOpen, now = Date.now(), store = storageOf(
   const stale = feed.failed?.length > 0
   if (!data) {
     return feed.loaded
-      ? <p className="mt-6 text-sm text-red-400">Can’t reach GitHub ({feed.failed.join(', ')}), and nothing is saved from an earlier read yet.</p>
+      ? <p className="mt-6 text-sm text-red-400">Can't reach GitHub ({feed.failed.join(', ')}), and nothing is saved from an earlier read yet.</p>
       : <p className="mt-6 text-sm text-neutral-500">Loading…</p>
   }
   const { stuck, yours, marvin, next, waiting } = data.sections
@@ -260,13 +301,18 @@ export function WorkshopNow({ feed, onOpen, now = Date.now(), store = storageOf(
   const waitingOpen = sectionState.waiting ? !sectionState.waiting.collapsed : false
   return (
     <div>
+      {pipelineHealth?.amber && (
+        <p className="mt-4 rounded-md border border-amber-900/60 bg-amber-950/30 px-3 py-2 text-xs text-amber-300" data-testid="pipeline-health-amber">
+          Pipeline stalled: {pipelineHealth.step}{pipelineHealth.detail ? ` (${pipelineHealth.detail})` : ''}.
+        </p>
+      )}
       {stale && (
         <p className="mt-4 rounded-md border border-amber-900/60 bg-amber-950/30 px-3 py-2 text-xs text-amber-300" data-testid="as-of">
-          Can’t read {feed.failed.join(', ')} right now: showing the last known list{asOf ? `, as of ${asOf}` : ''}.
+          Can't read {feed.failed.join(', ')} right now: showing the last known list{asOf ? `, as of ${asOf}` : ''}.
         </p>
       )}
       {stuck.length > 0 && (
-        <Section id="stuck" ui={ui} title="Stuck" aside="nobody’s move, or over its limit (I5)" testid="now-stuck">
+        <Section id="stuck" ui={ui} title="Stuck" aside="nobody's move, or over its limit (I5)" testid="now-stuck">
           <Box tone="stuck">{long(stuck, 'stuck')}</Box>
         </Section>
       )}
@@ -276,7 +322,7 @@ export function WorkshopNow({ feed, onOpen, now = Date.now(), store = storageOf(
       <Section id="marvin" ui={ui} title="MARVIN is on it" aside={`all ${marvin.length} · everything in motion`} testid="now-marvin">
         <Box>{marvin.length ? long(marvin, 'marvin') : <Empty>Nothing in motion.</Empty>}</Box>
       </Section>
-      <Section id="next" ui={ui} title="Up next" aside="the pipeline’s queue" testid="now-next">
+      <Section id="next" ui={ui} title="Up next" aside="the pipeline's queue" testid="now-next">
         <Box>
           {next.length === 0 && <Empty>Nothing ready.</Empty>}
           {rows(nextOpen ? next : next.slice(0, 1), 'next')}
@@ -299,7 +345,7 @@ export function WorkshopNow({ feed, onOpen, now = Date.now(), store = storageOf(
           </Box>
         </section>
       )}
-      <p className="mt-3 text-xs text-neutral-500">Machines, helpers’ health and the parallel toggle: Health.</p>
+      <p className="mt-3 text-xs text-neutral-500">Machines, helpers' health and the parallel toggle: Health.</p>
     </div>
   )
 }
