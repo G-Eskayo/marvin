@@ -31,8 +31,9 @@ ensure: no marker -> return (O(1): one stat, one exists check). Marker -> take a
 Exit codes for scripts: 0 ok, 2 not parked / bad input, 3 cold host unreachable, 4 not enough free space,
 5 verification failed, 6 folder in use or changed while parking, 7 a copy stopped part way (run again).
 
-Usage: marvin-cold park PATH [--name NAME]
+Usage: marvin-cold park PATH [--name NAME]       (again on a parked folder: parks what came back, marvin#1271)
        marvin-cold ensure PATH|NAME [--part SUB] [--optional] [--min-free-gb N]   (prints the local path)
+       marvin-cold ensure PATH|NAME [--part SUB] --then-park -- COMMAND [ARGS...]  (fetch, run, park again)
        marvin-cold list            (alias: where) what is parked, sizes, free space on every machine
 """
 from __future__ import annotations
@@ -47,6 +48,7 @@ import shlex
 import shutil
 import subprocess
 import sys
+from contextlib import contextmanager
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
@@ -127,6 +129,38 @@ def stat_snapshot(folder: Path) -> dict:
     return out
 
 
+MARKER_NAMES = (MARKER_JSON, MARKER_JSON + ".tmp", MARKER_TXT)
+
+
+def _snapshot_without_marker(folder: Path) -> dict:
+    return {k: v for k, v in stat_snapshot(folder).items() if k not in MARKER_NAMES}
+
+
+def _local_entries(folder: Path) -> list[str]:
+    """Top-level names in a parked folder other than its marker: anything here means data came back."""
+    try:
+        return sorted(n for n in os.listdir(folder) if n not in MARKER_NAMES)
+    except OSError:
+        return []
+
+
+def local_bytes(folder: Path) -> int:
+    """Bytes of regular files under folder, its marker left out. O(F) stats."""
+    total = 0
+    for base, dirs, names in os.walk(folder):
+        for n in names:
+            p = os.path.join(base, n)
+            if base == str(folder) and n in MARKER_NAMES:
+                continue
+            try:
+                st = os.lstat(p)
+            except OSError:
+                continue
+            if not os.path.islink(p):
+                total += st.st_size
+    return total
+
+
 def manifest_bytes(manifest: dict) -> bytes:
     return json.dumps(manifest, sort_keys=True, separators=(",", ":")).encode()
 
@@ -155,7 +189,7 @@ def local_manifest(path: Path, part: str | None = None) -> dict:
     """The manifest of path, or of just `part` of it (a sub-folder or one file), keyed relative to path. O(B_part)."""
     if not part:
         here = build_manifest(str(path))
-        for extra in (MARKER_JSON, MARKER_TXT):
+        for extra in MARKER_NAMES:
             here["files"].pop(extra, None)
         return here
     target = path / part
@@ -372,7 +406,9 @@ class Store:
         existing = self.marker(path)
         if existing:
             self._finish_swap(path)
-            return existing
+            if not _local_entries(path):
+                return existing                                        # nothing came back: nothing to do, no network
+            return self._repark(path, existing)
         if path.is_symlink() or not path.is_dir():
             raise ColdError(NOT_PARKED, f"{path} is not a folder")
         rel = home_relative(path, self.home)
@@ -423,6 +459,128 @@ class Store:
             self._swap(path, entry)
             self.say(f"parked {rel} on {self.host_id}: {total / 1e9:.2f} GB, {len(manifest['files'])} files verified")
             return entry
+
+    def _repark(self, path: Path, marker: dict) -> dict:
+        """Park again a folder that still has its marker but holds data again: parts `ensure --part` fetched back, or
+        files written next to the marker (marvin#1271). The trusted manifest plus what is local now makes the new
+        manifest: local files and links win (new or changed), a file inside a fetched part that is gone locally is
+        deleted, and every file that never came back is kept. Only then is the cold copy brought to match it (rsync
+        up without --delete, then remove what the new manifest no longer has) and hashed there, so nothing local is
+        dropped unless the cold copy holds every byte of the new manifest.
+        Write order keeps every crash readable: cold data -> cold manifest.json (the sha is first noted in the catalog
+        as pending, so the next park accepts it) -> entry.json -> local marker -> catalog -> swap. A marker always
+        names a sha that either the catalog or the cold manifest.json holds, so `ensure` can verify at every step.
+        Time O(B_local) here + O(B) hashing on the cold host, memory O(F)."""
+        name = marker["name"]
+        with self._lock(name):
+            busy = self.in_use(path)
+            if busy:
+                raise ColdError(BUSY, f"{path} is in use, nothing was moved: {', '.join(busy[:5])}")
+            old_entry = {k: v for k, v in marker.items() if k != "parts"}
+            base = self._trusted_manifest(old_entry)
+            rec = self.catalog(name) or {}
+            accepted = {marker.get("manifest_sha256"), rec.get("pending_manifest_sha256")} - {None}
+            cold_sha = self._remote_manifest_sha(name)
+            if cold_sha not in accepted:
+                raise ColdError(VERIFY_FAILED, f"the manifest for {name} on {self.host_id} doesn't match the one this "
+                                               f"folder's marker names; nothing local was removed. Look at it by hand.")
+            snap = _snapshot_without_marker(path)
+            self.say(f"hashing what is back in {path}")
+            here = local_manifest(path)
+            fetched = marker.get("parts", [])
+
+            def was_fetched(rel: str) -> bool:
+                return any(rel == p or rel.startswith(p + "/") for p in fetched)
+            new = {"files": dict(base["files"]), "links": dict(base["links"])}
+            local_paths = set(here["files"]) | set(here["links"])
+            for kind in ("files", "links"):
+                for rel in list(new[kind]):
+                    if was_fetched(rel) and rel not in local_paths:
+                        del new[kind][rel]                             # deleted after it came back
+            for rel, v in here["files"].items():
+                new["links"].pop(rel, None)
+                new["files"][rel] = v
+            for rel, v in here["links"].items():
+                new["files"].pop(rel, None)
+                new["links"][rel] = v
+            sha = manifest_sha(new)
+            changed = sha != marker.get("manifest_sha256")
+            total = sum(s for s, _ in new["files"].values())
+            self.say(f"bringing the copy of {name} on {self.host_id} up to date")
+            dst = self._spec(self._rpath(name, "data") + "/")
+            excl = [f"--exclude=/{MARKER_JSON}", f"--exclude=/{MARKER_JSON}.tmp", f"--exclude=/{MARKER_TXT}"]
+            self._rsync(f"{path}/", dst, *excl)
+            problems = self._match_cold(name, new)
+            if problems:
+                self.say(f"{len(problems)} file(s) differ on {self.host_id}; one repair pass with --checksum")
+                self._rsync(f"{path}/", dst, *excl, "--checksum")
+                problems = self._match_cold(name, new)
+            if problems:
+                raise ColdError(VERIFY_FAILED, f"the copy on {self.host_id} doesn't match, nothing local was removed: "
+                                               f"{'; '.join(problems[:5])}")
+            entry = {**old_entry, "bytes": total, "files": len(new["files"]), "links": len(new["links"]),
+                     "manifest_sha256": sha}
+            if changed:
+                entry["reparked_at"] = _now()
+                self._save_catalog(name, {**rec, "pending_manifest_sha256": sha})
+                self._remote_write(self._rpath(name, "manifest.json"), manifest_bytes(new))
+                self._remote_write(self._rpath(name, "entry.json"), json.dumps(entry, sort_keys=True).encode() + b"\n")
+                self._write_marker(path, entry, fetched)
+            record = {k: v for k, v in rec.items() if k != "pending_manifest_sha256"}
+            self._save_catalog(name, {**record, **entry, "state": "parked", "manifest": new, "parts": []})
+            if _snapshot_without_marker(path) != snap:
+                raise ColdError(BUSY, f"{path} changed while it was being parked; nothing local was removed. Run again "
+                                      f"when nothing is writing to it.")
+            busy = self.in_use(path)
+            if busy:
+                raise ColdError(BUSY, f"{path} came into use while parking, nothing local was removed: {busy[:5]}")
+            self._swap(path, entry)
+            self.say(f"parked {name} again on {self.host_id}: {total / 1e9:.2f} GB, {len(new['files'])} files verified")
+            return entry
+
+    def _remote_manifest_sha(self, name: str) -> str | None:
+        r = self._remote(f"cat {shlex.quote(self._rpath(name, 'manifest.json'))}")
+        if r.returncode != 0:
+            return None
+        try:
+            return manifest_sha(json.loads(r.stdout))
+        except ValueError:
+            return None
+
+    def _match_cold(self, name: str, want: dict) -> list[str]:
+        """Hash the cold copy, remove what `want` no longer has (files deleted locally, leftovers of an interrupted
+        run), and return what still differs. Removal happens only inside this entry's data folder."""
+        have = self.remote_manifest(name)
+        extra = sorted((set(have["files"]) - set(want["files"])) | (set(have["links"]) - set(want["links"])))
+        extra = [p for p in extra if p not in want["files"] and p not in want["links"]]
+        if extra:
+            data = self._rpath(name, "data")
+            r = self._remote(f"cd {shlex.quote(data)} && xargs -0 rm -f --", stdin="\0".join(extra).encode())
+            if r.returncode != 0:
+                return [f"couldn't remove {len(extra)} old file(s): {r.stderr.decode()[-200:]}"]
+            have = {k: {p: v for p, v in d.items() if p not in extra} for k, d in have.items()}
+        return compare(want, have)
+
+    @contextmanager
+    def fetched(self, target: str, part: str | None = None, optional: bool = False,
+                min_free_bytes: int | None = None):
+        """`with store.fetched(path, part=...) as p:` ensures the data, runs the block, then parks the whole folder
+        again, even when the block fails, so a job's fetch never keeps the disk. A folder that was never parked is
+        left alone. A park failure after a failed block is reported and the block's own error is raised."""
+        root, entry, _ = self._resolve(target, optional)
+        got = self.ensure(target, part, optional, min_free_bytes)
+        was_cold = got is not None and (entry is not None or self.marker(root) is not None)
+        try:
+            yield got
+        except BaseException:
+            if was_cold:
+                try:
+                    self.park(root, (entry or {}).get("name"))
+                except ColdError as err:
+                    self.say(f"couldn't park {root} again: {err}")
+            raise
+        if was_cold:
+            self.park(root, (entry or {}).get("name"))
 
     def _trash(self, path: Path) -> Path:
         return path.parent / f".{path.name}.cold-trash"
@@ -600,6 +758,10 @@ class Store:
             for e in out["parked"]:
                 if e.get("name") == rec.get("name") and rec.get("origin_machine") == self.machine:
                     e["here"] = rec.get("state")
+        for e in out["parked"]:
+            if e.get("origin_machine") == self.machine and e.get("origin_path"):
+                folder = from_home_relative(e["origin_path"], self.home)
+                e["local_bytes"] = local_bytes(folder) if folder.is_dir() and not folder.is_symlink() else 0
         out["free_gb"][self.machine] = round(shutil.disk_usage(self.home).free / 1e9, 1)
         for dev, host in (devices or {}).items():
             if dev == self.machine:
@@ -643,6 +805,8 @@ def _print_listing(out: dict) -> None:
         print("  nothing parked")
     for e in out["parked"]:
         here = f", here: {e['here']}" if e.get("here") else ""
+        if e.get("local_bytes"):
+            here += f", {e['local_bytes'] / 1e9:.2f} GB back on this machine (park it again to free it)"
         print(f"  {e.get('name')}: {e.get('bytes', 0) / 1e9:.2f} GB, {e.get('files')} files, from "
               f"{e.get('origin_machine')}:{e.get('origin_path')} on {e.get('parked_at')}{here}")
     print("free space:")
@@ -650,7 +814,23 @@ def _print_listing(out: dict) -> None:
         print(f"  {dev}: {'not reachable' if gb is None else f'{gb:g} GB'}")
 
 
+def _run(command: list[str]) -> int:
+    try:
+        return subprocess.run(command).returncode
+    except FileNotFoundError:
+        print(f"marvin-cold: {command[0]}: command not found", file=sys.stderr)
+        return 127
+    except OSError as err:
+        print(f"marvin-cold: {command[0]}: {err}", file=sys.stderr)
+        return 126
+
+
 def main(argv: list[str] | None = None) -> int:
+    argv = list(sys.argv[1:] if argv is None else argv)
+    command: list[str] = []
+    if "--" in argv:
+        cut = argv.index("--")
+        argv, command = argv[:cut], argv[cut + 1:]
     ap = argparse.ArgumentParser(prog="marvin-cold", description=__doc__.split("\n\n")[0])
     sub = ap.add_subparsers(dest="cmd", required=True)
     p = sub.add_parser("park", help="move a folder to the cold host, leave a marker")
@@ -661,10 +841,32 @@ def main(argv: list[str] | None = None) -> int:
     e.add_argument("--part", help="fetch only this sub-folder or file")
     e.add_argument("--optional", action="store_true", help="succeed quietly when nothing by that name is parked")
     e.add_argument("--min-free-gb", type=float, help="free space to leave after the fetch (default: pipeline floor)")
+    e.add_argument("--then-park", action="store_true",
+                   help="run the command after -- with the data here, then park the whole folder again")
     sub.add_parser("list", help="what is parked, and free space on each machine")
     sub.add_parser("where", help="same as list")
     a = ap.parse_args(argv)
+    then_park = getattr(a, "then_park", False)
+    if then_park and not command:
+        print("marvin-cold: --then-park needs a command after --, e.g. ensure PATH --then-park -- python eval.py",
+              file=sys.stderr)
+        return NOT_PARKED
+    if command and not then_park:
+        print("marvin-cold: a command after -- only runs with ensure --then-park", file=sys.stderr)
+        return NOT_PARKED
     store, hosts = default_store()
+    if then_park:
+        floor = None if a.min_free_gb is None else int(a.min_free_gb * 1e9)
+        rc = None
+        try:
+            with store.fetched(a.target, a.part, a.optional, floor) as got:
+                if got is not None:
+                    print(got, flush=True)
+                rc = _run(command)
+        except ColdError as err:
+            print(f"marvin-cold: {err}", file=sys.stderr)
+            return rc if rc else err.code
+        return rc
     try:
         if a.cmd == "park":
             print(json.dumps(store.park(Path(a.path), a.name)))
