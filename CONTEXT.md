@@ -925,6 +925,13 @@ unbounded: any chat, either machine, raw `gh`, the GitHub UI). Polling stays onl
   comment becomes one `ready-for-agent` follow-up ticket after 4 h; the dashboard ranks it first from the issue list it
   already caches. Rules in `docs/agents/decisions-format.md`.
 
+- **Answers aren't built yet** (marvin#1261, merge-time re-check): when the owner approved a PR after answering
+  Decisions, the merge server checks whether work has been committed since the answers (a reply, a completed follow-up,
+  or as-built answers). If not, merge refuses (`OWNER_DECISIONS_UNBUILT`) and re-queues the same Approve so it retries
+  when the answers are tested and built. This fresh re-check happens just before the gate runs, right after UI images
+  and decision structure have been verified, and gates both the gate and the merge itself. Code:
+  `lib/owner_decisions.py::pr_built_status`, `dashboard/webhook-server/owner_decisions_gate.js`.
+
 ### Dashboard actions render their true result locally at once, and confirm in the background (decided 2026-10-21)
 
 Gil, 2026-10-21: "Clicks render the true result instantly and confirm in the background", and "I want that to be
