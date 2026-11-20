@@ -1611,7 +1611,7 @@ def test_the_guard_runs_before_anything_that_changes_github(monkeypatch):
     # Stale code also decides which PRs to send back and what ticket agents apply: none of it may run.
     called = []
     _ready_one(monkeypatch, called)
-    monkeypatch.setattr(tp, "_requeue_all", lambda repos: called.append("requeue") or [])
+    monkeypatch.setattr(tp, "_requeue_all", lambda repos, timings=None: called.append("requeue") or [])
     monkeypatch.setattr(tp, "_run_ticket_agents", lambda step, summary: called.append("agents"))
     monkeypatch.setattr(tp, "_refresh_onboarding_plans", lambda: called.append("onboarding") or "")
     monkeypatch.setattr(tp.failure_breaker, "code_freshness", lambda *a, **k: {"state": "stale", "detail": "", "behind": 1, "oldest_hours": 3.0})

@@ -24,11 +24,13 @@ import re
 import subprocess
 import sys
 import tempfile
+import time
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import generated_paths as gp  # noqa: E402
 import marvin_launcher  # noqa: E402
+import evidence_capture  # noqa: E402
 
 HOME = Path.home()
 MARVIN = "G-Eskayo/marvin"
@@ -36,6 +38,7 @@ STATE_PATH = HOME / ".claude" / "logs" / "conflict-repair.json"
 VENV_PYTHON = str(HOME / ".agents" / "venv" / "bin" / "python")
 MAX_PER_SCAN = 2
 TEST_TIMEOUT_S = 25 * 60
+CONFLICT_REPAIR_SLOT_WAIT_CAP_S = 5 * 60
 
 
 def _git(cwd, *args, check=True, timeout=300):
@@ -116,25 +119,25 @@ def default_tests(repo: str, cwd: str, changed: list[str]) -> tuple[bool, str]:
             env = {**os.environ, "MARVIN_MERGE_GATE": "1"}
             import cleanup_sweep
             with cleanup_sweep.disposable_basetemp() as basetemp_args:
-                p = subprocess.run([VENV_PYTHON, "-m", "pytest", "-q", "-p", "no:cacheprovider", *basetemp_args], cwd=cwd, env=env,
-                                   capture_output=True, text=True, timeout=TEST_TIMEOUT_S)
-            if p.returncode != 0:
-                return False, p.stdout[-1500:]
+                returncode, output = evidence_capture.run_timed([VENV_PYTHON, "-m", "pytest", "-q", "-p", "no:cacheprovider", *basetemp_args],
+                                                                cwd=cwd, env=env, timeout_s=TEST_TIMEOUT_S, slot_wait_cap_s=CONFLICT_REPAIR_SLOT_WAIT_CAP_S)
+            if returncode != 0:
+                return False, output[-1500:]
             if any(f.startswith("dashboard/") for f in changed):
                 dash = Path(cwd) / "dashboard"
                 import node_modules_seed  # #687: seeded from the cache, so the install writes almost nothing
-                p = node_modules_seed.npm_install(dash, ["npm", "install", "--no-audit", "--no-fund"],
-                                                  capture_output=True, text=True, timeout=TEST_TIMEOUT_S)
-                if p.returncode != 0:
-                    return False, (p.stdout + p.stderr)[-1500:]
-                p = subprocess.run(["npx", "vitest", "run"], cwd=dash, capture_output=True, text=True, timeout=TEST_TIMEOUT_S)
-                if p.returncode != 0:
-                    return False, (p.stdout + p.stderr)[-1500:]
+                returncode, output = evidence_capture.run_timed(["npm", "install", "--no-audit", "--no-fund"],
+                                                                cwd=dash, timeout_s=TEST_TIMEOUT_S, slot_wait_cap_s=CONFLICT_REPAIR_SLOT_WAIT_CAP_S)
+                if returncode != 0:
+                    return False, output[-1500:]
+                returncode, output = evidence_capture.run_timed(["npx", "vitest", "run"], cwd=dash, timeout_s=TEST_TIMEOUT_S, slot_wait_cap_s=CONFLICT_REPAIR_SLOT_WAIT_CAP_S)
+                if returncode != 0:
+                    return False, output[-1500:]
             return True, ""
-        p = subprocess.run([VENV_PYTHON, str(HOME / ".agents" / "lib" / "project_profile.py"), "verify", repo, cwd],
-                           capture_output=True, text=True, timeout=TEST_TIMEOUT_S)
-        return p.returncode == 0, (p.stdout + p.stderr)[-1500:]
-    except (subprocess.SubprocessError, OSError) as e:
+        returncode, output = evidence_capture.run_timed([VENV_PYTHON, str(HOME / ".agents" / "lib" / "project_profile.py"), "verify", repo, cwd],
+                                                        timeout_s=TEST_TIMEOUT_S, slot_wait_cap_s=CONFLICT_REPAIR_SLOT_WAIT_CAP_S)
+        return returncode == 0, output[-1500:]
+    except (evidence_capture.TestTimedOut, evidence_capture.SlotWaitTimedOut, subprocess.SubprocessError, OSError) as e:
         return False, str(e)
 
 
@@ -241,7 +244,10 @@ def repair(repo: str, head: str, clone: str, base: str, run_tests=default_tests,
                 else:
                     return {"outcome": "rebuild", "files": real_files, "reason": resolved.get("reason", ""), "cost_usd": 0.0}
         changed = [l for l in _git(wt, "diff", "--name-only", f"origin/{base}", "HEAD").stdout.splitlines() if l]
-        ok, out = run_tests(repo, wt, changed)
+        try:
+            ok, out = run_tests(repo, wt, changed)
+        except evidence_capture.SlotWaitTimedOut as e:
+            return {"outcome": "later", "reason": str(e), "cost_usd": model_cost}
         if not ok:
             return {"outcome": "rebuild", "files": files, "reason": f"tests fail after resolving the conflict:\n{out[-800:]}", "cost_usd": model_cost}
         push = _git(wt, "push", "-q", f"--force-with-lease={head}:{old}", "origin", f"HEAD:{head}", check=False)
@@ -253,6 +259,8 @@ def repair(repo: str, head: str, clone: str, base: str, run_tests=default_tests,
             kinds.insert(0, "model-assisted resolution of genuine conflicts")
         detail = "; ".join(k for k in kinds if k) or "it rebased cleanly"
         return {"outcome": "repaired", "detail": f"{detail}. Tests pass on the rebased branch.", "cost_usd": model_cost}
+    except evidence_capture.SlotWaitTimedOut as e:
+        return {"outcome": "later", "reason": str(e), "cost_usd": model_cost}
     except (subprocess.SubprocessError, OSError) as e:
         return {"outcome": "rebuild", "files": files, "reason": f"repair could not run: {e}", "cost_usd": model_cost}
     finally:
@@ -277,8 +285,9 @@ def _save(state: dict, path: Path) -> None:
 
 
 class Budget:
-    def __init__(self, n: int = MAX_PER_SCAN):
+    def __init__(self, n: int = MAX_PER_SCAN, max_seconds: float | None = None):
         self.left = n
+        self.deadline = time.monotonic() + max_seconds if max_seconds is not None else None
 
 
 def attempt(repo: str, pr: dict, budget: Budget, state_path: Path | None = None, do_repair=repair) -> dict:
@@ -294,7 +303,7 @@ def attempt(repo: str, pr: dict, budget: Budget, state_path: Path | None = None,
     if sha and state.get(key, {}).get("failed_sha") == sha:
         prev = state[key]
         return {"outcome": "rebuild", "files": prev.get("files", []), "reason": prev.get("reason", ""), "cost_usd": 0.0}
-    if budget.left <= 0:
+    if budget.left <= 0 or (budget.deadline is not None and time.monotonic() >= budget.deadline):
         return {"outcome": "later", "cost_usd": 0.0}
     budget.left -= 1
     res = do_repair(repo, head, clone, base, pr=pr)

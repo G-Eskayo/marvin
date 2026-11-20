@@ -226,8 +226,8 @@ def _parked() -> str:
         return f"skipped ({str(exc)[:120]})"
 
 
-def _requeue_all(repos) -> list[str]:
-    return [f"{r.split('/')[-1]}#{n}" for r in repos for n in _requeue_conflicted_prs(r)]
+def _requeue_all(repos, timings: list | None = None) -> list[str]:
+    return [f"{r.split('/')[-1]}#{n}" for r in repos for n in _requeue_conflicted_prs(r, timings)]
 
 _CLOSES = __import__("re").compile(r"Closes\s+(?:[\w.-]+/[\w.-]+)?#(\d+)")
 
@@ -246,6 +246,7 @@ def _failing_checks(rollup) -> list[str]:
 
 
 _REPAIR_BUDGET = None
+CONFLICTED_PRS_STEP_BUDGET_S = 10 * 60
 FLAGGED_PATH = Path.home() / ".claude" / "logs" / "conflict-flagged.json"
 
 
@@ -267,7 +268,7 @@ def _try_conflict_repair(repo: str, pr: dict) -> dict:
     global _REPAIR_BUDGET
     import conflict_repair
     if _REPAIR_BUDGET is None:
-        _REPAIR_BUDGET = conflict_repair.Budget()
+        _REPAIR_BUDGET = conflict_repair.Budget(max_seconds=CONFLICTED_PRS_STEP_BUDGET_S)
     try:
         def resolve_hunks(scratch_dir, prompt):
             return _resolve_hunks_with_model(scratch_dir, prompt)
@@ -318,7 +319,7 @@ def _still_needs_sending_back(gh, repo: str, pr: dict, red: list) -> bool:
     return cur.get("mergeable") == "CONFLICTING"
 
 
-def _requeue_conflicted_prs(repo: str) -> list[int]:
+def _requeue_conflicted_prs(repo: str, timings: list | None = None) -> list[int]:
     """A PR that GitHub says CONFLICTS with its base can never be merged as it stands, and the first anyone
     learned was a human clicking Approve (finance-os #9, clarity #48). So the pipeline sends the ticket back
     by itself: label `needs-reengagement` + a comment saying why, and the existing sent-back loop rebuilds it
@@ -351,7 +352,11 @@ def _requeue_conflicted_prs(repo: str) -> list[int]:
             # Already sent back, but its PR still conflicts: the rebuild hasn't happened (#257 sat 12 hours, still
             # claimed). A repair makes the rebuild unnecessary; anything else stays the sent-back loop's business.
             if not red and pr.get("mergeable") == "CONFLICTING":
+                start = time.time()
                 fix = _try_conflict_repair(repo, pr)
+                elapsed = time.time() - start
+                if timings is not None:
+                    timings.append((repo, pr["number"], elapsed, fix["outcome"]))
                 ts.record_stage(n, "gate", "passed" if fix["outcome"] == "repaired" else "failed",
                                detail=fix.get("detail", fix.get("reason", "")),
                                cost_usd=fix.get("cost_usd", 0.0), repo=repo)
@@ -365,7 +370,11 @@ def _requeue_conflicted_prs(repo: str) -> list[int]:
         files: list[str] = []
         if not red:
             # A conflict: try the cheap fix first (2026-10-09, #314). Most are two PRs appending to the same file.
+            start = time.time()
             fix = _try_conflict_repair(repo, pr)
+            elapsed = time.time() - start
+            if timings is not None:
+                timings.append((repo, pr["number"], elapsed, fix["outcome"]))
             ts.record_stage(n, "gate", "passed" if fix["outcome"] == "repaired" else "failed",
                            detail=fix.get("detail", fix.get("reason", "")),
                            cost_usd=fix.get("cost_usd", 0.0), repo=repo)
@@ -935,8 +944,14 @@ def _scan(run, dry_run: bool) -> str | None:
     if not dry_run:
         _background_checks()
         step("Conflicted PRs", "sending back PRs that no longer merge")
-        sent = _requeue_all([REPO, *pp.runnable_repos()])
-        step("Conflicted PRs", ", ".join(sent) + " sent back" if sent else "none")
+        timings: list = []
+        sent = _requeue_all([REPO, *pp.runnable_repos()], timings)
+        detail = ", ".join(sent) + " sent back" if sent else "none"
+        if timings:
+            total_s = sum(t[2] for t in timings)
+            slowest = max(timings, key=lambda t: t[2])
+            detail += f"; {len(timings)} repairs, {total_s:.0f}s total, slowest {slowest[0]}#{slowest[1]} {slowest[2]:.0f}s ({slowest[3]})"
+        step("Conflicted PRs", detail)
         step("Owner decisions", "PRs whose owner decisions went unanswered (#607)")
         step("Owner decisions", _owner_decisions())
         step("Parked choices", "choices parked on the owner whose review-by passed (#1222)")

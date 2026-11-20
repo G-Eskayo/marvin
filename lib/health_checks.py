@@ -150,6 +150,45 @@ def check_dispatch_lock(state_path: Path | None = None) -> dict:
     return _result(cid, label, "green", f"busy {age_min:.0f}min on '{task}' — normal range", value=age_min)
 
 
+# ── ticket pipeline scan duration ────────────────────────────────────
+
+SCAN_DURATION_YELLOW_MINUTES = 15
+
+
+def check_scan_duration(jobs_dir: Path | None = None) -> dict:
+    """The hourly scan: yellow if running >15 minutes, showing the current step."""
+    import job_events
+    cid = "pipeline:scan-duration"
+    label = "Ticket pipeline scan duration"
+    path = jobs_dir or job_events.JOBS_DIR
+    job_file = path / "ticket-pipeline.json"
+    if not job_file.exists():
+        return _result(cid, label, "green", "no runs yet (idle)")
+    try:
+        doc = json.loads(job_file.read_text())
+    except (OSError, ValueError):
+        return _unknown(cid, label, "ticket-pipeline.json unreadable")
+    runs = doc.get("runs", [])
+    if not runs:
+        return _result(cid, label, "green", "no runs yet (idle)")
+    current = runs[-1]
+    if current.get("status") != "running":
+        return _result(cid, label, "green", f"last run {current.get('status')}")
+    started_at = current.get("started_at")
+    if not started_at:
+        return _result(cid, label, "yellow", "running with no started_at timestamp")
+    try:
+        started = datetime.fromisoformat(started_at)
+    except ValueError:
+        return _result(cid, label, "yellow", f"unparseable started_at: {started_at}")
+    elapsed_min = (_now() - started).total_seconds() / 60
+    steps = current.get("steps", [])
+    current_step = steps[-1]["step"] if steps else "unknown"
+    if elapsed_min >= SCAN_DURATION_YELLOW_MINUTES:
+        return _result(cid, label, "yellow", f"running {elapsed_min:.0f}min, currently on '{current_step}'", value=elapsed_min)
+    return _result(cid, label, "green", f"running {elapsed_min:.0f}min on '{current_step}'", value=elapsed_min)
+
+
 # ── cron jobs (absorbed from cron_health.py -- literally the same
 # check_job() + persistent offset-tracking state, not a reimplementation,
 # per ADR 0033. Reimplementing the log-scan naively (whole-tail regex, no
@@ -1802,6 +1841,7 @@ def default_checks(reach: dict[str, str] | None = None, reach_results: list[dict
         ("route:intent-routing-collection", "route.py embedding classifier (ChromaDB)", check_intent_routing_collection, CHECK_BUDGET_S),
         ("dispatch:lock-age", "Local dispatch lock", check_dispatch_lock, CHECK_BUDGET_S),
         ("pipeline:breaker", "Ticket pipeline circuit breaker", lambda: check_pipeline_breaker(reach), CROSS_MACHINE_BUDGET_S),
+        ("pipeline:scan-duration", "Ticket pipeline scan duration", check_scan_duration, CHECK_BUDGET_S),
         ("sync:stuck", "Code sync", lambda: check_sync_stuck(reach), CROSS_MACHINE_BUDGET_S),
         ("sync:union-review", "Code sync: merged lines to check", check_union_merge_review, CHECK_BUDGET_S),
         ("dispatch:parallel", "Parallel dispatch keeping up", check_parallel_dispatch, CHECK_BUDGET_S),

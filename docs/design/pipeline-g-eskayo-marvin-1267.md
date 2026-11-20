@@ -1,0 +1,48 @@
+## North-star fit
+
+**Reuses:** `lib/health_checks.py:check_dispatch_lock` (the exact "injectable state path, age-based severity, name the stuck task" pattern — I'll follow it verbatim for a new `check_scan_duration`). `lib/conflict_repair.py:Budget`/`attempt()` (the existing per-scan attempt-count budget already returns `"later"` to defer work to the next scan — I extend it with a time dimension instead of inventing a second budgeting mechanism). `lib/evidence_capture.py:run_timed`/`SlotWaitTimedOut` (marvin#1113's fix that excludes test-slot wait time from a run's timeout — already used correctly by `project_profile.py:_default_runner`; `conflict_repair.default_tests` is the one caller that bypasses it with a flat `subprocess.run(timeout=...)`, which is the actual root cause of the 50-minute step). `job_events`'s existing per-step run log (already timestamped; no new persistence format needed).
+
+**Simplest sufficient approach:** the root cause isn't "the scan is structured wrong," it's one function (`conflict_repair.default_tests`) that doesn't participate in the single-test-slot queue's wait-exclusion the rest of the pipeline already honors — so the fix is wiring it in, plus a time cap, not reordering `_scan()`'s steps (which I considered and rejected: `_scan()` has early `return`s before the dispatch loop for "no ready tickets"/"no runnable repos," so moving Conflicted PRs after dispatch would silently stop it running on those scans — a regression, and it would also invalidate the existing step-order test at `lib/tests/test_ticket_pipeline.py:228`). A time-budgeted step, left in its current position, satisfies AC2's own third option without touching dispatch control flow at all.
+
+**Tokens:** spends a small, fixed amount of code (one new health check modeled on an existing one, a few new constants) to save a recurring, open-ended cost — up to an hour of stalled dispatch with 161 tickets sitting idle, as happened in the incident.
+
+**Phone-OS / capability direction:** doesn't touch the user-facing surface; it's reliability plumbing that keeps the always-on pipeline honest — a precondition for "nothing breaks silently" (north star 5), not something that makes the user more or less capable directly.
+
+**Machine:** no change — this runs wherever `ticket_pipeline.py`'s hourly scan already runs (whichever Mac is primary).
+
+## What I found (AC1, analytically — code to make this visible is below)
+
+`conflict_repair.default_tests()` runs the repair's test suite via a flat `subprocess.run(..., timeout=TEST_TIMEOUT_S)` (25 min) for all three of its branches (marvin pytest, marvin vitest, other-repo `project_profile.py verify`). But the commands it runs **do** take the shared machine test slot (`lib/test_slot.py`, #940) — marvin's own `conftest.py` grabs it for a whole-suite pytest run, `project_profile.py`'s own runner already calls `evidence_capture.run_timed` internally (#1113) specifically so slot-wait doesn't count against its budget. `default_tests`'s outer flat timeout defeats that: if the merge gate is holding the slot (as it was during the incident — "merges of the approved freshness PRs were in progress"), the subprocess just sits there for up to the full 25 minutes, counted as elapsed time, then gets killed by `subprocess.TimeoutExpired` → treated as a genuine test failure → `repair()` returns `{"outcome": "rebuild", ...}`. With `MAX_PER_SCAN = 2` repair attempts per scan, two PRs hitting this back-to-back is `2 × 25min ≈ 50min` — exactly the incident's number. Worse: a PR that failed only because the slot was busy gets sent back for a full agent rebuild it never needed.
+
+## Decisions
+
+None. The three options AC2 offers are alternatives, not a owner choice — I picked the time-budget option for the concrete, code-level reason above (reordering risks a real regression in `_scan()`'s early-return paths), and the cap values below (5 min slot-wait, 10 min total step budget) are ordinary implementation constants, not product choices.
+
+## Tests written first
+
+**From "How we'll try to break it":**
+1. A merge holds the test slot for 40 min (real `test_slot.slot(merge=True)` in a background thread/process, using the existing `slot_dir` fixture from `lib/tests/test_test_slot.py`) → a repair attempt's test run gives up within the new, tight slot-wait cap (not 25 min, not 40 min) and `repair()` returns `{"outcome": "later", ...}`, not `"rebuild"`.
+2. 10 conflicted PRs, repairs made artificially slow → once the step's wall-clock budget is spent, remaining PRs are left alone (no label edit, no comment, no `gh` mutation calls) rather than attempted or wrongly sent back; confirms the existing count budget (`MAX_PER_SCAN=2`) and the new time budget compose (whichever trips first wins).
+3. GitHub rate-limited mid-step → already covered by the existing `test_a_gh_failure_is_swallowed_not_fatal`; confirmed unaffected by this change, no new test needed.
+
+**Misuse the section didn't name:**
+4. `Budget(max_seconds=0)` / a deadline already in the past at construction → `attempt()` returns `"later"` immediately, never calls `do_repair`.
+5. A genuine (non-slot) test timeout — tests that are just slow, slot free — still returns `"rebuild"` (unchanged existing behavior; confirms I didn't conflate the two timeout causes).
+6. `check_scan_duration`: no jobs file yet (fresh install) → green, not red/unknown. Malformed/non-JSON jobs file → `_unknown`, not a crash. Run doc present but `steps` empty → names "starting up" instead of raising `IndexError`. `started_at` missing/unparseable → yellow "can't judge age" (mirrors `check_dispatch_lock`'s existing handling for the same malformed-timestamp case). Latest run already finished (`status != "running"`) → green, never stale-flagged as still running.
+7. Real end-to-end: hold the slot for real via `test_slot.py hold --merge`, run `conflict_repair.default_tests` against a real tiny repo, assert it returns within the cap — not a mocked `run_timed`, so the wiring itself (not just the idea of it) is verified.
+
+**Existing coverage reused, not duplicated:** `test_budget_and_memory`, `test_no_clone_here_means_no_repair`, `test_a_crash_inside_repair_still_falls_back_to_a_rebuild`, the step-order assertion at `test_ticket_pipeline.py:228` (must still pass unchanged — confirms I didn't reorder `_scan()`).
+
+## Task List
+
+1. `lib/conflict_repair.py`: add `import time` and `import evidence_capture`; add `CONFLICT_REPAIR_SLOT_WAIT_CAP_S = 5 * 60` (tight — this runs inside the hourly scan, not a ticket build that can tolerate evidence_capture's own 7200s default).
+2. `lib/conflict_repair.py`: rewrite `default_tests()`'s three subprocess calls (marvin pytest, marvin vitest, other-repo `verify`) to go through `evidence_capture.run_timed(..., timeout_s=TEST_TIMEOUT_S, slot_wait_cap_s=CONFLICT_REPAIR_SLOT_WAIT_CAP_S)` instead of raw `subprocess.run(timeout=...)`; adapt to its `(returncode, output)` return shape. Let `SlotWaitTimedOut`/`TestTimedOut` propagate (don't swallow them in the existing `except (subprocess.SubprocessError, OSError)`).
+3. `lib/conflict_repair.py`: in `repair()`, wrap the `run_tests(...)` call to catch `evidence_capture.SlotWaitTimedOut` specifically and return `{"outcome": "later", "reason": str(e), "cost_usd": model_cost}` (a busy machine is not the PR's fault — don't send it back).
+4. `lib/conflict_repair.py`: extend `Budget.__init__` with an optional `max_seconds: float | None = None`, storing a monotonic `deadline`; `attempt()` checks it alongside the existing `budget.left <= 0` check and returns `"later"` without decrementing `left` or calling `do_repair`.
+5. `lib/ticket_pipeline.py`: add `CONFLICTED_PRS_STEP_BUDGET_S = 10 * 60`; pass `max_seconds=CONFLICTED_PRS_STEP_BUDGET_S` when `_try_conflict_repair` lazily constructs `_REPAIR_BUDGET`.
+6. `lib/ticket_pipeline.py`: add an optional `timings: list | None = None` parameter to `_requeue_conflicted_prs` (default `None` — zero change to its existing `list[int]` return contract or any of its ~15 existing callers/tests); when provided, append `(repo, pr_number, elapsed_s, outcome)` around both `_try_conflict_repair` call sites (the `needs-reengagement` branch and the main branch), and log each attempt's elapsed time to stderr.
+7. `lib/ticket_pipeline.py`: thread `timings` through `_requeue_all`; in `_scan()`, collect it and fold a summary (count, total seconds, slowest PR) into the existing `step("Conflicted PRs", ...)` detail string — this is what AC1 makes visible in the dashboard instead of requiring a raw log read.
+8. `lib/health_checks.py`: add `check_scan_duration(jobs_dir: Path | None = None)` modeled on `check_dispatch_lock` — reads `~/.claude/logs/jobs/ticket-pipeline.json` (via `job_events.JOBS_DIR` by default), green if idle/no runs yet, `_unknown` if unreadable, yellow once the current run has been "running" for >15 min, naming the step currently open (`steps[-1]["step"]`).
+9. `lib/health_checks.py`: register it in `default_checks()` as `("pipeline:scan-duration", "Ticket pipeline scan duration", check_scan_duration, CHECK_BUDGET_S)`, next to the existing `pipeline:breaker` entry.
+10. Write the tests listed above in `lib/tests/test_conflict_repair.py` (items 1, 4, 5, 7) and `lib/tests/test_ticket_pipeline.py` (item 2, plus a timings-collection test) and `lib/tests/test_health_checks.py` (item 6), before each corresponding implementation change.
+11. Run the full `pytest` suite (not just the touched files) before considering this done, per the repo's "full suites before a hand-merge" rule — this change touches a shared budget/timeout primitive several other callers rely on.
