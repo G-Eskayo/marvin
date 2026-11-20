@@ -36,6 +36,7 @@ STATE_PATH = HOME / ".claude" / "logs" / "conflict-repair.json"
 VENV_PYTHON = str(HOME / ".agents" / "venv" / "bin" / "python")
 MAX_PER_SCAN = 2
 TEST_TIMEOUT_S = 25 * 60
+CONFLICT_REPAIR_SLOT_WAIT_CAP_S = 120  # short cap: conflict repairs are low-priority and should not wait long for the test slot
 
 
 def _git(cwd, *args, check=True, timeout=300):
@@ -109,17 +110,25 @@ def _other_pr(wt: str, base: str, path: str, hunk_start: int, hunk_end: int) -> 
         return None
 
 
+def _run_timed_test(cmd: list[str], cwd: str, env: dict | None = None, timeout_s: float = TEST_TIMEOUT_S) -> tuple[int, str]:
+    """Run a test command through evidence_capture.run_timed with conflict repair's short slot-wait cap.
+    Raises SlotWaitTimedOut or TestTimedOut on timeout/slot-wait breach."""
+    import evidence_capture
+    return evidence_capture.run_timed(cmd, cwd=cwd, env=env, timeout_s=timeout_s, slot_wait_cap_s=CONFLICT_REPAIR_SLOT_WAIT_CAP_S)
+
+
 def default_tests(repo: str, cwd: str, changed: list[str]) -> tuple[bool, str]:
-    """The merge gate's tests: marvin = pytest (+ vitest when the PR touches dashboard/); others = their profile's verify."""
+    """The merge gate's tests: marvin = pytest (+ vitest when the PR touches dashboard/); others = their profile's verify.
+    Routes through evidence_capture.run_timed with a short slot-wait cap so conflict repairs don't block on a busy slot."""
+    import evidence_capture
     try:
         if repo.lower() == MARVIN.lower():
             env = {**os.environ, "MARVIN_MERGE_GATE": "1"}
             import cleanup_sweep
             with cleanup_sweep.disposable_basetemp() as basetemp_args:
-                p = subprocess.run([VENV_PYTHON, "-m", "pytest", "-q", "-p", "no:cacheprovider", *basetemp_args], cwd=cwd, env=env,
-                                   capture_output=True, text=True, timeout=TEST_TIMEOUT_S)
-            if p.returncode != 0:
-                return False, p.stdout[-1500:]
+                returncode, output = _run_timed_test([VENV_PYTHON, "-m", "pytest", "-q", "-p", "no:cacheprovider", *basetemp_args], cwd=cwd, env=env, timeout_s=TEST_TIMEOUT_S)
+            if returncode != 0:
+                return False, output[-1500:]
             if any(f.startswith("dashboard/") for f in changed):
                 dash = Path(cwd) / "dashboard"
                 import node_modules_seed  # #687: seeded from the cache, so the install writes almost nothing
@@ -127,13 +136,18 @@ def default_tests(repo: str, cwd: str, changed: list[str]) -> tuple[bool, str]:
                                                   capture_output=True, text=True, timeout=TEST_TIMEOUT_S)
                 if p.returncode != 0:
                     return False, (p.stdout + p.stderr)[-1500:]
-                p = subprocess.run(["npx", "vitest", "run"], cwd=dash, capture_output=True, text=True, timeout=TEST_TIMEOUT_S)
-                if p.returncode != 0:
-                    return False, (p.stdout + p.stderr)[-1500:]
+                returncode, output = _run_timed_test(["npx", "vitest", "run"], cwd=dash, timeout_s=TEST_TIMEOUT_S)
+                if returncode != 0:
+                    return False, output[-1500:]
             return True, ""
-        p = subprocess.run([VENV_PYTHON, str(HOME / ".agents" / "lib" / "project_profile.py"), "verify", repo, cwd],
-                           capture_output=True, text=True, timeout=TEST_TIMEOUT_S)
-        return p.returncode == 0, (p.stdout + p.stderr)[-1500:]
+        returncode, output = _run_timed_test([VENV_PYTHON, str(HOME / ".agents" / "lib" / "project_profile.py"), "verify", repo, cwd], cwd=cwd, timeout_s=TEST_TIMEOUT_S)
+        return returncode == 0, output[-1500:]
+    except evidence_capture.SlotWaitTimedOut as e:
+        # Slot wait exceeded: signal "try again later" via a special exception that repair() will catch
+        raise
+    except evidence_capture.TestTimedOut as e:
+        # Test suite itself timed out: signal test failure
+        return False, str(e)
     except (subprocess.SubprocessError, OSError) as e:
         return False, str(e)
 
@@ -241,7 +255,15 @@ def repair(repo: str, head: str, clone: str, base: str, run_tests=default_tests,
                 else:
                     return {"outcome": "rebuild", "files": real_files, "reason": resolved.get("reason", ""), "cost_usd": 0.0}
         changed = [l for l in _git(wt, "diff", "--name-only", f"origin/{base}", "HEAD").stdout.splitlines() if l]
-        ok, out = run_tests(repo, wt, changed)
+        try:
+            ok, out = run_tests(repo, wt, changed)
+        except Exception as e:  # catch SlotWaitTimedOut or TestTimedOut from run_tests
+            import evidence_capture
+            if isinstance(e, evidence_capture.SlotWaitTimedOut):
+                return {"outcome": "later", "reason": f"test slot was busy (conflict repair is low-priority): {e}", "cost_usd": model_cost}
+            elif isinstance(e, evidence_capture.TestTimedOut):
+                return {"outcome": "rebuild", "files": files, "reason": f"tests timed out: {e}", "cost_usd": model_cost}
+            raise
         if not ok:
             return {"outcome": "rebuild", "files": files, "reason": f"tests fail after resolving the conflict:\n{out[-800:]}", "cost_usd": model_cost}
         push = _git(wt, "push", "-q", f"--force-with-lease={head}:{old}", "origin", f"HEAD:{head}", check=False)

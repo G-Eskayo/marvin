@@ -422,6 +422,73 @@ def check_pipeline_breaker(reachability: dict[str, str] | None = None, remote=No
     return _result(cid, label, "red", detail, value=len(trips))
 
 
+SLOW_SCAN_YELLOW_MIN = 10  # scan takes 10+ min: getting slow
+SLOW_SCAN_RED_MIN = 15     # scan takes 15+ min: too slow, blocks other work
+
+
+def check_pipeline_scan_speed(now: datetime | None = None) -> dict:
+    """The hourly ticket pipeline scan must complete within reasonable bounds. Yellow if >10 min, red if >15 min.
+    Shows which step took the longest to help diagnose performance regressions."""
+    cid, label = "pipeline:slow-scan", "Ticket pipeline scan time"
+    now = now or _now()
+
+    try:
+        import job_events
+        jobs_dir = job_events.JOBS_DIR
+        pipeline_log = jobs_dir / "ticket-pipeline.json"
+        if not pipeline_log.exists():
+            return _result(cid, label, "green", "no scan history yet")
+
+        data = json.loads(pipeline_log.read_text())
+        runs = data.get("runs", [])
+        if not runs:
+            return _result(cid, label, "green", "no scan history yet")
+
+        last_run = runs[-1]
+        started = datetime.fromisoformat(last_run.get("started_at", ""))
+
+        is_running = last_run.get("status") == "running"
+        if is_running:
+            elapsed_s = (now - started).total_seconds()
+            finished = now
+        else:
+            finished = datetime.fromisoformat(last_run.get("finished_at", ""))
+            elapsed_s = (finished - started).total_seconds()
+
+        elapsed_min = elapsed_s / 60
+
+        # Find the slowest step
+        steps = last_run.get("steps", [])
+        step_times = []
+        for i, step in enumerate(steps):
+            step_start = datetime.fromisoformat(step.get("at", ""))
+            if i + 1 < len(steps):
+                step_end = datetime.fromisoformat(steps[i + 1].get("at", ""))
+            else:
+                step_end = finished
+            step_elapsed = (step_end - step_start).total_seconds()
+            step_times.append((step.get("step", "?"), step_elapsed))
+
+        slowest = max(step_times, key=lambda x: x[1]) if step_times else ("?", 0)
+
+        status_prefix = "scan running" if is_running else "scan took"
+
+        if elapsed_min >= SLOW_SCAN_RED_MIN:
+            detail = f"{status_prefix} {elapsed_min:.1f}min, slowest step: {slowest[0]} ({slowest[1]:.0f}s)"
+            return _result(cid, label, "red", detail, value=round(elapsed_min, 1))
+        elif elapsed_min >= SLOW_SCAN_YELLOW_MIN:
+            detail = f"{status_prefix} {elapsed_min:.1f}min, slowest step: {slowest[0]} ({slowest[1]:.0f}s)"
+            return _result(cid, label, "yellow", detail, value=round(elapsed_min, 1))
+        else:
+            if is_running:
+                detail = f"scan running, {elapsed_min:.1f}min so far"
+            else:
+                detail = f"scan took {elapsed_min:.1f}min, slowest step: {slowest[0]} ({slowest[1]:.0f}s)"
+            return _result(cid, label, "green", detail, value=round(elapsed_min, 1))
+    except Exception as e:
+        return _result(cid, label, "yellow", f"could not read scan log: {type(e).__name__}")
+
+
 CATALOG_YELLOW_AFTER_HOURS = 3
 CATALOG_RED_AFTER_HOURS = 24
 
@@ -1802,6 +1869,7 @@ def default_checks(reach: dict[str, str] | None = None, reach_results: list[dict
         ("route:intent-routing-collection", "route.py embedding classifier (ChromaDB)", check_intent_routing_collection, CHECK_BUDGET_S),
         ("dispatch:lock-age", "Local dispatch lock", check_dispatch_lock, CHECK_BUDGET_S),
         ("pipeline:breaker", "Ticket pipeline circuit breaker", lambda: check_pipeline_breaker(reach), CROSS_MACHINE_BUDGET_S),
+        ("pipeline:slow-scan", "Ticket pipeline scan time", check_pipeline_scan_speed, CHECK_BUDGET_S),
         ("sync:stuck", "Code sync", lambda: check_sync_stuck(reach), CROSS_MACHINE_BUDGET_S),
         ("sync:union-review", "Code sync: merged lines to check", check_union_merge_review, CHECK_BUDGET_S),
         ("dispatch:parallel", "Parallel dispatch keeping up", check_parallel_dispatch, CHECK_BUDGET_S),

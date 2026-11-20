@@ -1693,3 +1693,195 @@ def test_react_to_accounts_summarises_and_never_raises():
 def test_the_health_sweep_entry_point_runs_the_accounts_check():
     import inspect
     assert "react_to_accounts()" in inspect.getsource(hc._cli)
+
+
+# ── pipeline scan speed (slow scans blocking other work) ──────────────────
+
+def test_check_pipeline_scan_speed_green_with_no_history(tmp_path, monkeypatch):
+    import job_events
+    monkeypatch.setattr(job_events, "JOBS_DIR", tmp_path)
+    result = hc.check_pipeline_scan_speed()
+    assert result["severity"] == "green"
+    assert "no scan history" in result["detail"]
+
+
+def test_check_pipeline_scan_speed_reports_completed_slow_scan_as_red(tmp_path, monkeypatch):
+    import job_events
+    monkeypatch.setattr(job_events, "JOBS_DIR", tmp_path)
+
+    now = datetime.now(timezone.utc)
+    started = (now - timedelta(minutes=16)).isoformat()
+    finished = now.isoformat()
+
+    log_data = {
+        "runs": [{
+            "status": "passed",
+            "started_at": started,
+            "finished_at": finished,
+            "steps": [
+                {"step": "Conflicted PRs", "at": started},
+                {"step": "Other", "at": (now - timedelta(minutes=1)).isoformat()},
+            ]
+        }]
+    }
+    (tmp_path / "ticket-pipeline.json").write_text(json.dumps(log_data))
+
+    result = hc.check_pipeline_scan_speed(now=now)
+    assert result["severity"] == "red"
+    assert "16.0min" in result["detail"]
+    assert "Conflicted PRs" in result["detail"]
+
+
+def test_check_pipeline_scan_speed_reports_running_scan_over_threshold_as_red(tmp_path, monkeypatch):
+    """A scan stuck in progress for >15 min should go red, not yellow."""
+    import job_events
+    monkeypatch.setattr(job_events, "JOBS_DIR", tmp_path)
+
+    now = datetime.now(timezone.utc)
+    started = (now - timedelta(minutes=16)).isoformat()
+
+    log_data = {
+        "runs": [{
+            "status": "running",
+            "started_at": started,
+            "steps": [
+                {"step": "Conflicted PRs", "at": started},
+                {"step": "Other", "at": (now - timedelta(minutes=1)).isoformat()},
+            ]
+        }]
+    }
+    (tmp_path / "ticket-pipeline.json").write_text(json.dumps(log_data))
+
+    result = hc.check_pipeline_scan_speed(now=now)
+    assert result["severity"] == "red"
+    assert "scan running" in result["detail"]
+    assert "16.0min" in result["detail"]
+    assert "Conflicted PRs" in result["detail"]
+
+
+def test_check_pipeline_scan_speed_reports_running_scan_between_thresholds_as_yellow(tmp_path, monkeypatch):
+    """A scan running for 10-15 min should go yellow."""
+    import job_events
+    monkeypatch.setattr(job_events, "JOBS_DIR", tmp_path)
+
+    now = datetime.now(timezone.utc)
+    started = (now - timedelta(minutes=12)).isoformat()
+
+    log_data = {
+        "runs": [{
+            "status": "running",
+            "started_at": started,
+            "steps": [
+                {"step": "Conflicted PRs", "at": started},
+            ]
+        }]
+    }
+    (tmp_path / "ticket-pipeline.json").write_text(json.dumps(log_data))
+
+    result = hc.check_pipeline_scan_speed(now=now)
+    assert result["severity"] == "yellow"
+    assert "scan running" in result["detail"]
+    assert "12.0min" in result["detail"]
+
+
+def test_check_pipeline_scan_speed_reports_running_scan_under_threshold_as_green(tmp_path, monkeypatch):
+    """A scan running for <10 min should stay green."""
+    import job_events
+    monkeypatch.setattr(job_events, "JOBS_DIR", tmp_path)
+
+    now = datetime.now(timezone.utc)
+    started = (now - timedelta(minutes=5)).isoformat()
+
+    log_data = {
+        "runs": [{
+            "status": "running",
+            "started_at": started,
+            "steps": [
+                {"step": "Conflicted PRs", "at": started},
+            ]
+        }]
+    }
+    (tmp_path / "ticket-pipeline.json").write_text(json.dumps(log_data))
+
+    result = hc.check_pipeline_scan_speed(now=now)
+    assert result["severity"] == "green"
+    assert "scan running" in result["detail"]
+    assert "5.0min" in result["detail"]
+
+
+def test_check_pipeline_scan_speed_fails_open_with_naive_timestamps(tmp_path, monkeypatch):
+    """Naive timestamps in JSON cause TypeError when compared with aware now. Should fail gracefully."""
+    import job_events
+    monkeypatch.setattr(job_events, "JOBS_DIR", tmp_path)
+
+    now = datetime.now(timezone.utc)
+    # Naive timestamp (no timezone) — will cause TypeError on subtraction
+    naive_started = datetime.now().isoformat()
+
+    log_data = {
+        "runs": [{
+            "status": "running",
+            "started_at": naive_started,
+            "steps": [
+                {"step": "Conflicted PRs", "at": naive_started},
+            ]
+        }]
+    }
+    (tmp_path / "ticket-pipeline.json").write_text(json.dumps(log_data))
+
+    result = hc.check_pipeline_scan_speed(now=now)
+    # Should fail gracefully (yellow) instead of crashing
+    assert result["severity"] == "yellow"
+    assert "could not read scan log" in result["detail"]
+
+
+def test_check_pipeline_scan_speed_fails_open_with_non_dict_data(tmp_path, monkeypatch):
+    """Non-dict data in JSON causes AttributeError. Should fail gracefully."""
+    import job_events
+    monkeypatch.setattr(job_events, "JOBS_DIR", tmp_path)
+
+    # Write invalid JSON structure — a list instead of a dict
+    (tmp_path / "ticket-pipeline.json").write_text(json.dumps([]))
+
+    result = hc.check_pipeline_scan_speed()
+    # Should fail gracefully (yellow) instead of crashing
+    assert result["severity"] == "yellow"
+    assert "could not read scan log" in result["detail"]
+
+
+def test_check_pipeline_scan_speed_fails_open_with_non_dict_last_run(tmp_path, monkeypatch):
+    """Non-dict last_run entry causes AttributeError. Should fail gracefully."""
+    import job_events
+    monkeypatch.setattr(job_events, "JOBS_DIR", tmp_path)
+
+    # Valid outer structure but last_run is not a dict
+    log_data = {"runs": ["not a dict"]}
+    (tmp_path / "ticket-pipeline.json").write_text(json.dumps(log_data))
+
+    result = hc.check_pipeline_scan_speed()
+    # Should fail gracefully (yellow) instead of crashing
+    assert result["severity"] == "yellow"
+    assert "could not read scan log" in result["detail"]
+
+
+def test_check_pipeline_scan_speed_fails_open_with_non_dict_step(tmp_path, monkeypatch):
+    """Non-dict step entry causes AttributeError. Should fail gracefully."""
+    import job_events
+    monkeypatch.setattr(job_events, "JOBS_DIR", tmp_path)
+
+    now = datetime.now(timezone.utc)
+    started = (now - timedelta(minutes=5)).isoformat()
+
+    log_data = {
+        "runs": [{
+            "status": "running",
+            "started_at": started,
+            "steps": ["not a dict"]  # Invalid step format
+        }]
+    }
+    (tmp_path / "ticket-pipeline.json").write_text(json.dumps(log_data))
+
+    result = hc.check_pipeline_scan_speed(now=now)
+    # Should fail gracefully (yellow) instead of crashing
+    assert result["severity"] == "yellow"
+    assert "could not read scan log" in result["detail"]

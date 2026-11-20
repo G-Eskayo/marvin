@@ -226,8 +226,19 @@ def _parked() -> str:
         return f"skipped ({str(exc)[:120]})"
 
 
+CONFLICTED_PRS_STEP_BUDGET_S = 300  # max 5 minutes per scan for all conflicted PR work (scanning + repair + send-back)
+
+
 def _requeue_all(repos) -> list[str]:
-    return [f"{r.split('/')[-1]}#{n}" for r in repos for n in _requeue_conflicted_prs(r)]
+    """Process all conflicted PRs across all repos with a wall-clock budget."""
+    start = time.monotonic()
+    result = []
+    for r in repos:
+        elapsed = time.monotonic() - start
+        if elapsed >= CONFLICTED_PRS_STEP_BUDGET_S:
+            break  # out of time for this scan; the next scan will process remaining PRs
+        result.extend(f"{r.split('/')[-1]}#{n}" for n in _requeue_conflicted_prs(r, start_time=start))
+    return result
 
 _CLOSES = __import__("re").compile(r"Closes\s+(?:[\w.-]+/[\w.-]+)?#(\d+)")
 
@@ -318,13 +329,14 @@ def _still_needs_sending_back(gh, repo: str, pr: dict, red: list) -> bool:
     return cur.get("mergeable") == "CONFLICTING"
 
 
-def _requeue_conflicted_prs(repo: str) -> list[int]:
+def _requeue_conflicted_prs(repo: str, start_time: float | None = None) -> list[int]:
     """A PR that GitHub says CONFLICTS with its base can never be merged as it stands, and the first anyone
     learned was a human clicking Approve (finance-os #9, clarity #48). So the pipeline sends the ticket back
     by itself: label `needs-reengagement` + a comment saying why, and the existing sent-back loop rebuilds it
     on the current main. Tickets already sent back, protected by `pinned`/`held`, or with a person
     (ticket_policy.NEEDS_PERSON_LABELS) are left alone, and any
     gh failure just means 'try again next scan'."""
+    import job_events
     def gh(*args):
         return subprocess.run(["gh", *args], capture_output=True, text=True, timeout=30)
 
@@ -339,6 +351,11 @@ def _requeue_conflicted_prs(repo: str) -> list[int]:
         return []
     sent: list[int] = []
     for pr in pr_list:
+        # Check wall-clock budget before attempting repairs (which are the slow operations)
+        if start_time is not None:
+            elapsed = time.monotonic() - start_time
+            if elapsed >= CONFLICTED_PRS_STEP_BUDGET_S:
+                break  # out of time for this repo; next scan will process remaining PRs
         m = _CLOSES.search(pr.get("body") or "")
         red = _failing_checks(pr.get("statusCheckRollup"))
         if not m or not (pr.get("mergeable") == "CONFLICTING" or red):
@@ -347,6 +364,11 @@ def _requeue_conflicted_prs(repo: str) -> list[int]:
         names = labels_of.get(n)
         if names is None or names & HOLD_LABELS or ticket_policy.needs_person(names):
             continue  # a person's: no send-back, no paid repair, no comment (#605: #81/#218 were re-sent every scan)
+
+        pr_start = time.monotonic()
+        pr_ref = f"{repo.split('/')[-1]}#{n} PR#{pr['number']}"
+        outcome = None
+
         if "needs-reengagement" in names:
             # Already sent back, but its PR still conflicts: the rebuild hasn't happened (#257 sat 12 hours, still
             # claimed). A repair makes the rebuild unnecessary; anything else stays the sent-back loop's business.
@@ -356,11 +378,15 @@ def _requeue_conflicted_prs(repo: str) -> list[int]:
                                detail=fix.get("detail", fix.get("reason", "")),
                                cost_usd=fix.get("cost_usd", 0.0), repo=repo)
                 if fix["outcome"] == "repaired":
+                    outcome = "repaired"
                     gh("issue", "edit", str(n), "--repo", repo, "--remove-label", "needs-reengagement")
                     gh("issue", "comment", str(n), "--repo", repo, "--body",
                        f"PR #{pr['number']}'s {ticket_policy.REPAIRED_MARKER} and pushed, so no rebuild is needed: "
                        f"the sent-back flag is cleared and the PR is ready for review.")
                     print(f"{LOG_PREFIX} {repo}#{n}: sent-back PR #{pr['number']} repaired instead of rebuilt", file=sys.stderr)
+            if outcome:
+                elapsed = time.monotonic() - pr_start
+                job_events.step("Conflicted PRs", f"{pr_ref}: {outcome} ({elapsed:.1f}s)")
             continue
         files: list[str] = []
         if not red:
@@ -370,22 +396,31 @@ def _requeue_conflicted_prs(repo: str) -> list[int]:
                            detail=fix.get("detail", fix.get("reason", "")),
                            cost_usd=fix.get("cost_usd", 0.0), repo=repo)
             if fix["outcome"] == "repaired":
+                outcome = "repaired"
                 gh("pr", "comment", str(pr["number"]), "--repo", repo, "--body",
                    f"Conflict with main resolved automatically: {fix.get('detail', '')} Rebased onto main and pushed; nothing was rebuilt.")
                 print(f"{LOG_PREFIX} {repo}#{n}: PR #{pr['number']} conflict repaired ({fix.get('detail', '')})", file=sys.stderr)
+                elapsed = time.monotonic() - pr_start
+                job_events.step("Conflicted PRs", f"{pr_ref}: {outcome} ({elapsed:.1f}s)")
                 continue
             if fix["outcome"] == "later":
+                outcome = "later"
+                elapsed = time.monotonic() - pr_start
+                job_events.step("Conflicted PRs", f"{pr_ref}: {outcome} ({elapsed:.1f}s)")
                 continue  # out of repair budget this scan: try again next scan rather than rebuild
             files = fix.get("files") or []
             if not str(pr.get("headRefName", "")).startswith("pipeline/"):
                 # Made by hand, not by the pipeline: an agent rebuild would replace someone's work. Flag it, once per commit.
                 url, sha = pr.get("url") or f"{repo}#{pr['number']}", pr.get("headRefOid") or ""
                 if not _flagged_before(url, sha):
+                    outcome = "flagged"
                     gh("pr", "comment", str(pr["number"]), "--repo", repo, "--body",
                        f"This PR conflicts with main{' in ' + ', '.join(files) if files else ''}, and the conflict is a real one "
                        f"(the same existing lines changed on both sides), so it could not be resolved automatically. It was made "
                        f"by hand, so it is not sent for an agent rebuild: rebase it onto main, or ask MARVIN to.")
                     _mark_flagged(url, sha)
+                    elapsed = time.monotonic() - pr_start
+                    job_events.step("Conflicted PRs", f"{pr_ref}: {outcome} ({elapsed:.1f}s)")
                 continue
         if not _still_needs_sending_back(gh, repo, pr, red):
             print(f"{LOG_PREFIX} {repo}#{n}: PR #{pr['number']} changed since this scan listed it; not sent back", file=sys.stderr)
@@ -401,6 +436,7 @@ def _requeue_conflicted_prs(repo: str) -> list[int]:
             add = gh(*edit_args)
         if add.returncode != 0:
             continue
+        outcome = "sent-back"
         gh("issue", "comment", str(n), "--repo", repo, "--body",
            (f"PR #{pr['number']}'s GitHub checks failed: {', '.join(red)}. " if red else
             f"PR #{pr['number']} now conflicts with main{' in ' + ', '.join(files) if files else ''} (the same lines changed on both "
@@ -408,6 +444,8 @@ def _requeue_conflicted_prs(repo: str) -> list[int]:
            f"{ticket_policy.SENT_BACK_MARKER} the pipeline will rebuild it on the current main and update the same PR.")
         print(f"{LOG_PREFIX} {repo}#{n}: PR #{pr['number']} {'failed its checks' if red else 'conflicts with main'}, sent back for rework", file=sys.stderr)
         sent.append(n)
+        elapsed = time.monotonic() - pr_start
+        job_events.step("Conflicted PRs", f"{pr_ref}: {outcome} ({elapsed:.1f}s)")
     return sent
 
 

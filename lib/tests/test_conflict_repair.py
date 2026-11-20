@@ -319,3 +319,40 @@ def test_a_crash_inside_repair_still_falls_back_to_a_rebuild(monkeypatch, tmp_pa
     monkeypatch.setattr(cr, "repair", boom)
     res = REAL_TRY_CONFLICT_REPAIR("o/r", {"number": 1, "headRefName": "h", "headRefOid": "s"})
     assert res["outcome"] == "rebuild" and "boom" in res["reason"]
+
+
+def test_slot_wait_timeout_from_run_timed_returns_later_outcome(origin_and_clone, monkeypatch):
+    """When _run_timed_test raises SlotWaitTimedOut, repair returns 'later'."""
+    origin, clone = origin_and_clone
+    _branch(clone, "pr", {"tests.py": "def test_a():\n    pass\n\ndef test_pr():\n    pass\n"})
+    _main_moves(clone, {"tests.py": "def test_a():\n    pass\n\ndef test_main():\n    pass\n"})
+
+    import evidence_capture
+    def mock_run_timed(*args, **kwargs):
+        raise evidence_capture.SlotWaitTimedOut(["python", "-m", "pytest"], 1.0, "")
+
+    monkeypatch.setattr(cr, "_run_timed_test", mock_run_timed)
+
+    res = cr.repair("o/r", "pr", str(clone), "main", run_tests=cr.default_tests)
+    assert res["outcome"] == "later"
+    assert "slot" in res.get("reason", "").lower()
+    assert res["cost_usd"] == 0.0
+
+
+def test_test_timeout_from_run_timed_returns_rebuild(origin_and_clone, monkeypatch):
+    """When _run_timed_test raises TestTimedOut, default_tests catches it and returns (False, str(e)),
+    so repair sees it as a test failure, not a special timeout outcome."""
+    origin, clone = origin_and_clone
+    _branch(clone, "pr", {"tests.py": "def test_a():\n    pass\n\ndef test_pr():\n    pass\n"})
+    _main_moves(clone, {"tests.py": "def test_a():\n    pass\n\ndef test_main():\n    pass\n"})
+
+    import evidence_capture
+    def mock_run_timed(*args, **kwargs):
+        raise evidence_capture.TestTimedOut(["python", "-m", "pytest"], 100, "")
+
+    monkeypatch.setattr(cr, "_run_timed_test", mock_run_timed)
+
+    res = cr.repair("o/r", "pr", str(clone), "main", run_tests=cr.default_tests)
+    # default_tests catches TestTimedOut and returns (False, str(e)), so repair treats it as test failure
+    assert res["outcome"] == "rebuild"
+    assert "timed out" in res.get("reason", "").lower()
