@@ -174,6 +174,7 @@ import { createBoundsStore } from './show_bounds.js'
 import { readFileForView, fileFromBuffer } from './outbox.js'
 import { resolveLocalClone } from './docs_local.js'
 import { resolveServiceDefaults, resolveDeviceId, peerHosts, primaryDeviceId } from './device_identity.js'
+import { createMainWindow } from './main_window.js'
 import { createHelpersReader } from './chat_helpers.js'
 import { createChatsReader, createChatSender } from './chat_tabs.js'
 import { isPullOnlyNode, createFeedSource, feedOnlyGh, readNetworkRegistry, assertActsHere as assertPullOnlyActs, canMergeHere, withReadOnlyReason } from './github_feed.js'
@@ -371,23 +372,7 @@ function loadAppPage(win, hash = '') {
 }
 
 function createWindow() {
-  mainWindow = new BrowserWindow({
-    width: 1280,
-    height: 820,
-    minWidth: 900,
-    minHeight: 600,
-    titleBarStyle: 'hiddenInset',
-    trafficLightPosition: { x: 18, y: 18 },
-    backgroundColor: '#0f1117',
-    vibrancy: 'under-window',
-    show: false,
-    webPreferences: {
-      preload: preloadPath(),
-      nodeIntegration: false,
-      contextIsolation: true,
-      sandbox: false
-    }
-  })
+  mainWindow = createMainWindow({ BrowserWindow, preload: preloadPath() })
 
   mainWindow.on('ready-to-show', () => {
     mainWindow.show()

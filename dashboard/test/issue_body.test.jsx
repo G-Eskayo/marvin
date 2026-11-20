@@ -153,6 +153,13 @@ describe('IssueBody rendering', () => {
     expect(html).toContain('Section 399')
     expect(Date.now() - t).toBeLessThan(3000)
   })
+
+  it('the <script>-tag component in a rendered body is sanitized', () => {
+    const html = render({ body: '<script>alert("xss")</script><p>Safe content</p>' })
+    expect(html).not.toContain('<script>')
+    expect(html).not.toContain('alert')
+    expect(html).toContain('Safe content')
+  })
 })
 
 describe('memoization: same body, no re-render', () => {

@@ -54,6 +54,7 @@ function rewriteHtml(text) {
       if (i % 2 === 1) return part // inline code
       return part
         .replace(/<!--[\s\S]*?-->/g, '')
+        .replace(/<script\b[\s\S]*?<\/script>/gi, '')
         .replace(/<img\b[^>]*>/gi, (tag) => {
           const src = attr(tag, 'src')
           return src ? `![${attr(tag, 'alt').replace(/[[\]]/g, '')}](${src})` : ''

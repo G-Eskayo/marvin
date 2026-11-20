@@ -255,7 +255,7 @@ export function createShowWindows({
       webPreferences: {
         partition,
         preload,
-        sandbox: false, // the app's own preload, as the main window; the untrusted page is the sandboxed frame
+        sandbox: true,
         contextIsolation: true,
         nodeIntegration: false,
         nodeIntegrationInSubFrames: false,
