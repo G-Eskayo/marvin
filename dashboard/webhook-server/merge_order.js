@@ -69,9 +69,10 @@ export function mainStateFrom({ issues = [], health = null, base = 'main', headS
 // The facts mergeOrder reads off each PR, from what each side already has. One implementation for both.
 //   issues: the repo's open tickets (labels) · unbuilt: Set of PR urls with answered-but-unbuilt Decisions
 //   repairFailed: {"repo#n": headSha} whose conflict repair failed (lib/conflict_repair.py)
+//   repairFiles: {"repo#n": [files...]} conflicted files from a repair attempt
 //   rebaseStatus: the post-merge conflict check by url (#225) · sentBack: Set of "repo#ticket" (optional)
 // gateCovers (marvin#1099): names of the checks the merge gate runs itself; GitHub's copy of those doesn't hold a PR.
-export function enrichForOrder(prs, { repo = null, issues = [], unbuilt = new Set(), repairFailed = {}, rebaseStatus = {}, sentBack = null, gateCovers = null } = {}) {
+export function enrichForOrder(prs, { repo = null, issues = [], unbuilt = new Set(), repairFailed = {}, repairFiles = {}, rebaseStatus = {}, sentBack = null, gateCovers = null } = {}) {
   const covers = Array.isArray(gateCovers) ? gateCovers.filter((n) => typeof n === 'string') : []
   const sentBackTickets = sentBack || new Set((issues || []).filter((i) => labelNames(i).includes('needs-reengagement')).map((i) => `${repo}#${i.number}`))
   return (prs || []).map((p) => {
@@ -80,6 +81,18 @@ export function enrichForOrder(prs, { repo = null, issues = [], unbuilt = new Se
     const rb = rebaseStatus?.[p.url]
     const rbConflict = rb?.state === 'conflict'
     const conflict = p.mergeable === 'CONFLICTING' || (rbConflict && (!p.mergeable || p.mergeable === 'UNKNOWN'))
+    // Conflict files: prefer rebaseStatus files, fall back to repair-state files when sha matches
+    let conflictFiles = []
+    if (rbConflict && Array.isArray(rb?.files)) {
+      conflictFiles = rb.files
+    } else {
+      const repairEntry = repairFiles?.[`${r}#${p.number}`]
+      // Only use repair files if the stored SHA matches the current HEAD (not rebased since repair failed)
+      if (repairEntry?.sha === p.headRefOid && Array.isArray(repairEntry?.files)) {
+        conflictFiles = repairEntry.files
+      }
+    }
+    const needsReapproval = labelNames(p).includes('needs-reapproval')
     return {
       ...p,
       repo: r,
@@ -88,7 +101,9 @@ export function enrichForOrder(prs, { repo = null, issues = [], unbuilt = new Se
       decisionsUnbuilt: unbuilt.has(p.url) && !answersAsBuilt(p.body || ''),
       conflict,
       conflictAfter: rbConflict && Number.isFinite(rb.after) ? rb.after : null,
+      conflictFiles,
       repairFailed: !!p.headRefOid && repairFailed?.[`${r}#${p.number}`] === p.headRefOid,
+      needsReapproval,
       gateCovers: covers
     }
   })
@@ -153,9 +168,15 @@ function ownReason(pr, base) {
   if (pr.decisionsUnbuilt) return { reason: "your answers aren't built yet", unbuilt: true }
   const ci = ciState(pr.statusCheckRollup, { ignore: pr.gateCovers })
   if (ci.state === 'failing') return { reason: `checks failing: ${ci.failing.join(', ')}` }
+  if (pr.needsReapproval) return { reason: 'needs reapproval after model-assisted conflict resolution' }
   if (pr.conflict) {
     const after = pr.conflictAfter ? ` after #${pr.conflictAfter}` : ''
-    return { reason: `conflicts with ${base}${after} · ${pr.repairFailed ? 'needs a rebuild' : 'MARVIN is fixing it'}`, conflict: true }
+    const filesSuffix = pr.conflictFiles?.length > 0
+      ? (pr.conflictFiles.length <= 3
+        ? ` in ${pr.conflictFiles.join(', ')}`
+        : ` in ${pr.conflictFiles.slice(0, 3).join(', ')} + ${pr.conflictFiles.length - 3} more`)
+      : ''
+    return { reason: `Held: conflicts with ${base}${after}${filesSuffix} · ${pr.repairFailed ? 'needs a rebuild' : 'MARVIN is fixing it'}`, conflict: true }
   }
   if (pr.sentBack) return { reason: 'sent back for rework' }
   return null

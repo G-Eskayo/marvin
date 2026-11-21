@@ -40,7 +40,7 @@ function snapshot() {
     pr(52, { decisions: { pending: ['a', 'b', 'c'], problems: [] } }),
     pr(53, { checks: { state: 'pending', failing: [], pending: ['ci'], runs: [{ state: 'success' }, { state: 'pending' }] } }),
     pr(54, { mergeQueue: { queued: true, state: 'queued', reason: '2nd in the queue' } }),
-    pr(55, { conflicts: true, mergeQueue: { reason: 'conflicts with main · needs a rebuild', conflict: true } }),
+    pr(55, { conflicts: true, mergeQueue: { reason: 'Held: conflicts with main · needs a rebuild', conflict: true } }),
     pr(56, { mergeQueue: { state: 'waiting', reason: "your answers aren't built yet", unbuilt: true } }),
     pr(57, { mockups: [{}] })
   ]

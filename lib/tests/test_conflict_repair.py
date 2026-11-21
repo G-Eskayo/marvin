@@ -56,6 +56,7 @@ def test_both_appending_tests_is_repaired_tested_and_pushed(origin_and_clone):
     res = cr.repair("o/r", "pr", str(clone), "main", run_tests=lambda r, cwd, ch: (seen.append(ch) or True, ""))
     assert res["outcome"] == "repaired" and "tests.py" in res["detail"]
     assert res["cost_usd"] == 0.0  # No model call needed for both-added conflict
+    assert res["model_assisted"] == False  # Mechanical repair (both-added)
     git(clone, "fetch", "-q", "origin")
     text = git(clone, "show", "origin/pr:tests.py")
     assert "test_main" in text and "test_pr" in text and text.index("test_main") < text.index("test_pr")
@@ -152,6 +153,7 @@ def test_both_sides_add_to_list_with_model_assist(origin_and_clone):
     res = cr.repair("o/r", "pr", str(clone), "main", run_tests=PASS, resolve_hunks=fake_resolve_hunks)
     assert res["outcome"] == "repaired"
     assert "model-assisted" in res["detail"]
+    assert res["model_assisted"] == True  # This was model-assisted
     assert res["cost_usd"] == 0.01
 
     git(clone, "fetch", "-q", "origin")

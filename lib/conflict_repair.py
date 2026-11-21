@@ -252,7 +252,7 @@ def repair(repo: str, head: str, clone: str, base: str, run_tests=default_tests,
         if resolved.get("model_assisted"):
             kinds.insert(0, "model-assisted resolution of genuine conflicts")
         detail = "; ".join(k for k in kinds if k) or "it rebased cleanly"
-        return {"outcome": "repaired", "detail": f"{detail}. Tests pass on the rebased branch.", "cost_usd": model_cost}
+        return {"outcome": "repaired", "detail": f"{detail}. Tests pass on the rebased branch.", "cost_usd": model_cost, "model_assisted": bool(resolved.get("model_assisted"))}
     except (subprocess.SubprocessError, OSError) as e:
         return {"outcome": "rebuild", "files": files, "reason": f"repair could not run: {e}", "cost_usd": model_cost}
     finally:

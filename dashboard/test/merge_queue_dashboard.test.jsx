@@ -109,7 +109,7 @@ describe('the queue line is hidden when the headline says the same', () => {
   })
   it('open Decisions, a conflict, sent back, a stack and a merge running are each said once', () => {
     expect(queueLineFor(card({ decisions: { present: true, questions: [], problems: [], pending: ['a', 'b'] }, mergeQueue: mq('2 Decisions are waiting for you') }))).toBeNull()
-    expect(queueLineFor(card({ conflicts: true, mergeQueue: mq('conflicts with main after #970 · MARVIN is fixing it') }))).toBeNull()
+    expect(queueLineFor(card({ conflicts: true, mergeQueue: mq('Held: conflicts with main after #970 · MARVIN is fixing it') }))).toBeNull()
     expect(queueLineFor(card({ sentBack: true, mergeQueue: mq('sent back for rework') }))).toBeNull()
     expect(queueLineFor(card({ baseProblem: { base: 'b941', expected: 'main', parent: { number: 941 } }, mergeQueue: mq("waits for #941 (it's built on it)") }))).toBeNull()
     expect(queueLineFor(card({ mergeQueue: mq('merging now', { queued: true, state: 'running', tone: 'sky' }) }))).toBeNull()

@@ -766,11 +766,62 @@ def test_only_conflicting_prs_whose_ticket_is_not_already_sent_back_are_touched(
     assert not any("--add-label" in c for c in calls)
 
 
-def test_a_pr_with_no_ticket_reference_is_left_alone(monkeypatch):
+def test_a_ticketless_conflicting_pr_is_attempted_to_be_repaired(monkeypatch):
+    # Ticketless PRs that conflict are now attempted to be repaired (not left alone).
+    # If repair succeeds, they get a comment but are not sent back (no ticket).
+    # If repair fails, they are flagged as hand-made.
     calls = []
-    pr = {"number": 60, "body": "hand-made PR", "mergeable": "CONFLICTING", "headRefName": "x", "labels": []}
+    seen = _repair(monkeypatch, {"outcome": "repaired", "detail": "it rebased cleanly"})
+    pr = {"number": 60, "body": "hand-made PR", "mergeable": "CONFLICTING", "headRefName": "x", "url": "o/r/pull/60", "headRefOid": "abc123"}
+    monkeypatch.setattr(tp.subprocess, "run", _requeue([pr], [], calls))
+    assert tp._requeue_conflicted_prs("o/r") == []  # not sent back (no ticket)
+    assert seen == [60]  # but repair WAS attempted
+    comment = [c for c in calls if "comment" in c][0]
+    assert "60" in " ".join(comment) and "resolved automatically" in " ".join(comment)
+
+
+def test_a_ticketless_pr_with_model_assisted_repair_does_not_add_needs_reapproval_while_decision_unanswered(monkeypatch):
+    # Ticketless PRs with model-assisted repair would get needs-reapproval label, but the Decision 'reapproval'
+    # is not yet answered. Per the rule, we don't ship one option as a default: the label is not applied until
+    # the Decision is answered (Decision 'reapproval' in CONTEXT.md).
+    calls = []
+    seen = _repair(monkeypatch, {"outcome": "repaired", "detail": "model-assisted resolution", "model_assisted": True})
+    pr = {"number": 61, "body": "hand-made PR", "mergeable": "CONFLICTING", "headRefName": "y", "url": "o/r/pull/61", "headRefOid": "xyz789"}
     monkeypatch.setattr(tp.subprocess, "run", _requeue([pr], [], calls))
     assert tp._requeue_conflicted_prs("o/r") == []
+    assert seen == [61]
+    comment = [c for c in calls if "comment" in c][0]
+    assert "resolved automatically" in " ".join(comment)
+    # Should NOT have added needs-reapproval label to the PR (Decision 'reapproval' is unanswered)
+    assert not any("needs-reapproval" in " ".join(c) for c in calls if "pr" in c and "edit" in c)
+
+
+def test_a_ticketless_pr_with_rebuild_outcome_is_flagged_as_hand_made(monkeypatch):
+    # Ticketless PR that repair can't fix (rebuild outcome) gets flagged as hand-made.
+    calls = []
+    seen = _repair(monkeypatch, {"outcome": "rebuild", "files": ["lib/x.py"], "reason": "real conflict"})
+    pr = {"number": 62, "body": "", "mergeable": "CONFLICTING", "headRefName": "z", "url": "o/r/pull/62", "headRefOid": "def456"}
+    monkeypatch.setattr(tp.subprocess, "run", _requeue([pr], [], calls))
+    monkeypatch.setattr(tp, "_flagged_before", lambda url, sha: False)
+    marks = []
+    monkeypatch.setattr(tp, "_mark_flagged", lambda url, sha: marks.append(url))
+    assert tp._requeue_conflicted_prs("o/r") == []
+    assert seen == [62]
+    # Should have flagged as hand-made
+    assert any("real conflict" in " ".join(c) for c in calls if "comment" in c)
+    assert len(marks) == 1
+
+
+def test_a_ticketless_pr_with_later_outcome_is_skipped_silently(monkeypatch):
+    # Ticketless PR with "later" outcome (out of budget) is skipped silently.
+    calls = []
+    seen = _repair(monkeypatch, {"outcome": "later"})
+    pr = {"number": 63, "body": "", "mergeable": "CONFLICTING", "headRefName": "a"}
+    monkeypatch.setattr(tp.subprocess, "run", _requeue([pr], [], calls))
+    assert tp._requeue_conflicted_prs("o/r") == []
+    assert seen == [63]
+    # Should NOT have added any comments or labels
+    assert not any("comment" in c or "label" in c for c in calls if "pr" in c or "issue" in c)
 
 
 def test_a_gh_failure_is_swallowed_not_fatal(monkeypatch):
@@ -1168,6 +1219,46 @@ def test_failing_checks_are_not_a_conflict_and_skip_the_repair(monkeypatch):
     monkeypatch.setattr(tp.subprocess, "run", _requeue([pr], [{"number": 34, "labels": []}], calls))
     assert tp._requeue_conflicted_prs("o/r") == [34]
     assert seen == []
+
+
+def test_a_ticket_linked_pr_with_mechanical_repair_does_not_get_needs_reapproval(monkeypatch):
+    # Mechanical repairs (no model assistance) don't need reapproval.
+    calls = []
+    seen = _repair(monkeypatch, {"outcome": "repaired", "detail": "both sides only added", "model_assisted": False})
+    monkeypatch.setattr(tp.subprocess, "run", _requeue([_pr(48, "o/r#34")], [{"number": 34, "labels": []}], calls))
+    assert tp._requeue_conflicted_prs("o/r") == []
+    assert seen == [48]
+    assert not any("needs-reapproval" in " ".join(c) for c in calls)
+
+
+def test_a_ticket_linked_pr_with_model_assisted_repair_does_not_add_label_while_decision_unanswered(monkeypatch):
+    # Model-assisted repairs would flag the ticket with needs-reapproval, but the Decision 'reapproval'
+    # is not yet answered. Per the rule, we don't ship one option as a default: the label is not applied.
+    calls = []
+    seen = _repair(monkeypatch, {"outcome": "repaired", "detail": "model-assisted resolution", "model_assisted": True})
+    monkeypatch.setattr(tp.subprocess, "run", _requeue([_pr(48, "o/r#34")], [{"number": 34, "labels": []}], calls))
+    assert tp._requeue_conflicted_prs("o/r") == []
+    assert seen == [48]
+    # Should NOT have added needs-reapproval label (Decision 'reapproval' is unanswered)
+    assert not any("needs-reapproval" in " ".join(c) for c in calls)
+    # Should have added a comment about the repair
+    comments = [" ".join(c) for c in calls if "comment" in c]
+    assert any("resolved automatically" in c for c in comments)
+
+
+def test_a_sent_back_pr_with_model_assisted_repair_does_not_add_label_while_decision_unanswered(monkeypatch):
+    # Already-sent-back PRs that are repaired with model assistance would get needs-reapproval,
+    # but the Decision 'reapproval' is not yet answered. Per the rule, we don't ship one option
+    # as a default: the label is not applied, only the needs-reengagement is removed.
+    calls = []
+    seen = _repair(monkeypatch, {"outcome": "repaired", "detail": "model-assisted resolution", "model_assisted": True})
+    monkeypatch.setattr(tp.subprocess, "run", _requeue([_pr(48, "o/r#34")], [{"number": 34, "labels": [{"name": "needs-reengagement"}]}], calls))
+    assert tp._requeue_conflicted_prs("o/r") == []
+    assert seen == [48]
+    # Should remove needs-reengagement but NOT add needs-reapproval (Decision is unanswered)
+    assert not any("needs-reapproval" in " ".join(c) for c in calls)
+    edit_calls = [" ".join(c) for c in calls if "edit" in c]
+    assert any("remove-label" in c and "needs-reengagement" in c for c in edit_calls)
 
 
 def test_a_sent_back_ticket_whose_pr_still_conflicts_gets_the_repair_and_the_flag_cleared(monkeypatch):

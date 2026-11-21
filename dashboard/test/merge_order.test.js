@@ -129,12 +129,12 @@ describe('mergeOrder: a PR\'s own blockers come first', () => {
   it('a conflict after a merge says which merge, and whether the resolver can fix it or it needs a rebuild', () => {
     const rebaseStatus = { [url(972)]: { state: 'conflict', after: 970 } }
     let prs = enrichForOrder([pr(972, { mergeable: 'CONFLICTING' })], { repo: REPO, rebaseStatus })
-    expect(line(mergeOrder(prs, green_main, q(972)), 972)).toMatchObject({ reason: 'conflicts with main after #970 · MARVIN is fixing it', conflict: true })
+    expect(line(mergeOrder(prs, green_main, q(972)), 972)).toMatchObject({ reason: 'Held: conflicts with main after #970 · MARVIN is fixing it', conflict: true })
     prs = enrichForOrder([pr(972, { mergeable: 'CONFLICTING' })], { repo: REPO, rebaseStatus, repairFailed: { [`${REPO}#972`]: 'sha972' } })
-    expect(line(mergeOrder(prs, green_main, q(972)), 972).reason).toBe('conflicts with main after #970 · needs a rebuild')
+    expect(line(mergeOrder(prs, green_main, q(972)), 972).reason).toBe('Held: conflicts with main after #970 · needs a rebuild')
     // A repair that failed on an OLDER commit says nothing about this one.
     prs = enrichForOrder([pr(972, { mergeable: 'CONFLICTING' })], { repo: REPO, repairFailed: { [`${REPO}#972`]: 'old' } })
-    expect(line(mergeOrder(prs, green_main, { ...q(972), lastMerged: 971 }), 972).reason).toBe('conflicts with main after #971 · MARVIN is fixing it')
+    expect(line(mergeOrder(prs, green_main, { ...q(972), lastMerged: 971 }), 972).reason).toBe('Held: conflicts with main after #971 · MARVIN is fixing it')
   })
 
   it('a stale post-merge conflict is overruled once GitHub says the PR merges', () => {
@@ -144,8 +144,19 @@ describe('mergeOrder: a PR\'s own blockers come first', () => {
 
   it('the gate\'s conflict on a commit holds that commit; a new commit (the resolver\'s push) is tried again', () => {
     const queue = { items: [{ url: url(5), approvedAt: 1, conflictHead: 'sha5' }], failed: {}, lastMerged: 4 }
-    expect(line(mergeOrder([pr(5)], green_main, queue), 5).reason).toBe('conflicts with main after #4 · MARVIN is fixing it')
+    expect(line(mergeOrder([pr(5)], green_main, queue), 5).reason).toBe('Held: conflicts with main after #4 · MARVIN is fixing it')
     expect(mergeOrder([pr(5, { headRefOid: 'new' })], green_main, queue).next).toBe(url(5))
+  })
+
+  it('repair files from a previous failed repair are only used if the PR\'s SHA still matches', () => {
+    // PR 972 has sha972, and a previous repair failed with files stored for sha972
+    const repairFiles = { [`${REPO}#972`]: { files: ['lib/x.py'], sha: 'sha972' } }
+    // If the PR still has the same SHA, use the repair files
+    let prs = enrichForOrder([pr(972, { mergeable: 'CONFLICTING', headRefOid: 'sha972' })], { repo: REPO, repairFiles })
+    expect(prs[0].conflictFiles).toEqual(['lib/x.py'])
+    // If the PR has been rebased (new SHA), don't use the old repair files
+    prs = enrichForOrder([pr(972, { mergeable: 'CONFLICTING', headRefOid: 'new' })], { repo: REPO, repairFiles })
+    expect(prs[0].conflictFiles).toEqual([])
   })
 
   it('a sent-back PR waits for its rework', () => {

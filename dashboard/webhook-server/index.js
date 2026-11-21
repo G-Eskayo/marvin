@@ -287,6 +287,11 @@ const server = createServer(async (req, res) => {
       reply.result(409, alreadyMergingBody(machineId))
       return
     }
+    // Clear needs-reapproval label when owner approves, so the PR can proceed through the queue
+    // (otherwise merge_order.js would hold it indefinitely waiting for owner action).
+    // This is a fire-and-forget action: a missing label is not an error.
+    execFile('gh', ['pr', 'edit', prUrl, '--remove-label', 'needs-reapproval'], { maxBuffer: 10 * 1024 * 1024 })
+      .catch(() => {})
     // marvin#231: Approve queues the merge. The queue merges in the order it works out (stacked PRs base first, only the
     // fix while main is red), one at a time per repo. When this PR is next it runs now and this response follows it,
     // as before; otherwise the answer is its place and what it waits for, and it merges by itself when its turn comes.
@@ -457,9 +462,19 @@ const mergeQueue = createMergeQueue({
     const notify = path.resolve(path.dirname(new URL(import.meta.url).pathname), '..', '..', 'lib', 'notify.py')
     const venv = path.resolve(path.dirname(notify), '..', 'venv', 'bin', 'python')
     const code = 'import sys; sys.path.insert(0, sys.argv[1]); import notify; notify.notify(sys.argv[2], sys.argv[3], sys.argv[4])'
+    const message = `${repo} #${pr.number} has waited ${days} day${days === 1 ? '' : 's'} in the merge queue on a conflict the resolver couldn't fix. It needs main merged in by hand.`
     execFile(venv, ['-c', code, path.dirname(notify), `#${pr.number} is stuck on a conflict`,
-      `${repo} #${pr.number} has waited ${days} day${days === 1 ? '' : 's'} in the merge queue on a conflict the resolver couldn't fix. It needs main merged in by hand.`,
-      pr.url], { timeout: 30_000 }, () => {})
+      message, pr.url], { timeout: 30_000 }, () => {})
+    // Post a comment to the PR as well, including conflicting files when known
+    const filesSuffix = pr.conflictFiles?.length > 0
+      ? (pr.conflictFiles.length <= 3
+        ? ` in ${pr.conflictFiles.join(', ')}`
+        : ` in ${pr.conflictFiles.slice(0, 3).join(', ')} + ${pr.conflictFiles.length - 3} more`)
+      : ''
+    const prNumber = String(pr.url || '').match(/#(\d+)$/)?.[1] || pr.number
+    execFile('gh', ['pr', 'comment', prNumber, '--repo', repo, '--body',
+      `This PR has been stuck on a conflict${filesSuffix} for ${days} day${days === 1 ? '' : 's'}. The merge queue tried to resolve it automatically, but the conflict is real and needs to be fixed by hand: rebase onto main and resolve the conflicting lines, then push again.`],
+      { timeout: 30_000 }, () => {})  // fail-soft: errors are logged but don't block
   },
   log: (m) => console.log(m)
 })

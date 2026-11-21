@@ -1028,6 +1028,8 @@ async function mergePrUnqueued(
         ...(sleep ? { sleep } : {})
       })
       mergeError = null
+      // Clear the needs-reapproval label if it was set by model-assisted conflict resolution
+      await exec('gh', ['pr', 'edit', prUrl, '--remove-label', 'needs-reapproval']).catch(() => {})
       break
     } catch (error) {
       mergeError = error

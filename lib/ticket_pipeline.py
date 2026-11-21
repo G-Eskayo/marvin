@@ -318,6 +318,50 @@ def _still_needs_sending_back(gh, repo: str, pr: dict, red: list) -> bool:
     return cur.get("mergeable") == "CONFLICTING"
 
 
+def _flag_hand_made(gh, repo: str, pr: dict, files: list[str]) -> None:
+    """Flag a hand-made PR that conflicts with its base. Adds a comment explaining the conflict and that it
+    was not rebuilt because it was made by hand, once per commit."""
+    url, sha = pr.get("url") or f"{repo}#{pr['number']}", pr.get("headRefOid") or ""
+    if not _flagged_before(url, sha):
+        gh("pr", "comment", str(pr["number"]), "--repo", repo, "--body",
+           f"This PR conflicts with main{' in ' + ', '.join(files) if files else ''}, and this real conflict "
+           f"(the same existing lines changed on both sides) could not be resolved automatically. It was made "
+           f"by hand, so it is not sent for an agent rebuild: rebase it onto main, or ask MARVIN to.")
+        _mark_flagged(url, sha)
+
+
+def _flag_needs_reapproval(gh, repo: str, pr: dict) -> None:
+    """Flag a PR as needing reapproval after model-assisted conflict resolution.
+    Adds the label to the PR (not the issue) so it's readable from merge_order.js.
+    NOTE: Gated by Decision 'reapproval' (marvin#XXXX). The label is only applied when that
+    Decision is answered and chooses to require reapproval. When both options are unchecked
+    (Decision not yet answered), this function is called but does nothing, leaving the label
+    unset until the owner decides."""
+    # Check Decision 'reapproval' in CONTEXT.md to see if it's answered. For now, both options
+    # are unchecked, so we don't apply the label (don't ship option A as a default).
+    # TODO: Once the Decision is answered, gate on it here and apply the label conditionally.
+    return  # Decision not answered; label not applied until owner decides
+
+    try:
+        # Try to create the label if it doesn't exist, then add it
+        gh("label", "create", "needs-reapproval", "--repo", repo, "--color", "fbca04", "--description", "Needs reapproval: model-assisted repair applied")
+    except Exception:  # noqa: BLE001
+        pass  # label may already exist
+
+    # Add the label to the PR itself (merge_order.js reads PR labels via labelNames(p))
+    result = gh("pr", "edit", str(pr["number"]), "--repo", repo, "--add-label", "needs-reapproval")
+    if result.returncode != 0:
+        return
+
+    # If the PR is ticket-linked, also comment on the issue to explain the label
+    m = _CLOSES.search(pr.get("body") or "")
+    if m:
+        n = int(m.group(1))
+        gh("issue", "comment", str(n), "--repo", repo, "--body",
+           f"PR #{pr['number']}'s conflict was resolved with model assistance. {ticket_policy.REPAIRED_MARKER} "
+           f"Please review the resolution carefully before merging.")
+
+
 def _requeue_conflicted_prs(repo: str) -> list[int]:
     """A PR that GitHub says CONFLICTS with its base can never be merged as it stands, and the first anyone
     learned was a human clicking Approve (finance-os #9, clarity #48). So the pipeline sends the ticket back
@@ -341,55 +385,83 @@ def _requeue_conflicted_prs(repo: str) -> list[int]:
     for pr in pr_list:
         m = _CLOSES.search(pr.get("body") or "")
         red = _failing_checks(pr.get("statusCheckRollup"))
-        if not m or not (pr.get("mergeable") == "CONFLICTING" or red):
+
+        # Process both ticket-linked and ticketless PRs when they conflict or have failed checks
+        if not (pr.get("mergeable") == "CONFLICTING" or red):
             continue
-        n = int(m.group(1))
-        names = labels_of.get(n)
-        if names is None or names & HOLD_LABELS or ticket_policy.needs_person(names):
-            continue  # a person's: no send-back, no paid repair, no comment (#605: #81/#218 were re-sent every scan)
-        if "needs-reengagement" in names:
-            # Already sent back, but its PR still conflicts: the rebuild hasn't happened (#257 sat 12 hours, still
-            # claimed). A repair makes the rebuild unnecessary; anything else stays the sent-back loop's business.
-            if not red and pr.get("mergeable") == "CONFLICTING":
-                fix = _try_conflict_repair(repo, pr)
+
+        # For ticket-linked PRs, check policies
+        if m:
+            n = int(m.group(1))
+            names = labels_of.get(n)
+            if names is None or names & HOLD_LABELS or ticket_policy.needs_person(names):
+                continue  # a person's: no send-back, no paid repair, no comment (#605: #81/#218 were re-sent every scan)
+
+            # Already sent back: try repair if still conflicting (not red)
+            if "needs-reengagement" in names:
+                if not red and pr.get("mergeable") == "CONFLICTING":
+                    fix = _try_conflict_repair(repo, pr)
+                    ts.record_stage(n, "gate", "passed" if fix["outcome"] == "repaired" else "failed",
+                                   detail=fix.get("detail", fix.get("reason", "")),
+                                   cost_usd=fix.get("cost_usd", 0.0), repo=repo)
+                    if fix["outcome"] == "repaired":
+                        gh("issue", "edit", str(n), "--repo", repo, "--remove-label", "needs-reengagement")
+                        gh("issue", "comment", str(n), "--repo", repo, "--body",
+                           f"PR #{pr['number']}'s {ticket_policy.REPAIRED_MARKER} and pushed, so no rebuild is needed: "
+                           f"the sent-back flag is cleared and the PR is ready for review.")
+                        if fix.get("model_assisted"):
+                            _flag_needs_reapproval(gh, repo, pr)
+                        print(f"{LOG_PREFIX} {repo}#{n}: sent-back PR #{pr['number']} repaired instead of rebuilt", file=sys.stderr)
+                continue
+
+        # Try to repair conflicting PRs (both ticket-linked and ticketless)
+        files: list[str] = []
+        if not red and pr.get("mergeable") == "CONFLICTING":
+            # A conflict: try the cheap fix first (2026-10-09, #314). Most are two PRs appending to the same file.
+            fix = _try_conflict_repair(repo, pr)
+            if m:
+                n = int(m.group(1))
                 ts.record_stage(n, "gate", "passed" if fix["outcome"] == "repaired" else "failed",
                                detail=fix.get("detail", fix.get("reason", "")),
                                cost_usd=fix.get("cost_usd", 0.0), repo=repo)
-                if fix["outcome"] == "repaired":
-                    gh("issue", "edit", str(n), "--repo", repo, "--remove-label", "needs-reengagement")
-                    gh("issue", "comment", str(n), "--repo", repo, "--body",
-                       f"PR #{pr['number']}'s {ticket_policy.REPAIRED_MARKER} and pushed, so no rebuild is needed: "
-                       f"the sent-back flag is cleared and the PR is ready for review.")
-                    print(f"{LOG_PREFIX} {repo}#{n}: sent-back PR #{pr['number']} repaired instead of rebuilt", file=sys.stderr)
-            continue
-        files: list[str] = []
-        if not red:
-            # A conflict: try the cheap fix first (2026-10-09, #314). Most are two PRs appending to the same file.
-            fix = _try_conflict_repair(repo, pr)
-            ts.record_stage(n, "gate", "passed" if fix["outcome"] == "repaired" else "failed",
-                           detail=fix.get("detail", fix.get("reason", "")),
-                           cost_usd=fix.get("cost_usd", 0.0), repo=repo)
+
             if fix["outcome"] == "repaired":
                 gh("pr", "comment", str(pr["number"]), "--repo", repo, "--body",
                    f"Conflict with main resolved automatically: {fix.get('detail', '')} Rebased onto main and pushed; nothing was rebuilt.")
-                print(f"{LOG_PREFIX} {repo}#{n}: PR #{pr['number']} conflict repaired ({fix.get('detail', '')})", file=sys.stderr)
+                print(f"{LOG_PREFIX} {repo}#{pr['number']}: PR conflict repaired ({fix.get('detail', '')})", file=sys.stderr)
+                if fix.get("model_assisted"):
+                    _flag_needs_reapproval(gh, repo, pr)
                 continue
+
             if fix["outcome"] == "later":
                 continue  # out of repair budget this scan: try again next scan rather than rebuild
+
             files = fix.get("files") or []
+
+            # Check if PR is hand-made (not from pipeline)
             if not str(pr.get("headRefName", "")).startswith("pipeline/"):
-                # Made by hand, not by the pipeline: an agent rebuild would replace someone's work. Flag it, once per commit.
-                url, sha = pr.get("url") or f"{repo}#{pr['number']}", pr.get("headRefOid") or ""
-                if not _flagged_before(url, sha):
-                    gh("pr", "comment", str(pr["number"]), "--repo", repo, "--body",
-                       f"This PR conflicts with main{' in ' + ', '.join(files) if files else ''}, and the conflict is a real one "
-                       f"(the same existing lines changed on both sides), so it could not be resolved automatically. It was made "
-                       f"by hand, so it is not sent for an agent rebuild: rebase it onto main, or ask MARVIN to.")
-                    _mark_flagged(url, sha)
+                # Made by hand, not by the pipeline: an agent rebuild would replace someone's work. Flag it.
+                _flag_hand_made(gh, repo, pr, files)
                 continue
+
+            # Ticketless pipeline PR that couldn't be repaired: flag it too
+            if not m:
+                _flag_hand_made(gh, repo, pr, files)
+                continue
+
+        # Only send back if it has a ticket reference (ticketless PRs are just flagged, not sent back)
+        if not m:
+            continue
+
+        n = int(m.group(1))
+        names = labels_of.get(n)
+        if names is None or names & HOLD_LABELS or ticket_policy.needs_person(names):
+            continue
+
         if not _still_needs_sending_back(gh, repo, pr, red):
             print(f"{LOG_PREFIX} {repo}#{n}: PR #{pr['number']} changed since this scan listed it; not sent back", file=sys.stderr)
             continue
+
         # The claim from the run that raised this PR must go too: the dispatcher only takes tickets with no claim, so a
         # sent-back ticket that kept it would never be rebuilt (clarity-captions #51).
         edit_args = ["issue", "edit", str(n), "--repo", repo, "--add-label", "needs-reengagement"]

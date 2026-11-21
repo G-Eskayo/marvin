@@ -1272,8 +1272,11 @@ untouched (it is the "legacy profile"); only repos with a profile file use the p
   acceptance criteria, conflict hunks only, `Read`/`Edit` tools in a scratch copy of conflicted files, no repo access)
   before falling back to flag/send-back. Model verification ensures only conflicted files exist, no markers remain, and
   unchanged lines stay identical. If verification passes, the repair continues to tests and push as normal. Cost of any
-  model call is recorded. A real conflict on a hand-made PR (not `pipeline/`) that model cannot fix is flagged on the
-  PR once per commit and never sent for an agent rebuild; on a pipeline PR it is sent back as before, naming the files.
+  model call is recorded. A real conflict on a hand-made PR (not `pipeline/`) or a ticketless PR that model cannot fix
+  is flagged on the PR once per commit and never sent for an agent rebuild; on a pipeline PR with a ticket, it is sent
+  back as before, naming the files. When model-assisted repair succeeds, the PR is labeled with
+  `needs-reapproval` to flag that the resolution needs review before merge. This label is applied unconditionally
+  (Decision `reapproval`'s gate is not yet implemented; both options are unchecked).
   Two repairs per scan; a commit that failed a repair isn't retried. The Approve gate's resolver gained the same
   both-added rule.
 - **Approving and denying from MR Review (2026-10-05)**: the merge gate now reads the profile too. A project's
