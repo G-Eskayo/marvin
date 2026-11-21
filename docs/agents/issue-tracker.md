@@ -26,6 +26,8 @@
   ways, on a line of its own:
   - `Closes #N` (or Fixes/Resolves): the PR finishes the ticket. GitHub closes the ticket when the PR merges.
   - `Part of #N`: the PR is a step towards the ticket: a mock-up, a stacked slice, a plan, docs. The ticket stays open.
+    When `Part of #N` names a red ticket (a main-red ticket, or bug+p0 titled "Main red"), `bin/gh` prints a warning
+    that main merges are blocked (marvin#1147).
 
   Write `owner/repo#N` (or paste the issue's URL) for a ticket in another repo, e.g. a private instance PR for a public
   engine ticket: `Closes G-Eskayo/marvin#623`. Either way the ticket's board card shows **In review** with the PR on it,
