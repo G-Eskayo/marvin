@@ -1,5 +1,7 @@
 # Changelog
 
+- Remove improve-codebase-architecture/SKILL.md's unused calls: [zoom-out] ([#1378](https://github.com/G-Eskayo/marvin/pull/1378))
+
 - Share one ollama_chat() and one extract_core_claim() across paper-dive's synthesis scripts ([#1370](https://github.com/G-Eskayo/marvin/pull/1370))
 
 - Add a Type: HITL/AFK field to to-tasklist's persisted task template ([#1372](https://github.com/G-Eskayo/marvin/pull/1372))
