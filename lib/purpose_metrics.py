@@ -36,6 +36,7 @@ import json
 import re
 import subprocess
 import sys
+import time
 from collections import Counter
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
@@ -494,6 +495,46 @@ def _ci_onnx_download_failures(fetch=None, repo: str = "G-Eskayo/marvin", runs: 
     return float(count)
 
 
+def _label_problems(days: float = PROBE_WINDOW_DAYS, path: Path | None = None, now: datetime | None = None) -> float:
+    """Count of gh label healing refusals (uncatalogued labels or create failures) over the past days (marvin#1160)."""
+    path = path or Path.home() / ".claude" / "logs" / "gh-calls.jsonl"
+    if not path.exists():
+        return 0.0
+    # Calculate cutoff using float timestamp (gh logs store time.time() as "t")
+    if now is None:
+        now_ts = time.time()
+    elif isinstance(now, datetime):
+        now_ts = now.timestamp()
+    else:
+        now_ts = float(now)
+    cut_ts = now_ts - (days * 86400)
+
+    count = 0
+    for line in path.read_text(errors="ignore").splitlines():
+        try:
+            d = json.loads(line)
+        except json.JSONDecodeError:
+            continue
+        t = d.get("t")
+        # Handle both float timestamps and ISO format strings
+        if isinstance(t, str):
+            when = _when(t)
+            if not when:
+                continue
+            t_ts = when.timestamp()
+        elif isinstance(t, (int, float)):
+            t_ts = float(t)
+        else:
+            continue
+        if t_ts < cut_ts:
+            continue
+        # Count refusal outcomes: label_healing present and non-empty with rc != 0 (failed in the end)
+        healing = d.get("label_healing")
+        if healing and isinstance(healing, dict) and d.get("rc") != 0:
+            count += 1
+    return float(count)
+
+
 # name -> (symptom counter, the most it may read while the fix holds, what it counts). Summed across Macs like any
 # measure; the logs are per Mac (~/.claude/logs doesn't sync), so nothing is counted twice.
 # Each counter takes `days` (default the 7-day window): a watched incident is re-measured over the time since its last
@@ -537,6 +578,9 @@ PROBES: dict[str, tuple[Callable[..., float], float, str]] = {
     # marvin#997: local skills that exist on live ~/.agents/skills but not in the repo's origin/main (missing upstream).
     "banner-skill-count-drift": (lambda days=PROBE_WINDOW_DAYS: _banner_skill_count_drift(), 0.0,
                                  "skills on live ~/.agents/skills but not in origin/main (marvin#997)"),
+    # marvin#1160: label healing refusals (uncatalogued labels or create failures).
+    "label-problems": (lambda days=PROBE_WINDOW_DAYS: _label_problems(days=days), 0.0,
+                       "gh label healing refusals (uncatalogued or create failures) over 7 days, per Mac, summed (#1160)"),
 }
 MEASURES.update({name: fn for name, (fn, _limit, _what) in PROBES.items()})
 MEASURES["stale-relay-caught"] = lambda: _stale_relay("caught")

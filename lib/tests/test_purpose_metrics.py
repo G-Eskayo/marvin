@@ -1,5 +1,8 @@
 """Purpose metrics and outcome checks (marvin#304): a ticket that promises a measurable effect gets measured."""
+import json
+import time
 from datetime import datetime, timezone
+from pathlib import Path
 
 import pytest
 
@@ -817,3 +820,54 @@ def test_pipeline_verify_timeout_is_registered():
     assert "pipeline-verify-timeouts" in pm.PROBES
     fn, limit, what = pm.PROBES["pipeline-verify-timeouts"]
     assert limit == 0.0 and "#881" in what and "#1316" in what
+
+
+# ── label-problems probe tests (marvin#1160) ───────────────────────────────────
+
+def test_label_problems_counts_healing_refusals(tmp_path):
+    """label-problems probe counts label healing attempts that failed (rc != 0)."""
+    log_file = tmp_path / "gh-calls.jsonl"
+    log_file.write_text(
+        json.dumps({"t": time.time(), "rc": 0, "label_healing": {}}) + "\n" +  # success: rc=0
+        json.dumps({"t": time.time(), "rc": 1, "label_healing": {"attempt_1": "failed"}}) + "\n"  # failure
+    )
+    count = pm._label_problems(path=log_file)
+    assert count == 1.0
+
+
+def test_label_problems_ignores_entries_outside_window(tmp_path):
+    """label-problems ignores entries older than the window."""
+    log_file = tmp_path / "gh-calls.jsonl"
+    now = time.time()
+    old_time = now - 10 * 24 * 3600  # 10 days ago
+    log_file.write_text(
+        json.dumps({"t": old_time, "rc": 1, "label_healing": {"attempt_1": "failed"}}) + "\n"
+    )
+    count = pm._label_problems(days=7, path=log_file, now=now)
+    assert count == 0.0
+
+
+def test_label_problems_counts_only_refusals(tmp_path):
+    """label-problems counts only entries where rc != 0 and label_healing exists."""
+    log_file = tmp_path / "gh-calls.jsonl"
+    now = time.time()
+    log_file.write_text(
+        json.dumps({"t": now, "rc": 0, "cmd": "issue create"}) + "\n" +  # no label_healing
+        json.dumps({"t": now, "rc": 0, "label_healing": {"attempt_1": "tried"}}) + "\n" +  # success (rc=0)
+        json.dumps({"t": now, "rc": 1, "label_healing": {"attempt_1": "failed"}}) + "\n"  # refusal
+    )
+    count = pm._label_problems(path=log_file, now=now)
+    assert count == 1.0
+
+
+def test_label_problems_handles_missing_file():
+    """label-problems returns 0 when the log file doesn't exist."""
+    count = pm._label_problems(path=Path("/nonexistent/gh-calls.jsonl"))
+    assert count == 0.0
+
+
+def test_label_problems_is_registered():
+    """The probe is registered with target 0 and references #1160."""
+    assert "label-problems" in pm.PROBES
+    fn, limit, what = pm.PROBES["label-problems"]
+    assert limit == 0.0 and "#1160" in what

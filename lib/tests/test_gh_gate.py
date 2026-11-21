@@ -309,3 +309,149 @@ def test_on_a_pull_only_node_the_real_gh_is_never_run(tmp_path):
     assert p.returncode == 1
     assert "REAL GH RAN" not in p.stdout and "gh auth login" not in p.stderr
     assert "reads GitHub only through the Mini" in p.stderr
+
+
+# ── Label healing (marvin #1160) ────────────────────────────────────────────
+
+def _fake_gh_with_label_healing(tmp_path, label_missing=None, calls=None):
+    """Create a fake gh that fails with 'label not found' on first call, succeeds on retry.
+
+    label_missing: if set, fail with this label missing on the first call
+    calls: list to track calls (for testing retry behavior)
+    """
+    d = tmp_path / "realbin"
+    d.mkdir(exist_ok=True)
+    f = d / "gh"
+    script = f"""#!/usr/bin/env python3
+import sys
+import json
+
+# Track calls to a file for testing
+calls_file = "{tmp_path / 'calls.jsonl'}"
+try:
+    with open(calls_file, "a") as f:
+        f.write(json.dumps({{"argv": sys.argv}}) + "\\n")
+except:
+    pass
+
+# Check for label create command
+if len(sys.argv) > 2 and sys.argv[1] == "label" and sys.argv[2] == "create":
+    sys.exit(0)
+
+# Check for issue/pr edit/create with labels
+if len(sys.argv) > 2 and sys.argv[1] in ("issue", "pr") and sys.argv[2] in ("create", "edit"):
+    # On first call, fail with missing label
+    with open("{tmp_path / 'call_count.txt'}", "a") as f:
+        f.write("1")
+    count = len((open("{tmp_path / 'call_count.txt'}").read()))
+
+    if count == 1 and "{label_missing or 'bug'}" in " ".join(sys.argv):
+        print("error: could not add label: '{label_missing or 'bug'}' not found", file=sys.stderr)
+        sys.exit(1)
+
+print("ok")
+sys.exit(0)
+"""
+    # Write as Python to handle the logic
+    f.write_text(script)
+    f.chmod(f.stat().st_mode | stat.S_IEXEC)
+    return d
+
+
+def test_label_healing_creates_missing_label_and_retries(tmp_path):
+    """When gh fails with 'label not found', healing creates the label and retries."""
+    realbin = _fake_gh_with_label_healing(tmp_path, label_missing="bug")
+    # Clear any prior call tracking
+    call_count_file = tmp_path / "call_count.txt"
+    if call_count_file.exists():
+        call_count_file.unlink()
+
+    p = _run(tmp_path, realbin, "issue", "create", "--title", "Test", "--add-label", "bug")
+
+    # Should succeed after retry
+    assert p.returncode == 0
+    assert p.stdout.strip() == "ok"
+
+    # Check log shows healing happened
+    log = [json.loads(l) for l in (tmp_path / ".claude" / "logs" / "gh-calls.jsonl").read_text().splitlines()]
+    assert any("label_healing" in entry for entry in log)
+
+
+def test_label_healing_preserves_original_error_for_uncatalogued_labels(tmp_path):
+    """When a label is not catalogued, original error is preserved."""
+    # Create fake gh that fails with an uncatalogued label
+    d = tmp_path / "realbin"
+    d.mkdir(exist_ok=True)
+    f = d / "gh"
+    f.write_text("""#!/bin/sh
+echo "gh: label 'totally-unknown-label-xyz' not found" >&2
+exit 1
+""")
+    f.chmod(f.stat().st_mode | stat.S_IEXEC)
+
+    p = _run(tmp_path, d, "issue", "create", "--title", "Test", "--add-label", "totally-unknown-label-xyz")
+
+    # Should fail with the original error (not healed since label is not catalogued)
+    assert p.returncode == 1
+    assert "totally-unknown-label-xyz" in p.stderr
+
+
+def test_label_healing_logs_healing_attempts(tmp_path):
+    """Healing attempts are logged in the gh-calls.jsonl."""
+    realbin = _fake_gh_with_label_healing(tmp_path, label_missing="bug")
+    call_count_file = tmp_path / "call_count.txt"
+    if call_count_file.exists():
+        call_count_file.unlink()
+
+    p = _run(tmp_path, realbin, "issue", "edit", "5", "--add-label", "bug,enhancement")
+
+    # Check that the log entry exists and contains healing info
+    log_file = tmp_path / ".claude" / "logs" / "gh-calls.jsonl"
+    assert log_file.exists(), "gh-calls.jsonl should be created"
+    log = [json.loads(l) for l in log_file.read_text().splitlines()]
+    # At least one entry should have healing info
+    assert any(entry.get("label_healing") for entry in log), "At least one log entry should contain label_healing"
+
+
+def test_healing_with_issue_create_label_flag(tmp_path):
+    """Healing works with --label flag (gh issue create uses this, not --add-label)."""
+    realbin = _fake_gh_with_label_healing(tmp_path, label_missing="bug")
+    call_count_file = tmp_path / "call_count.txt"
+    if call_count_file.exists():
+        call_count_file.unlink()
+
+    # gh issue create uses --label, not --add-label
+    p = _run(tmp_path, realbin, "issue", "create", "--title", "Test", "--label", "bug")
+    assert p.returncode == 0
+    # The label should have been healed (created then retried)
+    calls_file = tmp_path / "calls.jsonl"
+    if calls_file.exists():
+        calls = [json.loads(l) for l in calls_file.read_text().splitlines()]
+        # Should see both the failed attempt and the label create and the retry
+        assert len(calls) >= 3, f"Expected at least 3 calls (issue create, label create, retry), got {len(calls)}"
+
+
+def test_healing_refusal_without_healing_has_no_heal_log(tmp_path):
+    """Refusals of uncatalogued labels create an empty label_healing entry (attempted but no healing)."""
+    # Use a label that's not in the catalog
+    realbin = _fake_gh_with_label_healing(tmp_path, label_missing="totally-unknown-xyz")
+    call_count_file = tmp_path / "call_count.txt"
+    if call_count_file.exists():
+        call_count_file.unlink()
+
+    p = _run(tmp_path, realbin, "issue", "edit", "5", "--add-label", "totally-unknown-xyz")
+
+    # Should fail (no healing for uncatalogued label)
+    assert p.returncode == 1
+
+    # Check the log: should have an entry with empty label_healing (marking it was a label call but no healing)
+    log_file = tmp_path / ".claude" / "logs" / "gh-calls.jsonl"
+    assert log_file.exists(), "gh-calls.jsonl should be created even for failed calls"
+    log = [json.loads(l) for l in log_file.read_text().splitlines()]
+
+    # The failed call should have label_healing={} (marked but no healing attempted)
+    edit_entries = [e for e in log if e.get("cmd") == "issue edit"]
+    assert edit_entries, "Should have an issue edit entry"
+    # Should have label_healing={} to mark it was a label call with no healing attempted
+    for entry in edit_entries:
+        assert entry.get("label_healing") == {}, f"Entry should have label_healing={{}} for uncatalogued label: {entry}"
