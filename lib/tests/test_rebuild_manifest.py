@@ -157,3 +157,31 @@ class TestCallsField:
         )
         assert to_tasklist_entry is not None, "Expected to-tasklist entry in scan_skills() output"
         assert "calls" not in to_tasklist_entry, f"Expected no 'calls' key in to-tasklist entry, but got: {to_tasklist_entry.get('calls')}"
+
+    def test_parse_frontmatter_on_real_improve_codebase_architecture_has_no_calls_key(self):
+        """AC3: parse_frontmatter on the real improve-codebase-architecture/SKILL.md has no 'calls' key."""
+        repo_root = Path(__file__).resolve().parents[2]
+        skill_file = repo_root / "skills" / "improve-codebase-architecture" / "SKILL.md"
+
+        assert skill_file.exists(), f"Expected {skill_file} to exist"
+
+        fm = rebuild_manifest.parse_frontmatter(skill_file)
+        assert "calls" not in fm, f"Expected no 'calls' key in frontmatter, but got: {fm.get('calls')}"
+
+    def test_scan_skills_improve_codebase_architecture_entry_has_no_calls_key(self, monkeypatch):
+        """AC4: scan_skills() returns improve-codebase-architecture entry with no 'calls' key."""
+        repo_root = Path(__file__).resolve().parents[2]
+        skills_dir = repo_root / "skills"
+
+        assert skills_dir.exists(), f"Expected {skills_dir} to exist"
+
+        monkeypatch.setattr(rebuild_manifest, "SKILLS_DIR", skills_dir)
+
+        entries = rebuild_manifest.scan_skills()
+
+        improve_arch_entry = next(
+            (e for e in entries if e.get("name") == "improve-codebase-architecture"),
+            None
+        )
+        assert improve_arch_entry is not None, "Expected improve-codebase-architecture entry in scan_skills() output"
+        assert "calls" not in improve_arch_entry, f"Expected no 'calls' key in improve-codebase-architecture entry, but got: {improve_arch_entry.get('calls')}"
