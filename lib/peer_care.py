@@ -575,6 +575,46 @@ def expect_back(peer: str, cfg: dict, minutes: float | None = None, *, sleep: Ca
     return handle(peer, "expected-back")
 
 
+def hub_care(registry: dict | None = None) -> dict:
+    """Check and claim the GitHub hub on a trigger (like peer-care). Part of the existing peer-care watcher (ADR 0081).
+    Returns a summary of what happened."""
+    import github_hub
+    import job_events
+    import machine_profile
+
+    me = machine_profile.registry_id()
+    if not me:
+        return {"machine": None, "action": "skipped", "reason": "no machine id"}
+
+    registry = registry or machine_profile._load_registry()
+    priority = {"mac-mini-1": 0, "macbook-pro-1": 1, "mac-mini-2012": 2}
+    machines = sorted(registry.keys(), key=lambda x: priority.get(x, 999))
+
+    current = github_hub.current_hub(registry)
+    with job_events.job_run("peer-care-hub", "GitHub hub claim", None) as run:
+        run.step("current", current or "none")
+        if current and current == me:
+            success, reason = github_hub.try_claim(me)
+            if success:
+                run.step("renewed", reason)
+                return {"machine": me, "action": "renewed", "reason": reason}
+            else:
+                run.step("renew-failed", reason)
+                return {"machine": me, "action": "failed", "reason": reason}
+
+        if current and not github_hub.read_claim().stale:
+            run.step("skip", f"{current} is hub and claim is fresh")
+            return {"machine": me, "action": "skipped", "reason": "hub is current"}
+
+        success, reason = github_hub.try_claim(me)
+        if success:
+            run.step("claimed", reason)
+            return {"machine": me, "action": "claimed", "reason": reason}
+        else:
+            run.step("claim-failed", reason)
+            return {"machine": me, "action": "failed", "reason": reason}
+
+
 def status(cfg: dict, state_dir: Path = STATE_DIR) -> dict:
     import machine_profile
     me = machine_profile.registry_id()
@@ -611,6 +651,13 @@ def main(argv: list[str] | None = None) -> int:
     if a.cmd == "check":
         print(json.dumps(handle(a.peer, a.trigger, cfg)))
     elif a.cmd == "check-all":
+        # Hub claim check on every trigger
+        try:
+            hub_result = hub_care()
+            if hub_result:
+                print(json.dumps(hub_result))
+        except Exception as e:
+            print(json.dumps({"machine": me, "action": "error", "reason": f"hub_care failed: {e}"}), file=sys.stderr)
         for p in cfg["watch"].get(me, []):
             print(json.dumps(handle(p, a.trigger, cfg)))
     elif a.cmd == "watch-ipn":

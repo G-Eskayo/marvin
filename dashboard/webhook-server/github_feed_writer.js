@@ -19,7 +19,7 @@ const ALIVE_EVERY_MS = 60_000
 const BOARD_PR_FIELDS = ['number', 'title', 'url', 'isDraft', 'body', 'files']
 
 export function emptyFeed(host) {
-  return { version: 1, host: host || null, alive_at: null, repos: {} }
+  return { version: 1, host: host || null, generated_at: null, alive_at: null, repos: {}, tolerance_s: 600 }
 }
 
 export function createGithubFeedWriter({
@@ -46,6 +46,11 @@ export function createGithubFeedWriter({
   const save = () => {
     const keep = new Set(repos())
     for (const r of Object.keys(feed.repos)) if (!keep.has(r)) delete feed.repos[r]
+    // Stamped envelope: generated_at and alive_at are always set fresh on save
+    const t = now()
+    feed.generated_at = new Date(t).toISOString()
+    feed.alive_at = t
+    feed.tolerance_s = 600
     write(path, JSON.stringify(feed))
   }
 
@@ -113,8 +118,9 @@ export function createGithubFeedWriter({
     if (t - lastAliveWrite < ALIVE_EVERY_MS) return false
     lastAliveWrite = t
     feed.alive_at = t
+    feed.tolerance_s = 600
     try {
-      save()
+      write(path, JSON.stringify(feed))
     } catch (err) {
       log(`[github-feed] could not write: ${err?.message || err}`)
     }

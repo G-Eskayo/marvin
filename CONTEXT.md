@@ -643,6 +643,18 @@ ever been closed unmerged. Gil approves almost everything; the wait is the cost.
   ticket retry storm's comment-velocity spike would be caught without a "storm detector" ever
   having been written.
 
+## GitHub feed and hub claim (built 2026-11-19, ADR 0069 amendment 3, marvin#TBD)
+
+- **GitHub feed** (`github-feed.json`): the Mini's snapshot of every registered repo's open PRs and board data,
+  written by the webhook server and distributed to the box and laptop. The Mini runs GitHub reads itself; the box
+  has no credential and reads through a relay on the laptop. Stamped with envelope fields (`host`, `generated_at`,
+  `alive_at`, `tolerance_s`) matching the existing pattern for Health and other per-Mac files.
+- **Hub claim**: one Mac is elected the "hub" — the one allowed to call GitHub directly for reads that the feed
+  doesn't cover. Election is deterministic by priority (Mini > laptop > box), not consensus: the first machine to
+  acquire a lock and write its claim wins. The claim (`~/.claude/github-hub.json`) is stamped and leased; a stale
+  claim can be overwritten. Useful for distributed builds and fallback reads. Integrated into the existing peer-care
+  watcher (ADR 0081) as a new tracked role, logging through `job_events` like other peer-care incidents.
+
 ## Entity IDs (ADR 0079, accepted 2026-10-27, marvin#697)
 
 - **Entity ID**: the one name every part of MARVIN uses for the same thing (an ADR, a ticket, a project, a memory note).

@@ -107,3 +107,15 @@ concrete for ticket builds:
     routing only sends a ticket whose tools are all in the image or the catalog.
 
   Until then only marvin opts in (`linux_ok`), and the image built by `provision.sh` already holds all of marvin's tools.
+
+## Amendment 3 (2026-11-19): Box relay for GitHub reads and stamped copy distribution
+
+Built as plan #TBD (GitHub hub and feed distribution). The box has no GitHub credential (ADR 0069 point 3).
+
+**Stamped feed copy.** The Mini's GitHub feed (`github-feed.json`) is now stamped with envelope fields (`host`, `generated_at`, `alive_at`, `tolerance_s`) matching the existing envelope pattern used for Health and other per-Mac files. The box and laptop read it through the peer-copy mechanism: they check their own copy first, and if stale, fetch the Mini's via GET /copy/github-feed.
+
+**Box relay for GitHub reads.** When the box needs to read GitHub (the fetch part of the mirror, cached board builds), it sends authenticated read-shaped `gh` commands to the laptop's webhook server over Tailscale:
+- `POST /gh-relay` on the laptop, gated by (a) Tailscale/loopback transport and (b) an explicit registry hostname match (the caller claims a registered device id; the laptop verifies it).
+- Accepts only closed-form argv shapes: `pr list --repo X --json subset-of-feed-fields` and `issue list` equivalents covered by the feed. Writes are refused (the feed is read-only).
+- The laptop runs the command through its own `~/.agents/bin/gh`, so relay calls are budgeted and logged the same way, and the token comes from the laptop's credential.
+- The box's local `bin/gh` sends reads that the feed doesn't cover through the relay when the box is hub, retries on failure (backoff 1→30 min), and falls through to a live GitHub call only as a last resort when the relay is unreachable.

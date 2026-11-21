@@ -1,6 +1,7 @@
 import { readFileSync, statSync } from 'fs'
 import { homedir } from 'os'
 import { join } from 'path'
+import { isPrimaryHost } from './device_identity.js'
 
 // marvin#954: mac-mini-2012 holds no secrets (ADR 0069), so its dashboard never calls GitHub. The M4 Mini's webhook
 // server writes what GitHub says (each registered repo's open PRs and board data) to github-feed.json
@@ -78,9 +79,18 @@ export function readFeed(path = FEED_PATH, { read = (p) => readFileSync(p, 'utf-
 
 // How old the box's view of GitHub is: the older of "when the box last copied the feed" and "when the Mini last
 // looked at GitHub". A clock that runs ahead (skew between the machines) never makes an age negative.
+// Collects timestamps from the stamped envelope (generated_at, alive_at) and copiedAt, using whichever is oldest.
 export function feedAge({ feed, copiedAt }, now = Date.now()) {
-  const ages = [copiedAt, Number(feed?.alive_at) || null].filter((t) => Number.isFinite(t)).map((t) => Math.max(0, now - t))
-  return ages.length ? Math.max(...ages) : null
+  const times = []
+  // Collect all available timestamps
+  if (Number.isFinite(feed?.generated_at)) times.push(Number(feed.generated_at))
+  if (Number.isFinite(feed?.alive_at)) times.push(Number(feed.alive_at))
+  if (Number.isFinite(copiedAt)) times.push(copiedAt)
+  // The age is the difference between now and the oldest timestamp (minimum time)
+  const validTimes = times.filter((t) => Number.isFinite(t))
+  if (!validTimes.length) return null
+  const oldestTime = Math.min(...validTimes)
+  return Math.max(0, now - oldestTime)
 }
 
 export function agoText(ms) {
@@ -165,3 +175,4 @@ export const canMergeHere = (pullOnly, allowed) => !pullOnly && !!allowed
 // What a card shows in place of Approve on the box, instead of "this project's profile hasn't opted in".
 export const PULL_ONLY_CARD = 'Approve and Deny happen on a Mac: this machine shows what the Mini sees.'
 export const withReadOnlyReason = (prs, pullOnly) => (pullOnly && Array.isArray(prs) ? prs.map((p) => ({ ...p, readOnlyReason: PULL_ONLY_CARD })) : prs)
+
