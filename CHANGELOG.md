@@ -1,5 +1,7 @@
 # Changelog
 
+- Reconcile prototype/SKILL.md's "No tests" rule with the always-on tdd default, and say how a validated prototype… ([#1382](https://github.com/G-Eskayo/marvin/pull/1382))
+
 - Specify which triage label (if any) to-prd's published PRD issue should receive ([#1383](https://github.com/G-Eskayo/marvin/pull/1383))
 
 - Consolidate the priority-ranking pattern between improvement_sweep.py and sort_suggestions.py ([#1384](https://github.com/G-Eskayo/marvin/pull/1384))
