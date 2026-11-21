@@ -1,5 +1,7 @@
 # Changelog
 
+- Trim historical rationale from caveman/SKILL.md's frontmatter description ([#1361](https://github.com/G-Eskayo/marvin/pull/1361))
+
 - Cut index/SKILL.md's stale Examples section and correct its "unified index for all skills AND knowledge files" claim ([#1362](https://github.com/G-Eskayo/marvin/pull/1362))
 
 - Incident 2026-10-22..26: the Macs drifted apart (sync stuck 4 days); fixed, watched by a recurrence check ([#1363](https://github.com/G-Eskayo/marvin/pull/1363))
