@@ -1,5 +1,7 @@
 # Changelog
 
+- Remove the non-functional `calls: [to-issues]` frontmatter field from to-tasklist ([#1386](https://github.com/G-Eskayo/marvin/pull/1386))
+
 - Bring back proposals dismissed until a linked ticket closes ([#1387](https://github.com/G-Eskayo/marvin/pull/1387))
 
 - readme skill loads project profiles and review questions twice per run — dedupe criteria.md against TEMPLATES.md/SKILL.md ([#1388](https://github.com/G-Eskayo/marvin/pull/1388))
