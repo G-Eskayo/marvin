@@ -1,5 +1,7 @@
 # Changelog
 
+- Collapse cross_machine_merge.py's two identical ChromaDB sync functions into one parameterized helper ([#1364](https://github.com/G-Eskayo/marvin/pull/1364))
+
 - Flaky test: test_du_runs_at_low_priority fails only in the parallel run ([#1365](https://github.com/G-Eskayo/marvin/pull/1365))
 
 - Fix duplicate section numbers and colliding FR-IDs in resume-tailor's requirements.md ([#1366](https://github.com/G-Eskayo/marvin/pull/1366))
