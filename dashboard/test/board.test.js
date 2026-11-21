@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { deriveColumn, buildBoard, COLUMNS, STALE_CLAIM_MS, checklistProgress } from '../electron/main/board.js'
+import { deriveColumn, buildBoard, COLUMNS, STALE_CLAIM_MS, checklistProgress, openDependencies } from '../electron/main/board.js'
 
 const issue = (over = {}) => ({
   number: 1,
@@ -23,15 +23,24 @@ const pr = (over = {}) => ({
   repo: 'o/r',
   ...over
 })
-const ctx = (over = {}) => ({
-  prs: [],
-  events: [],
-  isLive: false,
-  openNumbers: new Set([1]),
-  heldNumbers: new Set(),
-  notPlannedNumbers: new Set(),
-  ...over
-})
+const ctx = (over = {}) => {
+  const repo = over.repo || 'o/r'
+  const tk = (nums) => new Set([...nums].map((n) => `${String(repo).toLowerCase()}#${n}`))
+  const openNums = over.openNumbers || new Set([1])
+  const heldNums = over.heldNumbers || new Set()
+  const notPlannedNums = over.notPlannedNumbers || new Set()
+  const { openNumbers, heldNumbers, notPlannedNumbers, ...rest } = over
+  return {
+    repo,
+    prs: [],
+    events: [],
+    isLive: false,
+    ...rest,
+    openNumbers: tk(openNums),
+    heldNumbers: tk(heldNums),
+    notPlannedNumbers: tk(notPlannedNums)
+  }
+}
 
 describe('deriveColumn', () => {
   it('puts closed issues in done', () => {
@@ -219,7 +228,7 @@ describe('tags on cards', () => {
     ])
     expect(card(b, 7).tags.map((t) => [t.name, t.kind])).toEqual([['bug', 'type'], ['ready-for-agent', 'state'], ['priority:p1', 'priority'], ['area:docs', 'other']])
     expect(card(b, 8).claimedBy).toBe('mac-mini')
-    expect(card(b, 9).blockedBy).toEqual([7])
+    expect(card(b, 9).blockedBy).toEqual([{ repo: 'o/r', number: 7 }])
   })
 
   it('carries age in days from creation', () => {
@@ -393,7 +402,7 @@ describe('on hold and not planned (marvin #139)', () => {
     const cardOf = (n) => board.columns.flatMap((c) => c.cards).find((c) => c.number === n)
     expect(cardOf(1).held).toBe(true)
     expect(cardOf(2).blockedBy).toEqual([])
-    expect(cardOf(2).heldDependencies).toEqual([1])
+    expect(cardOf(2).heldDependencies).toEqual([{ repo: 'o/r', number: 1 }])
     expect(cardOf(4).blockedBy).toEqual([])
     expect(board.columns.find((c) => c.id === 'ready').cards.map((c) => c.number).sort()).toEqual([2, 4])
   })
@@ -563,5 +572,35 @@ describe('a PR names its ticket as Closes or Part of, in any repo (marvin#1004)'
 
   it('a code block quoting "Closes #1" is not a link', () => {
     expect(deriveColumn(issue(), ctx({ prs: [pr({ body: '```\nCloses #1\n```' })] })).column).toBe('backlog')
+  })
+})
+
+describe('openDependencies', () => {
+  it('filters self-references so a ticket "Blocked by #5" does not block itself', () => {
+    const iss = issue({ number: 5, body: 'Blocked by #5' })
+    const result = openDependencies(iss, new Set(['o/r#5']), 'o/r')
+    expect(result).toEqual([])
+  })
+
+  it('includes other-ticket deps and handles cross-repo refs', () => {
+    const iss = issue({ body: 'Blocked by #7 and other/repo#9' })
+    const open = new Set(['o/r#1', 'o/r#7', 'other/repo#9'])
+    const result = openDependencies(iss, open, 'o/r')
+    expect(result.map((r) => `${r.repo}#${r.number}`).sort()).toEqual(['o/r#7', 'other/repo#9'])
+  })
+
+  it('excludes deps that are not in the open set (closed, held, not planned)', () => {
+    const iss = issue({ body: 'Blocked by #7 and #9' })
+    const open = new Set(['o/r#1', 'o/r#7'])
+    const result = openDependencies(iss, open, 'o/r')
+    expect(result.map((r) => r.number)).toEqual([7])
+  })
+
+  it('respects the ignored set (held or not planned deps that should not block)', () => {
+    const iss = issue({ body: 'Blocked by #7 and #9' })
+    const open = new Set(['o/r#1', 'o/r#7', 'o/r#9'])
+    const ignored = new Set(['o/r#9'])
+    const result = openDependencies(iss, open, 'o/r', ignored)
+    expect(result.map((r) => r.number)).toEqual([7])
   })
 })

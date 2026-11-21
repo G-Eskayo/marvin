@@ -1,13 +1,22 @@
 import { describe, it, expect } from 'vitest'
 import { readFileSync } from 'fs'
-import { prTicketRefs, ticketLinked } from '../electron/main/ticket_refs.js'
+import { prTicketRefs, ticketLinked, relationRefs } from '../electron/main/ticket_refs.js'
 
-const { cases } = JSON.parse(readFileSync(new URL('./fixtures/pr_ticket_refs_cases.json', import.meta.url), 'utf-8'))
+const { cases: prCases } = JSON.parse(readFileSync(new URL('./fixtures/pr_ticket_refs_cases.json', import.meta.url), 'utf-8'))
+const { cases: relationCases } = JSON.parse(readFileSync(new URL('./fixtures/relation_refs_cases.json', import.meta.url), 'utf-8'))
 
 describe('prTicketRefs: the shared cases (lib/pr_ticket_check.py runs the same file)', () => {
-  for (const c of cases) {
+  for (const c of prCases) {
     it(c.name, () => {
       expect(prTicketRefs(c.body, c.prRepo).map((r) => [`${r.repo}#${r.number}`, r.relation])).toEqual(c.refs)
+    })
+  }
+})
+
+describe('relationRefs: all relation types (lib/pr_ticket_check.py runs the same file)', () => {
+  for (const c of relationCases) {
+    it(c.name, () => {
+      expect(relationRefs(c.body, c.prRepo).map((r) => [`${r.repo}#${r.number}`, r.relation])).toEqual(c.refs)
     })
   }
 })
@@ -19,6 +28,13 @@ describe('prTicketRefs: inputs that are not text', () => {
   })
   it('returns numbers, not strings', () => {
     expect(prTicketRefs('Part of #9', 'o/r')[0].number).toBe(9)
+  })
+})
+
+describe('relationRefs: inputs that are not text', () => {
+  it('treats null and undefined bodies as empty', () => {
+    expect(relationRefs(null, 'o/r')).toEqual([])
+    expect(relationRefs(undefined, 'o/r')).toEqual([])
   })
 })
 

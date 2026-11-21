@@ -74,37 +74,41 @@ export function missingFor(ticket) {
 // Build a reverse-adjacency (blocks) graph for one repo, excluding held/not-planned
 export function blocksGraph(tickets, repo) {
   const graph = {}
+  const tk = (r, n) => `${String(r).toLowerCase()}#${n}`
   const openNumbers = new Set()
   const heldNumbers = new Set()
   const notPlannedNumbers = new Set()
 
-  // First pass: collect open numbers and special sets
+  // First pass: collect open numbers and special sets (repo-qualified)
   for (const t of tickets) {
-    if (t.state === 'OPEN') openNumbers.add(t.number)
+    if (t.state === 'OPEN') openNumbers.add(tk(repo, t.number))
     const labels = new Set((t.labels || []).map((l) => l.name || l))
-    if (labels.has('hold')) heldNumbers.add(t.number)
-    if (t.state === 'CLOSED' && t.stateReason === 'NOT_PLANNED') notPlannedNumbers.add(t.number)
+    if (labels.has('hold')) heldNumbers.add(tk(repo, t.number))
+    if (t.state === 'CLOSED' && t.stateReason === 'NOT_PLANNED') notPlannedNumbers.add(tk(repo, t.number))
   }
 
   const ignored = new Set([...heldNumbers, ...notPlannedNumbers])
 
   // Build reverse edges
   for (const t of tickets) {
-    if (!openNumbers.has(t.number)) continue
-    const deps = openDependencies(t, openNumbers, ignored)
+    if (!openNumbers.has(tk(repo, t.number))) continue
+    const deps = openDependencies(t, openNumbers, repo, ignored)
     for (const dep of deps) {
-      if (!graph[dep]) graph[dep] = []
-      graph[dep].push(t.number)
+      const depKey = tk(dep.repo, dep.number)
+      if (!graph[depKey]) graph[depKey] = []
+      graph[depKey].push(tk(repo, t.number))
     }
   }
 
   return graph
 }
 
-// BFS to find all tickets transitively unblocked by a given ticket
+// BFS to find all tickets transitively unblocked by a given ticket (by repo#number)
 export function transitiveUnblocks(number, repo, graph, tickets) {
+  const tk = (r, n) => `${String(r).toLowerCase()}#${n}`
+  const startKey = tk(repo, number)
   const visited = new Set()
-  const queue = [number]
+  const queue = [startKey]
   const items = []
 
   while (queue.length > 0) {
@@ -113,13 +117,15 @@ export function transitiveUnblocks(number, repo, graph, tickets) {
     visited.add(current)
 
     const dependents = graph[current] || []
-    for (const dep of dependents) {
-      if (!visited.has(dep)) {
-        queue.push(dep)
-        if (dep !== number) { // Don't include the starting node itself
-          const ticket = tickets.find((t) => t.number === dep)
+    for (const depKey of dependents) {
+      if (!visited.has(depKey)) {
+        queue.push(depKey)
+        if (depKey !== startKey) { // Don't include the starting node itself
+          const [depRepo, depNum] = depKey.match(/^(.+)#(\d+)$/).slice(1)
+          // Match by both repo and number if ticket has repo field; number only if not.
+          const ticket = tickets.find((t) => t.number === Number(depNum) && (!t.repo || t.repo.toLowerCase() === depRepo.toLowerCase()))
           if (ticket) {
-            items.push({ repo: ticket.repo, number: dep, title: ticket.title })
+            items.push({ repo: ticket.repo || depRepo, number: ticket.number, title: ticket.title })
           }
         }
       }

@@ -19,6 +19,7 @@ sys.path.insert(0, str(ROOT / "lib"))
 import pr_ticket_check as pt  # noqa: E402
 
 CASES = json.loads((ROOT / "dashboard" / "test" / "fixtures" / "pr_ticket_refs_cases.json").read_text())["cases"]
+RELATION_CASES = json.loads((ROOT / "dashboard" / "test" / "fixtures" / "relation_refs_cases.json").read_text())["cases"]
 
 
 # ── the parser: one rule, two languages ──────────────────────────────────────
@@ -35,6 +36,12 @@ def test_none_body_is_empty():
 
 def test_unicode_digits_are_not_ticket_numbers():
     assert pt.ticket_refs("Closes #١٢", "o/r") == []  # Arabic-Indic digits: JS \d wouldn't match them
+
+
+@pytest.mark.parametrize("case", RELATION_CASES, ids=[c["name"] for c in RELATION_CASES])
+def test_relation_refs_shared_cases(case):
+    got = [[f"{r}#{n}", rel] for r, n, rel in pt.relation_refs(case["body"], case["prRepo"])]
+    assert got == case["refs"]
 
 
 # ── which calls are checked ─────────────────────────────────────────────────

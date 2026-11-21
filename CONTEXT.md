@@ -865,16 +865,19 @@ its ticketing system creates shows up there with drill-down status. Boards live 
   15 min, and a running app is rebuilt once it is >=1h behind (was 2h / 24h, which made a new feature
   take up to a day to show). Trade-off accepted: the relaunch drops unsaved in-tab edits (Portfolio).
 
-- **Names its ticket (2026-11-02, marvin#1004).** An open PR names its ticket as `Closes #n` (it finishes the ticket;
-  GitHub closes it on merge) or `Part of #n` (a step: a mock-up, a stacked slice, a plan, docs; the ticket stays open).
-  Either form takes `owner/repo#n` or the issue URL. The relation index has them as two relations, `closes` and
-  `part-of` ("part of" / "worked on in" in the Related panel); a bare mention or "for #n" is only `mentions`. Both put
-  the ticket's card In review and satisfy the parity check. PRs are matched across repos: every board gets every
-  onboarded project's open PRs (read once per project, the same cached board data the relation index uses), so a
-  marvin-instance PR that closes a marvin ticket moves that card. One parser per language,
-  `dashboard/electron/main/ticket_refs.js` and `lib/pr_ticket_check.py`, both run
-  `dashboard/test/fixtures/pr_ticket_refs_cases.json`. `bin/gh` refuses a PR body that names no ticket
-  (`PR_NAMES_NO_TICKET`; override `MARVIN_NO_TICKET="<reason>"`). The rule: `docs/agents/issue-tracker.md`.
+- **Names its ticket (2026-11-02, marvin#1004; relations extended 2026-11-21, marvin#1016).** An open PR names its
+  ticket as `Closes #n` (finishes the ticket; GitHub closes on merge) or `Part of #n` (a step toward it; ticket stays
+  open). Either form takes `owner/repo#n` or the issue URL. Only these two are gated by `bin/gh`. Tickets also express
+  five more relations (all support cross-repo): `Blocked by`, `Duplicate of`, `Covered by`, `Supersedes`, `Related to`.
+  The relation index treats all seven as separate relation types in the ticket panels and dependency graphs; a bare
+  mention or "for #n" is only `mentions`. PRs with Closes/Part of put the ticket's card In review and satisfy the
+  parity check. Tickets link across repos: every board shows cross-repo blockers and relations in the Related panel
+  (shallow resolution: shown correctly, but their open/closed state is not tracked — marvin#1016 decision cross_repo_depth
+  = A). One parser per language, `dashboard/electron/main/ticket_refs.js` and `lib/pr_ticket_check.py`, both run
+  `dashboard/test/fixtures/pr_ticket_refs_cases.json` (Closes/Part of) and `relation_refs_cases.json` (all seven). PRs
+  are matched across repos (every board gets every onboarded project's PRs, cached), so a marvin-instance PR closing a
+  marvin ticket moves that card. `bin/gh` refuses a PR body that names no ticket (`PR_NAMES_NO_TICKET`; override
+  `MARVIN_NO_TICKET="<reason>"`). The rule: `docs/agents/issue-tracker.md`.
 
 ### Triggers over polling (decided 2026-10-03)
 

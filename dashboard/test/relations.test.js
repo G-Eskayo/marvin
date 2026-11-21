@@ -1,6 +1,28 @@
 import { describe, it, expect } from 'vitest'
 import { extractRefs, buildRelationIndex, linkify } from '../electron/main/relations.js'
 
+describe('buildRelationIndex: sectionBlockedBy scanning', () => {
+  it('skips code blocks when scanning "## Blocked by" sections', () => {
+    const tickets = [
+      { repo: 'o/r', number: 1, title: 'T1', state: 'OPEN', body: '## Blocked by\n```\n- #5\n```\n- #6' },
+      { repo: 'o/r', number: 5, title: 'T5', state: 'OPEN', body: '' },
+      { repo: 'o/r', number: 6, title: 'T6', state: 'OPEN', body: '' }
+    ]
+    const idx = buildRelationIndex({ tickets })
+    const rels = idx.forTicket('o/r', 1)
+    expect(rels.tickets.map((t) => t.number).sort()).toEqual([6])
+  })
+
+  it('handles null and undefined bodies gracefully in sectionBlockedBy', () => {
+    const tickets = [
+      { repo: 'o/r', number: 1, title: 'T1', state: 'OPEN', body: null },
+      { repo: 'o/r', number: 2, title: 'T2', state: 'OPEN', body: undefined },
+      { repo: 'o/r', number: 3, title: 'T3', state: 'OPEN', body: 'Blocked by #1' }
+    ]
+    expect(() => buildRelationIndex({ tickets })).not.toThrow()
+  })
+})
+
 describe('extractRefs', () => {
   it('finds ticket refs, qualified or not, but not headings, hex colours or words ending in #n', () => {
     const r = extractRefs('See #12 and G-Eskayo/clarity-captions#7. # Heading, colour #fff, issue#9, and #3abc.')

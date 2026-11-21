@@ -22,19 +22,33 @@
   (`skills/to-issues/SKILL.md` template). That includes the quick ones an agent files for itself in the middle of a
   session, which skip the rest of the template. It steers the build, so keep it to the three lines. A `bug` still
   needs its outcome check (`docs/agents/triage-labels.md`).
-- **A PR names its ticket** (Gil, 2026-11-02, marvin#1004): every PR body says which ticket it is for, in one of two
-  ways, on a line of its own:
-  - `Closes #N` (or Fixes/Resolves): the PR finishes the ticket. GitHub closes the ticket when the PR merges.
-  - `Part of #N`: the PR is a step towards the ticket: a mock-up, a stacked slice, a plan, docs. The ticket stays open.
-    When `Part of #N` names a red ticket (a main-red ticket, or bug+p0 titled "Main red"), `bin/gh` prints a warning
-    that main merges are blocked (marvin#1147).
+- **Link vocabulary** (marvin#1004, #1016): tickets and PRs express relationships in their body text via link words.
+  Every word supports `owner/repo#N` (or the issue's URL) for a ticket in another repo:
 
-  Write `owner/repo#N` (or paste the issue's URL) for a ticket in another repo, e.g. a private instance PR for a public
-  engine ticket: `Closes G-Eskayo/marvin#623`. Either way the ticket's board card shows **In review** with the PR on it,
-  and the dashboard's parity check is satisfied. "for #N" or a bare "#N" links nothing. `bin/gh` refuses
-  `pr create` and `pr edit --body*` in a repo with a MARVIN board when the body names no ticket either way
-  (`PR_NAMES_NO_TICKET`, `lib/pr_ticket_check.py`); `MARVIN_NO_TICKET="<reason>"` lets one call through, logged, for a
-  PR that truly has no ticket.
+  | Word | Use | Inverse word |
+  |------|-----|---|
+  | `Closes` (Fixes, Resolves) | The PR finishes the ticket. GitHub closes it on merge. | `Closed by` |
+  | `Part of` | The PR is a step (mock-up, stacked slice, plan, docs). The ticket stays open. | `Worked on in` |
+  | `Blocked by` | This ticket cannot progress until another ticket is closed. | `Blocks` |
+  | `Duplicate of` | This ticket is the same as another. | `Duplicated by` |
+  | `Covered by` | This ticket's scope is included in another ticket's implementation. | `Covers` |
+  | `Supersedes` | This ticket replaces another (in preference, design, or intent). | `Superseded by` |
+  | `Related to` | This ticket is connected to another but doesn't strictly block or duplicate it. | `Related to` |
+
+  - **For PRs, only Closes and Part of** are gated (marvin#1004): every PR body in a board repo must name its ticket
+    via `Closes #N` (the PR finishes the ticket) or `Part of #N` (the PR is a step). When `Part of #N` names a red
+    ticket (main-red label, or bug+p0 titled "Main red"), `bin/gh` prints a warning that main merges are blocked
+    (marvin#1147). "for #N" or a bare "#N" links nothing. `bin/gh` refuses `pr create` and `pr edit --body*` when
+    the body names no ticket either way (`PR_NAMES_NO_TICKET`, `lib/pr_ticket_check.py`); `MARVIN_NO_TICKET="<reason>"`
+    lets one call through, logged.
+  - **For tickets, all seven words are parsed** to populate the Related panel and dependency graphs (marvin#1016).
+    Conflicts resolve by priority: Closes > Part of > Blocked by > Duplicate of > Covered by > Supersedes > Related to
+    (a ticket named `Closes #5` and `Duplicate of #5` is treated as closes). Same word, same ticket, same repo: one ref.
+    A ticket's own body saying "Blocked by #N" (itself) is never a blocker (openDependencies guards against self-reference).
+  - Write the full form `owner/repo#N` or paste the issue's URL (`https://github.com/owner/repo/issues/N`) for a ticket
+    in another repo. The ticket's board card shows **In review** with the PR on it (Closes/Part of only), and the
+    dashboard's parity check is satisfied (PRs only). The Related panel and board dependency columns show cross-repo
+    links when resolved, with the target's repo name shown as a chip (Decision cross_repo_depth: A, shallow).
 - Never force-push, close, or delete issues without explicit user confirmation — these skills
   only create/comment/label by default.
 

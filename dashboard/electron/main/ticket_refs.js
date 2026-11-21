@@ -15,6 +15,11 @@ export const stripCode = (text) =>
 const REF = String.raw`(?:https?://github\.com/[\w.-]+/[\w.-]+/issues/\d+|(?:[\w.-]+/[\w.-]+)?#\d+)(?![\w-])`
 const CLOSES = new RegExp(String.raw`\b(?:close[sd]?|fix(?:e[sd])?|resolve[sd]?)\b:?\s+(${REF})`, 'gi')
 const PART_OF = new RegExp(String.raw`\bpart of:?\s+(${REF}(?:\s*(?:,|&|\band\b)\s*${REF})*)`, 'gi')
+const BLOCKED_BY = new RegExp(String.raw`\bblocked by:?\s+(${REF}(?:\s*(?:,|&|\band\b)\s*${REF})*)`, 'gi')
+const DUPLICATE_OF = new RegExp(String.raw`\bduplicate of:?\s+(${REF}(?:\s*(?:,|&|\band\b)\s*${REF})*)`, 'gi')
+const COVERED_BY = new RegExp(String.raw`\bcovered by:?\s+(${REF}(?:\s*(?:,|&|\band\b)\s*${REF})*)`, 'gi')
+const SUPERSEDES = new RegExp(String.raw`\bsupersedes:?\s+(${REF}(?:\s*(?:,|&|\band\b)\s*${REF})*)`, 'gi')
+const RELATED_TO = new RegExp(String.raw`\brelated to:?\s+(${REF}(?:\s*(?:,|&|\band\b)\s*${REF})*)`, 'gi')
 const ONE_REF = new RegExp(REF, 'g')
 
 function parseRef(text, prRepo) {
@@ -24,22 +29,35 @@ function parseRef(text, prRepo) {
   return { repo: repo || prRepo, number: Number(n) }
 }
 
-// [{ repo, number, relation: 'closes' | 'part-of' }] in the order written; a ticket named both ways is 'closes'.
-export function prTicketRefs(body, prRepo) {
+// Priority order for conflicting relations: closes > part-of > blocked-by > duplicate-of > covered-by > supersedes > related-to
+// [{ repo, number, relation: 'closes' | 'part-of' | 'blocked-by' | 'duplicate-of' | 'covered-by' | 'supersedes' | 'related-to' }]
+// in the order written; a ticket named both ways uses the strongest relation.
+export function relationRefs(body, prRepo) {
   const text = stripCode(body)
   const found = new Map()
+  const relationPriority = { closes: 7, 'part-of': 6, 'blocked-by': 5, 'duplicate-of': 4, 'covered-by': 3, supersedes: 2, 'related-to': 1 }
   const put = (ref, relation) => {
     const key = `${String(ref.repo).toLowerCase()}#${ref.number}`
     const had = found.get(key)
     if (!had) found.set(key, { ...ref, relation })
-    else if (relation === 'closes') had.relation = 'closes'
+    else if (relationPriority[relation] > relationPriority[had.relation]) had.relation = relation
   }
   const hits = []
   for (const m of text.matchAll(CLOSES)) hits.push({ at: m.index, refs: [m[1]], relation: 'closes' })
   for (const m of text.matchAll(PART_OF)) hits.push({ at: m.index, refs: m[1].match(ONE_REF), relation: 'part-of' })
+  for (const m of text.matchAll(BLOCKED_BY)) hits.push({ at: m.index, refs: m[1].match(ONE_REF), relation: 'blocked-by' })
+  for (const m of text.matchAll(DUPLICATE_OF)) hits.push({ at: m.index, refs: m[1].match(ONE_REF), relation: 'duplicate-of' })
+  for (const m of text.matchAll(COVERED_BY)) hits.push({ at: m.index, refs: m[1].match(ONE_REF), relation: 'covered-by' })
+  for (const m of text.matchAll(SUPERSEDES)) hits.push({ at: m.index, refs: m[1].match(ONE_REF), relation: 'supersedes' })
+  for (const m of text.matchAll(RELATED_TO)) hits.push({ at: m.index, refs: m[1].match(ONE_REF), relation: 'related-to' })
   hits.sort((a, b) => a.at - b.at)
   for (const h of hits) for (const r of h.refs) put(parseRef(r, prRepo), h.relation)
   return [...found.values()]
+}
+
+// [{ repo, number, relation: 'closes' | 'part-of' }] in the order written; a ticket named both ways is 'closes'.
+export function prTicketRefs(body, prRepo) {
+  return relationRefs(body, prRepo).filter((r) => r.relation === 'closes' || r.relation === 'part-of')
 }
 
 // The relation ('closes' / 'part-of') by which this PR names ticket repo#number, else null. A PR with no `repo` is

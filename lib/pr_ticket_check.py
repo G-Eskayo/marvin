@@ -35,6 +35,11 @@ MAX_PART_OF_LOOKUPS = 10
 _REF = r"(?:https?://github\.com/[\w.-]+/[\w.-]+/issues/\d+|(?:[\w.-]+/[\w.-]+)?#\d+)(?![\w-])"
 _CLOSES = re.compile(rf"\b(?:close[sd]?|fix(?:e[sd])?|resolve[sd]?)\b:?\s+({_REF})", re.I | re.A)
 _PART_OF = re.compile(rf"\bpart of:?\s+({_REF}(?:\s*(?:,|&|\band\b)\s*{_REF})*)", re.I | re.A)
+_BLOCKED_BY = re.compile(rf"\bblocked by:?\s+({_REF}(?:\s*(?:,|&|\band\b)\s*{_REF})*)", re.I | re.A)
+_DUPLICATE_OF = re.compile(rf"\bduplicate of:?\s+({_REF}(?:\s*(?:,|&|\band\b)\s*{_REF})*)", re.I | re.A)
+_COVERED_BY = re.compile(rf"\bcovered by:?\s+({_REF}(?:\s*(?:,|&|\band\b)\s*{_REF})*)", re.I | re.A)
+_SUPERSEDES = re.compile(rf"\bsupersedes:?\s+({_REF}(?:\s*(?:,|&|\band\b)\s*{_REF})*)", re.I | re.A)
+_RELATED_TO = re.compile(rf"\brelated to:?\s+({_REF}(?:\s*(?:,|&|\band\b)\s*{_REF})*)", re.I | re.A)
 _ONE_REF = re.compile(_REF, re.A)
 _URL = re.compile(r"github\.com/([\w.-]+/[\w.-]+)/issues/(\d+)", re.A)
 _CODE = [re.compile(r"```[\s\S]*?```"), re.compile(r"~~~[\s\S]*?~~~"), re.compile(r"`[^`\n]*`")]
@@ -57,11 +62,17 @@ def _parse_ref(text: str, pr_repo: str | None) -> tuple[str | None, int]:
     return (repo or pr_repo), int(n)
 
 
-def ticket_refs(body: str | None, pr_repo: str | None) -> list[tuple[str | None, int, str]]:
-    """[(repo, number, 'closes' | 'part-of')] in the order written; a ticket named both ways is 'closes'."""
+def relation_refs(body: str | None, pr_repo: str | None) -> list[tuple[str | None, int, str]]:
+    """[(repo, number, relation)] in the order written; priority: closes > part-of > blocked-by > duplicate-of > covered-by > supersedes > related-to."""
     text = _strip_code(body or "")
+    priority = {"closes": 7, "part-of": 6, "blocked-by": 5, "duplicate-of": 4, "covered-by": 3, "supersedes": 2, "related-to": 1}
     hits = [(m.start(), [m.group(1)], "closes") for m in _CLOSES.finditer(text)]
     hits += [(m.start(), _ONE_REF.findall(m.group(1)), "part-of") for m in _PART_OF.finditer(text)]
+    hits += [(m.start(), _ONE_REF.findall(m.group(1)), "blocked-by") for m in _BLOCKED_BY.finditer(text)]
+    hits += [(m.start(), _ONE_REF.findall(m.group(1)), "duplicate-of") for m in _DUPLICATE_OF.finditer(text)]
+    hits += [(m.start(), _ONE_REF.findall(m.group(1)), "covered-by") for m in _COVERED_BY.finditer(text)]
+    hits += [(m.start(), _ONE_REF.findall(m.group(1)), "supersedes") for m in _SUPERSEDES.finditer(text)]
+    hits += [(m.start(), _ONE_REF.findall(m.group(1)), "related-to") for m in _RELATED_TO.finditer(text)]
     found: dict[str, list] = {}
     for _at, refs, relation in sorted(hits, key=lambda h: h[0]):
         for r in refs:
@@ -69,9 +80,14 @@ def ticket_refs(body: str | None, pr_repo: str | None) -> list[tuple[str | None,
             key = f"{str(repo).lower()}#{n}"
             if key not in found:
                 found[key] = [repo, n, relation]
-            elif relation == "closes":
-                found[key][2] = "closes"
+            elif priority.get(relation, 0) > priority.get(found[key][2], 0):
+                found[key][2] = relation
     return [tuple(v) for v in found.values()]
+
+
+def ticket_refs(body: str | None, pr_repo: str | None) -> list[tuple[str | None, int, str]]:
+    """[(repo, number, 'closes' | 'part-of')] in the order written; a ticket named both ways is 'closes'."""
+    return [(r, n, rel) for r, n, rel in relation_refs(body, pr_repo) if rel in ("closes", "part-of")]
 
 
 def is_red_ticket(issue: dict | None) -> bool:

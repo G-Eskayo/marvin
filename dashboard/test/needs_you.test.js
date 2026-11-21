@@ -120,8 +120,8 @@ describe('blocksGraph', () => {
       issue(3, { body: 'Blocked by #2', state: 'OPEN' })
     ]
     const graph = blocksGraph(tickets, 'o/r')
-    expect(graph[1]).toContain(2)
-    expect(graph[2]).toContain(3)
+    expect(graph['o/r#1']).toContain('o/r#2')
+    expect(graph['o/r#2']).toContain('o/r#3')
   })
 
   it('excludes hold-labelled tickets from both ends', () => {
@@ -130,7 +130,7 @@ describe('blocksGraph', () => {
       issue(2, { body: 'Blocked by #1', state: 'OPEN' })
     ]
     const graph = blocksGraph(tickets, 'o/r')
-    expect(graph[1]).toBeUndefined()
+    expect(graph['o/r#1']).toBeUndefined()
   })
 
   it('excludes not-planned tickets from dependents', () => {
@@ -140,7 +140,7 @@ describe('blocksGraph', () => {
     ]
     const graph = blocksGraph(tickets, 'o/r')
     // #2 should not list #1 as a blocker since #1 is not planned
-    expect(graph[1]).toBeUndefined()
+    expect(graph['o/r#1']).toBeUndefined()
   })
 
   it('ignores references to closed tickets', () => {
@@ -149,7 +149,7 @@ describe('blocksGraph', () => {
       issue(2, { body: 'Blocked by #1', state: 'OPEN' })
     ]
     const graph = blocksGraph(tickets, 'o/r')
-    expect(graph[1]).toBeUndefined()
+    expect(graph['o/r#1']).toBeUndefined()
   })
 })
 
