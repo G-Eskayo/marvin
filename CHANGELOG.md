@@ -1,5 +1,7 @@
 # Changelog
 
+- Split write-a-skill/SKILL.md (129 lines) under its own 100-line rule ([#1367](https://github.com/G-Eskayo/marvin/pull/1367))
+
 - Point diagnose/SKILL.md at retrospective.md so past sessions' lessons get read ([#1368](https://github.com/G-Eskayo/marvin/pull/1368))
 
 - A main-red fix that says Part of instead of Closes stalls the queue silently: warn at PR time and say why the queue is held ([#1369](https://github.com/G-Eskayo/marvin/pull/1369))
