@@ -2,7 +2,7 @@
 
 **Version:** 1.1-draft  
 **Date:** 2026-06-29  
-**Status:** Draft — awaiting template approval and resume/transcript uploads
+**Status:** Implemented. Post-launch revisions are recorded as ADRs in architecture.md.
 
 ---
 
@@ -346,12 +346,12 @@ Ambiguous = same company + overlapping dates but different title or significantl
 
 ---
 
-## 9. Open Items (resolve before implementation)
+## 9. Open Items (at design time)
 
-- [ ] **Template approved** — Gil reviews §6 sample, confirms or requests changes
-- [ ] **Resumes uploaded** — format refined to match newer resume style
-- [ ] **Transcript uploaded** — aerospace courses extracted into master
-- [ ] **Location** — confirm city/state for frontmatter header
-- [ ] **WeasyPrint install confirmed** — `~/.agents/venv/bin/pip install weasyprint`
+- [x] **Template approved** — template/resume.css in use, ADR history (ADR-002 superseded by ADR-006; ADR-007–011)
+- [ ] **Resumes uploaded** — not blocking: tool in use
+- [ ] **Transcript uploaded** — not blocking: tool in use
+- [ ] **Location** — not blocking: tool in use
+- [x] **WeasyPrint install confirmed** — venv has weasyprint 69.0
 - [x] **Font decision** — RESOLVED 2026-07-02: system font (offline-safe), after the Inter @font-face was found to silently break all bold/italic rendering. See §7.
-- [ ] **Repo created** — `G-Eskayo/resume-tailor` on GitHub
+- [x] **Repo created** — `G-Eskayo/resume-tailor` exists, public
