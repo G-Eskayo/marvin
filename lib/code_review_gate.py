@@ -22,6 +22,28 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 MAX_DIFF_CHARS = 60000  # Cap diff size sent to judge, same spirit as fit_check.py's MAX_NET_LINES
 
+RUBRIC = """You are a Judge reviewing one pull request's code for correctness bugs and quality issues.
+Review the diff below. Look for: logic errors, unhandled edge cases, missing error handling,
+security issues, type mismatches, off-by-one errors, race conditions, resource leaks, and clarity problems.
+Do NOT report style/linting issues unless they obscure intent. Do NOT report missing tests (that's separate).
+Do NOT report cosmetic changes.
+
+Resources: O(n)-or-worse work added to a hot or per-request path where O(1) or an indexed/cached read already exists,
+space growth (a file/cache/log/worktree that grows unbounded, or anything a run creates and never cleans up when it
+ends — a disposable resource, one quick to recreate, is cleaned up as part of finishing the work, with no approval
+needed; leaving it behind is a bug, per ADR 0065), and wasted calls (repeated network, token, or subprocess calls
+inside a loop that could be batched or cached). A small, bounded, one-off loop is a micro-optimisation (note), not a
+resources regression (must-fix).
+
+Respond with exactly one line: VERDICT: clean  or  VERDICT: findings
+
+If you found issues, follow with bullets (one per line, starting with `-`), each tagged:
+- [must-fix] file:line — summary   (a real defect: wrong result, crash, data loss, security hole, a resources regression
+  as above, or a test that doesn't test what it claims or that touches real external systems)
+- [note] file:line — summary       (worth knowing but not wrong: micro-optimisations, polish, clarity, missing UI hint)
+
+If clean, stop after the VERDICT line."""
+
 
 def fetch_diff(pr_url: str, run=subprocess.run) -> str | None:
     """Fetch the diff for a PR via `gh pr diff`. Returns None on failure, empty string if diff is empty."""
@@ -39,22 +61,7 @@ def build_prompt(diff: str) -> str:
     if len(diff) > MAX_DIFF_CHARS:
         diff = diff[:MAX_DIFF_CHARS] + "\n\n[... diff truncated ...]"
 
-    rubric = """You are a Judge reviewing one pull request's code for correctness bugs and quality issues.
-Review the diff below. Look for: logic errors, unhandled edge cases, missing error handling,
-security issues, type mismatches, off-by-one errors, race conditions, resource leaks, and clarity problems.
-Do NOT report style/linting issues unless they obscure intent. Do NOT report missing tests (that's separate).
-Do NOT report cosmetic changes.
-
-Respond with exactly one line: VERDICT: clean  or  VERDICT: findings
-
-If you found issues, follow with bullets (one per line, starting with `-`), each tagged:
-- [must-fix] file:line — summary   (a real defect: wrong result, crash, data loss, security hole, a test that
-  doesn't test what it claims or that touches real external systems)
-- [note] file:line — summary       (worth knowing but not wrong: performance, polish, clarity, missing UI hint)
-
-If clean, stop after the VERDICT line."""
-
-    return f"{rubric}\n\nDIFF:\n\n{diff}"
+    return f"{RUBRIC}\n\nDIFF:\n\n{diff}"
 
 
 _TAG = re.compile(r"\[([A-Za-z-]+[^\]]*)\]\s*(.*)")
