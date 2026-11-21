@@ -1,5 +1,7 @@
 # Changelog
 
+- Point diagnose/SKILL.md at retrospective.md so past sessions' lessons get read ([#1368](https://github.com/G-Eskayo/marvin/pull/1368))
+
 - A main-red fix that says Part of instead of Closes stalls the queue silently: warn at PR time and say why the queue is held ([#1369](https://github.com/G-Eskayo/marvin/pull/1369))
 
 - Remove improve-codebase-architecture/SKILL.md's unused calls: [zoom-out] ([#1378](https://github.com/G-Eskayo/marvin/pull/1378))
