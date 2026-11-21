@@ -1,0 +1,114 @@
+{
+  "name": "Dashboard celestial-navigation palette (#1148)",
+  "notes": "Accessibility rule marvin#1062: text ≥4.5:1, large text ≥3:1, pixel (thin fonts) ≥7:1; color never alone. Dash background #0f1117 is the boot sequence; bg #05040A is marvin show windows. The raster texture (#ffffff07 on 1px of 3px height) sits on both.",
+  "levels": {
+    "text": 4.5,
+    "large": 3.0,
+    "ui": 3.0,
+    "pixel": 7.0
+  },
+  "pairs": [
+    {
+      "what": "--dim (#b89235) on solid --bg (#05040A)",
+      "fg": "#b89235",
+      "bg": "#05040A",
+      "level": "text",
+      "notes": "Dashboard/show-window body text (.show-empty, .show-history-meta, .show-tag); 10–12px. Needs 'text' (4.5:1) because these are read normally, not at pixel-art density."
+    },
+    {
+      "what": "--dim (#b89235) on --bg with raster texture (#ffffff07 overlay)",
+      "fg": "#b89235",
+      "bg": "#ffffff",
+      "opacity": 0.07,
+      "backdrop": "#05040A",
+      "level": "text",
+      "notes": "Raster sits on .show-root/.show-hud; .show-tag sits on this. Same text level since the raster texture is felt, not read."
+    },
+    {
+      "what": "--dim (#b89235) on solid --dash (#0f1117)",
+      "fg": "#b89235",
+      "bg": "#0f1117",
+      "level": "text",
+      "notes": "Boot sequence body labels (.boot-hdr, .boot-bar .boot-lbl); 11px. Same contrast level as the main background."
+    },
+    {
+      "what": "--dim (#b89235) on --dash with raster texture (#ffffff07 overlay)",
+      "fg": "#b89235",
+      "bg": "#ffffff",
+      "opacity": 0.07,
+      "backdrop": "#0f1117",
+      "level": "text",
+      "notes": "Raster texture over boot's dark background; worst-case for visibility."
+    },
+    {
+      "what": "--amber (#f0b32a) on solid --bg (#05040A)",
+      "fg": "#f0b32a",
+      "bg": "#05040A",
+      "level": "text",
+      "notes": ".show-label (14px), .show-btn (11px), .show-card-url (13px): main UI text that's read normally, not pixel-density."
+    },
+    {
+      "what": "--amber (#f0b32a) on solid --dash (#0f1117)",
+      "fg": "#f0b32a",
+      "bg": "#0f1117",
+      "level": "text",
+      "notes": ".boot-sum (13px): boot sequence summary text."
+    },
+    {
+      "what": "--green (#54ff8a) on solid --bg (#05040A)",
+      "fg": "#54ff8a",
+      "bg": "#05040A",
+      "level": "text",
+      "notes": ".boot-title h1 is 60px (large) but other greens are UI accents (<18pt): classifying at 'text' (4.5:1) covers all uses."
+    },
+    {
+      "what": "--green (#54ff8a) on solid --dash (#0f1117)",
+      "fg": "#54ff8a",
+      "bg": "#0f1117",
+      "level": "text",
+      "notes": "Boot sequence uses green for ok states and smaller UI accents; classified at 'text' (4.5:1) for safety since not all uses are 18pt+."
+    },
+    {
+      "what": "--orange (#ff6a1f) on solid --bg (#05040A)",
+      "fg": "#ff6a1f",
+      "bg": "#05040A",
+      "level": "text",
+      "notes": ".show-project (11px) and .boot-title .boot-sub (13px) are <18pt regular; classified at 'text' (4.5:1) per font size, not semantic use."
+    },
+    {
+      "what": "--orange (#ff6a1f) on solid --dash (#0f1117)",
+      "fg": "#ff6a1f",
+      "bg": "#0f1117",
+      "level": "text",
+      "notes": "Boot subtitle (13px) and smaller status text are <18pt; classified at 'text' (4.5:1) for consistent coverage across both backgrounds."
+    },
+    {
+      "what": "--red (#ff3b2f) on solid --bg (#05040A)",
+      "fg": "#ff3b2f",
+      "bg": "#05040A",
+      "level": "text",
+      "notes": ".show-reason, .show-notice (10–12px): error/warning text that must be clear but are shorter spans."
+    },
+    {
+      "what": "--red (#ff3b2f) on solid --dash (#0f1117)",
+      "fg": "#ff3b2f",
+      "bg": "#0f1117",
+      "level": "text",
+      "notes": "Boot sequence error states (banner, text); same contrast level as other boot text."
+    },
+    {
+      "what": "--moon (#cfd6e6) on solid --bg (#05040A)",
+      "fg": "#cfd6e6",
+      "bg": "#05040A",
+      "level": "text",
+      "notes": "Default text color for .show-root; fallback for items and labels where no accent color is set."
+    },
+    {
+      "what": "--moon (#cfd6e6) on solid --dash (#0f1117)",
+      "fg": "#cfd6e6",
+      "bg": "#0f1117",
+      "level": "text",
+      "notes": "Moon is the boot's lighter alternate text; same level across both backgrounds."
+    }
+  ]
+}

@@ -1,0 +1,41 @@
+{
+  "name": "Test: #b89235 (new dim color) contrast verification",
+  "levels": {
+    "text": 4.5,
+    "large": 3.0,
+    "ui": 3.0,
+    "pixel": 7.0
+  },
+  "pairs": [
+    {
+      "what": "dim (#b89235) on solid #05040A",
+      "fg": "#b89235",
+      "bg": "#05040A",
+      "level": "text"
+    },
+    {
+      "what": "dim (#b89235) on solid #0f1117",
+      "fg": "#b89235",
+      "bg": "#0f1117",
+      "level": "text"
+    },
+    {
+      "what": "dim (#b89235) on #05040A with raster texture (white 7% over 1px)",
+      "fg": "#b89235",
+      "bg": "#ffffff",
+      "opacity": 0.07,
+      "backdrop": "#05040A",
+      "level": "text",
+      "notes": "Raster is #ffffff07 on 1px of 3px height"
+    },
+    {
+      "what": "dim (#b89235) on #0f1117 with raster texture (white 7% over 1px)",
+      "fg": "#b89235",
+      "bg": "#ffffff",
+      "opacity": 0.07,
+      "backdrop": "#0f1117",
+      "level": "text",
+      "notes": "Raster is #ffffff07 on 1px of 3px height"
+    }
+  ]
+}

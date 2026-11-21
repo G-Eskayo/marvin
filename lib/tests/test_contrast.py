@@ -99,7 +99,9 @@ def test_an_exception_on_a_pair_that_passes_is_flagged_as_stale():
 @pytest.mark.parametrize("pair", [{"fg": "#fff", "bg": "#000", "level": "nope", "what": "a"},
                                   {"fg": "#fff", "level": "text", "what": "a"},
                                   {"fg": "bogus", "bg": "#000", "level": "text", "what": "a"},
-                                  {"fg": "#fff", "bg": "#000", "level": "text"}])
+                                  {"fg": "#fff", "bg": "#000", "level": "text"},
+                                  {"fg": "#b89235", "bg": "#05040A", "level": "unknown-level", "what": "dashboard dim on bg"},
+                                  {"fg": "#f0b32a", "bg": "#0f1117", "what": "dashboard amber on dash (missing level)"}])
 def test_a_malformed_pair_fails_the_check_rather_than_being_skipped(pair):
     r = cx.check(_spec(pairs=[pair]))
     assert not r["ok"]
@@ -109,6 +111,12 @@ def test_the_same_pair_listed_twice_with_different_levels_is_refused():
     p = {"what": "a", "fg": "#f0b32a", "bg": "#05040A"}
     r = cx.check(_spec(pairs=[{**p, "level": "text"}, {**p, "level": "pixel", "what": "b"}]))
     assert not r["ok"] and "twice" in r["failures"][0]
+    # Dashboard-shaped case: dim color on two backgrounds with different levels
+    p_dashboard = {"fg": "#b89235", "bg": "#05040A"}
+    r_dash = cx.check(_spec(levels={"text": 4.5, "large": 3.0, "pixel": 7.0},
+                             pairs=[{**p_dashboard, "what": "dim on bg (text)", "level": "text"},
+                                    {**p_dashboard, "what": "dim on bg (large)", "level": "large"}]))
+    assert not r_dash["ok"] and "twice" in r_dash["failures"][0]
 
 
 def test_the_cli_exits_non_zero_on_a_failure(tmp_path, capsys):
@@ -121,6 +129,13 @@ def test_the_cli_exits_non_zero_on_a_failure(tmp_path, capsys):
 
 
 # ── MARVIN's own palettes pass (this is what keeps the rule from depending on memory) ───────
+
+def test_planted_failing_pair_is_caught():
+    """Dashboard-specific: the old dim (#6b551f) fails the new 4.5:1 text rule and is caught."""
+    r = cx.check(_spec(pairs=[{"what": "dim (old, #6b551f) on bg", "fg": "#6b551f", "bg": "#05040A", "level": "text"}]))
+    assert not r["ok"]
+    assert "2.9" in r["failures"][0] and "4.5" in r["failures"][0]
+
 
 def test_every_marvin_palette_meets_the_rule():
     palettes = sorted((REPO / "config" / "palette").glob("*.json"))
