@@ -1,5 +1,7 @@
 # Changelog
 
+- A main-red fix that says Part of instead of Closes stalls the queue silently: warn at PR time and say why the queue is held ([#1369](https://github.com/G-Eskayo/marvin/pull/1369))
+
 - Remove improve-codebase-architecture/SKILL.md's unused calls: [zoom-out] ([#1378](https://github.com/G-Eskayo/marvin/pull/1378))
 
 - Share one ollama_chat() and one extract_core_claim() across paper-dive's synthesis scripts ([#1370](https://github.com/G-Eskayo/marvin/pull/1370))
