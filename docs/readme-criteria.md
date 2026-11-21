@@ -12,6 +12,17 @@ whole manual (see Scope).
 
 Six goals follow. Each has a test a reader can apply and, where possible, a check a program can run.
 
+## Audience ladder
+
+READMEs serve two readers at different depths. See "Two readers on every page" in [`skills/writing-style/SKILL.md`](../skills/writing-style/SKILL.md) for the principle: **a lay reader gets the gist from the opening paragraph and the pictures; a technical reader gets real depth further down** (architecture, hard problems, proofs). This applies to READMEs in the same way:
+
+- **The opening paragraph** (what it is, why it matters, what it does) must be written for a lay reader — no unexplained jargon, plain language, every technical term hyperlinked to a definition further down.
+- **Sections below the opening** (How it works, Quickstart, API docs, architecture diagrams, technical design) are for readers who already understand the first paragraph and want depth.
+- **The portfolio**: for hiring-manager-facing projects, a portfolio page (outside this README) provides the fullest technical view, and the README opening should link to it for readers who want that depth.
+- **The lay-reader test**: read only the first paragraph and the pictures; does a stranger understand what this is and why it exists? The proof: can you explain it to a non-technical friend in those words alone, without backfilling from the rest of the README?
+
+This matters because README clarity compounds across a career's portfolio and across teams' shared documentation; a clear opening is not a nicety, it is the job.
+
 | # | Goal | The reader's question | Mechanical check (`readme_audit.py`) |
 |---|---|---|---|
 | 1 | **ORIENT** | What is this, and why would I want it? | title; a one-line statement near the top; the intro says why |

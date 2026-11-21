@@ -14,7 +14,7 @@ ROOT = Path(__file__).resolve().parents[1]
 OUT = ROOT / "docs" / "skills.md"
 
 GROUPS = [
-    ("Quality and debugging", ["diagnose", "audit", "tdd", "qa-agent", "grill-with-docs", "grill-me", "improve-codebase-architecture", "safety-monitor"]),
+    ("Quality and debugging", ["diagnose", "audit", "tdd", "qa-agent", "grill-with-docs", "grill-me", "improve-codebase-architecture", "safety-monitor", "security-sweep"]),
     ("Research and reading", ["research", "paper-dive", "research-colony", "zoom-out"]),
     ("Writing and creating", ["readme", "writing-style", "portfolio-page", "creative", "prototype", "resume-tailor"]),
     ("Continuity and self-improvement", ["handoff", "index", "self-improve", "architecture-review", "improve", "lexicon", "write-a-skill", "variable-tracker"]),
