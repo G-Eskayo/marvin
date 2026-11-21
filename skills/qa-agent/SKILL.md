@@ -97,5 +97,5 @@ ChromaDB collection: `qa-knowledge`
 ## Behaviour rules
 - Always query the KB before starting a non-trivial task on an unfamiliar library.
 - After scanning a project, print a summary: N entries added, top libraries found.
-- Dedup: before inserting, check if near-identical content already exists (cosine > 0.95).
+- Dedup: entries are skipped if their exact content already exists in the KB (SHA-256 hash match). Near-identical paraphrases are not deduplicated yet; see #1314.
 - Never store secrets, tokens, or personal data in the KB.

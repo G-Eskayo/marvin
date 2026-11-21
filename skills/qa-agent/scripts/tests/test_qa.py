@@ -13,6 +13,8 @@ import pytest
 SCRIPTS = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(SCRIPTS))
 
+import qa_capture
+import qa_query
 from qa_scan import detect_stack, extract_dependencies, extract_imports, extract_markers, analyze_python_file, store_entries
 from qa_capture import build_entry
 from qa_query import filter_results
@@ -584,4 +586,144 @@ def test_sub_agent_snippet_with_check_true_raises_on_failure():
             "sys": sys,
             "SCRIPTS": SCRIPTS,
         })
+
+
+# ── Dedup behavior regression tests ───────────────────────────────────────────
+
+def test_skill_md_dedup_rule_states_sha256_not_cosine():
+    """SKILL.md dedup rule must mention SHA-256, never cosine."""
+    skill_path = Path(__file__).resolve().parents[2] / "SKILL.md"
+    markdown = skill_path.read_text()
+    # Extract the Behaviour rules section
+    lines = markdown.split('\n')
+    behaviour_start = None
+    for i, line in enumerate(lines):
+        if '## Behaviour rules' in line:
+            behaviour_start = i
+            break
+    assert behaviour_start is not None, "## Behaviour rules section not found"
+    # Find the dedup line
+    dedup_line = None
+    for i in range(behaviour_start, len(lines)):
+        if 'Dedup:' in lines[i]:
+            dedup_line = lines[i]
+            break
+    assert dedup_line is not None, "Dedup rule not found"
+    assert 'SHA-256' in dedup_line, "Dedup rule must mention SHA-256"
+    assert 'cosine' not in dedup_line.lower(), "Dedup rule must not mention cosine"
+
+
+def test_skill_md_dedup_rule_links_1314():
+    """SKILL.md dedup rule must reference issue #1314."""
+    skill_path = Path(__file__).resolve().parents[2] / "SKILL.md"
+    markdown = skill_path.read_text()
+    lines = markdown.split('\n')
+    behaviour_start = None
+    for i, line in enumerate(lines):
+        if '## Behaviour rules' in line:
+            behaviour_start = i
+            break
+    assert behaviour_start is not None, "## Behaviour rules section not found"
+    dedup_line = None
+    for i in range(behaviour_start, len(lines)):
+        if 'Dedup:' in lines[i]:
+            dedup_line = lines[i]
+            break
+    assert dedup_line is not None, "Dedup rule not found"
+    assert '#1314' in dedup_line, "Dedup rule must reference #1314"
+
+
+def test_no_cosine_promise_anywhere_in_qa_agent_skill_folder():
+    """No file in skills/qa-agent/ folder should mention cosine (regression guard)."""
+    skill_folder = Path(__file__).resolve().parents[2]  # skills/qa-agent/
+    cosine_mentions = []
+    this_test_file = Path(__file__).resolve()
+    for file_path in skill_folder.rglob('*'):
+        if file_path.is_file() and not file_path.name.startswith('.') and file_path != this_test_file:
+            try:
+                content = file_path.read_text()
+                if 'cosine' in content.lower():
+                    cosine_mentions.append(str(file_path.relative_to(skill_folder)))
+            except (UnicodeDecodeError, PermissionError):
+                pass
+    assert not cosine_mentions, f"Found 'cosine' in: {cosine_mentions}"
+
+
+def test_store_entries_skips_exact_duplicate_content(tmp_path, monkeypatch):
+    """store_entries should skip entries with identical IDs (exact content match)."""
+    # Patch CHROMA_PATH at call time using monkeypatch (not sys.modules manipulation)
+    monkeypatch.setattr(qa_scan, "CHROMA_PATH", tmp_path)
+
+    from qa_scan import store_entries
+    from qa_capture import build_entry
+
+    # Create two identical entries
+    entry1 = build_entry(
+        content="Always use PersistentClient for ChromaDB",
+        category="anti-pattern"
+    )
+    entry2 = build_entry(
+        content="Always use PersistentClient for ChromaDB",
+        category="anti-pattern"
+    )
+    assert entry1["id"] == entry2["id"], "Identical content should produce identical IDs"
+
+    # First call stores 1
+    result1 = store_entries([entry1])
+    assert result1 == 1, f"Expected 1 new entry, got {result1}"
+
+    # Second call with same entry stores 0
+    result2 = store_entries([entry2])
+    assert result2 == 0, f"Expected 0 new entries (duplicate), got {result2}"
+
+
+def test_store_entries_does_not_dedup_near_identical_content(tmp_path, monkeypatch):
+    """store_entries should NOT skip near-identical content with different IDs."""
+    # Patch CHROMA_PATH at call time using monkeypatch
+    monkeypatch.setattr(qa_scan, "CHROMA_PATH", tmp_path)
+
+    from qa_scan import store_entries
+    from qa_capture import build_entry
+
+    # Create two entries with near-identical content (differ by one character)
+    entry1 = build_entry(
+        content="Always use PersistentClient for ChromaDB",
+        category="anti-pattern"
+    )
+    entry2 = build_entry(
+        content="Always use PersistentClient for Chroma_DB",  # Different by one char
+        category="anti-pattern"
+    )
+    assert entry1["id"] != entry2["id"], "Different content should produce different IDs"
+
+    # Both should be stored
+    result = store_entries([entry1, entry2])
+    assert result == 2, f"Expected 2 new entries (not deduplicated), got {result}"
+
+
+def test_store_entry_skips_exact_duplicate_content(tmp_path, monkeypatch):
+    """store_entry should skip entries that already exist (exact content match)."""
+    # Patch CHROMA_PATH at call time using monkeypatch
+    monkeypatch.setattr(qa_capture, "CHROMA_PATH", tmp_path)
+
+    from qa_capture import store_entry, build_entry
+
+    # Create two identical entries
+    entry1 = build_entry(
+        content="Use venv for Python isolation",
+        category="pattern"
+    )
+    entry2 = build_entry(
+        content="Use venv for Python isolation",
+        category="pattern"
+    )
+    assert entry1["id"] == entry2["id"]
+
+    # First call returns True (new)
+    result1 = store_entry(entry1)
+    assert result1 is True, f"Expected True (new entry), got {result1}"
+
+    # Second call returns False (already exists)
+    result2 = store_entry(entry2)
+    assert result2 is False, f"Expected False (duplicate), got {result2}"
 
