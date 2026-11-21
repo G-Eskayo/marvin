@@ -22,7 +22,8 @@ One sentence: what it is, for whom, and why they would want it. (<= ~120 charact
 3. **See it work**: 2-3 screenshots or a short recording, each with one sentence on what to notice
 4. **Install / run**: exact commands or the download link; requirements
 5. **How it works**: one architecture diagram (Mermaid) and a paragraph
-6. **Docs** (links), **Roadmap/status**, **Contributing**, **License**
+6. **Status**: what works, what does not yet; platform support (web, iOS, desktop, etc.)
+7. **Docs** (links to handbook, issues, contributing), **License**
 
 ## Library or CLI
 
