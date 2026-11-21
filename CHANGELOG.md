@@ -1,5 +1,7 @@
 # Changelog
 
+- Review gate: real time and space complexity regressions are must-fix, not notes ([#1343](https://github.com/G-Eskayo/marvin/pull/1343))
+
 - A rebuild after a merge restarts the merge server mid-merge and the interrupted merge is never resumed ([#1264](https://github.com/G-Eskayo/marvin/pull/1264))
 
 - Extract diagnose/SKILL.md's growing gotcha log to a separate reference file ([#1349](https://github.com/G-Eskayo/marvin/pull/1349))
