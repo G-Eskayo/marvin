@@ -1,5 +1,7 @@
 # Changelog
 
+- Implement or correct qa-agent's promised cosine-similarity dedup check ([#1371](https://github.com/G-Eskayo/marvin/pull/1371))
+
 - Replace audit/SKILL.md's hardcoded Session Start step numbers with descriptive references ([#1381](https://github.com/G-Eskayo/marvin/pull/1381))
 
 - test_stale_relay week test fails after 2026-11-16 12:00 UTC: the question log is stamped with the real clock ([#1346](https://github.com/G-Eskayo/marvin/pull/1346))
