@@ -36,12 +36,18 @@ from pathlib import Path
 
 import requests
 
+import sys
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+import model_calls  # noqa: E402
+
 HOME = Path.home()
 CHROMA_PATH = HOME / ".claude" / "chroma"
 VECTORS_FILE = HOME / ".claude" / "intent-routing-vectors.json"
-OLLAMA_URL = "http://localhost:11434/api/embed"
 EMBED_MODEL = "nomic-embed-text"
 COLLECTION_NAME = "intent-routing"
+
+CALLER = "intent_classify"
+NUM_CTX = 2048
 
 # Fixed v1 threshold. score = 1 - dist/2 (ChromaDB cosine distance ranges
 # 0-2, not 0-1 -- see qa-knowledge's documented gotcha; 1-dist alone is not
@@ -263,14 +269,12 @@ def embed_text(text: str, task: str = "query", timeout: float = 10) -> list[floa
     asymmetric prefix convention (matches rebuild-embeddings.py's usage)."""
     prefix = "search_query: " if task == "query" else "search_document: "
     try:
-        resp = requests.post(
-            OLLAMA_URL,
-            json={"model": EMBED_MODEL, "input": f"{prefix}{text}"},
-            timeout=timeout,
-        )
-        resp.raise_for_status()
-        return resp.json()["embeddings"][0]
-    except Exception:
+        result = model_calls.embed(EMBED_MODEL, f"{prefix}{text}", caller=CALLER, num_ctx=NUM_CTX, timeout=timeout)
+        return result["embedding"]
+    except model_calls.PromptTooLargeError:
+        # Let this propagate distinctly per test #16
+        raise
+    except (model_calls.OllamaUnavailableError, Exception):
         return None
 
 
@@ -293,10 +297,18 @@ def build_collection() -> int:
     ids, embeddings, documents, metadatas = [], [], [], []
     for intent, examples in REFERENCE_EXAMPLES.items():
         for i, example in enumerate(examples):
-            ids.append(f"{intent}-{i}")
-            embeddings.append(embed_text(example, task="document"))
-            documents.append(example)
-            metadatas.append({"intent": intent})
+            try:
+                vec = embed_text(example, task="document")
+                if vec is None:
+                    continue
+                ids.append(f"{intent}-{i}")
+                embeddings.append(vec)
+                documents.append(example)
+                metadatas.append({"intent": intent})
+            except model_calls.PromptTooLargeError:
+                # Skip reference examples that are too large; shouldn't happen in practice
+                import sys
+                print(f"WARNING: reference example {intent}-{i} too large, skipping", file=sys.stderr)
     col.upsert(ids=ids, embeddings=embeddings, documents=documents, metadatas=metadatas)
     return len(ids)
 
@@ -307,7 +319,11 @@ def classify(description: str) -> dict:
     "unavailable" signals the caller (route.py) should fall back to the
     keyword classifier -- Ollama or ChromaDB unreachable, not a real verdict.
     """
-    vec = embed_text(description, task="query")
+    try:
+        vec = embed_text(description, task="query")
+    except model_calls.PromptTooLargeError:
+        return {"status": "unavailable", "intent": None, "score": None}
+
     if vec is None:
         return {"status": "unavailable", "intent": None, "score": None}
 
@@ -366,7 +382,11 @@ def build_vector_cache(path: Path | None = None) -> int:
     vectors, dim = [], None
     for intent, examples in REFERENCE_EXAMPLES.items():
         for example in examples:
-            vec = embed_text(example, task="document")
+            try:
+                vec = embed_text(example, task="document")
+            except model_calls.PromptTooLargeError:
+                # Reference example too large; fail the entire cache build
+                return 0
             if _unit(vec) is None or (dim is not None and len(vec) != dim):
                 return 0
             dim = len(vec)
@@ -412,7 +432,10 @@ def classify_fast(description: str, timeout: float = 1.5, path: Path | None = No
     if refs is None:
         return {"status": "no_cache", "intent": None, "score": None}
     unavailable = {"status": "unavailable", "intent": None, "score": None}
-    q = _unit(embed_text(description, task="query", timeout=timeout))
+    try:
+        q = _unit(embed_text(description, task="query", timeout=timeout))
+    except model_calls.PromptTooLargeError:
+        return unavailable
     if q is None or len(q) != len(refs[0][1]):
         return unavailable
     # chroma's cosine distance is 1 - cos; classify() scores 1 - distance/2

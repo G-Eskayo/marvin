@@ -21,6 +21,10 @@ sys.path[:0] = [str(Path(__file__).resolve().parent), str(Path.home() / ".agents
 from s2_client import get_with_retry as _get_with_retry
 from s2_client import s2_id as _s2_id
 from s2_client import S2_PAPER_BASE
+import model_calls  # noqa: E402
+
+CALLER = "paper_graph"
+NUM_CTX = 2048
 
 
 def select_candidates(candidates: list[dict], top_k: int, relevance_floor: float) -> list[dict]:
@@ -207,15 +211,8 @@ def _real_specter2_embed(text: str) -> list[float]:
 
 
 def _real_nomic_embed(text: str) -> list[float]:
-    import requests
-
-    resp = requests.post(
-        "http://localhost:11434/api/embeddings",
-        json={"model": "nomic-embed-text", "prompt": text},
-        timeout=30,
-    )
-    resp.raise_for_status()
-    return resp.json()["embedding"]
+    result = model_calls.embed("nomic-embed-text", text, caller=CALLER, num_ctx=NUM_CTX, timeout=30)
+    return result["embedding"]
 
 
 def embed_paper(text: str, specter2_fn=None, nomic_fn=None) -> dict:

@@ -21,16 +21,42 @@ from __future__ import annotations
 
 import json
 import re
+import sys
 import urllib.request
 from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "lib"))
+import model_calls  # noqa: E402
 
 CHROMA_PATH = str(Path.home() / ".claude" / "chroma")
 COLLECTION  = "marvin-memory"
 EMBED_MODEL = "nomic-embed-text"
-OLLAMA_BASE = "http://localhost:11434"
+OLLAMA_CALLER = "memory_rag"
+OLLAMA_NUM_CTX = 2048
 
 # module-level cache so bench doesn't re-open collection on every run
 _col_cache: object | None = None
+
+
+class _CustomEmbeddingFunction:
+    """Custom ChromaDB embedding function using model_calls.embed()."""
+
+    def __call__(self, input: list[str]) -> list[list[float]]:
+        """Embed a batch of texts. Parameter name 'input' required by ChromaDB protocol."""
+        embeddings = []
+        for text in input:
+            try:
+                result = model_calls.embed(EMBED_MODEL, text, caller=OLLAMA_CALLER, num_ctx=OLLAMA_NUM_CTX, timeout=30)
+                embeddings.append(result["embedding"])
+            except model_calls.PromptTooLargeError:
+                # Text is too large to embed; return a zero vector as placeholder
+                # This allows collection build to continue instead of aborting
+                print(f"  [memory_rag] warning: memory file too large to embed (skipping)", flush=True)
+                embeddings.append([0.0] * 768)  # nomic-embed-text produces 768-dim vectors
+            except (model_calls.OllamaUnavailableError, Exception) as e:
+                # Ollama is unavailable or unexpected error; fail fast
+                raise RuntimeError(f"Cannot embed text: {e}")
+        return embeddings
 
 
 def _memory_dir() -> Path | None:
@@ -67,9 +93,8 @@ def _get_collection(force_rebuild: bool = False):
         return _col_cache
 
     import chromadb
-    from chromadb.utils.embedding_functions import OllamaEmbeddingFunction
 
-    ef = OllamaEmbeddingFunction(url=OLLAMA_BASE, model_name=EMBED_MODEL)
+    ef = _CustomEmbeddingFunction()
     client = chromadb.PersistentClient(path=CHROMA_PATH)
 
     if force_rebuild:

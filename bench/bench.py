@@ -33,14 +33,19 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent
 sys.path.insert(0, str(ROOT / "lib"))
+sys.path.insert(0, str(ROOT.parent / "lib"))
 from score import parse_stream, score_correctness  # noqa: E402
 from memory_rag import query_memory  # noqa: E402
+import model_calls  # noqa: E402
 
 PROFILES = {
     "clean":  ROOT / "profiles" / "clean",           # base Claude Code (control)
     "marvin": ROOT / "profiles" / "marvin",          # symlink overlay of ~/.claude (rich)
     "lean":   ROOT / "profiles" / "lean",            # symlink overlay of ~/.claude-lean (no memory overhead)
 }
+
+OLLAMA_CALLER = "bench"
+OLLAMA_NUM_CTX = 8192
 
 # Where a run's working folder lives (PR #1125, decision bench-folders). Under Claude Code 2.1.318, plain Claude
 # Code's system prompt embeds an auto-memory path derived from the folder, so a fresh temp folder per run made it
@@ -245,34 +250,27 @@ def run_once_ollama(task: dict, profile: str, ollama_model: str,
         messages.append({"role": "system", "content": system_content})
     messages.append({"role": "user", "content": task["prompt"]})
 
-    payload = json.dumps({
-        "model": ollama_model,
-        "messages": messages,
-        "stream": False,
-        "options": {"temperature": 0},
-    }).encode()
-    req = urllib.request.Request(
-        f"{OLLAMA_BASE}/api/chat",
-        data=payload,
-        headers={"Content-Type": "application/json"},
-        method="POST",
-    )
-
     base = {"profile": profile, "model": ollama_model, "runner": "ollama",
             "cost_usd": 0.0, "num_turns": 1, "tool_calls": 0}
     t0 = time.time()
     try:
-        with urllib.request.urlopen(req, timeout=task.get("timeout", 300)) as resp:
-            data = json.loads(resp.read())
+        result = model_calls.chat(
+            ollama_model,
+            messages,
+            caller=OLLAMA_CALLER,
+            num_ctx=OLLAMA_NUM_CTX,
+            timeout=task.get("timeout", 300),
+            temperature=0,
+        )
     except Exception as exc:
         return {**base, "result_text": "", "spawn_error": str(exc),
                 "wall_s": round(time.time() - t0, 1), "total_tokens": 0,
                 "correctness": {"score": 0.0}}
     wall = time.time() - t0
 
-    result_text = (data.get("message") or {}).get("content", "")
-    prompt_tokens = data.get("prompt_eval_count", 0)
-    gen_tokens = data.get("eval_count", 0)
+    result_text = result.get("content", "")
+    prompt_tokens = result.get("prompt_tokens", 0) if isinstance(result.get("prompt_tokens"), int) else 0
+    gen_tokens = result.get("eval_count", 0) if isinstance(result.get("eval_count"), int) else 0
 
     return {
         **base,

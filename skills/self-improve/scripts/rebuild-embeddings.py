@@ -11,11 +11,16 @@ import json
 import sys
 from pathlib import Path
 
+sys.path.insert(0, str(Path.home() / ".agents" / "lib"))
+import model_calls  # noqa: E402
+
 HOME = Path.home()
 MANIFEST_PATH = HOME / ".claude" / "manifest.json"
 CHROMA_PATH = HOME / ".claude" / "chroma"
-OLLAMA_URL = "http://localhost:11434/api/embed"
 EMBED_MODEL = "nomic-embed-text"
+
+CALLER = "rebuild-embeddings"
+NUM_CTX = 8192  # nomic-embed-text actual context window
 
 
 def resolve_path(p):
@@ -51,15 +56,13 @@ def content_hash(text):
 
 def embed(text):
     try:
-        import requests
-        resp = requests.post(
-            OLLAMA_URL,
-            json={"model": EMBED_MODEL, "input": f"search_document: {text}"},
-            timeout=30,
-        )
-        resp.raise_for_status()
-        return resp.json()["embeddings"][0]
-    except Exception as e:
+        result = model_calls.embed(EMBED_MODEL, f"search_document: {text}", caller=CALLER, num_ctx=NUM_CTX, timeout=30)
+        return result["embedding"]
+    except model_calls.PromptTooLargeError as e:
+        # Document too large; skip it rather than aborting the whole rebuild
+        print(f"  WARN: document too large to embed: {e}", file=sys.stderr)
+        return None
+    except (model_calls.OllamaUnavailableError, Exception) as e:
         print(f"  WARN: embed failed: {e}", file=sys.stderr)
         return None
 

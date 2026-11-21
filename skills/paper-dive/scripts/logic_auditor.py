@@ -29,22 +29,22 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parents[3] / "lib"))
 import model_registry  # noqa: E402
 import model_queue  # noqa: E402
+import model_calls  # noqa: E402
 
-OLLAMA_URL = "http://localhost:11434/api/chat"
 # Model selection via capability names (validated 2026-07-13):
 _classify_model_list = model_registry.resolve_capability("local-classify-medium")
 CLASSIFY_MODEL = _classify_model_list[0]  # Use first available model for the capability
 assert CLASSIFY_MODEL == "qwen2.5:14b", f"Regression: expected qwen2.5:14b, got {CLASSIFY_MODEL}"
 
+CALLER = "logic_auditor"
+NUM_CTX = 4096
+
 PAPER_TYPES = {"empirical", "survey", "benchmark", "conceptual"}
 
 
 def ollama_chat(model: str, messages: list[dict], timeout: int = 60) -> str:
-    payload = json.dumps({"model": model, "messages": messages, "stream": False}).encode()
-    req = urllib.request.Request(OLLAMA_URL, data=payload, headers={"Content-Type": "application/json"})
-    with urllib.request.urlopen(req, timeout=timeout) as resp:
-        data = json.loads(resp.read())
-    return data["message"]["content"]
+    result = model_calls.chat(model, messages, caller=CALLER, num_ctx=NUM_CTX, timeout=timeout)
+    return result["content"]
 
 
 CLASSIFY_PROMPT = """Below is an academic paper's title and abstract. Classify what KIND of argument it makes, choosing exactly one of these four types:

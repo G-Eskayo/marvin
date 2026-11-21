@@ -18,14 +18,17 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path.home() / ".agents" / "lib"))
 import model_scope  # noqa: E402
+import model_calls  # noqa: E402
 
 HOME = Path.home()
 MANIFEST_PATH = HOME / ".claude" / "manifest.json"
 CHROMA_PATH = HOME / ".claude" / "chroma"
-OLLAMA_URL = "http://localhost:11434/api/embed"
 EMBED_MODEL = "nomic-embed-text"
 ALL_COLLECTIONS = ["skills", "knowledge", "general"]
 TOP_K = 5
+
+CALLER = "retrieve"
+NUM_CTX = 2048
 
 # Higher threshold = precision (analytical). Lower = recall (creative).
 INTENT_THRESHOLD_MAP = {
@@ -50,15 +53,12 @@ def get_threshold(intent):
 
 def embed_query(query):
     try:
-        import requests
-        resp = requests.post(
-            OLLAMA_URL,
-            json={"model": EMBED_MODEL, "input": f"search_query: {query}"},
-            timeout=10,
-        )
-        resp.raise_for_status()
-        return resp.json()["embeddings"][0]
-    except Exception:
+        result = model_calls.embed(EMBED_MODEL, f"search_query: {query}", caller=CALLER, num_ctx=NUM_CTX, timeout=10)
+        return result["embedding"]
+    except model_calls.PromptTooLargeError:
+        # Query too large; propagate distinctly so caller knows semantic search is impossible
+        raise
+    except (model_calls.OllamaUnavailableError, Exception):
         return None
 
 
@@ -198,7 +198,12 @@ def tag_fallback(query, model=None):
 def retrieve(query, intent=None, model=None):
     threshold = get_threshold(intent)
 
-    query_vector = embed_query(query)
+    try:
+        query_vector = embed_query(query)
+    except model_calls.PromptTooLargeError:
+        print("  INFO: Query too large for semantic search — using tag fallback", file=sys.stderr)
+        return tag_fallback(query, model)
+
     if query_vector is None:
         print("  INFO: Ollama unavailable — using tag fallback", file=sys.stderr)
         return tag_fallback(query, model)
