@@ -1,5 +1,7 @@
 # Changelog
 
+- Flaky test: test_du_runs_at_low_priority fails only in the parallel run ([#1365](https://github.com/G-Eskayo/marvin/pull/1365))
+
 - Fix duplicate section numbers and colliding FR-IDs in resume-tailor's requirements.md ([#1366](https://github.com/G-Eskayo/marvin/pull/1366))
 
 - Split write-a-skill/SKILL.md (129 lines) under its own 100-line rule ([#1367](https://github.com/G-Eskayo/marvin/pull/1367))
