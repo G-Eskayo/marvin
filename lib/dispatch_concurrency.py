@@ -17,6 +17,11 @@ import tempfile
 from datetime import datetime, timezone
 from pathlib import Path
 
+try:
+    import guard_reading as gr
+except ImportError:
+    gr = None
+
 PATH = Path(__file__).resolve().parents[1] / "config" / "dispatch.json"
 TASKS_DIR = Path.home() / ".claude" / "dispatch" / "tasks"
 DISPATCH_STATE_PATH = Path.home() / ".claude" / "dispatch-state.json"
@@ -156,6 +161,19 @@ def _safe(reader, *args):
         return None
 
 
+def _safe_with_guard(guard_name, reader, *args):
+    """Read via _safe, logging to guard_reading on failure."""
+    try:
+        value = reader(*args)
+        if gr:
+            gr.guard_reading(guard_name, value, error=None)
+        return value
+    except Exception as exc:  # noqa: BLE001
+        if gr:
+            gr.guard_reading(guard_name, None, error=str(exc)[:200])
+        return None
+
+
 def can_start_another(machine: str, settings: dict, *, slots_in_use, disk_free_gb, github_budget_pct,
                       breaker_tripped, missing_tools, credit_ready=None) -> tuple[bool, str | None]:
     # An unreadable credit state means the plan's slots only: never a block, never extra builds on a guess.
@@ -166,17 +184,17 @@ def can_start_another(machine: str, settings: dict, *, slots_in_use, disk_free_g
     if not settings.get("parallel"):
         return True, None  # off: exactly today's behaviour, no extra guards
     g = settings["guards"]
-    disk = _safe(disk_free_gb, machine)
+    disk = _safe_with_guard("disk:local-pipeline", disk_free_gb, machine)
     if disk is not None and disk < g["min_disk_gb"]:
         return False, f"disk {disk:g} GB free on {machine}, minimum {g['min_disk_gb']:g}"
-    pct = _safe(github_budget_pct)
+    pct = _safe_with_guard("dispatch:github-budget", github_budget_pct)
     if pct is not None and pct < g["min_github_budget_pct"]:
         return False, f"GitHub request budget {pct:g}% left, minimum {g['min_github_budget_pct']:g}%"
-    trips = _safe(breaker_tripped) or []
+    trips = _safe_with_guard("dispatch:breaker", breaker_tripped) or []
     if trips:
         t = trips[0]
         return False, f"circuit breaker tripped for {str(t.get('project', '?')).split('/')[-1]}: {t.get('signature', '?')}"
-    missing = _safe(missing_tools, machine) or []
+    missing = _safe_with_guard("dispatch:missing-tools", missing_tools, machine) or []
     if missing:
         return False, f"{machine} lacks tools the project needs: {', '.join(missing)}"
     return True, None

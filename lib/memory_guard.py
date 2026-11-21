@@ -49,6 +49,11 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Callable, Iterable, Iterator
 
+try:
+    import guard_reading as gr
+except ImportError:
+    gr = None
+
 HERE = Path(__file__).resolve()
 PY = Path.home() / ".agents" / "venv" / "bin" / "python"
 STATE_DIR = Path.home() / ".claude" / "memory-guard"
@@ -80,8 +85,17 @@ def read_level(run: Callable = subprocess.run) -> str | None:
         return override if override in LEVELS.values() else None
     try:
         r = run([SYSCTL, "-n", "kern.memorystatus_vm_pressure_level"], capture_output=True, text=True, timeout=5)
-        return LEVELS.get(int(r.stdout.strip())) if r.returncode == 0 else None
-    except (OSError, ValueError, subprocess.SubprocessError):
+        if r.returncode == 0:
+            level = LEVELS.get(int(r.stdout.strip()))
+            if gr:
+                gr.guard_reading("memory:pressure", level, error=None)
+            return level
+        if gr:
+            gr.guard_reading("memory:pressure", None, error="sysctl returned non-zero")
+        return None
+    except (OSError, ValueError, subprocess.SubprocessError) as exc:
+        if gr:
+            gr.guard_reading("memory:pressure", None, error=str(exc)[:100])
         return None
 
 

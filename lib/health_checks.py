@@ -31,6 +31,10 @@ import cron_health as ch  # noqa: E402
 import machine_profile  # noqa: E402
 from machine_profile import machine_label  # noqa: E402
 from task_dispatch import TAILSCALE_BIN, TAILSCALE_ENV  # noqa: E402  (absolute path -- launchd's PATH omits the shell's additions)
+try:
+    import guard_reading as gr
+except ImportError:
+    gr = None
 
 HOME = Path.home()
 STATUS_PATH = HOME / ".claude" / "logs" / "health-status.json"
@@ -353,10 +357,17 @@ def _run_failure_breaker_remote(host: str) -> list[dict]:
     cmd = ["ssh", *SSH_OPTS, host, script]
     proc = subprocess.run(cmd, capture_output=True, text=True, timeout=10)
     if proc.returncode != 0:
+        if gr:
+            gr.guard_reading("pipeline:breaker-remote", None, error=f"ssh returned {proc.returncode}")
         return []
     try:
-        return json.loads(proc.stdout)
-    except (json.JSONDecodeError, ValueError):
+        result = json.loads(proc.stdout)
+        if gr:
+            gr.guard_reading("pipeline:breaker-remote", result, error=None)
+        return result
+    except (json.JSONDecodeError, ValueError) as exc:
+        if gr:
+            gr.guard_reading("pipeline:breaker-remote", None, error=f"json decode: {str(exc)[:100]}")
         return []
 
 
@@ -1793,6 +1804,25 @@ def _mirror_health():
     return mirror_health
 
 
+def check_unreadable_guards() -> list[dict]:
+    """Guard readings log: yellow for each guard with ≥2 consecutive unreadables or ≥30min episode age."""
+    if not gr:
+        return []
+    cid_base = "guard:unreadable"
+    results = []
+    for guard_name in gr.FAIL_MODE:
+        s = gr.guard_state(guard_name)
+        if not s.get("alert"):
+            continue
+        cid = f"{cid_base}:{guard_name}"
+        label = f"Guard unreadable: {guard_name}"
+        detail = (f"{s['consecutive_unreadable']} consecutive failures, "
+                 f"episode {s['episode_age_min']:.0f}min old")
+        results.append(_result(cid, label, "yellow", detail, value={"consecutive": s["consecutive_unreadable"],
+                                                                     "episode_age_min": s["episode_age_min"]}))
+    return results
+
+
 def default_checks(reach: dict[str, str] | None = None, reach_results: list[dict] | None = None) -> list[tuple]:
     """Every check the sweep runs, in the order the Health tab shows them. `reach` maps machine:<id> -> severity from
     the reachability check, which runs first; `reach_results` are its rows, listed where they always appeared."""
@@ -1801,6 +1831,7 @@ def default_checks(reach: dict[str, str] | None = None, reach_results: list[dict
         ("token", "Auth tokens", check_token_files, CHECK_BUDGET_S),
         ("route:intent-routing-collection", "route.py embedding classifier (ChromaDB)", check_intent_routing_collection, CHECK_BUDGET_S),
         ("dispatch:lock-age", "Local dispatch lock", check_dispatch_lock, CHECK_BUDGET_S),
+        ("guard:unreadable", "Guard readings: unreadable state", check_unreadable_guards, CHECK_BUDGET_S),
         ("pipeline:breaker", "Ticket pipeline circuit breaker", lambda: check_pipeline_breaker(reach), CROSS_MACHINE_BUDGET_S),
         ("sync:stuck", "Code sync", lambda: check_sync_stuck(reach), CROSS_MACHINE_BUDGET_S),
         ("sync:union-review", "Code sync: merged lines to check", check_union_merge_review, CHECK_BUDGET_S),

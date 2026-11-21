@@ -34,6 +34,7 @@ const GENERATED_SCRIPT = path.resolve(__dirname, '..', '..', 'lib', 'generated_p
 const PURPOSE_METRICS_SCRIPT = path.resolve(__dirname, '..', '..', 'lib', 'purpose_metrics.py')
 const NODE_MODULES_SEED_SCRIPT = path.resolve(__dirname, '..', '..', 'lib', 'node_modules_seed.py')
 const BOX_RUNNER_SCRIPT = path.resolve(__dirname, '..', '..', 'lib', 'box_runner.py')
+const GUARD_READING_SCRIPT = path.resolve(__dirname, '..', '..', 'lib', 'guard_reading.py')
 
 // #687: a gate copy gets node_modules as a copy-on-write clone of a cached install (lib/node_modules_seed.py), so the
 // `npm install` below finds everything in place instead of writing ~0.8 GB. Best effort: a miss or an error just means
@@ -525,10 +526,23 @@ export async function mergeInstead(exec, dir, headRef, base) {
 }
 
 export async function rebaseAndRetest(headRef, exec = execFileAsync, repoPath = REPO_PATH, runTests = _defaultRunTests, base = 'main', resolveConflicts = null, sleep = null, progress = noProgress, freeBytes = freeDiskBytes, firstAid = null, rerun = null) {
-  let free = await freeBytes(tmpdir()).catch(() => null) // unreadable: carry on, as before this check
+  let free = await freeBytes(tmpdir()).catch(() => null)
   const gb = (n) => `${(n / 1024 ** 3).toFixed(1)} GB`
+  // Log the disk read to guard_reading (fire-and-forget, no error handling)
+  const recordGuardReading = (ok, error) => {
+    const args = [GUARD_READING_SCRIPT, 'record', '--name', 'disk:merge-gate', '--ok', ok ? 'true' : 'false']
+    if (error) args.push('--error', error)
+    execFileAsync(VENV_PYTHON, args).catch(() => {}) // fire-and-forget, ignore errors
+  }
+
   let aidNote = ''
-  if (free !== null && free < MIN_GATE_FREE_BYTES && firstAid) {
+  if (free === null) {
+    recordGuardReading(false, 'freeBytes read failed')
+    return { ok: false, reason: `Disk check before rebasing onto ${base}:\n\nCouldn't read free disk space. Try approving again in a moment.` }
+  }
+  recordGuardReading(true)
+
+  if (free < MIN_GATE_FREE_BYTES && firstAid) {
     // Once per approve: one call here, no retry loop. Only then refuse.
     progress('rebasing', 'running', { detail: `disk nearly full (${gb(free)} free): clearing rebuildable files first`, logDetail: true })
     let aid
@@ -537,10 +551,16 @@ export async function rebaseAndRetest(headRef, exec = execFileAsync, repoPath = 
     const detail = String(aid.detail || (aid.ok ? 'nothing to clear' : 'first aid failed')).replace(/\s+/g, ' ').slice(0, 300)
     const before = free
     free = await freeBytes(tmpdir()).catch(() => null)
-    progress('rebasing', 'running', { detail: `first aid: ${detail}; ${free === null ? 'free space unreadable' : `${gb(free)} free now`} (was ${gb(before)})`, logDetail: true })
-    aidNote = `\n\nFirst aid ran first: ${detail}; ${free === null ? 'free space unreadable' : `${gb(free)} free`} after.`
+    if (free === null) {
+      recordGuardReading(false, 'freeBytes read failed after first aid')
+      progress('rebasing', 'running', { detail: `first aid: ${detail}; free space now unreadable`, logDetail: true })
+      return { ok: false, reason: `Disk check before rebasing onto ${base}:\n\nFirst aid ran but free space couldn't be re-read. Try approving again in a moment.` }
+    }
+    recordGuardReading(true)
+    progress('rebasing', 'running', { detail: `first aid: ${detail}; ${gb(free)} free now (was ${gb(before)})`, logDetail: true })
+    aidNote = `\n\nFirst aid ran first: ${detail}; ${gb(free)} free after.`
   }
-  if (free !== null && free < MIN_GATE_FREE_BYTES) {
+  if (free < MIN_GATE_FREE_BYTES) {
     // Worded so summarizeGateFailure files it as GATE_INFRA (the machine, not the PR, and nothing is sent back) and
     // infraCause can name the disk and both numbers.
     return { ok: false, reason: `Disk check before rebasing onto ${base}:\n\nNo space left on device for the check: ${gb(free)} free, the gate needs ${gb(MIN_GATE_FREE_BYTES)}. Free up space on this Mac, then approve again.${aidNote}` }

@@ -57,6 +57,10 @@ import project_catalog  # noqa: E402
 import ticket_evidence  # noqa: E402
 import project_onboard  # noqa: E402
 import dispatch_concurrency  # noqa: E402
+try:
+    import guard_reading as gr
+except ImportError:
+    gr = None
 
 VENV_PYTHON = str(Path.home() / ".agents" / "venv" / "bin" / "python")
 RUN_TICKET_SCRIPT = str(Path.home() / ".agents" / "lib" / "run_ticket.py")
@@ -762,8 +766,40 @@ def _local_slots_used() -> int:
 def _free_disk_gb() -> float | None:
     try:
         import shutil
-        return shutil.disk_usage(Path.home()).free / 1e9
-    except OSError:
+        result = shutil.disk_usage(Path.home()).free / 1e9
+        if gr:
+            gr.guard_reading("disk:local-pipeline", result, error=None)
+        return result
+    except OSError as exc:
+        if gr:
+            gr.guard_reading("disk:local-pipeline", None, error=str(exc)[:100])
+        return None
+
+
+def _free_disk_gb_remote(machine: str) -> float | None:
+    """Disk free on a remote machine via machine_resources; None if unreadable or stale."""
+    try:
+        import machine_resources
+        import machine_profile
+        device_id = machine
+        samples = machine_resources.read_samples(device_id)
+        if not samples or machine_resources.is_stale(samples):
+            if gr:
+                gr.guard_reading("disk:remote-dispatch", None, error="samples missing or stale")
+            return None
+        latest = samples[-1]
+        disk_free_kb = latest.get("disk_free_kb")
+        if disk_free_kb is None:
+            if gr:
+                gr.guard_reading("disk:remote-dispatch", None, error="disk_free_kb not in sample")
+            return None
+        result = disk_free_kb / 1e6  # convert KB to GB
+        if gr:
+            gr.guard_reading("disk:remote-dispatch", result, error=None)
+        return result
+    except Exception as exc:
+        if gr:
+            gr.guard_reading("disk:remote-dispatch", None, error=str(exc)[:100])
         return None
 
 
@@ -848,7 +884,7 @@ def _select_for_profile(profile: dict, settings: dict | None = None, taken: dict
             ok, why = dispatch_concurrency.can_start_another(
                 device, settings, slots_in_use=lambda m, used=used: used,
                 credit_ready=lambda m: settings.get("credit_ready", {}).get(m, False),
-                disk_free_gb=lambda m, s=is_self: _free_disk_gb() if s else None,
+                disk_free_gb=lambda m, s=is_self: _free_disk_gb() if s else _free_disk_gb_remote(m),
                 github_budget_pct=_github_budget_pct,
                 breaker_tripped=lambda: [],   # a tripped breaker already removed that project from this scan
                 missing_tools=lambda m: [])

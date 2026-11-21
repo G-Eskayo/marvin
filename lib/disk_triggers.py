@@ -40,6 +40,10 @@ from typing import Callable
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import cleanup_sweep as cs  # noqa: E402
 import gh_env  # noqa: E402
+try:
+    import guard_reading as gr
+except ImportError:
+    gr = None
 
 MARVIN_ROOT = Path(__file__).resolve().parent.parent
 CONFIG_PATH = MARVIN_ROOT / "config" / "disk_triggers.json"
@@ -62,8 +66,13 @@ MIB = lambda n: f"{n // 2**20} MiB"  # noqa: E731
 def free_bytes(path: Path | None = None) -> int | None:
     try:
         s = os.statvfs(path or Path.home())
-        return s.f_bavail * s.f_frsize
-    except OSError:
+        result = s.f_bavail * s.f_frsize
+        if gr:
+            gr.guard_reading("disk:local-triggers", result, error=None)
+        return result
+    except OSError as exc:
+        if gr:
+            gr.guard_reading("disk:local-triggers", None, error=str(exc)[:100])
         return None
 
 

@@ -696,6 +696,24 @@ ever been closed unmerged. Gil approves almost everything; the wait is the cost.
 - Background: `docs/research/knowledge-graphs-2026-10-26.md`. The graph was 84 commits stale because code_sync lands
   commits with `git merge`, which never fired graphify's post-commit hook.
 
+## Guard readings (ADR pending)
+
+- **Guard reading**: every place MARVIN reads system state (disk space, memory pressure, GitHub budget, Tailscale
+  status, dispatch lock, Vscode checks) logs the result through `lib/guard_reading.py:guard_reading()`. Each guard has a
+  **fail-mode** from `FAIL_MODE` table: "closed" means unreadable state refuses work (disk space, memory); "open" means
+  it falls back to safe defaults (GitHub budget, dispatch state).
+  - `guard_reading(name, value, error=None)` appends one JSONL line to `~/.claude/logs/guard-readings.jsonl` and
+    returns `value` unchanged on success, `None` on failure (error not None). Unreadable guards never block dispatch.
+  - `lib/guard_reading.py record` CLI logs reads from the Node.js merge gate and Python scripts that execute in
+    subprocess contexts (fire-and-forget).
+- **Guard state**: `guard_reading.guard_state(name)` reads the log and returns current episode info: consecutive
+  unreadables, episode age, alert flag. Alert fires when ≥2 consecutive unreadables or episode age ≥30 minutes.
+  Called by Health's `check_unreadable_guards()` to flag degrading systems — not broken (green, the fallback holds),
+  but noisy enough that it's time to investigate.
+- **Health check `guard:unreadable`**: yellow per guard with ≥2 unreadables or ≥30min episode, one alert per episode
+  (deduplicated by `~/.claude/logs/guard-degraded-state.json`). Never green; never stale (checked every sweep). All
+  guards are listed in `guard_reading.FAIL_MODE`.
+
 ## Memory lint (built 2026-10-26, marvin#695)
 
 - **Memory lint**: `lib/memory_lint.py` checks the memory folder.
