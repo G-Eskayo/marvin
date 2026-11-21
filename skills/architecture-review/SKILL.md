@@ -30,6 +30,7 @@ Read each component. For each, ask:
 - **Organization**: does the file structure reflect how things are actually used?
 - **Robustness**: what happens when something is missing or malformed?
 - **Maintenance burden** (added 2026-07-09, Gil's direction): does two-or-more scripts implement the same *shape* of logic on different data (not necessarily copy-pasted — a duplicated pattern counts)? Every new script is something to maintain going forward; growing that count without checking for reuse first is itself a cost. Flag genuine duplication; don't force consolidation for its own sake at 2 call sites (see the `priority_rank.py` entry in `suggestions.md` for the calibration — noted, not force-extracted).
+- **Symlink safety**: Read cannot detect symlinks. Before calling a `commands/` file a duplicate of its SKILL.md, check `ls -l`; a symlink is not a duplicate — editing it through Edit would silently overwrite the real SKILL.md it points to. If a link genuinely must be replaced, `rm` it and write a new file, never Edit-in-place.
 
 ### 2. Generate suggestions
 

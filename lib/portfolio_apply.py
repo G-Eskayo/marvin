@@ -152,13 +152,31 @@ def _run(cmd: list[str], **kw) -> subprocess.CompletedProcess:
     return subprocess.run(cmd, capture_output=True, text=True, timeout=180, **kw)
 
 
+def restart_wpcli_container(runner=_run) -> tuple[bool, str]:
+    """Check if the wp-cli container is running; if not, start it and report whether a retry is worth it.
+    Returns (is_worth_retrying, human_readable_reason)."""
+    r = runner([DOCKER, "inspect", WPCLI, "--format={{.State.Running}}"])
+    if r.returncode == 0 and r.stdout.strip() == "true":
+        return True, "container is already running"
+    if r.returncode != 0:
+        return False, f"container does not exist: {r.stderr[:100] if r.stderr else 'unknown reason'}"
+    r = runner([DOCKER, "start", WPCLI])
+    if r.returncode == 0:
+        return True, "container restarted successfully"
+    return False, f"failed to restart container: {r.stderr[:100] if r.stderr else r.stdout[:100]}"
+
+
 def regenerate_pages(project: Path = PROJECT, runner=_run) -> list[str]:
     """Regenerate the hub + All Projects pages (and re-wrap their sidebars) on the DEV site. Returns log lines."""
     wp = wp_base()
     pages = {}
     listing = runner([*wp, "post", "list", "--post_type=page", "--post_status=publish", "--fields=ID,post_name", "--format=json"])
     if listing.returncode != 0:
-        raise RuntimeError("could not list the dev site's pages (is the dev site running?)")
+        ok, reason = restart_wpcli_container(runner)
+        if ok:
+            listing = runner([*wp, "post", "list", "--post_type=page", "--post_status=publish", "--fields=ID,post_name", "--format=json"])
+        if listing.returncode != 0:
+            raise RuntimeError(f"could not list the dev site's pages: {reason}")
     for p in json.loads(listing.stdout):
         pages[p["post_name"]] = str(p["ID"])
     user = runner([*wp, "user", "list", "--role=administrator", "--field=user_login"]).stdout.split()[0]

@@ -1,5 +1,19 @@
 # Changelog
 
+- MARVIN's README rewritten for lay readers, and the audience ladder (READMEs → portfolio → LinkedIn) written into the README criteria ([#1342](https://github.com/G-Eskayo/marvin/pull/1342))
+
+- Architecture review: check for a symlink before calling a commands/ file a duplicate ([#1344](https://github.com/G-Eskayo/marvin/pull/1344))
+
+- Trim handoff/SKILL.md's now-redundant manual "check handoffs on resume" instructions ([#1350](https://github.com/G-Eskayo/marvin/pull/1350))
+
+- Model registry names qwen2.5:14b and 7b, which aren't installed on either Mac: audit callers, make config match reality, health check ([#1385](https://github.com/G-Eskayo/marvin/pull/1385))
+
+- Portfolio inventory captured 8 of 40+ pages (page_id URLs stopped redirecting) and the element capture then overwrote the library with 0 placements ([#1398](https://github.com/G-Eskayo/marvin/pull/1398))
+
+- Implement or correct qa-agent's promised cosine-similarity dedup check ([#1371](https://github.com/G-Eskayo/marvin/pull/1371))
+
+- Replace audit/SKILL.md's hardcoded Session Start step numbers with descriptive references ([#1381](https://github.com/G-Eskayo/marvin/pull/1381))
+
 - test_stale_relay week test fails after 2026-11-16 12:00 UTC: the question log is stamped with the real clock ([#1346](https://github.com/G-Eskayo/marvin/pull/1346))
 
 - Fix self-contradicting write-target instruction in inbox-mode reviewer prompt ([#1336](https://github.com/G-Eskayo/marvin/pull/1336))

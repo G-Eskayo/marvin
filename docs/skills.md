@@ -1,6 +1,6 @@
 # Skills
 
-32 skills. Generated from each skill's own `SKILL.md` by `lib/skill_index.py`: edit the skill, not this file.
+34 skills. Generated from each skill's own `SKILL.md` by `lib/skill_index.py`: edit the skill, not this file.
 
 ## Quality and debugging
 
@@ -14,6 +14,7 @@
 | [`grill-me`](../skills/grill-me/SKILL.md) | Interview the user relentlessly about a plan or design until reaching shared understanding, resolving each branch of the decision tree. |
 | [`improve-codebase-architecture`](../skills/improve-codebase-architecture/SKILL.md) | Find deepening opportunities in a codebase, informed by the domain language in CONTEXT.md and the decisions in docs/adr/. |
 | [`safety-monitor`](../skills/safety-monitor/SKILL.md) | Calibrated verifier that scores an autonomous loop's output for risk (fabricated references, unsupported claims) before it ships, quarantining flagged artifacts for review instead of blocking the loop. |
+| [`security-sweep`](../skills/security-sweep/SKILL.md) | Source-level security review of a repository or a diff, in one pass. Finds missing and bypassable controls as well as dangerous calls. |
 
 ## Research and reading
 

@@ -14,6 +14,7 @@ sys.path.insert(0, str(LIB))
 
 import cron_health as ch  # noqa: E402
 import health_checks as hc  # noqa: E402
+import model_registry as mr  # noqa: E402
 
 
 # ── token files ──────────────────────────────────────────────────────────
@@ -1693,3 +1694,209 @@ def test_react_to_accounts_summarises_and_never_raises():
 def test_the_health_sweep_entry_point_runs_the_accounts_check():
     import inspect
     assert "react_to_accounts()" in inspect.getsource(hc._cli)
+
+
+# ── model availability (ollama runtime) ────────────────────────────────────
+
+def test_query_ollama_models_local_returns_none_on_connection_error(monkeypatch):
+    """When local ollama isn't running, should return None gracefully."""
+    def mock_urlopen(*a, **k):
+        raise OSError("Connection refused")
+    monkeypatch.setattr("urllib.request.urlopen", mock_urlopen)
+    result = hc._query_ollama_models_local()
+    assert result is None
+
+
+def test_query_ollama_models_remote_returns_none_on_ssh_failure(monkeypatch):
+    """When SSH fails, should return None."""
+    monkeypatch.setattr("subprocess.run",
+                       lambda *a, **k: subprocess.CompletedProcess(a[0], returncode=1, stdout="", stderr="SSH failed"))
+    result = hc._query_ollama_models_remote("test-host")
+    assert result is None
+
+
+def test_check_model_availability_green_when_no_ollama_models(tmp_path, monkeypatch):
+    """If the registry has no ollama models, should be green."""
+    # Mock the ModelRegistry to return empty capabilities
+    class MockRegistry:
+        def all(self):
+            return {"capabilities": {}, "models": {}}
+    monkeypatch.setattr(mr, "ModelRegistry", lambda: MockRegistry())
+    result = hc.check_model_availability()
+    assert result["severity"] == "green"
+    assert "no ollama models" in result["detail"]
+
+
+def test_check_model_availability_unknown_when_no_machines_queried(tmp_path, monkeypatch):
+    """If no machines can be queried, should be unknown."""
+    class MockRegistry:
+        def all(self):
+            return {
+                "capabilities": {"test-cap": ["qwen2.5:7b"]},
+                "models": {"qwen2.5:7b": {"runtime": "ollama"}}
+            }
+    monkeypatch.setattr(mr, "ModelRegistry", lambda: MockRegistry())
+    monkeypatch.setattr(hc, "_query_ollama_models_local", lambda: None)
+    monkeypatch.setattr(hc.machine_profile, "remote_devices", lambda: {})
+    result = hc.check_model_availability()
+    assert result["severity"] == "unknown"
+    assert "couldn't reach any machine" in result["detail"]
+
+
+def test_check_model_availability_green_when_models_present_locally(tmp_path, monkeypatch):
+    """When required models are on the local machine, should be green."""
+    class MockRegistry:
+        def all(self):
+            return {
+                "capabilities": {"test-cap": ["qwen2.5:7b"]},
+                "models": {"qwen2.5:7b": {"runtime": "ollama"}}
+            }
+    monkeypatch.setattr(mr, "ModelRegistry", lambda: MockRegistry())
+    monkeypatch.setattr(hc, "_query_ollama_models_local", lambda: ["qwen2.5:7b"])
+    monkeypatch.setattr(hc.machine_profile, "remote_devices", lambda: {})
+    result = hc.check_model_availability()
+    assert result["severity"] == "green"
+    assert "all 1 ollama models present" in result["detail"]
+
+
+def test_check_model_availability_green_with_model_variant(tmp_path, monkeypatch):
+    """Model variants (e.g. qwen2.5:7b-instruct-q4_K_M) should match."""
+    class MockRegistry:
+        def all(self):
+            return {
+                "capabilities": {"test-cap": ["qwen2.5:7b"]},
+                "models": {"qwen2.5:7b": {"runtime": "ollama"}}
+            }
+    monkeypatch.setattr(mr, "ModelRegistry", lambda: MockRegistry())
+    monkeypatch.setattr(hc, "_query_ollama_models_local", lambda: ["qwen2.5:7b-instruct-q4_K_M"])
+    monkeypatch.setattr(hc.machine_profile, "remote_devices", lambda: {})
+    result = hc.check_model_availability()
+    assert result["severity"] == "green"
+
+
+def test_check_model_availability_yellow_when_all_machines_answered(tmp_path, monkeypatch):
+    """When all queryable machines answered and models are missing, should be yellow."""
+    class MockRegistry:
+        def all(self):
+            return {
+                "capabilities": {"test-cap": ["qwen2.5:7b", "qwen2.5:14b"]},
+                "models": {
+                    "qwen2.5:7b": {"runtime": "ollama"},
+                    "qwen2.5:14b": {"runtime": "ollama"}
+                }
+            }
+    monkeypatch.setattr(mr, "ModelRegistry", lambda: MockRegistry())
+    monkeypatch.setattr(hc, "_query_ollama_models_local", lambda: ["qwen2.5:7b"])
+    monkeypatch.setattr(hc.machine_profile, "remote_devices", lambda: {})
+    result = hc.check_model_availability()
+    assert result["severity"] == "yellow"
+    assert "Missing on all queried machines" in result["detail"]
+    assert "qwen2.5:14b" in result["detail"]
+
+
+def test_check_model_availability_ignores_non_ollama_models(tmp_path, monkeypatch):
+    """Models with non-ollama runtimes should be ignored."""
+    class MockRegistry:
+        def all(self):
+            return {
+                "capabilities": {"test-cap": ["qwen2.5:7b"]},
+                "models": {
+                    "qwen2.5:7b": {"runtime": "hf"},  # Not ollama
+                }
+            }
+    monkeypatch.setattr(mr, "ModelRegistry", lambda: MockRegistry())
+    # Even though local returns nothing, should be green because there are no ollama models
+    monkeypatch.setattr(hc, "_query_ollama_models_local", lambda: None)
+    monkeypatch.setattr(hc.machine_profile, "remote_devices", lambda: {})
+    result = hc.check_model_availability()
+    assert result["severity"] == "green"
+
+
+def test_check_model_availability_yellow_when_missing_on_some_machines(tmp_path, monkeypatch):
+    """When models are missing on queried machines but other machines exist, should be yellow."""
+    class MockRegistry:
+        def all(self):
+            return {
+                "capabilities": {"test-cap": ["qwen2.5:7b"]},
+                "models": {"qwen2.5:7b": {"runtime": "ollama"}}
+            }
+    monkeypatch.setattr(mr, "ModelRegistry", lambda: MockRegistry())
+    monkeypatch.setattr(hc, "_query_ollama_models_local", lambda: [])  # local is empty
+    monkeypatch.setattr(hc.machine_profile, "remote_devices",
+                       lambda: {"mac-mini": {"tailscale_hostname": "mini.local"}})
+    # Simulate remote also being empty but reachable
+    monkeypatch.setattr(hc, "_query_ollama_models_remote", lambda h: [])
+    result = hc.check_model_availability(reachability={"machine:mac-mini": "green"})
+    assert result["severity"] == "yellow"
+    assert "Missing on all queried machines" in result["detail"]
+
+
+def test_check_model_availability_red_on_unregistered_model_in_capability(tmp_path, monkeypatch):
+    """Config drift: capability references a model that doesn't exist in the registry."""
+    class MockRegistry:
+        def all(self):
+            return {
+                "capabilities": {"test-cap": ["nonexistent-model"]},
+                "models": {}  # nonexistent-model is not registered
+            }
+    monkeypatch.setattr(mr, "ModelRegistry", lambda: MockRegistry())
+    monkeypatch.setattr(hc, "_query_ollama_models_local", lambda: [])
+    monkeypatch.setattr(hc.machine_profile, "remote_devices", lambda: {})
+    result = hc.check_model_availability()
+    assert result["severity"] == "red"
+    assert "Config drift" in result["detail"]
+    assert "unregistered model" in result["detail"]
+    assert "nonexistent-model" in result["detail"]
+
+
+def test_check_model_availability_red_on_empty_capability(tmp_path, monkeypatch):
+    """Config drift: capability list is empty."""
+    class MockRegistry:
+        def all(self):
+            return {
+                "capabilities": {"empty-cap": []},  # empty list
+                "models": {"qwen2.5:7b": {"runtime": "ollama"}}
+            }
+    monkeypatch.setattr(mr, "ModelRegistry", lambda: MockRegistry())
+    monkeypatch.setattr(hc, "_query_ollama_models_local", lambda: ["qwen2.5:7b"])
+    monkeypatch.setattr(hc.machine_profile, "remote_devices", lambda: {})
+    result = hc.check_model_availability()
+    assert result["severity"] == "red"
+    assert "Config drift" in result["detail"]
+    assert "empty" in result["detail"]
+
+
+def test_check_model_availability_unknown_when_remote_machine_unreachable(tmp_path, monkeypatch):
+    """Incomplete evidence: remote machine's listing couldn't be read, models missing."""
+    class MockRegistry:
+        def all(self):
+            return {
+                "capabilities": {"test-cap": ["qwen2.5:7b"]},
+                "models": {"qwen2.5:7b": {"runtime": "ollama"}}
+            }
+    monkeypatch.setattr(mr, "ModelRegistry", lambda: MockRegistry())
+    monkeypatch.setattr(hc, "_query_ollama_models_local", lambda: [])  # local doesn't have it
+    monkeypatch.setattr(hc.machine_profile, "remote_devices",
+                       lambda: {"mac-mini": {"tailscale_hostname": "mini.local"}})
+    # Simulate remote machine query failing (returns None)
+    monkeypatch.setattr(hc, "_query_ollama_models_remote", lambda h: None)
+    result = hc.check_model_availability(reachability={"machine:mac-mini": "green"})
+    assert result["severity"] == "unknown"
+    assert "couldn't verify" in result["detail"]
+
+
+def test_check_model_availability_untagged_model_match(tmp_path, monkeypatch):
+    """Untagged models in registry should match ollama's ':latest' reports."""
+    class MockRegistry:
+        def all(self):
+            return {
+                "capabilities": {"test-cap": ["nomic-embed-text"]},
+                "models": {"nomic-embed-text": {"runtime": "ollama"}}
+            }
+    monkeypatch.setattr(mr, "ModelRegistry", lambda: MockRegistry())
+    # Ollama reports untagged pulls as "name:latest"
+    monkeypatch.setattr(hc, "_query_ollama_models_local", lambda: ["nomic-embed-text:latest"])
+    monkeypatch.setattr(hc.machine_profile, "remote_devices", lambda: {})
+    result = hc.check_model_availability()
+    assert result["severity"] == "green"
+    assert "all 1 ollama models present" in result["detail"]

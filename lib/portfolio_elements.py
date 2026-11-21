@@ -357,11 +357,11 @@ def _most_common(items: list):
     return Counter(json.dumps(i, sort_keys=True) for i in items).most_common(1)[0][0] if items else None
 
 
-def capture(element_id: str = "project-card", base: str = BASE, project: Path = PROJECT, inventory: Path = INVENTORY) -> dict:
-    return capture_many([element_id], base, project, inventory)[element_id]
+def capture(element_id: str = "project-card", base: str = BASE, project: Path = PROJECT, inventory: Path = INVENTORY, accept_drop: bool = False) -> dict:
+    return capture_many([element_id], base, project, inventory, accept_drop)[element_id]
 
 
-def capture_many(element_ids: list[str], base: str = BASE, project: Path = PROJECT, inventory: Path = INVENTORY) -> dict[str, dict]:
+def capture_many(element_ids: list[str], base: str = BASE, project: Path = PROJECT, inventory: Path = INVENTORY, accept_drop: bool = False) -> dict[str, dict]:
     """Capture several elements in ONE pass over the site (each page is loaded once, not once per element)."""
     from playwright.sync_api import sync_playwright
     pages = [p["url"] for p in json.loads(Path(inventory).read_text())["pages"]]
@@ -386,10 +386,10 @@ def capture_many(element_ids: list[str], base: str = BASE, project: Path = PROJE
                 page.goto(base + ELEMENTS[eid]["sample_pages"][0], wait_until="networkidle")
                 provenance[eid] = _provenance(page, ELEMENTS[eid])
         browser.close()
-    return {eid: _finish(eid, acc[eid], provenance.get(eid, {}), project) for eid in element_ids}
+    return {eid: _finish(eid, acc[eid], provenance.get(eid, {}), project, accept_drop) for eid in element_ids}
 
 
-def _finish(element_id: str, a: dict, provenance: dict, project: Path) -> dict:
+def _finish(element_id: str, a: dict, provenance: dict, project: Path, accept_drop: bool = False) -> dict:
     definition = ELEMENTS[element_id]
     generic = definition.get("rules") is not None            # generalized in the page; the card keeps its own regex path
     instances = a["instances"]
@@ -414,14 +414,43 @@ def _finish(element_id: str, a: dict, provenance: dict, project: Path) -> dict:
     }
     out = Path(project) / "templates" / "elements"
     out.mkdir(parents=True, exist_ok=True)
-    (out / f"{element_id}.json").write_text(json.dumps(result, indent=2, ensure_ascii=False) + "\n")
+    el_file = out / f"{element_id}.json"
+    new_placement_count = result["usage"]["placements"]
+    if el_file.exists() and not accept_drop:
+        try:
+            old = json.loads(el_file.read_text())
+        except (json.JSONDecodeError, ValueError):
+            old = {}
+        usage = old.get("usage")
+        if not isinstance(usage, dict):
+            usage = {}
+        old_placement_count = usage.get("placements", 0)
+        if old_placement_count > 0 and (new_placement_count == 0 or new_placement_count < old_placement_count / 2):
+            result["written"] = False
+            result["refused"] = f"placement count dropped from {old_placement_count} to {new_placement_count}; use --accept-drop to override"
+            return result
+    el_file.write_text(json.dumps(result, indent=2, ensure_ascii=False) + "\n")
+    result["written"] = True
     return result
 
 
+def parse_cli_args(argv):
+    import argparse
+    ap = argparse.ArgumentParser(description=__doc__.split("\n\n")[0])
+    ap.add_argument("elements", nargs="*", help="element IDs to capture (all if omitted)")
+    ap.add_argument("--accept-drop", action="store_true", help="allow placement count drops without refusing")
+    return ap.parse_args(argv[1:])
+
+
 def main() -> None:
-    ids = sys.argv[1:] or list(ELEMENTS)
-    for i, r in capture_many(ids).items():
-        print(f"{i}: {r['usage']['placements']} placements on {len(r['usage']['pages'])} pages, {r['distinct_looks']} distinct look(s)")
+    args = parse_cli_args(sys.argv)
+    ids = args.elements or list(ELEMENTS)
+    for i, r in capture_many(ids, accept_drop=args.accept_drop).items():
+        status = "written" if r.get("written", True) else "refused"
+        msg = f"{i}: {r['usage']['placements']} placements on {len(r['usage']['pages'])} pages, {r['distinct_looks']} distinct look(s)"
+        if not r.get("written", True):
+            msg += f" — {r['refused']}"
+        print(f"{status}: {msg}")
 
 
 if __name__ == "__main__":
