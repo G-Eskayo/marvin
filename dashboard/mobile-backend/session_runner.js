@@ -79,7 +79,10 @@ export function normaliseEvent(rawEvent) {
 
 // Async generator that streams normalised events from a claude CLI session.
 // Spawns the CLI with --output-format stream-json and reads stdout line-by-line.
-export async function* runSession({ message, sessionId, spawnFn, cwd, permissionHookPath } = {}) {
+// Read-only tools for a voice turn (ADR 0005, ADR 0075): look-ups run, nothing with a side effect can.
+export const READ_ONLY_TOOLS = ['Read', 'Grep', 'Glob', 'WebSearch', 'WebFetch']
+
+export async function* runSession({ message, sessionId, spawnFn, cwd, permissionHookPath, readOnly = false } = {}) {
   const claudeBin = resolveClaudeBinary()
   const actualSpawnFn = spawnFn || spawn
   const actualCwd = cwd || homedir()
@@ -93,8 +96,12 @@ export async function* runSession({ message, sessionId, spawnFn, cwd, permission
     '--permission-mode', 'dontAsk'
   ]
 
-  // Add hook configuration if permissionHookPath is provided
-  if (permissionHookPath) {
+  if (readOnly) {
+    // Only the read tools exist in this session and only they are allowed; no MCP servers (they can send mail,
+    // post, merge). dontAsk denies anything else rather than prompting. No hook, so nothing can widen it.
+    args.push('--tools', READ_ONLY_TOOLS.join(','), '--allowedTools', READ_ONLY_TOOLS.join(','), '--strict-mcp-config')
+  } else if (permissionHookPath) {
+    // Add hook configuration if permissionHookPath is provided
     const hookSettings = {
       hooks: {
         PreToolUse: {

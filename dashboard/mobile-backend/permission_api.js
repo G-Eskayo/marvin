@@ -1,5 +1,7 @@
 export function createPermissionApiRouter(opts = {}) {
   const pendingActionStore = opts.pendingActionStore
+  // Told about each resolved action after the reply is sent (the voice endpoint runs confirmed voice requests).
+  const onResolved = opts.onResolved || null
 
   if (!pendingActionStore) {
     throw new Error('pendingActionStore is required')
@@ -57,6 +59,11 @@ export function createPermissionApiRouter(opts = {}) {
           res.writeHead(200, { 'Content-Type': 'application/json' }).end(
             JSON.stringify({ ok: true, data: action })
           )
+          if (onResolved) {
+            Promise.resolve()
+              .then(() => onResolved(action))
+              .catch((err) => console.error(`pending-actions: onResolved failed for ${id}: ${err.message}`))
+          }
         } catch (err) {
           res.writeHead(400, { 'Content-Type': 'application/json' }).end(
             JSON.stringify({ ok: false, error: err.message })
