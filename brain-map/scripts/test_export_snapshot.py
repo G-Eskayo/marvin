@@ -387,3 +387,41 @@ def test_write_facts_failure_writes_nothing_and_does_not_block_the_map(tmp_path)
         raise RuntimeError("github down")
     assert write_facts(tmp_path, gather=boom) == []
     assert not (tmp_path / "facts.json").exists()
+
+
+def test_write_facts_merges_with_previous_on_partial_failure(tmp_path):
+    """When gather() succeeds for pytest but fails for vitest, the previous vitest count is carried forward."""
+    from export_snapshot import write_facts
+    # Pre-populate facts.json with a previous state
+    (tmp_path / "facts.json").write_text(json.dumps({
+        "tests_pytest": "800",
+        "tests_vitest": "500",
+        "tests_site": "100",
+        "tests": "1,400",
+        "counted_on": "7 October 2026"
+    }))
+    # New gather returns only pytest
+    def partial_gather():
+        return {"tests_pytest": 1200, "counted_on": "8 October 2026"}
+    leaks = write_facts(tmp_path, gather=partial_gather)
+    assert leaks == []
+    result = json.loads((tmp_path / "facts.json").read_text())
+    assert result["tests_pytest"] == "1,200"  # fresh
+    assert result["tests_vitest"] == "500"    # carried forward
+    assert result["tests_site"] == "100"      # carried forward
+    assert result["tests"] == "1,800"         # recalculated sum
+
+
+def test_write_facts_does_not_block_on_corrupt_previous(tmp_path):
+    """If the previous facts.json is corrupt, write_facts still writes the fresh data."""
+    from export_snapshot import write_facts
+    # Pre-populate facts.json with corrupt data
+    (tmp_path / "facts.json").write_text("{invalid json")
+    # New gather returns fresh data
+    def fresh_gather():
+        return {"tests_pytest": 1200, "counted_on": "8 October 2026"}
+    leaks = write_facts(tmp_path, gather=fresh_gather)
+    assert leaks == []
+    result = json.loads((tmp_path / "facts.json").read_text())
+    assert result["tests_pytest"] == "1,200"
+    assert result["counted_on"] == "8 October 2026"

@@ -274,11 +274,33 @@ def copy_local_assets(html: str, src_dir: Path, out_dir: Path) -> list[str]:
 
 def write_facts(out_dir: Path, gather=None) -> list[str]:
     """facts.json for the MARVIN page (living page, layer 1; ADR 0057 extension). Returns leak findings, if any.
-    A failure to gather writes nothing and never blocks the map: the page keeps the numbers it was written with."""
+    A failure to gather writes nothing and never blocks the map: the page keeps the numbers it was written with.
+    Fresh facts are merged with previous ones to carry forward per-field counts when sources fail."""
     sys.path.insert(0, str(HERE / "scripts"))
     import facts as facts_mod
+    out_dir = Path(out_dir)
+    # Read existing facts if they exist
+    facts_file = out_dir / "facts.json"
+    existing = {}
+    if facts_file.exists():
+        try:
+            existing = json.loads(facts_file.read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            pass
     try:
-        data = facts_mod.formatted((gather or facts_mod.gather)())
+        fresh = (gather or facts_mod.gather)()
+        # Convert both to raw numbers for merging (strip formatting from existing)
+        def to_raw(value):
+            if isinstance(value, str) and "," in value or (isinstance(value, str) and value.isdigit()):
+                try:
+                    return int(value.replace(",", ""))
+                except ValueError:
+                    return value
+            return value
+        fresh_raw = {k: to_raw(v) for k, v in fresh.items()}
+        existing_raw = {k: to_raw(v) for k, v in existing.items()}
+        merged = facts_mod.merge_with_previous(fresh_raw, existing_raw)
+        data = facts_mod.formatted(merged)
     except Exception as e:  # noqa: BLE001
         print(f"facts not written: {e}", file=sys.stderr)
         return []
