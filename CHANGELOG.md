@@ -1,5 +1,7 @@
 # Changelog
 
+- Pass run_colony.py's already-computed correlated-items list into research_digest.py instead of re-querying ChromaDB… ([#1359](https://github.com/G-Eskayo/marvin/pull/1359))
+
 - Update route/SKILL.md to describe the embedding classifier that's now the actual default, not the superseded… ([#1360](https://github.com/G-Eskayo/marvin/pull/1360))
 
 - Trim historical rationale from caveman/SKILL.md's frontmatter description ([#1361](https://github.com/G-Eskayo/marvin/pull/1361))
