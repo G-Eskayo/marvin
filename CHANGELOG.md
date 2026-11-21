@@ -1,5 +1,7 @@
 # Changelog
 
+- Leave gitignored caches (__pycache__, .pytest_cache, *.pyc) out of the background reviewer's chunk file lists ([#1358](https://github.com/G-Eskayo/marvin/pull/1358))
+
 - Pass run_colony.py's already-computed correlated-items list into research_digest.py instead of re-querying ChromaDB… ([#1359](https://github.com/G-Eskayo/marvin/pull/1359))
 
 - Update route/SKILL.md to describe the embedding classifier that's now the actual default, not the superseded… ([#1360](https://github.com/G-Eskayo/marvin/pull/1360))
