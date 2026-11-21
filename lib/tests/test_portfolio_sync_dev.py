@@ -83,3 +83,30 @@ def test_the_evaluate_step_fails_on_errors_but_only_reports_warnings():
     assert ok and "2 warning(s)" in detail
     ok, detail = sd.judge_evaluation({"findings": [warn, err]})
     assert not ok and "1 error(s)" in detail and "page-overflow" in detail
+
+
+def test_judge_capture_passes_when_all_elements_are_written():
+    results = {
+        "project-card": {"written": True, "usage": {"placements": 25}},
+        "button-github": {"written": True, "usage": {"placements": 10}},
+    }
+    ok, detail = sd.judge_capture(results, [])
+    assert ok and "2 elements" in detail and "successfully" in detail
+
+
+def test_judge_capture_fails_when_elements_are_refused():
+    results = {
+        "project-card": {"written": True, "usage": {"placements": 25}},
+        "button-github": {"written": False, "refused": "placement count dropped from 20 to 5"},
+    }
+    ok, detail = sd.judge_capture(results, [])
+    assert not ok and "1 element(s) refused" in detail and "button-github" in detail
+
+
+def test_judge_capture_handles_all_elements_refused():
+    results = {
+        "project-card": {"written": False, "refused": "placement count dropped"},
+        "button-github": {"written": False, "refused": "placement count dropped"},
+    }
+    ok, detail = sd.judge_capture(results, [])
+    assert not ok and "2 element(s) refused" in detail

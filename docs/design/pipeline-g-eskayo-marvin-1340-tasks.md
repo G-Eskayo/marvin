@@ -1,0 +1,13 @@
+1. `lib/portfolio_apply.py`: add `restart_wpcli_container(runner=_run) -> tuple[bool, str]` using the existing `DOCKER`/`WPCLI` constants (`docker inspect` → `docker start` → report). Returns whether a retry is worth it and a human-readable reason.
+2. `lib/portfolio_apply.py`: wire `regenerate_pages` to call `restart_wpcli_container()` and retry its page listing once when the initial listing fails, replacing the blind "is the dev site running?" message with the specific reason when it still can't proceed.
+3. `lib/portfolio_add_project.py`: same wiring in `create_page` (reuse `pa.restart_wpcli_container`).
+4. `lib/portfolio_inventory.py`: same wiring in `collect`'s initial `_wpcli(["post", "list", ...])` call.
+5. `lib/portfolio_inventory.py`: add `url` to the wp-cli `post list --fields=...`; validate every listed page has a non-empty `url` (refuse early otherwise).
+6. `lib/portfolio_inventory.py`: add pure `resolve_page_targets(wp_pages)`; replace the `?page_id=` navigation + `urlparse(page.url).path` redirect-dependent logic in `collect`'s crawl loop with it (navigate straight to each page's own path).
+7. `lib/portfolio_inventory.py`: add pure `missing_pages(wp_pages, captured_urls)` and `finalize(result, wp_pages, out_dir)` (missing-pages refusal, then `inventory.json` → `inventory.prev.json` backup, then write); replace `collect`'s final inline write with a call to `finalize`.
+8. `lib/portfolio_inventory.py`: remove the now-unused duplicate `WPCLI_CONTAINER` constant (dead since `_wpcli` already goes through `portfolio_apply.wp_base()`).
+9. `lib/portfolio_elements.py`: thread `accept_drop: bool = False` through `capture`, `capture_many`, `_finish`; in `_finish`, read the existing on-disk file's `usage.placements` before writing, refuse (set `written=False`, `refused="..."`, skip the write) when the new count is `0` or less than half the old count, unless `accept_drop`.
+10. `lib/portfolio_elements.py`: add `parse_cli_args(argv)` and update `main()` to support `--accept-drop`, and to print a distinct line for any refused element.
+11. `lib/portfolio_sync_dev.py`: add `judge_capture(results, layouts)` (mirrors `judge_evaluation`); update the `capture()` step closure in `run()` to use it, so a refused element capture fails that pipeline step instead of reporting success.
+12. Write all tests listed above alongside each change (red → green per file).
+13. Run the full `lib/tests` suite (not just the touched files) before considering this done, per the "full suites before a hand-merge" rule.

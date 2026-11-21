@@ -169,6 +169,92 @@ def test_no_portfolio_tool_builds_its_own_wp_cli_command():
     assert offenders == [], f"use portfolio_apply.wp_base() instead: {offenders}"
 
 
+# ── Container restart logic ──
+
+def test_restart_wpcli_container_returns_true_when_container_is_running():
+    def mock_run(cmd, **_):
+        return SimpleNamespace(returncode=0, stdout="true\n", stderr="")
+    ok, reason = pa.restart_wpcli_container(runner=mock_run)
+    assert ok is True
+    assert "running" in reason
+
+
+def test_restart_wpcli_container_returns_false_when_container_does_not_exist():
+    def mock_run(cmd, **_):
+        return SimpleNamespace(returncode=1, stdout="", stderr="Error: No such object")
+    ok, reason = pa.restart_wpcli_container(runner=mock_run)
+    assert ok is False
+    assert "does not exist" in reason
+
+
+def test_restart_wpcli_container_starts_and_reports_success():
+    calls = []
+    def mock_run(cmd, **_):
+        calls.append(cmd)
+        if "inspect" in " ".join(cmd):
+            return SimpleNamespace(returncode=0, stdout="false\n", stderr="")
+        if "start" in " ".join(cmd):
+            return SimpleNamespace(returncode=0, stdout="", stderr="")
+        return SimpleNamespace(returncode=1, stdout="", stderr="")
+    ok, reason = pa.restart_wpcli_container(runner=mock_run)
+    assert ok is True
+    assert "restarted successfully" in reason
+    assert any("start" in " ".join(c) for c in calls)
+
+
+def test_restart_wpcli_container_handles_start_failure():
+    def mock_run(cmd, **_):
+        if "inspect" in " ".join(cmd):
+            return SimpleNamespace(returncode=0, stdout="false\n", stderr="")
+        if "start" in " ".join(cmd):
+            return SimpleNamespace(returncode=1, stdout="", stderr="Permission denied")
+        return SimpleNamespace(returncode=1, stdout="", stderr="")
+    ok, reason = pa.restart_wpcli_container(runner=mock_run)
+    assert ok is False
+    assert "failed to restart" in reason
+
+
+def test_regenerate_pages_retries_after_container_restart(tmp_path):
+    post_list_calls = []
+    docker_inspect_calls = []
+    docker_start_calls = []
+
+    def mock_run(cmd, **_):
+        joined = " ".join(map(str, cmd))
+        if "post list" in joined:
+            post_list_calls.append(cmd)
+            if len(post_list_calls) == 1:
+                # First call fails
+                return SimpleNamespace(returncode=1, stdout="", stderr="connection refused")
+            # Retry succeeds
+            return SimpleNamespace(returncode=0, stdout=json.dumps([
+                {"ID": 1, "post_name": "ai-projects"},
+                {"ID": 2, "post_name": "all-projects"},
+                {"ID": 3, "post_name": "cybersecurity-projects"},
+                {"ID": 4, "post_name": "software-engineering"},
+            ]), stderr="")
+        if "inspect" in joined:
+            docker_inspect_calls.append(cmd)
+            return SimpleNamespace(returncode=0, stdout="false\n", stderr="")
+        if "start" in joined:
+            docker_start_calls.append(cmd)
+            return SimpleNamespace(returncode=0, stdout="", stderr="")
+        if "user list" in joined:
+            return SimpleNamespace(returncode=0, stdout="admin\n", stderr="")
+        if "application-password create" in joined:
+            return SimpleNamespace(returncode=0, stdout="PW\n", stderr="")
+        if "application-password delete" in joined:
+            return SimpleNamespace(returncode=0, stdout="", stderr="")
+        return SimpleNamespace(returncode=0, stdout="ok\n", stderr="")
+
+    pa.regenerate_pages(tmp_path, mock_run)
+    # Verify post list was called twice (once failing, once succeeding after restart)
+    assert len(post_list_calls) == 2, f"Expected 2 post list calls, got {len(post_list_calls)}"
+    # Verify inspect and start were called (the restart logic)
+    assert len(docker_inspect_calls) >= 1, "docker inspect not called"
+    assert len(docker_start_calls) >= 1, "docker start not called"
+
+
 # ── Hero image synchronization (unifies card thumbnail and page hero) ──
 
 

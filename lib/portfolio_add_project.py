@@ -87,7 +87,11 @@ def create_page(s: dict, content: str, runner=_run) -> int:
     hub_slug = portfolio_rules.load_rules()["categories"][s["category"]]
     listing = runner([*wp, "post", "list", "--post_type=page", "--post_status=publish", "--fields=ID,post_name,post_parent", "--format=json"])
     if listing.returncode != 0:
-        raise AddProjectError("could not reach the dev site's WordPress (is the dev site running?)")
+        ok, reason = pa.restart_wpcli_container(runner)
+        if ok:
+            listing = runner([*wp, "post", "list", "--post_type=page", "--post_status=publish", "--fields=ID,post_name,post_parent", "--format=json"])
+        if listing.returncode != 0:
+            raise AddProjectError(f"could not reach the dev site's WordPress: {reason}")
     pages = json.loads(listing.stdout)
     hub = next((p for p in pages if p["post_name"] == hub_slug and str(p["post_parent"]) == "0"), None)
     if hub is None:

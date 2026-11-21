@@ -30,7 +30,6 @@ import project_catalog  # noqa: E402
 PROJECT = project_catalog.portfolio_repo_path()
 MANIFEST_PATH = PROJECT / "deploy" / "other-projects" / "manifest.json"
 OUT_DIR = Path.home() / ".claude" / "portfolio" / "inventory"
-WPCLI_CONTAINER = "portfolio-website-updater-wpcli-1"
 HUB_PAGES = ["/ai-projects/", "/cybersecurity-projects/", "/software-engineering/"]
 
 STYLE_FIELDS = ["color", "backgroundColor", "borderTopWidth", "borderTopStyle", "borderTopColor", "borderRadius",
@@ -174,17 +173,56 @@ def _wpcli(args: list[str]) -> str | None:
         return None
 
 
+def resolve_page_targets(wp_pages: list[dict]) -> list[tuple[str | None, str, dict]]:
+    """Convert WordPress pages to (url, title, wp_dict) navigation targets. url is None for pages with no URL.
+    Format: list of (url, title, wp_data) tuples ready to pass to page.goto()."""
+    targets = []
+    for p in wp_pages:
+        url = p.get("url", "").strip() if "url" in p else None
+        targets.append((url, p.get("post_title", "Untitled"), p))
+    targets.append(("/", "Home", None))
+    return targets
+
+
+def missing_pages(wp_pages: list[dict], captured_urls: set[str]) -> list[str]:
+    """Pages that WordPress knows about but were never captured (bad URLs or capture failures)."""
+    expected = {_norm(p.get("url", "")) for p in wp_pages if p.get("url")}
+    expected.add("/")
+    return sorted(expected - captured_urls)
+
+
+def finalize(result: dict, wp_pages: list[dict], out_dir: Path) -> None:
+    """Validate and persist the inventory: backup previous, refuse if missing pages, then write."""
+    captured_urls = {_norm(p["url"]) for p in result["pages"]}
+    missing = missing_pages(wp_pages, captured_urls)
+    if missing:
+        raise RuntimeError(f"inventory incomplete: could not capture {missing}")
+    prev_file = out_dir / "inventory.prev.json"
+    current_file = out_dir / "inventory.json"
+    if current_file.exists():
+        current_file.rename(prev_file)
+    current_file.write_text(json.dumps(result, indent=2))
+
+
 def collect(base: str = "http://localhost:8080", out_dir: Path = OUT_DIR, manifest_path: Path = MANIFEST_PATH) -> dict:
     # Ask WordPress for its pages FIRST. When wp-cli cannot answer (dev site down, container restarting) the crawl used to
     # carry on with only the "/" fallback and overwrite a good inventory with a 1-page one, which then emptied the
     # reference index (marvin#585). No pages listed = a failed crawl: stop before writing anything.
-    listing = _wpcli(["post", "list", "--post_type=page", "--post_status=publish", "--fields=ID,post_name,post_title,post_parent", "--format=json"])
+    listing = _wpcli(["post", "list", "--post_type=page", "--post_status=publish", "--fields=ID,post_name,post_title,post_parent,url", "--format=json"])
+    if not listing:
+        import portfolio_apply as pa
+        ok, reason = pa.restart_wpcli_container()
+        if ok:
+            listing = _wpcli(["post", "list", "--post_type=page", "--post_status=publish", "--fields=ID,post_name,post_title,post_parent,url", "--format=json"])
     try:
         wp_pages = json.loads(listing) if listing else []
     except json.JSONDecodeError:
         wp_pages = []
     if not wp_pages:
-        raise RuntimeError("could not list the dev site's WordPress pages (is the dev site running?); the existing inventory is kept")
+        raise RuntimeError("could not list the dev site's WordPress pages; the existing inventory is kept")
+    for p in wp_pages:
+        if not p.get("url", "").strip():
+            raise RuntimeError(f"page {p.get('ID', '?')} ({p.get('post_title', 'untitled')}) has no url; check wp-cli post list output")
     from playwright.sync_api import sync_playwright
     from PIL import Image
     manifest_urls = [p["url"] for p in json.loads(Path(manifest_path).read_text())]
@@ -197,17 +235,18 @@ def collect(base: str = "http://localhost:8080", out_dir: Path = OUT_DIR, manife
         browser = pw.chromium.launch()
         page = browser.new_page(viewport={"width": 1280, "height": 900})
         # WordPress entries first (they carry the raw markup); "/" is only a fallback if the front page is not among them
-        targets = [(None, p["post_title"], p) for p in wp_pages] + [("/", "Home", None)]
+        targets = resolve_page_targets(wp_pages)
         for url, title, wp in targets:
-            if wp is not None:
-                page.goto(f"{base}/?page_id={wp['ID']}", wait_until="networkidle")
-                url = urlparse(page.url).path       # WordPress redirects to the pretty permalink
-            else:
-                page.goto(base + url, wait_until="networkidle")
-            slug = (url.strip("/").replace("/", "--") or "home")
-            if url in seen_urls:                 # e.g. the front page is both "Home" and a WordPress page entry
+            if url is None:
                 continue
-            seen_urls.add(url)
+            path = urlparse(url).path if url else None
+            if not path:
+                continue
+            page.goto(base + path, wait_until="networkidle")
+            slug = (path.strip("/").replace("/", "--") or "home")
+            if path in seen_urls:                 # e.g. the front page is both "Home" and a WordPress page entry
+                continue
+            seen_urls.add(path)
             shot = out_dir / "pages" / f"{slug}.png"
             page.screenshot(path=str(shot), full_page=True)
             img = Image.open(shot); w, h = img.size
@@ -220,13 +259,13 @@ def collect(base: str = "http://localhost:8080", out_dir: Path = OUT_DIR, manife
             (out_dir / "rendered" / f"{slug}.html").write_text(rendered or "")
             if raw is not None:
                 (out_dir / "raw" / f"{slug}.html").write_text(raw)
-            pages.append({"slug": slug, "url": url, "title": title, "id": wp["ID"] if wp else None,
-                          "type": classify_page(url, manifest_urls, HUB_PAGES) if url != "/" else "home",
+            pages.append({"slug": slug, "url": path, "title": title, "id": wp["ID"] if wp else None,
+                          "type": classify_page(path, manifest_urls, HUB_PAGES) if path != "/" else "home",
                           "screenshot": f"pages/{slug}.png", "raw": f"raw/{slug}.html" if raw is not None else None,
                           "rendered": f"rendered/{slug}.html",
                           "raw_chars": len(raw) if raw else 0})
             for rec in page.evaluate(_BUTTONS_JS, STYLE_FIELDS):
-                rec["page"] = url
+                rec["page"] = path
                 vid = variant_id(rec["kind"], button_signature(rec["styles"]))
                 if vid not in seen_variants:
                     seen_variants.add(vid)
@@ -243,7 +282,7 @@ def collect(base: str = "http://localhost:8080", out_dir: Path = OUT_DIR, manife
         b["screenshot"] = f"buttons/{b['id']}.png" if (out_dir / "buttons" / f"{b['id']}.png").exists() else None
     result = {"generated_at": datetime.now(timezone.utc).isoformat(), "base": base, "pages": pages, "buttons": buttons,
               "summary": summarize(pages, buttons)}
-    (out_dir / "inventory.json").write_text(json.dumps(result, indent=2))
+    finalize(result, wp_pages, out_dir)
     return result
 
 
