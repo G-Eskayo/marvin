@@ -1,5 +1,7 @@
 # Changelog
 
+- Research colony reads the owner's research newsletters ([#1356](https://github.com/G-Eskayo/marvin/pull/1356))
+
 - Leave gitignored caches (__pycache__, .pytest_cache, *.pyc) out of the background reviewer's chunk file lists ([#1358](https://github.com/G-Eskayo/marvin/pull/1358))
 
 - Pass run_colony.py's already-computed correlated-items list into research_digest.py instead of re-querying ChromaDB… ([#1359](https://github.com/G-Eskayo/marvin/pull/1359))
