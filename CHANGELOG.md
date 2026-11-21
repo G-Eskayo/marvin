@@ -1,5 +1,7 @@
 # Changelog
 
+- Bring back proposals dismissed until a linked ticket closes ([#1387](https://github.com/G-Eskayo/marvin/pull/1387))
+
 - readme skill loads project profiles and review questions twice per run — dedupe criteria.md against TEMPLATES.md/SKILL.md ([#1388](https://github.com/G-Eskayo/marvin/pull/1388))
 
 - Trim academic_search.py JSON output to cut 5-9k tokens/call to ~2-3k ([#1389](https://github.com/G-Eskayo/marvin/pull/1389))
