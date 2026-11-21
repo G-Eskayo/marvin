@@ -70,12 +70,12 @@ export function takeInterruptedMerges(file = inflightPath(), { log = console.log
     if (typeof url !== 'string' || !url.startsWith('https://github.com/') || !e || typeof e !== 'object') continue
     const stage = MERGE_STAGES.some(([k]) => k === e.stage) ? e.stage : 'queued'
     lost.push({ url, id: e.id ?? null, seq: Number.isFinite(e.seq) ? e.seq : 0, stage, startedAt: e.startedAt ?? null })
-    log(`[merge] ${prLabel(url)} interrupted: the webhook restarted while it was at "${stage}"${e.startedAt ? ` (started ${new Date(e.startedAt).toISOString()})` : ''}. Approve again.`)
+    log(`[merge] ${prLabel(url)} interrupted: the webhook restarted while it was at "${stage}"${e.startedAt ? ` (started ${new Date(e.startedAt).toISOString()})` : ''}. Will be retried automatically.`)
   }
   if (Object.keys(all).length) {
     try { writeJsonAtomic(file, {}) } catch { /* nothing more to do */ }
   }
-  return lost.map((l) => ({ url: l.url, event: { id: l.id, seq: l.seq + 1, stage: l.stage, state: 'failed', interrupted: true, at: now(), detail: 'interrupted: the webhook restarted' } }))
+  return lost.map((l) => ({ url: l.url, event: { id: l.id, seq: l.seq + 1, stage: l.stage, state: 'failed', interrupted: true, resumed: true, at: now(), detail: 'interrupted: webhook restarted, will be retried automatically' } }))
 }
 
 // ---- real gate durations ----

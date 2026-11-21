@@ -293,18 +293,20 @@ describe('the tracker: events, log lines, the in-flight record', () => {
 })
 
 describe('a webhook restart mid-merge', () => {
-  it('the next start finds the merge in flight, logs it, clears the record, and gives one "interrupted" event each', () => {
+  it('the next start finds the merge in flight, logs it, clears the record, and gives one "interrupted" event with auto-resume', () => {
     const store = createInflightStore()
     store.set(PR, { id: 'a1', seq: 6, stage: 'tests', startedAt: 1, machine: 'mac-mini-1' })
     const lines = []
     const lost = takeInterruptedMerges(inflightPath(), { log: (l) => lines.push(l), now: () => 99 })
-    expect(lost).toEqual([{ url: PR, event: { id: 'a1', seq: 7, stage: 'tests', state: 'failed', interrupted: true, at: 99, detail: 'interrupted: the webhook restarted' } }])
+    expect(lost).toEqual([{ url: PR, event: { id: 'a1', seq: 7, stage: 'tests', state: 'failed', interrupted: true, resumed: true, at: 99, detail: 'interrupted: webhook restarted, will be retried automatically' } }])
     expect(lines[0]).toMatch(/G-Eskayo\/marvin#559 interrupted: the webhook restarted while it was at "tests"/)
+    expect(lines[0]).toMatch(/Will be retried automatically/)
     expect(JSON.parse(readFileSync(inflightPath(), 'utf-8'))).toEqual({})
-    // ...and the dashboard's reducer turns that one event into a failed Tests row.
+    // ...and the dashboard's reducer turns that one event into a failed state (the resumed flag tells the UI it's being auto-handled).
     let p = applyMergeEvent(emptyProgress(), { id: 'a1', seq: 6, stage: 'tests', state: 'running', at: 1 })
     p = applyMergeEvent(p, lost[0].event)
     expect(p.stages.tests.state).toBe('failed')
+    expect(lost[0].event.resumed).toBe(true)
   })
 
   it('nothing in flight, a missing file, or a corrupt one: no events, no crash', () => {

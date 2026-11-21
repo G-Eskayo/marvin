@@ -550,3 +550,101 @@ describe('a conflict held too long is told once (#1183)', () => {
     expect(w.merged).toEqual([2])
   })
 })
+
+// marvin#1106: auto-resume after a crash mid-merge (the queue's own resume() covers the merge that was interrupted).
+describe('automatic resume after a webhook restart (#1106)', () => {
+  it('resume puts an interrupted PR back in the queue and kickAll() runs it before an earlier real approval', async () => {
+    const w = world([{ number: 100 }, { number: 101 }])
+    const { queue, store } = make(w)
+    // Approve PR 100, but it gets held so it stays queued
+    w.outcome = () => ({ result: { code: 'RATE_LIMITED', message: 'API rate limit exceeded' } })
+    await queue.approve(REPO, url(100))
+    expect(w.runs).toHaveLength(1)
+    expect(w.runs[0].n).toEqual(100)
+    expect(store.forRepo(REPO).items[0]).toMatchObject({ number: 100, hold: { code: 'RATE_LIMITED' } })
+    // Reset for resuming PR 101 (crash recovery, never separately approved)
+    w.runs = []
+    store.resume(REPO, url(101))
+    expect(store.forRepo(REPO).items).toHaveLength(2)  // Both 100 and 101 are queued
+    // 101 should be first (resume puts it at the front with earlier approvedAt)
+    expect(store.forRepo(REPO).items[0]).toMatchObject({ number: 101 })
+    expect(store.forRepo(REPO).items[1]).toMatchObject({ number: 100 })
+    // Now kickAll() runs 101 first
+    await queue.kickAll()
+    expect(w.runs[0].n).toEqual(101)
+  })
+
+  it('resume is idempotent: calling it twice keeps one entry, still at the front', () => {
+    const w = world([])
+    const { store } = make(w)
+    store.resume(REPO, url(102))
+    store.resume(REPO, url(102))
+    expect(store.forRepo(REPO).items.length).toEqual(1)
+    expect(store.forRepo(REPO).items[0]).toMatchObject({ number: 102 })
+  })
+
+  it('a resumed PR that merged or closed elsewhere is dropped on the next kickAll(), never run', async () => {
+    const w = world([])  // PR 103 not in the world
+    const { queue, store } = make(w)
+    store.resume(REPO, url(103))
+    expect(store.forRepo(REPO).items[0]).toMatchObject({ number: 103 })
+    // kickAll() runs but finds PR 103 is missing (merged/closed elsewhere)
+    await queue.kickAll()
+    expect(w.runs).toEqual([])  // Never attempted
+    expect(store.forRepo(REPO).items).toEqual([])  // Dropped
+  })
+
+  it('resume clears a stale hold/failed entry for the PR', () => {
+    const w = world([{ number: 104 }])
+    const { store } = make(w)
+    // Approve a PR that gets held
+    store.add(REPO, url(104))
+    store.hold(REPO, url(104), { key: 'RATE_LIMITED' })
+    expect(store.forRepo(REPO).items[0].hold).toBeTruthy()
+    // Resume clears the hold
+    store.resume(REPO, url(104))
+    expect(store.forRepo(REPO).items[0].hold).toBeUndefined()
+    // Also test with failed entry
+    store.fail(REPO, url(104), { reason: 'test failed' })
+    expect(store.forRepo(REPO).failed[url(104)]).toBeTruthy()
+    // Resume clears the failed entry
+    store.resume(REPO, url(104))
+    expect(store.forRepo(REPO).failed[url(104)]).toBeUndefined()
+  })
+
+  it('resume updates approvedAt when an item already exists, so mergeOrder respects the ordering', () => {
+    const w = world([{ number: 105 }, { number: 106 }])
+    const { store } = make(w)
+    // Add both PRs to the queue in order (not merged yet)
+    store.add(REPO, url(105))
+    store.add(REPO, url(106))
+    const item105 = store.forRepo(REPO).items.find((i) => i.number === 105)
+    const item106 = store.forRepo(REPO).items.find((i) => i.number === 106)
+    const original105ApprovedAt = item105.approvedAt
+    const original106ApprovedAt = item106.approvedAt
+    // 105 was added first, so it has a smaller approvedAt
+    expect(original105ApprovedAt).toBeLessThan(original106ApprovedAt)
+    // Resume 105: it should get an approvedAt before 106
+    store.resume(REPO, url(105))
+    const resumed105 = store.forRepo(REPO).items.find((i) => i.number === 105)
+    expect(resumed105.approvedAt).toBeLessThan(original106ApprovedAt)
+    // And it should be at the front
+    expect(store.forRepo(REPO).items[0].number).toEqual(105)
+  })
+
+  it('resume with a non-existent PR uses approvedAt before all current items', () => {
+    const w = world([{ number: 107 }])
+    const { store } = make(w)
+    store.add(REPO, url(107))
+    const item107 = store.forRepo(REPO).items[0]
+    const original107ApprovedAt = item107.approvedAt
+    // Resume a new PR 108 that was never approved
+    store.resume(REPO, url(108))
+    const item108 = store.forRepo(REPO).items.find((i) => i.number === 108)
+    // 108 should have approvedAt before 107
+    expect(item108.approvedAt).toBeLessThan(original107ApprovedAt)
+    // Sanity: the new approvedAt is exactly one less than the earliest existing item's
+    expect(Number.isFinite(item108.approvedAt)).toBe(true)
+    expect(item108.approvedAt).toBe(original107ApprovedAt - 1)
+  })
+})
