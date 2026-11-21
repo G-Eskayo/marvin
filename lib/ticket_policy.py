@@ -163,6 +163,20 @@ BUG_WEIGHT = 10  # a bare bug scores p1 (priority_for: >= 10)
 # Strong next to "unblocks N" (3 per ticket), below a hard deadline within a month (ADR 0047).
 FOUNDATION_WEIGHT = 6
 
+def rank_by(value, order, default=None) -> int:
+    """Find the rank (index) of `value` in `order`. For lists: order.index(value) with fallback to len(order).
+    For dicts: order.get(value, default) with fallback to len(order) if default is None.
+    First match wins for duplicates (free from list.index())."""
+    if isinstance(order, dict):
+        if default is not None:
+            return order.get(value, default)
+        return order.get(value, len(order))
+    try:
+        return order.index(value)
+    except (ValueError, TypeError):
+        return len(order)
+
+
 def priority_rank(issue: dict) -> int | None:
     for l in label_names(issue):
         m = re.fullmatch(r"priority:p([0-3])", l)

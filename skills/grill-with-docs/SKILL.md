@@ -75,6 +75,8 @@ When a term is resolved, update `CONTEXT.md` right there. Don't batch these up �
 
 `CONTEXT.md` should be totally devoid of implementation details. Do not treat `CONTEXT.md` as a spec, a scratch pad, or a repository for implementation decisions. It is a glossary and nothing else.
 
+`CONTEXT.md` holds only project-specific meaning. When a term meets the lexicon's own reuse trigger—used 2+ times with a stable meaning, per `lexicon/SKILL.md`—it is also added to the shared lexicon via the `lexicon` skill. These two are not exclusive: a single term can appear in both `CONTEXT.md` and lexicon.md simultaneously, one project-specific and one shared.
+
 ### Offer ADRs sparingly
 
 Only offer to create an ADR when all three are true:

@@ -455,3 +455,33 @@ def test_skill_md_documents_seeds_json_id_keying():
     assert "DOI or arXiv id" in skill_content
     # Verify it mentions search-seeded seeds have no edges
     assert "Search-seeded seeds have no edges" in skill_content
+
+
+# ── Imports and model assertions ────────────────────────────────────────────
+
+def test_extract_core_claim_imported_from_argument_mapper():
+    """Verify that extract_core_claim is imported from argument_mapper, not defined locally."""
+    import argument_mapper
+    import continuity_checker as cc
+
+    # They should be the same function object
+    assert cc.extract_core_claim is argument_mapper.extract_core_claim
+
+
+def test_ollama_chat_imported_from_shared_module():
+    """Verify that ollama_chat is imported from the shared ollama_chat module, not defined locally."""
+    import ollama_chat as om_module
+    import continuity_checker as cc
+
+    # Check that ollama_chat module has ollama_chat defined
+    assert hasattr(om_module, "ollama_chat")
+    # continuity_checker should import the same function
+    assert cc.ollama_chat is om_module.ollama_chat
+
+
+def test_continuity_model_name_assertion():
+    """Verify that CONTINUITY_MODEL is set to the expected value."""
+    import continuity_checker as cc
+
+    # The model should be the 14b inference model for judgment
+    assert cc.CONTINUITY_MODEL == "qwen2.5:14b"

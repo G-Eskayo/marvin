@@ -1,0 +1,6 @@
+1. In `skills/improve-codebase-architecture/SKILL.md`, replace lines 12-29 (the `## Glossary` section through the "Key principles" list, up to but not including the "This skill is _informed_ by..." line) with the ticket's exact two-line `## Vocabulary` block pointing to `LANGUAGE.md`.
+2. Leave the "This skill is _informed_ by the project's domain model..." line immediately after it unchanged.
+3. Leave `LANGUAGE.md` itself untouched (acceptance criterion: "LANGUAGE.md is unchanged").
+4. Re-run `wc -w skills/improve-codebase-architecture/SKILL.md` to get the new word count; confirm the drop is ≥200 words (acceptance criterion).
+5. Spot-check `skills/self-improve/scripts/rebuild-manifest.py` behavior is unaffected (already confirmed via code reading above — no manifest rebuild needed, just note this confirmation in the PR body as the ticket requests).
+6. Write the PR description recording the before/after word count and the frontmatter-only confirmation, per the ticket's "What to build" instruction.

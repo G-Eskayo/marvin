@@ -1,0 +1,5 @@
+1. Edit `skills/to-prd/SKILL.md` line 8: append the step-2 exception to the "Do NOT interview the user" sentence, per the ticket's exact wording.
+2. Edit `skills/to-prd/SKILL.md` line 20: replace both "Check with the user" sentences with the module-sketch-confirmation + headless-skip-and-record text, inlining the one-line decision format (choice / options considered / why) instead of linking `docs/agents/decisions-format.md`, and dropping the "which modules get tests" question entirely.
+3. Edit `skills/to-prd/SKILL.md`'s `## Testing Decisions` template (around line 68): replace bullet 1 with the break-it-bar wording citing `docs/north-stars.md` and ADR 0063; replace "Which modules will be tested" with "Which break-it cases matter most for each module."
+4. Grep the edited file to confirm no reference to `docs/agents/decisions-format.md` (or other repo-only paths) remains, and re-read the whole file to check each of the four acceptance criteria literally holds.
+5. Commit with a stated docs-only/ADR-0063-exemption reason (no test changes expected).

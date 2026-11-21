@@ -64,6 +64,9 @@ ROUTING_ENTRY_THRESHOLD = 20
 COOLDOWN_SECONDS = 20 * 60 * 60  # don't double-run same day even if re-triggered
 CLAUDE_CALL_TIMEOUT = 300  # generous for ONE bounded chunk, not the whole system
 
+_SKIP_PARTS = {"__pycache__", ".pytest_cache", ".mypy_cache", ".ruff_cache", "node_modules", ".git"}
+_SKIP_SUFFIXES = {".pyc", ".pyo"}
+
 
 # ── chunk enumeration ─────────────────────────────────────────────────────────
 
@@ -155,7 +158,10 @@ def _render_chunk_paths(paths: list[str]) -> str:
     for raw in paths:
         expanded = Path(raw).expanduser()
         if expanded.is_dir():
-            files = sorted(str(f) for f in expanded.rglob("*") if f.is_file())
+            files = sorted(str(f) for f in expanded.rglob("*")
+                          if f.is_file()
+                          and not (set(f.relative_to(expanded).parts) & _SKIP_PARTS)
+                          and f.suffix not in _SKIP_SUFFIXES)
             if files:
                 lines.extend(f"- {f}" for f in files)
                 continue
@@ -165,7 +171,7 @@ def _render_chunk_paths(paths: list[str]) -> str:
 
 # ── review execution ────────────────────────────────────────────────────────────
 
-REVIEW_PROMPT_TEMPLATE = """You are MARVIN's background architecture reviewer, running unattended with Read, Write, and Edit only — no Bash, no other tools. This is deliberate: the only file you should write to is ~/.claude/suggestions.md, and you physically cannot do anything else, so it's safe to run without anyone watching.
+REVIEW_PROMPT_TEMPLATE = """You are MARVIN's background architecture reviewer, running unattended with Read, Write, and Edit only — no Bash, no other tools. This is deliberate: the only file you should write to is the one named below, and you physically cannot do anything else, so it's safe to run without anyone watching.
 
 Read ~/.agents/skills/architecture-review/SKILL.md in full and follow its process exactly: the review checklist (tokens, speed, reliability, organization, robustness, maintenance burden), the suggestion bar, and the entry format including the Priority field and its scoring guidance. Do not improvise a different framework.
 

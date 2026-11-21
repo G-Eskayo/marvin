@@ -60,10 +60,14 @@ body {
    single-column (non-flex) arrangement — see .cover-header below. */
 
 .header {
-  display: flex;
-  justify-content: space-between;
-  align-items: flex-start;
-  margin-bottom: 6pt;
+  /* Grid, not flex: WeasyPrint's flex sized the header to the right column,
+     so a wrapped title spilled past the box and sat on the summary
+     (2026-11-20). Grid sizes the row to the taller column. */
+  display: grid;
+  grid-template-columns: 1fr auto;
+  column-gap: 12pt;
+  align-items: start;
+  margin-bottom: 8pt;
 }
 
 .header-left {
@@ -78,20 +82,24 @@ body {
   text-align: right;
 }
 
+.header-right .contact {
+  white-space: nowrap;
+}
+
 .name {
   font-size: 20pt;
   font-weight: 700;
   text-transform: uppercase;
   letter-spacing: 1px;
   color: #1c4b82;
-  margin-bottom: 1pt;
+  margin-bottom: 4pt;
 }
 
 .title {
   font-size: 9.5pt;
   font-weight: 400;
   text-transform: uppercase;
-  letter-spacing: 2px;
+  letter-spacing: 1.2px;
   color: #000;
 }
 

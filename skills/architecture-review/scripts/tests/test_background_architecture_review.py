@@ -350,6 +350,7 @@ def test_inbox_mode_the_reviewer_writes_a_staging_file_that_is_added_to_the_inbo
     assert not bar.STAGING_FILE.exists()
     assert len(calls) == 1  # no sort_suggestions subprocess in inbox mode
     assert str(bar.STAGING_FILE) in prompts[0] and "Append your findings to ~/.claude/suggestions.md" not in prompts[0]
+    assert "only file you should write to is ~/.claude/suggestions.md" not in prompts[0]
     assert "## Old idea" in bar.SNAPSHOT_FILE.read_text()  # the reviewer can read what's already there
     assert "1 new suggestion(s) added" in bar.LOG_FILE.read_text()
     assert bar.LOCK_FILE.exists()
@@ -402,6 +403,47 @@ def test_sort_suggestions_still_sorts_before_the_import(tmp_path, monkeypatch):
     md.write_text("# S\n\n" + EXISTING + "\n" + NEW)
     monkeypatch.setattr(ss, "SUGGESTIONS_FILE", md)
     assert ss.sort_suggestions() == 2 and md.read_text().index("## New idea") < md.read_text().index("## Old idea")
+
+
+def test_legacy_mode_prompt_names_suggestions_md_via_destination_block(tmp_path, monkeypatch):
+    # When the inbox does not exist (legacy mode), the prompt should reference
+    # suggestions.md only via the MD_DESTINATION block, not in the hardcoded opening sentence.
+    claude = tmp_path / ".claude"
+    claude.mkdir(exist_ok=True)
+    md = claude / "suggestions.md"
+    md.write_text(EXISTING)
+    state = tmp_path / "state"
+    monkeypatch.setattr(bar, "STATE_DIR", state)
+    monkeypatch.setattr(bar, "CURSOR_FILE", state / "chunk-cursor.json")
+    monkeypatch.setattr(bar, "LOCK_FILE", state / ".last-run")
+    monkeypatch.setattr(bar, "LOG_FILE", state / "background-review.log")
+    monkeypatch.setattr(bar, "SUGGESTIONS_FILE", md)
+    monkeypatch.setattr(bar, "SNAPSHOT_FILE", state / "suggestions-now.md")
+    monkeypatch.setattr(bar, "STAGING_FILE", state / "new-suggestions.md")
+    monkeypatch.setattr(inbox, "default_root", lambda: tmp_path / "nonexistent-inbox")
+    monkeypatch.setattr(bar, "_resolve_claude_bin", lambda: "/usr/bin/true")
+
+    calls, prompts = _fake_claude(monkeypatch, rc=0)
+    bar.run_review({"name": "handoffs", "paths": []}, "test reason", False)
+
+    assert "Append your findings to ~/.claude/suggestions.md" in prompts[0]
+    assert "only file you should write to is ~/.claude/suggestions.md" not in prompts[0]
+    assert "only file you should write to is the one named below" in prompts[0]
+
+
+def test_inbox_mode_staging_file_path_with_spaces_is_named_correctly_in_prompt(piled, monkeypatch, tmp_path):
+    # When the staging file path contains spaces, it should be correctly included
+    # in the rendered prompt without breaking the formatting.
+    state_with_spaces = tmp_path / "state dir with spaces"
+    state_with_spaces.mkdir()
+    staging_with_spaces = state_with_spaces / "new-suggestions with spaces.md"
+    monkeypatch.setattr(bar, "STAGING_FILE", staging_with_spaces)
+
+    calls, prompts = _fake_claude(monkeypatch, write=lambda: staging_with_spaces.write_text(NEW))
+    bar.run_review({"name": "handoffs", "paths": []}, "test reason", False)
+
+    assert str(staging_with_spaces) in prompts[0]
+    assert "New idea" in [i["title"] for i in inbox.list_items("suggestions")["items"]]
 
 
 def test_a_real_pile_under_a_different_home_does_not_flip_this_run_into_inbox_mode(tmp_path, monkeypatch):
@@ -457,3 +499,160 @@ def test_a_real_pile_under_a_different_home_does_not_flip_this_run_into_inbox_mo
     assert len(calls) == 2  # claude call + sort_suggestions call (legacy mode)
     # Verify the pile at fake_home was never touched
     assert set((fake_inbox_root / "suggestions").iterdir()) == initial_pile_contents
+
+
+# ── filter skip parts and suffixes (marvin#????) ───────────────────────────────
+
+def test_pycache_directories_are_filtered_out(tmp_path):
+    chunk_dir = tmp_path / "code"
+    chunk_dir.mkdir()
+    (chunk_dir / "script.py").write_text("code")
+    pycache = chunk_dir / "__pycache__"
+    pycache.mkdir()
+    (pycache / "script.cpython-311.pyc").write_text("bytecode")
+
+    rendered = bar._render_chunk_paths([str(chunk_dir) + "/"])
+
+    assert str(chunk_dir / "script.py") in rendered
+    assert "script.cpython-311.pyc" not in rendered
+    assert "__pycache__" not in rendered
+
+
+def test_pytest_cache_directories_are_filtered_out(tmp_path):
+    chunk_dir = tmp_path / "tests"
+    chunk_dir.mkdir()
+    (chunk_dir / "test_foo.py").write_text("test")
+    cache = chunk_dir / ".pytest_cache"
+    cache.mkdir()
+    (cache / "v" / "cache").mkdir(parents=True)
+    (cache / "v" / "cache" / "nodeids").write_text("[]")
+
+    rendered = bar._render_chunk_paths([str(chunk_dir) + "/"])
+
+    assert str(chunk_dir / "test_foo.py") in rendered
+    assert ".pytest_cache" not in rendered
+    assert "nodeids" not in rendered
+
+
+def test_mypy_cache_directories_are_filtered_out(tmp_path):
+    chunk_dir = tmp_path / "code"
+    chunk_dir.mkdir()
+    (chunk_dir / "app.py").write_text("code")
+    cache = chunk_dir / ".mypy_cache"
+    cache.mkdir()
+    (cache / "3.11").mkdir()
+    (cache / "3.11" / "app.meta.json").write_text("{}")
+
+    rendered = bar._render_chunk_paths([str(chunk_dir) + "/"])
+
+    assert str(chunk_dir / "app.py") in rendered
+    assert ".mypy_cache" not in rendered
+    assert "app.meta.json" not in rendered
+
+
+def test_ruff_cache_directories_are_filtered_out(tmp_path):
+    chunk_dir = tmp_path / "code"
+    chunk_dir.mkdir()
+    (chunk_dir / "mod.py").write_text("code")
+    cache = chunk_dir / ".ruff_cache"
+    cache.mkdir()
+    (cache / "mod.py.json").write_text("{}")
+
+    rendered = bar._render_chunk_paths([str(chunk_dir) + "/"])
+
+    assert str(chunk_dir / "mod.py") in rendered
+    assert ".ruff_cache" not in rendered
+    assert "mod.py.json" not in rendered
+
+
+def test_node_modules_directories_are_filtered_out(tmp_path):
+    chunk_dir = tmp_path / "app"
+    chunk_dir.mkdir()
+    (chunk_dir / "package.json").write_text("{}")
+    nm = chunk_dir / "node_modules"
+    nm.mkdir()
+    (nm / "lodash").mkdir(parents=True)
+    (nm / "lodash" / "index.js").write_text("module code")
+
+    rendered = bar._render_chunk_paths([str(chunk_dir) + "/"])
+
+    assert str(chunk_dir / "package.json") in rendered
+    assert str(chunk_dir / "node_modules" / "lodash" / "index.js") not in rendered
+
+
+def test_git_directories_are_filtered_out(tmp_path):
+    chunk_dir = tmp_path / "repo"
+    chunk_dir.mkdir()
+    (chunk_dir / "README.md").write_text("readme")
+    git = chunk_dir / ".git"
+    git.mkdir()
+    (git / "config").write_text("[core]")
+
+    rendered = bar._render_chunk_paths([str(chunk_dir) + "/"])
+
+    assert str(chunk_dir / "README.md") in rendered
+    assert ".git" not in rendered
+    assert "config" not in rendered
+
+
+def test_pyc_files_are_filtered_out(tmp_path):
+    chunk_dir = tmp_path / "dist"
+    chunk_dir.mkdir()
+    (chunk_dir / "app.py").write_text("code")
+    (chunk_dir / "app.pyc").write_text("bytecode")
+
+    rendered = bar._render_chunk_paths([str(chunk_dir) + "/"])
+
+    assert str(chunk_dir / "app.py") in rendered
+    assert "app.pyc" not in rendered
+
+
+def test_pyo_files_are_filtered_out(tmp_path):
+    chunk_dir = tmp_path / "dist"
+    chunk_dir.mkdir()
+    (chunk_dir / "app.py").write_text("code")
+    (chunk_dir / "app.pyo").write_text("bytecode")
+
+    rendered = bar._render_chunk_paths([str(chunk_dir) + "/"])
+
+    assert str(chunk_dir / "app.py") in rendered
+    assert "app.pyo" not in rendered
+
+
+def test_files_in_nested_skip_directories_are_filtered_out(tmp_path):
+    chunk_dir = tmp_path / "project"
+    chunk_dir.mkdir()
+    (chunk_dir / "main.py").write_text("code")
+    (chunk_dir / "subdir" / "__pycache__").mkdir(parents=True)
+    (chunk_dir / "subdir" / "__pycache__" / "cache.pyc").write_text("bytecode")
+
+    rendered = bar._render_chunk_paths([str(chunk_dir) + "/"])
+
+    assert str(chunk_dir / "main.py") in rendered
+    assert "cache.pyc" not in rendered
+    assert "__pycache__" not in rendered
+
+
+def test_similar_directory_names_without_exact_match_are_not_filtered(tmp_path):
+    chunk_dir = tmp_path / "code"
+    chunk_dir.mkdir()
+    (chunk_dir / "app.py").write_text("code")
+    (chunk_dir / "mypy_cache").mkdir(parents=True)
+    (chunk_dir / "mypy_cache" / "cache.txt").write_text("cache")
+
+    rendered = bar._render_chunk_paths([str(chunk_dir) + "/"])
+
+    assert str(chunk_dir / "app.py") in rendered
+    assert str(chunk_dir / "mypy_cache" / "cache.txt") in rendered
+
+
+def test_all_files_filtered_out_falls_back_to_bare_directory_bullet(tmp_path):
+    chunk_dir = tmp_path / "empty-after-filter"
+    chunk_dir.mkdir()
+    cache = chunk_dir / "__pycache__"
+    cache.mkdir()
+    (cache / "script.pyc").write_text("bytecode")
+
+    rendered = bar._render_chunk_paths([str(chunk_dir) + "/"])
+
+    assert rendered.strip() == f"- {chunk_dir}/"

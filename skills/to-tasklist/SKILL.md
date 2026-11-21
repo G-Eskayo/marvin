@@ -2,7 +2,6 @@
 name: to-tasklist
 description: Convert a confirmed design/requirements doc into a persisted markdown task list with per-task status checkboxes, for projects that have no issue tracker (private/local-only repos). Use when a design doc has just been approved and the project has no GitHub issues (e.g. local-only git repos holding sensitive data), instead of to-issues/to-prd.
 tags: [intent:plan, intent:tasks, intent:breakdown, type:skill]
-calls: [to-issues]
 ---
 
 # To Tasklist
@@ -21,7 +20,7 @@ Check for a real tracker first (git repo + triage labels, per `setup-matt-pocock
 
    **Self-check granularity before quizzing** (same check `to-issues` runs). A drafted task is too coarse if any of these hold: more than ~4-5 independently-checkable acceptance criteria; the work spans more than one subsystem/file-area; or it mixes a HITL decision (needs the maintainer's judgment) with AFK-completable work. Split any task matching one of these before step 2.
 
-2. **Quiz the user** — present the numbered breakdown, confirm granularity and dependency order, iterate until approved. Same as `to-issues` step 4.
+2. **Quiz the user** — present the numbered breakdown, confirm granularity and dependency order, iterate until approved. Same as `to-issues` step 4. Ask: Does the granularity feel right? Are the dependency relationships correct? Should any tasks be merged or split further? Are the correct tasks marked HITL and AFK?
 
 3. **Write the task list file** — save as `<design-doc-name>-tasks.md` next to the design doc it was derived from (e.g. `docs/features/foo.md` → `docs/features/foo-tasks.md`). Use this format per task:
 
@@ -30,9 +29,10 @@ Check for a real tracker first (git repo + triage labels, per `setup-matt-pocock
 
    - [ ] **T1** — <short title>
      Blocked by: <task id(s) or "none">
+     Type: HITL | AFK
      <1-3 sentence description of the end-to-end slice>
    ```
 
-4. **Update the checkbox in place** as work on a task starts/completes — this file is the source of truth for status, not the conversation that produced it. Point any resume/handoff prompt at this file rather than restating task state in prose.
+4. **Update the checkbox in place** as work on a task starts/completes — this file is the source of truth for status, not the conversation that produced it. Point any resume/handoff prompt at this file rather than restating task state in prose. The `Type:` field can be corrected in place if the initial marking was wrong, the same way the checkbox is updated in place.
 
 5. **Reflect the plan in the project roadmap** if one exists (e.g. `~/.claude/marvin-roadmap.md`), so it's discoverable outside the project directory too.

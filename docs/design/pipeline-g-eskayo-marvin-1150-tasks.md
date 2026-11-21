@@ -1,0 +1,12 @@
+1. `lib/pr_ticket_check.py`: add `FIX_TITLE` regex and `is_red_ticket(issue)` (Python mirror of `merge_order.js`'s `isRedTicket`), reading `labels`/`title` defensively (missing/malformed → `False`, never raises).
+2. `lib/pr_ticket_check.py`: add `red_ticket_warning(body, repo, ask)` — iterates `ticket_refs(body, repo)` entries with relation `"part-of"` (capped at `MAX_PART_OF_LOOKUPS = 10`), looks up each via `ask(["issue", "view", str(number), "--repo", target, "--json", "labels,title"])`, returns a warning message naming the first red one found, or `None` on any failure (fails open) or if nothing's red.
+3. `lib/pr_ticket_check.py`: wire it into `gate()` — new optional `ask=None` parameter; after the existing no-ticket `refusal()` check returns `None`, call `red_ticket_warning`, `say()` it and `log()` it if present, still `return None` either way (never blocks).
+4. `bin/gh`: pass `ask=lambda a: _gh_json(real, a)` into the existing `pr_ticket_check.gate(...)` call (reusing `_gh_json`, already defined above it for `ui_evidence_refusal`).
+5. `dashboard/test/fixtures/pr_ticket_refs_cases.json`: add one case for lower-case `"part of #N"` (shared by both parsers, closing the drift gap the Attacks list calls out).
+6. `lib/tests/test_pr_ticket_check.py`: add the tests in section A above (fake `ask`, extend `run_gate`/`fake_gh` helpers to pass it through).
+7. `dashboard/webhook-server/merge_order.js`: import `prTicketRefs` from `../electron/main/ticket_refs.js`; replace the `main.red && !isFix(p)` branch (lines 237-240) with the three-way split (fix PR exists / red ticket but no fix or part-of / no ticket at all), computing the Part-of lookup once per `mergeOrder` call (not per PR).
+8. `dashboard/test/merge_order.test.js`: update the two existing assertions (lines 79, 93) to the new wording; add the Part-of-only, two-red-tickets, closed-by-hand, and null-body tests from section B.
+9. `dashboard/test/merge_queue_dashboard.test.jsx`: update the assertion at line 89 to the new wording.
+10. `docs/agents/issue-tracker.md`: add one line to the existing "A PR names its ticket" bullet noting the new warning (Part-of naming a red ticket prints a warning, not a refusal).
+11. Run the full Python suite and the dashboard's JS/vitest suite (not a subset) before calling this done, per the repo's hand-merge rule.
+12. In the PR description: flag the Recurrence-check probe gap from the Decisions section above, and link the merge-queue-stall incident (#1147/#1144) this closes.

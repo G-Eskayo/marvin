@@ -7,6 +7,7 @@ import xml.etree.ElementTree as ET
 from pathlib import Path
 from unittest.mock import patch
 import importlib
+import argparse
 
 import pytest
 
@@ -17,7 +18,7 @@ sys.path.insert(0, str(LIB))
 SCRIPTS = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(SCRIPTS))
 
-from academic_search import search_semantic_scholar, search_arxiv, main
+from academic_search import search_semantic_scholar, search_arxiv, main, _clean, _nonneg_int
 
 # Import s2_client after path is set up
 import s2_client
@@ -590,3 +591,234 @@ def test_main_graceful_degradation_when_one_source_fails(monkeypatch, capsys):
     assert "arxiv" in output["errors"]
     # Error should be on stderr
     assert "arXiv search failed" in captured.err
+
+
+# ── _clean function tests ───────────────────────────────────────────────────
+
+def test_clean_none_passthrough():
+    assert _clean(None, 100) is None
+    assert _clean(None, 0) is None
+    assert _clean(None, -1) is None
+
+
+def test_clean_no_truncation_needed():
+    text = "This is a short text"
+    assert _clean(text, 100) == text
+    assert _clean(text, len(text)) == text
+
+
+def test_clean_collapses_whitespace():
+    text = "This   has\n\nmultiple    spaces"
+    expected = "This has multiple spaces"
+    assert _clean(text, 1000) == expected
+
+
+def test_clean_word_boundary_truncation():
+    text = "The quick brown fox jumps over the lazy dog"
+    result = _clean(text, 25)
+    assert result == "The quick brown fox…"
+
+
+def test_clean_hard_cut_no_word_boundary():
+    text = "verylongwordwithoutbreaks"
+    result = _clean(text, 10)
+    assert result == "verylongwo…"
+
+
+def test_clean_limit_zero_disables_truncation():
+    text = "This is a much longer text that would normally be truncated"
+    assert _clean(text, 0) == text
+
+
+def test_clean_negative_limit_disables_truncation():
+    text = "This is a much longer text that would normally be truncated"
+    assert _clean(text, -100) == text
+
+
+def test_nonneg_int_accepts_positive():
+    assert _nonneg_int("5") == 5
+    assert _nonneg_int("0") == 0
+    assert _nonneg_int("100") == 100
+
+
+def test_nonneg_int_rejects_negative():
+    with pytest.raises(argparse.ArgumentTypeError):
+        _nonneg_int("-1")
+    with pytest.raises(argparse.ArgumentTypeError):
+        _nonneg_int("-999")
+
+
+def test_main_with_full_flag_preserves_full_text(monkeypatch, capsys):
+    s2_response = {
+        "data": [{
+            "title": "A Very Long Title That Would Normally Be Truncated",
+            "abstract": "This is a very long abstract with lots of text that describes " + "x" * 300,
+            "externalIds": {"DOI": "10.1234/example"},
+            "authors": []
+        }]
+    }
+
+    class FakeResponse:
+        status_code = 200
+
+        def json(self):
+            return s2_response
+
+        def raise_for_status(self):
+            pass
+
+    monkeypatch.setattr(s2_client, "get_with_retry", lambda url, params, timeout, max_retries=8, headers=None: FakeResponse())
+
+    with patch.object(sys, "argv", ["academic_search.py", "--query", "test", "--full", "--format", "json"]):
+        main()
+
+    captured = capsys.readouterr()
+    output = json.loads(captured.out)
+
+    # Full text should be preserved
+    assert len(output["semantic_scholar"][0]["abstract"]) > 300
+    # externalIds should still be present in --full mode
+    assert "externalIds" in output["semantic_scholar"][0]
+
+
+def test_main_without_full_flag_cleans_text(monkeypatch, capsys):
+    s2_response = {
+        "data": [{
+            "title": "Title",
+            "abstract": "This is a very long abstract " + "x" * 300,
+            "externalIds": {"DOI": "10.1234/example"},
+            "authors": []
+        }]
+    }
+
+    class FakeResponse:
+        status_code = 200
+
+        def json(self):
+            return s2_response
+
+        def raise_for_status(self):
+            pass
+
+    monkeypatch.setattr(s2_client, "get_with_retry", lambda url, params, timeout, max_retries=8, headers=None: FakeResponse())
+
+    with patch.object(sys, "argv", ["academic_search.py", "--query", "test", "--format", "json"]):
+        main()
+
+    captured = capsys.readouterr()
+    output = json.loads(captured.out)
+
+    # Abstract should be truncated (default 300 chars)
+    assert len(output["semantic_scholar"][0]["abstract"]) <= 301  # 300 + "…"
+    # externalIds should be removed
+    assert "externalIds" not in output["semantic_scholar"][0]
+
+
+def test_main_with_abstract_chars_flag(monkeypatch, capsys):
+    s2_response = {
+        "data": [{
+            "title": "Title",
+            "abstract": "This is a very long abstract " + "x" * 100,
+            "authors": []
+        }]
+    }
+
+    class FakeResponse:
+        status_code = 200
+
+        def json(self):
+            return s2_response
+
+        def raise_for_status(self):
+            pass
+
+    monkeypatch.setattr(s2_client, "get_with_retry", lambda url, params, timeout, max_retries=8, headers=None: FakeResponse())
+
+    with patch.object(sys, "argv", ["academic_search.py", "--query", "test", "--abstract-chars", "50", "--format", "json"]):
+        main()
+
+    captured = capsys.readouterr()
+    output = json.loads(captured.out)
+
+    # Abstract should be truncated to ~50 chars
+    assert len(output["semantic_scholar"][0]["abstract"]) <= 51  # 50 + "…"
+
+
+def test_main_json_format_full_flag_uses_indented_output(monkeypatch, capsys):
+    s2_response = {"data": [{"title": "Paper", "authors": []}]}
+
+    class FakeResponse:
+        status_code = 200
+
+        def json(self):
+            return s2_response
+
+        def raise_for_status(self):
+            pass
+
+    monkeypatch.setattr(s2_client, "get_with_retry", lambda url, params, timeout, max_retries=8, headers=None: FakeResponse())
+
+    with patch.object(sys, "argv", ["academic_search.py", "--query", "test", "--full", "--format", "json"]):
+        main()
+
+    captured = capsys.readouterr()
+    # Indented output has newlines
+    assert "\n" in captured.out
+    output = json.loads(captured.out)
+    assert output["semantic_scholar"][0]["title"] == "Paper"
+
+
+def test_main_json_format_without_full_uses_compact_output(monkeypatch, capsys):
+    s2_response = {"data": [{"title": "Paper", "authors": []}]}
+
+    class FakeResponse:
+        status_code = 200
+
+        def json(self):
+            return s2_response
+
+        def raise_for_status(self):
+            pass
+
+    monkeypatch.setattr(s2_client, "get_with_retry", lambda url, params, timeout, max_retries=8, headers=None: FakeResponse())
+
+    with patch.object(sys, "argv", ["academic_search.py", "--query", "test", "--format", "json"]):
+        main()
+
+    captured = capsys.readouterr()
+    # Compact output uses separators without spaces
+    assert '": ' not in captured.out or captured.out.count('": ') <= 1  # Allow one for the last item potentially
+    output = json.loads(captured.out)
+    assert output["semantic_scholar"][0]["title"] == "Paper"
+
+
+def test_main_cleans_arxiv_summary(monkeypatch, capsys):
+    arxiv_atom = """<?xml version="1.0" encoding="UTF-8"?>
+    <feed xmlns="http://www.w3.org/2005/Atom">
+      <entry>
+        <id>http://arxiv.org/abs/2301.00001v1</id>
+        <title>Test Paper</title>
+        <author><name>Alice</name></author>
+        <published>2023-01-01T00:00:00Z</published>
+        <summary>This is a very long summary """ + "x" * 300 + """</summary>
+      </entry>
+    </feed>"""
+
+    class FakeResponse:
+        status_code = 200
+        text = arxiv_atom
+        encoding = "utf-8"
+
+        def raise_for_status(self):
+            pass
+
+    monkeypatch.setattr(s2_client, "get_with_retry", lambda url, params, timeout, max_retries=8, headers=None: FakeResponse())
+
+    with patch.object(sys, "argv", ["academic_search.py", "--query", "test", "--format", "json"]):
+        main()
+
+    captured = capsys.readouterr()
+    output = json.loads(captured.out)
+
+    # Summary should be truncated (default 300 chars)
+    assert len(output["arxiv"][0]["summary"]) <= 301  # 300 + "…"

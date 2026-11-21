@@ -94,10 +94,12 @@ Short, against `docs/north-stars.md` (MARVIN repo): what it reuses before adding
 
 Only when the slice's purpose is measurable (faster, fewer tokens, fewer refusals): name a measure registered in `lib/purpose_metrics.py` (add one there if none fits; a ticket never supplies a command), with a baseline you measured, a target and a date to check. Add the `purpose-metric` label. The daily outcome check measures it after that date and comments the result; a miss gets a missed-purpose diagnosis and turns Health red.
 
-- **Measure:** headless-refusal-rate
-- **Baseline:** 14.3
-- **Target:** -70%
-- **Check on:** 2026-10-16
+- **Measure:** [name registered in lib/purpose_metrics.py]
+- **Baseline:** [value you measured, with date]
+- **Target:** [absolute value or % change]
+- **Check on:** [YYYY-MM-DD, after the slice can have shipped]
+
+Delete the lines above and add your own Purpose metric details, or remove this section if the slice's purpose is not measurable.
 
 ## Recurrence check
 

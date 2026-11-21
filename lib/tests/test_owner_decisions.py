@@ -34,6 +34,76 @@ def pr(comments, last_commit=T0 - timedelta(minutes=10), number=577, repo=REPO):
 QUESTION = {"notes": {"text": "Do you think this is a good way to visualize this system? Is there better ways"}}
 
 
+# ── _fresh_status and pr_built_status (merge-time re-checks) ──────────────────────────────────────────────
+
+def test_fresh_status_gives_the_current_state_without_grace():
+    # Test 1: _fresh_status ignores grace period and always reports current state
+    p = pr([decisions()])
+    s = od._fresh_status(p, T0 + timedelta(hours=1))
+    assert s["overdue"] is False  # No grace period in _fresh_status
+    assert s["addressed_by"] is None
+
+
+def test_fresh_status_includes_as_built_answers():
+    # Test 2: _fresh_status checks as-built answers at merge time
+    p = {**pr([decisions()]), "body": "x"}
+    real = od._as_built
+    od._as_built = lambda body: True
+    try:
+        s = od._fresh_status(p, T0 + timedelta(hours=5))
+        assert s["addressed_by"] == "as-built"
+    finally:
+        od._as_built = real
+
+
+def test_pr_built_status_reports_whether_answers_are_built():
+    # Test 3: pr_built_status returns the merge-gate status dict
+    p = pr([decisions()], last_commit=T0 - timedelta(minutes=10))  # commit BEFORE decisions
+    built = od.pr_built_status(p, T0 + timedelta(hours=5))
+    assert built["number"] == 577
+    assert built["url"] == f"https://github.com/{REPO}/pull/577"
+    assert not built["built"]  # no work after decisions yet
+
+
+def test_pr_built_status_counts_a_reply_as_built():
+    # Test 4: pr_built_status sees a marked reply as evidence of building
+    p = pr([decisions(), comment(f"Done.\n{od.ADDRESSED_MARKER}", T0 + timedelta(hours=1))])
+    built = od.pr_built_status(p, T0 + timedelta(hours=5))
+    assert built["built"]
+
+
+def test_pr_built_status_counts_as_built_answers_as_built():
+    # Test 5: pr_built_status sees as-built answers as not needing work
+    p = {**pr([decisions()]), "body": "x"}
+    real = od._as_built
+    od._as_built = lambda body: True
+    try:
+        built = od.pr_built_status(p, T0 + timedelta(hours=5))
+        assert built["built"]
+    finally:
+        od._as_built = real
+
+
+def test_pr_built_status_checks_built_since_work_after_decisions():
+    # Test 5b: pr_built_status considers built_since (work commit after answers) as built
+    p = {**pr([decisions()], last_commit=T0 + timedelta(hours=1)), "last_work_at": od.last_work_at([node(T0 + timedelta(hours=1))])}
+    built = od.pr_built_status(p, T0 + timedelta(hours=5))
+    assert built["built"] is True  # built_since=True makes it built
+
+
+def test_pr_built_status_returns_none_for_prs_with_no_decisions():
+    # Test 6: pr_built_status returns None when there are no decisions
+    p = pr([])
+    assert od.pr_built_status(p) is None
+
+
+def test_pr_built_status_counts_completed_follow_ups_as_built():
+    # Test 6b: pr_built_status passes completed_comments and sees "follow-up" as built
+    p = pr([decisions()])
+    built = od.pr_built_status(p, T0 + timedelta(hours=5), completed_comments={1001})
+    assert built["addressed_by"] == "follow-up" and built["built"] is True
+
+
 # ── status ─────────────────────────────────────────────────────────────────────────────────────────────────────
 
 def test_a_commit_alone_is_not_an_answer_the_owner_can_see():
@@ -254,6 +324,57 @@ def test_follow_up_closes_itself_when_the_reply_lands_not_on_a_bare_commit():
     assert gh.open_followups() == [] and "addressed" in r["closed"][0]["why"]
 
 
+def test_sync_does_a_fresh_check_before_closing_a_follow_up_for_a_missing_pr():
+    # Test 9: when a follow-up's PR is not in the list, fetch_pr re-checks before closing (not just list truncation)
+    p = pr([decisions()])
+    gh = FakeGitHub([p])
+    od.sync([REPO], now=LATE, run=gh, grace=4)
+    # PR is now missing from the list, but fetch_pr still finds it
+    gh.prs = []
+    orig_fetch = od.fetch_pr
+    od.fetch_pr = lambda repo, num, run=None: p  # Still finds the PR
+    try:
+        r = od.sync([REPO], now=LATE, run=gh, grace=4)
+        assert gh.open_followups() != []  # Not closed: PR still exists
+    finally:
+        od.fetch_pr = orig_fetch
+
+
+def test_sync_does_not_close_on_api_error_during_fresh_check():
+    # Test 9b: when a follow-up's PR is missing but fresh check fails with API error, don't close
+    p = pr([decisions()])
+    gh = FakeGitHub([p])
+    od.sync([REPO], now=LATE, run=gh, grace=4)
+    # PR is now missing from the list, fresh check fails with API error
+    gh.prs = []
+    orig_fetch = od.fetch_pr
+    od.fetch_pr = lambda repo, num, run=None: (_ for _ in ()).throw(od._GitHubError("transient error"))
+    try:
+        r = od.sync([REPO], now=LATE, run=gh, grace=4)
+        assert gh.open_followups() != []  # Not closed: API error, not PR gone
+        assert r["closed"] == []
+    finally:
+        od.fetch_pr = orig_fetch
+
+
+def test_sync_closes_follow_up_when_missing_pr_fresh_check_shows_addressed():
+    # Test 9b: when a follow-up's PR is missing from list but fresh check shows it's addressed, close it
+    p_addressed = {**pr([decisions()]), "comments": [decisions(), comment(f"Done.\n{od.ADDRESSED_MARKER}", T0 + timedelta(hours=1))]}
+    p_unaddressed = pr([decisions()])
+    gh = FakeGitHub([p_unaddressed])
+    od.sync([REPO], now=LATE, run=gh, grace=4)
+    # PR is now missing, but fresh check shows it's addressed
+    gh.prs = []
+    orig_fetch = od.fetch_pr
+    od.fetch_pr = lambda repo, num, run=None: p_addressed  # Fresh check finds it addressed
+    try:
+        r = od.sync([REPO], now=LATE, run=gh, grace=4)
+        # Should be closed because fresh check shows it's addressed
+        assert gh.open_followups() == [] and r["closed"]
+    finally:
+        od.fetch_pr = orig_fetch
+
+
 def test_follow_up_closes_when_the_pr_closes_but_not_when_the_list_was_cut_short():
     gh = FakeGitHub([pr([decisions()])])
     od.sync([REPO], now=LATE, run=gh, grace=4)
@@ -299,6 +420,54 @@ def test_waiting_lists_decided_prs_of_any_age():
     gh = FakeGitHub([pr([decisions()]), pr([], number=12)])
     rows = od.waiting([REPO], now=T0 + timedelta(minutes=5), run=gh)
     assert [r["number"] for r in rows] == [577]
+
+
+def test_fetch_pr_reads_a_single_pr(tmp_path):
+    # Test 7: fetch_pr gets one PR via single-PR GraphQL query
+    class SinglePrGitHub:
+        def __init__(self):
+            self.calls = []
+
+        def __call__(self, cmd, **kw):
+            args = cmd[1:]
+            self.calls.append(args)
+            if " ".join(args[:2]) == "api graphql" and "owner=G-Eskayo" in args:
+                # Validate that number is passed with -F (for Int type), not -f (string)
+                if "-f" in args and f"number=" in " ".join(args):
+                    # Find if number was passed with -f
+                    for i, arg in enumerate(args):
+                        if arg == "-f" and i + 1 < len(args) and args[i + 1].startswith("number="):
+                            # This is the bug: -f passes as string, should be -F
+                            return subprocess.CompletedProcess(cmd, 1, "", "Variable $number of type Int! was provided invalid value")
+
+                p = pr([decisions()])
+                n = p
+                data = {"repository": {"pullRequest": {
+                    "number": n["number"], "title": n["title"], "url": n["url"], "headRefName": n["headRefName"],
+                    "body": n.get("body"), "repository": {"nameWithOwner": n["repo"]},
+                    "commits": {"nodes": [{"commit": {"committedDate": n["last_commit_at"], "authoredDate": n["last_commit_at"], "parents": {"totalCount": 1}}}]},
+                    "comments": {"nodes": n["comments"]}
+                }}}
+                return subprocess.CompletedProcess(cmd, 0, json.dumps({"data": data}), "")
+            return subprocess.CompletedProcess(cmd, 1, "", "error")
+    gh = SinglePrGitHub()
+    result = od.fetch_pr(REPO, 577, gh)
+    assert result["number"] == 577 and result["url"] == f"https://github.com/{REPO}/pull/577"
+    # Verify that -F was used (which passes the number as a JSON number, not a string)
+    assert any(arg == "-F" and i + 1 < len(gh.calls[-1]) and gh.calls[-1][i + 1].startswith("number=")
+               for i, arg in enumerate(gh.calls[-1]))
+
+
+def test_fetch_pr_raises_on_github_error():
+    # Test 8: fetch_pr raises _GitHubError when GitHub fails (distinguish from "PR doesn't exist")
+    class FailingGitHub:
+        def __call__(self, cmd, **kw):
+            return subprocess.CompletedProcess(cmd, 1, "", "error")
+    import pytest
+    with pytest.raises(od._GitHubError):
+        od.fetch_pr(REPO, 577, FailingGitHub())
+    # Bad repo format returns None (input validation, not API call)
+    assert od.fetch_pr("badrepo", 577, FailingGitHub()) is None  # no "/" in repo
 
 
 def test_the_scan_step_never_breaks_dispatch(monkeypatch):
@@ -426,6 +595,23 @@ def test_as_built_fails_closed_without_node():
     assert decisions_check.as_built("anything", node=None) is False
     assert decisions_check.as_built("", node="/bin/false") is False
     assert decisions_check.as_built("x", node="/bin/false") is False
+
+
+def test_fetch_pr_distinguishes_missing_pr_from_api_error():
+    # Test 10: fetch_pr returns None when PR genuinely doesn't exist, raises _GitHubError on API error
+    class MissingPr:
+        def __call__(self, cmd, **kw):
+            p = pr([decisions()])
+            data = {"repository": {"pullRequest": None}}  # PR doesn't exist
+            return subprocess.CompletedProcess(cmd, 0, json.dumps({"data": data}), "")
+    assert od.fetch_pr(REPO, 999, MissingPr()) is None  # PR not found, returns None
+
+
+def test_status_cli_with_completed_follow_up_recognizes_addressed():
+    # Test 11: pr_built_status recognizes completed follow-up when passed completed_comments
+    p = pr([decisions()])
+    built = od.pr_built_status(p, T0 + timedelta(hours=5), completed_comments={1001})
+    assert built["addressed_by"] == "follow-up" and built["built"] is True
 
 
 def test_an_as_built_pr_files_no_follow_up_and_closes_an_open_one():

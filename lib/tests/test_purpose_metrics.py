@@ -722,3 +722,98 @@ def test_banner_skill_count_drift_is_registered():
     assert "banner-skill-count-drift" in pm.PROBES
     fn, limit, what = pm.PROBES["banner-skill-count-drift"]
     assert limit == 0.0 and "#997" in what
+
+
+# ── pipeline-verify-timeouts: the ticket-stage record catches every timeout (#881, #1316) ──────────────────
+
+def _verify_stage(path, n, events):
+    path.mkdir(exist_ok=True)
+    (path / f"g-eskayo__marvin-{n}.json").write_text(_json.dumps(events))
+
+
+def test_pipeline_verify_timeout_counts_verifying_failed_with_timeout_detail(tmp_path):
+    d = tmp_path / "ticket-stages"
+    now = datetime(2026, 10, 30, 12, tzinfo=timezone.utc)
+    _verify_stage(d, 1, [
+        {"stage": "verifying", "status": "failed", "detail": "timed out after 1200s", "timestamp": "2026-10-30T11:00:00+00:00", "machine": "mac-mini-2012"},
+        {"stage": "verifying", "status": "failed", "detail": "TIMED OUT on loop", "timestamp": "2026-10-30T11:05:00+00:00", "machine": "mac-mini-2012"},
+        {"stage": "verifying", "status": "failed", "detail": "timeout no space here", "timestamp": "2026-10-30T11:10:00+00:00", "machine": "mac-mini-2012"},
+        {"stage": "done", "status": "failed", "detail": "timed out running", "timestamp": "2026-10-30T11:15:00+00:00", "machine": "mac-mini-2012"},
+        {"stage": "verifying", "status": "passed", "detail": "timed out", "timestamp": "2026-10-30T11:20:00+00:00", "machine": "mac-mini-2012"},
+    ])
+    assert pm._pipeline_verify_timeouts(d, machine="mac-mini-2012", now=now) == 2.0
+
+
+def test_pipeline_verify_timeout_filters_by_machine_and_window(tmp_path):
+    d = tmp_path / "ticket-stages"
+    now = datetime(2026, 10, 30, 12, tzinfo=timezone.utc)
+    _verify_stage(d, 1, [
+        {"stage": "verifying", "status": "failed", "detail": "timed out after 1200s", "timestamp": "2026-10-30T11:00:00+00:00", "machine": "macbook"},
+        {"stage": "verifying", "status": "failed", "detail": "timed out after 1200s", "timestamp": "2026-10-30T11:05:00+00:00", "machine": "mac-mini-2012"},
+        {"stage": "verifying", "status": "failed", "detail": "timed out after 1200s", "timestamp": "2026-10-22T11:00:00+00:00", "machine": "mac-mini-2012"},
+    ])
+    assert pm._pipeline_verify_timeouts(d, machine="mac-mini-2012", now=now) == 1.0
+
+
+def test_pipeline_verify_timeout_baseline_matches_episode_fixture(tmp_path):
+    from datetime import timedelta
+    d = tmp_path / "ticket-stages"
+    now = datetime(2026, 10, 30, 5, tzinfo=timezone.utc)
+    base_ts = datetime(2026, 10, 29, 17, tzinfo=timezone.utc)
+    events = []
+    for i in range(20):
+        events.append({
+            "stage": "verifying",
+            "status": "failed",
+            "detail": "timed out after 1200s",
+            "timestamp": (base_ts + timedelta(hours=i//2)).isoformat(),
+            "machine": "mac-mini-2012"
+        })
+    _verify_stage(d, 1, events)
+    assert pm._pipeline_verify_timeouts(d, machine="mac-mini-2012", now=now) == 20.0
+
+
+def test_pipeline_verify_timeout_missing_and_empty_dir_are_zero(tmp_path):
+    d = tmp_path / "ticket-stages"
+    now = datetime(2026, 10, 30, 12, tzinfo=timezone.utc)
+    assert pm._pipeline_verify_timeouts(d, now=now) == 0.0
+    d.mkdir()
+    assert pm._pipeline_verify_timeouts(d, now=now) == 0.0
+
+
+def test_pipeline_verify_timeout_skips_malformed_and_invalid_entries(tmp_path):
+    d = tmp_path / "ticket-stages"
+    d.mkdir()
+    now = datetime(2026, 10, 30, 12, tzinfo=timezone.utc)
+    (d / "corrupt.json").write_text("{not json")
+    (d / "odd.json").write_text(_json.dumps({"not": "a list"}))
+    (d / "mixed.json").write_text(_json.dumps([None, 3, {"stage": "verifying", "status": "failed", "timestamp": "bad"}]))
+    (d / "valid.json").write_text(_json.dumps([
+        {"stage": "verifying", "status": "failed", "detail": "timed out", "timestamp": "2026-10-30T11:00:00+00:00", "machine": "mac-mini-2012"}
+    ]))
+    assert pm._pipeline_verify_timeouts(d, machine="mac-mini-2012", now=now) == 1.0
+
+
+def test_pipeline_verify_timeout_unreadable_file_raises(tmp_path):
+    import os
+    d = tmp_path / "ticket-stages"
+    now = datetime(2026, 10, 30, 12, tzinfo=timezone.utc)
+    _verify_stage(d, 1, [
+        {"stage": "verifying", "status": "failed", "detail": "timed out", "timestamp": "2026-10-30T11:00:00+00:00", "machine": "mac-mini-2012"}
+    ])
+    target = d / "g-eskayo__marvin-1.json"
+    try:
+        os.chmod(target, 0o000)
+        with pytest.raises(OSError):
+            pm._pipeline_verify_timeouts(d, machine="mac-mini-2012", now=now)
+    finally:
+        # Restore permissions for cleanup
+        if target.exists():
+            os.chmod(target, 0o644)
+
+
+def test_pipeline_verify_timeout_is_registered():
+    """The probe is registered with target 0 and references both #881 and #1316."""
+    assert "pipeline-verify-timeouts" in pm.PROBES
+    fn, limit, what = pm.PROBES["pipeline-verify-timeouts"]
+    assert limit == 0.0 and "#881" in what and "#1316" in what

@@ -22,6 +22,8 @@
     { "name": "a closing word glued to text is not a keyword", "prRepo": "o/r", "body": "Encloses #5, prefixes #6, depart of #7", "refs": [] },
     { "name": "part of needs the ref right after it", "prRepo": "o/r", "body": "part of the #5 rewrite", "refs": [] },
     { "name": "a ref glued to more text is not a ref", "prRepo": "o/r", "body": "Closes #5abc, Part of #6-x", "refs": [] },
-    { "name": "pipeline template body", "prRepo": "G-Eskayo/marvin", "body": "## Summary\nDoes the thing.\n\nCloses #1004\n\n## Dev Environment Evidence\nN/A", "refs": [["G-Eskayo/marvin#1004", "closes"]] }
+    { "name": "pipeline template body", "prRepo": "G-Eskayo/marvin", "body": "## Summary\nDoes the thing.\n\nCloses #1004\n\n## Dev Environment Evidence\nN/A", "refs": [["G-Eskayo/marvin#1004", "closes"]] },
+    { "name": "part of, lowercase", "prRepo": "o/r", "body": "part of #235", "refs": [["o/r#235", "part-of"]] },
+    { "name": "part of, lowercase with colon", "prRepo": "o/r", "body": "part of: #235", "refs": [["o/r#235", "part-of"]] }
   ]
 }

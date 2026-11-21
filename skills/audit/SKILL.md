@@ -41,9 +41,8 @@ copied code — added 2026-07-09, Gil's direction: every new script is something
 going forward, so check for reuse before assuming something new is needed).
 
 For each real divergence found:
-- If it's fixable within the exact scope auto_fix.py already covers (NAMING/VERBOSITY
-  findings only, files under ~/.agents, never files in auto_fix.py's own _core_files()
-  exclusion list) — run auto_fix.py, don't fix it yourself.
+- If it's fixable within the exact scope auto_fix.py already covers (NAMING findings only, files under ~/.agents,
+  never files in auto_fix.py's own _core_files() exclusion list) — run auto_fix.py, don't fix it yourself.
 - Otherwise, do NOT fix it. Queue a suggestion in the inbox (`inbox.py import suggestions --file <entry.md>`,
   see `~/.agents/skills/architecture-review/SKILL.md`'s "Entry format:" block) with fields: **Priority**, **Status**,
   **Impact**, **Effort**, **Why**, **What**, **How**, **Added** — so it's queued for review, not silently changed.

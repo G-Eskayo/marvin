@@ -77,6 +77,8 @@ If you cannot state the prediction, the hypothesis is a vibe — discard or shar
 
 **Show the ranked list to the user before testing.** They often have domain knowledge that re-ranks instantly ("we just deployed a change to #3"), or know hypotheses they've already ruled out. Cheap checkpoint, big time saver. Don't block on it — proceed with your ranking if the user is AFK.
 
+Also skim `retrospective.md` (same folder) for past sessions' lessons, especially `S:` lines, which record verification approaches that worked.
+
 **MARVIN-specific gotcha classes:** read [`gotchas.md`](gotchas.md) (same folder) early when the symptom fits, before deeper instrumentation. Add new confirmed incidents there, not here.
 
 ## Phase 4 — Instrument

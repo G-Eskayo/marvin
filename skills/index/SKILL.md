@@ -27,17 +27,24 @@ Then load the returned paths. Check each loaded skill's `calls:` and load those 
 
 ## Fallback: manual manifest matching
 
-If the engine prints `INFO: ... tag fallback` or returns nothing, match by hand:
+The script produces one of three outcomes:
+
+**Printed ranked results** — lines like `  [0.456] (semantic) ~/.agents/skills/foo/SKILL.md` (possibly with `INFO: Ollama unavailable — using tag fallback` earlier)
+→ Load those paths. Nothing to do by hand.
+
+**Printed `No relevant files found.`** — the engine tried tag matching as a fallback and found nothing
+→ Proceed without loading additional skills rather than repeating the same manifest scan. The engine already tried all matching routes.
+
+**Failed to run** — missing venv, script not found, missing ChromaDB/Ollama, or a traceback
+→ Do it by hand. Use these steps:
 
 1. **Read the request** — extract 2–4 keywords describing the task
-2. **Read `~/.claude/manifest.json`** — scan the `index[]` array
+2. **Read `~/.claude/manifest.json`** — scan the `index[]` array (every skill, plus knowledge files carrying `tags:` frontmatter only). For memory files without tags, manually scan `MEMORY.md`'s one-line hooks
 3. **Collect entries** whose `tags` intersect the task keywords
 4. **Skip any entries** whose `model-scope` excludes your current tier (check your system context for which model you're running)
 5. **Load those files** — read each matched `path`
 6. **Check `calls`** — if a loaded skill declares `calls: [x, y]`, load those too if the task needs them
 7. **Proceed** with only what's relevant
-
-`~/.claude/manifest.json` is the unified index for all skills AND knowledge files. Each entry has `name`, `path`, `tags[]`, optionally `model-scope`, and optionally `calls[]`. Tags use `namespace:value` — `domain:`, `intent:`, `type:`.
 
 ## Tag Namespaces & Fields
 
@@ -47,21 +54,6 @@ If the engine prints `INFO: ... tag fallback` or returns nothing, match by hand:
 | `intent:` (tag) | What you're doing | `intent:build`, `intent:debug`, `intent:plan` |
 | `type:` (tag) | Kind of file | `type:skill`, `type:knowledge`, `type:memory-user` |
 | `model-scope` (field) | Model tier restrictions | `sonnet+` (sonnet or better), `haiku,sonnet` (comma list), omitted/`all` (unrestricted) |
-
-## Examples
-
-**"There's a bug in the auth middleware"**
-Keywords: debug, fix → match `intent:debug`, `intent:fix`
-Load: diagnose skill
-Also check: `domain:auth` entries → reference_mcp.md if MCP-related
-
-**"Let's TDD the payment feature"**
-Keywords: tdd, test, build → match `domain:testing`, `intent:tdd`, `intent:build`
-Load: tdd skill (which calls: [diagnose] if needed)
-
-**"Help me build an MCP server"**
-Keywords: build, mcp → match `domain:mcp`, `intent:build`
-Load: reference_mcp.md (knowledge) + research/build skills
 
 ## Manifest Structure
 
@@ -79,7 +71,7 @@ index[]         — flat array of all tagged entries:
 
 Manifest is **auto-generated** from frontmatter. Do not edit it by hand.
 
-When creating a new skill or memory file:
+When creating a new skill (or a knowledge file you want found by tag):
 1. Add `tags: [namespace:value, ...]` to its frontmatter
 2. Add `calls: [skill-name, ...]` if it depends on other skills
 3. The PostToolUse hook runs `rebuild-manifest.py` automatically
