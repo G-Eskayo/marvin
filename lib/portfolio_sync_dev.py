@@ -60,6 +60,15 @@ def judge_evaluation(eval_report: dict) -> tuple[bool, str]:
     return True, f"no errors; {warnings} warning(s) to review"
 
 
+def judge_capture(results: dict, layouts: list) -> tuple[bool, str]:
+    """Refused elements fail the step; successful captures pass."""
+    refused = {eid: r.get("refused", "") for eid, r in results.items() if not r.get("written", True)}
+    if refused:
+        first_id, first_reason = next(iter(refused.items()))
+        return False, f"{len(refused)} element(s) refused; {first_id}: {first_reason}"
+    return True, f"{len(results)} elements, {len(layouts)} layouts captured successfully"
+
+
 def _step(name: str, fn) -> dict:
     t = time.time()
     try:
@@ -86,7 +95,7 @@ def run(project: Path = pa.PROJECT, dev_html: Path = pa.DEV_HTML, status_path: P
     def capture():
         done = pe.capture_many(list(pe.ELEMENTS), project=project)
         layouts = pl.capture(project=project)
-        return True, f"{len(done)} elements, {len(layouts)} layouts captured"
+        return judge_capture(done, layouts)
 
     def parity():
         results = {i: pp.verify(i) for i in pe.ELEMENTS if (Path(project) / "templates" / "elements" / f"{i}.json").exists()}

@@ -104,3 +104,115 @@ def test_the_master_geometry_takes_the_widest_box_not_the_most_common_one():
     g = lambda w, pw: {"photoHeight": 240, "photoWidth": pw, "boxWidth": w, "boxHeight": 244, "overlap": 56}
     assert pe.master_geometry([g(264, 292), g(264, 292), g(300, 351), g(300, 497)]) == {"boxHeight": 244, "boxWidth": 300, "overlap": 56, "photoHeight": 240}
     assert pe.master_geometry([]) is None
+
+
+# ── drop detection (refuse to write when placements drop significantly) ──
+
+def test_finish_refuses_placement_drop_when_count_becomes_zero(tmp_path):
+    old_result = {"id": "project-card", "usage": {"placements": 10}}
+    (tmp_path / "templates" / "elements").mkdir(parents=True)
+    (tmp_path / "templates" / "elements" / "project-card.json").write_text('{"id": "project-card", "usage": {"placements": 10}}')
+    a = {"usage": {}, "instances": [], "geoms": [], "first": None}
+    result = pe._finish("project-card", a, {}, tmp_path, accept_drop=False)
+    assert result["written"] is False
+    assert "placement count dropped" in result["refused"]
+
+
+def test_finish_refuses_placement_drop_below_half(tmp_path):
+    (tmp_path / "templates" / "elements").mkdir(parents=True)
+    (tmp_path / "templates" / "elements" / "project-card.json").write_text('{"usage": {"placements": 100}}')
+    inst = {"look": {}, "geometry": None, "html": LIVE, "markup": None}
+    a = {"usage": {"url": 40}, "instances": [("url", inst)] * 40, "geoms": [], "first": "url"}
+    result = pe._finish("project-card", a, {}, tmp_path, accept_drop=False)
+    assert result["written"] is False
+    assert "dropped from 100 to 40" in result["refused"]
+
+
+def test_finish_accepts_drop_with_accept_drop_flag(tmp_path):
+    (tmp_path / "templates" / "elements").mkdir(parents=True)
+    (tmp_path / "templates" / "elements" / "project-card.json").write_text('{"usage": {"placements": 100}}')
+    inst = {"look": {}, "geometry": None, "html": LIVE, "markup": None}
+    a = {"usage": {"url": 40}, "instances": [("url", inst)] * 40, "geoms": [], "first": "url"}
+    result = pe._finish("project-card", a, {}, tmp_path, accept_drop=True)
+    assert result["written"] is True
+    assert "refused" not in result
+
+
+def test_finish_allows_placement_increase(tmp_path):
+    (tmp_path / "templates" / "elements").mkdir(parents=True)
+    (tmp_path / "templates" / "elements" / "project-card.json").write_text('{"usage": {"placements": 10}}')
+    inst = {"look": {}, "geometry": None, "html": LIVE, "markup": None}
+    a = {"usage": {"url": 100}, "instances": [("url", inst)] * 100, "geoms": [], "first": "url"}
+    result = pe._finish("project-card", a, {}, tmp_path, accept_drop=False)
+    assert result["written"] is True
+
+
+def test_finish_allows_new_element_creation(tmp_path):
+    (tmp_path / "templates" / "elements").mkdir(parents=True)
+    inst = {"look": {}, "geometry": None, "html": LIVE, "markup": None}
+    a = {"usage": {"url": 10}, "instances": [("url", inst)] * 10, "geoms": [], "first": "url"}
+    result = pe._finish("button-github", a, {}, tmp_path, accept_drop=False)
+    assert result["written"] is True
+
+
+def test_finish_allows_zero_placements_on_new_element(tmp_path):
+    """An element that legitimately has no placements can be created."""
+    (tmp_path / "templates" / "elements").mkdir(parents=True)
+    inst = {"look": {}, "geometry": None, "html": LIVE, "markup": None}
+    a = {"usage": {}, "instances": [], "geoms": [], "first": None}
+    result = pe._finish("project-card", a, {}, tmp_path, accept_drop=False)
+    assert result["written"] is True
+    assert result["usage"]["placements"] == 0
+
+
+def test_finish_allows_zero_placement_count_when_old_is_also_zero(tmp_path):
+    """If the old element also had zero placements, allow rewriting it without drop."""
+    (tmp_path / "templates" / "elements").mkdir(parents=True)
+    (tmp_path / "templates" / "elements" / "button-github.json").write_text('{"usage": {"placements": 0}}')
+    inst = {"look": {}, "geometry": None, "html": LIVE, "markup": None}
+    a = {"usage": {}, "instances": [], "geoms": [], "first": None}
+    result = pe._finish("button-github", a, {}, tmp_path, accept_drop=False)
+    assert result["written"] is True
+    assert "refused" not in result
+
+
+def test_finish_handles_corrupt_element_json_file(tmp_path):
+    """A corrupt or partially written element file falls back to 'no guard'."""
+    (tmp_path / "templates" / "elements").mkdir(parents=True)
+    (tmp_path / "templates" / "elements" / "button-github.json").write_text('{"id": "incomplete')
+    inst = {"look": {}, "geometry": None, "html": LIVE, "markup": None}
+    a = {"usage": {"url": 10}, "instances": [("url", inst)] * 10, "geoms": [], "first": "url"}
+    result = pe._finish("button-github", a, {}, tmp_path, accept_drop=False)
+    assert result["written"] is True
+    assert "refused" not in result
+
+
+def test_finish_handles_null_usage_field(tmp_path):
+    """If the old element has usage=null instead of a dict, treat it as no guard."""
+    (tmp_path / "templates" / "elements").mkdir(parents=True)
+    (tmp_path / "templates" / "elements" / "button-github.json").write_text('{"usage": null}')
+    inst = {"look": {}, "geometry": None, "html": LIVE, "markup": None}
+    a = {"usage": {"url": 10}, "instances": [("url", inst)] * 10, "geoms": [], "first": "url"}
+    result = pe._finish("button-github", a, {}, tmp_path, accept_drop=False)
+    assert result["written"] is True
+    assert "refused" not in result
+
+
+# ── CLI parsing ──
+
+def test_parse_cli_args_handles_element_ids_and_accept_drop():
+    args = pe.parse_cli_args(["prog", "project-card", "button-github", "--accept-drop"])
+    assert args.elements == ["project-card", "button-github"]
+    assert args.accept_drop is True
+
+
+def test_parse_cli_args_uses_all_elements_when_no_ids_given():
+    args = pe.parse_cli_args(["prog"])
+    assert args.elements == []
+    assert args.accept_drop is False
+
+
+def test_parse_cli_args_accept_drop_alone():
+    args = pe.parse_cli_args(["prog", "--accept-drop"])
+    assert args.elements == []
+    assert args.accept_drop is True

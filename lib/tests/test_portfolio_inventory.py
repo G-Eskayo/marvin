@@ -9,6 +9,8 @@ from __future__ import annotations
 import sys
 from pathlib import Path
 
+import pytest
+
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 import portfolio_inventory as inv  # noqa: E402
 
@@ -116,11 +118,119 @@ def test_chrome_catalogue_covers_every_part_that_wraps_a_page():
 
 def test_collect_refuses_to_crawl_when_wordpress_cannot_list_its_pages(tmp_path, monkeypatch):
     import pytest
+    import portfolio_apply as pa
     out = tmp_path / "inventory"; out.mkdir()
     (out / "inventory.json").write_text('{"pages": ["the good one"]}')
     manifest = tmp_path / "manifest.json"; manifest.write_text("[]")
     for listing in (None, "", "[]"):                       # wp-cli failed, printed nothing, or listed no pages
         monkeypatch.setattr(inv, "_wpcli", lambda args, _l=listing: _l)
+        # Mock restart_wpcli_container to avoid real docker calls in the test
+        monkeypatch.setattr(pa, "restart_wpcli_container", lambda runner=None: (False, "container unavailable"))
         with pytest.raises(RuntimeError, match="could not list"):
             inv.collect(out_dir=out, manifest_path=manifest)
         assert (out / "inventory.json").read_text() == '{"pages": ["the good one"]}'
+
+
+# ── pure navigation and finalization ────────────────────────────────────────
+
+def test_resolve_page_targets_converts_wp_pages_to_navigation_tuples():
+    wp_pages = [
+        {"post_title": "Home", "url": "/"},
+        {"post_title": "Mancala", "url": "/ai-projects/mancala/", "ID": 1},
+    ]
+    targets = inv.resolve_page_targets(wp_pages)
+    urls = [t[0] for t in targets if t[0] is not None]
+    assert "/" in urls
+    assert "/ai-projects/mancala/" in urls
+    assert any(t[0] == "/" and t[1] == "Home" for t in targets)
+
+
+def test_resolve_page_targets_adds_home_as_fallback():
+    wp_pages = [{"post_title": "About", "url": "/about/"}]
+    targets = inv.resolve_page_targets(wp_pages)
+    assert any(t[0] == "/" and t[1] == "Home" for t in targets)
+
+
+def test_collect_handles_absolute_urls_from_wp_cli():
+    """wp-cli's post list --fields=url returns absolute URLs; missing_pages must handle them.
+
+    When collect() gets pages with absolute URLs from wp-cli like
+    'http://localhost:8080/ai-projects/mancala/', missing_pages() must extract
+    the path and normalize it to match captured_urls.
+    """
+    # Simulate what wp-cli returns: absolute URLs from WordPress
+    wp_pages = [
+        {"url": "http://localhost:8080/ai-projects/mancala/"},
+        {"url": "http://localhost:8080/ai-projects/marvin/"},
+    ]
+    # Simulate what collect() stores: extracted paths
+    captured = {"/", "/ai-projects/mancala/"}
+
+    # missing_pages must handle absolute URLs from wp-cli and correctly
+    # identify which pages were not captured
+    missing = inv.missing_pages(wp_pages, captured)
+    assert "/ai-projects/marvin/" in missing
+    assert "/ai-projects/mancala/" not in missing
+    assert "/" not in missing  # home is always captured
+
+
+def test_missing_pages_detects_wordpress_pages_not_captured():
+    # wp-cli returns absolute URLs, not paths
+    wp_pages = [
+        {"url": "http://localhost:8080/ai-projects/mancala/"},
+        {"url": "http://localhost:8080/ai-projects/marvin/"},
+    ]
+    captured = {"/", "/ai-projects/mancala/"}
+    missing = inv.missing_pages(wp_pages, captured)
+    assert "/ai-projects/marvin/" in missing
+    assert "/" not in missing  # home is always required but should be in captured
+
+
+def test_missing_pages_ignores_trailing_slash_normalization():
+    # wp-cli returns absolute URLs; _norm should handle trailing slash normalization
+    wp_pages = [{"url": "http://localhost:8080/ai-projects/mancala"}]  # no trailing slash
+    captured = {"/ai-projects/mancala/"}  # with trailing slash (as stored by collect)
+    missing = inv.missing_pages(wp_pages, captured)
+    assert "/ai-projects/mancala/" not in missing
+
+
+def test_finalize_backs_up_and_writes_inventory(tmp_path):
+    result = {
+        "pages": [{"url": "/", "title": "Home"}, {"url": "/about/", "title": "About"}],
+        "buttons": [],
+        "summary": {},
+    }
+    # wp-cli returns absolute URLs
+    wp_pages = [
+        {"url": "http://localhost:8080/"},
+        {"url": "http://localhost:8080/about/"},
+    ]
+    inv.finalize(result, wp_pages, tmp_path)
+    assert (tmp_path / "inventory.json").exists()
+    assert (tmp_path / "inventory.json").read_text().startswith("{")
+
+
+def test_finalize_creates_prev_backup_if_inventory_exists(tmp_path):
+    old_result = {"pages": [{"url": "/"}], "buttons": []}
+    (tmp_path / "inventory.json").write_text('{"old": "data"}')
+    new_result = {"pages": [{"url": "/"}, {"url": "/about/"}], "buttons": [], "summary": {}}
+    # wp-cli returns absolute URLs
+    wp_pages = [
+        {"url": "http://localhost:8080/"},
+        {"url": "http://localhost:8080/about/"}
+    ]
+    inv.finalize(new_result, wp_pages, tmp_path)
+    assert (tmp_path / "inventory.prev.json").exists()
+    assert (tmp_path / "inventory.prev.json").read_text() == '{"old": "data"}'
+
+
+def test_finalize_refuses_when_pages_are_missing(tmp_path):
+    result = {"pages": [{"url": "/"}], "buttons": [], "summary": {}}
+    # wp-cli returns absolute URLs
+    wp_pages = [
+        {"url": "http://localhost:8080/"},
+        {"url": "http://localhost:8080/about/"}  # /about/ expected but not captured
+    ]
+    with pytest.raises(RuntimeError, match="incomplete"):
+        inv.finalize(result, wp_pages, tmp_path)
+    assert not (tmp_path / "inventory.json").exists()
