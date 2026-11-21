@@ -69,7 +69,7 @@ before an earlier truncation fix left an unquoted `---` inside its own body, whi
 simpler split attempt), finds entries with a checked box, calls `calibrate.record_label()` for
 each (approve/modify → 0, "was actually fine"; deny → 1, "was actually bad" — modify still counts
 as "not dangerous," just needing a tweak), then removes processed entries so the pending count
-stays accurate. Wired into CLAUDE.md's session-start step 5 (runs before the pending-count check)
+stays accurate. Wired into CLAUDE.md's session-start quarantine-review check (`process_and_check_quarantine` in `lib/session_start_report.py`) (runs before the pending-count check)
 and a daily 20:00 launchd job as redundancy for whenever a session doesn't start same-day as a
 review.
 

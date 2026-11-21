@@ -1,5 +1,11 @@
 # Changelog
 
+- Replace audit/SKILL.md's hardcoded Session Start step numbers with descriptive references ([#1381](https://github.com/G-Eskayo/marvin/pull/1381))
+
+- test_stale_relay week test fails after 2026-11-16 12:00 UTC: the question log is stamped with the real clock ([#1346](https://github.com/G-Eskayo/marvin/pull/1346))
+
+- Fix self-contradicting write-target instruction in inbox-mode reviewer prompt ([#1336](https://github.com/G-Eskayo/marvin/pull/1336))
+
 - Research colony reads the owner's research newsletters ([#1356](https://github.com/G-Eskayo/marvin/pull/1356))
 
 - Leave gitignored caches (__pycache__, .pytest_cache, *.pyc) out of the background reviewer's chunk file lists ([#1358](https://github.com/G-Eskayo/marvin/pull/1358))
