@@ -1,5 +1,7 @@
 # Changelog
 
+- Remove route.py's dead print_table() function, superseded by print_table_proper() ([#1379](https://github.com/G-Eskayo/marvin/pull/1379))
+
 - Wire tdd/SKILL.md's dangling `calls: [diagnose]` frontmatter into the body (or remove it) ([#1380](https://github.com/G-Eskayo/marvin/pull/1380))
 
 - Reconcile prototype/SKILL.md's "No tests" rule with the always-on tdd default, and say how a validated prototype… ([#1382](https://github.com/G-Eskayo/marvin/pull/1382))
