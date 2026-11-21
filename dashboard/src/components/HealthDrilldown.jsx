@@ -2,9 +2,11 @@ import { useState } from 'react'
 
 const SEVERITY_LABEL = {
   red: 'Broken',
+  amber: 'Caution',
   yellow: 'Degraded',
   green: 'Healthy',
   asleep: 'Asleep (lid closed or away)',
+  uncalibrated: 'Uncalibrated',
   unmonitored: 'Unmonitored'
 }
 

@@ -209,6 +209,19 @@ def remote_macs() -> dict:
     return {k: v for k, v in remote_devices().items() if v.get("os", "macos") == "macos"}
 
 
+def calibrated(device_id: str, registry: dict | None = None) -> bool:
+    """Check if a device is calibrated. macOS devices are always calibrated; for others,
+    check the registry (injected for tests, defaults to loading the network file)."""
+    if registry is None:
+        registry = _load_registry()
+    device_info = registry.get(device_id, {})
+    # macOS devices are always calibrated
+    if device_info.get("os", "macos") == "macos":
+        return True
+    # Other devices: check the calibrated flag
+    return device_info.get("calibrated", False)
+
+
 if __name__ == "__main__":
     profile = build_profile()
     PROFILE_PATH.parent.mkdir(parents=True, exist_ok=True)

@@ -20,11 +20,13 @@ const STALE_AFTER_MS = 30 * 60 * 1000
 
 const SEVERITY_COLOR = {
   red: { bg: 'bg-red-950', border: 'border-red-900', dot: 'bg-red-500', text: 'text-red-300' },
+  amber: { bg: 'bg-orange-950', border: 'border-orange-900', dot: 'bg-orange-500', text: 'text-orange-300' },
   yellow: { bg: 'bg-amber-950', border: 'border-amber-900', dot: 'bg-amber-500', text: 'text-amber-300' },
   green: { bg: 'bg-emerald-950', border: 'border-emerald-900', dot: 'bg-emerald-500', text: 'text-emerald-300' },
   // "asleep" = a laptop that is simply closed/away (Tailscale offline, recent) -- neutral,
   // blue + moon, deliberately NOT red: red means "needs your immediate attention".
   asleep: { bg: 'bg-sky-950', border: 'border-sky-900', dot: 'bg-sky-400', text: 'text-sky-300' },
+  uncalibrated: { bg: 'bg-purple-950', border: 'border-purple-900', dot: 'bg-purple-500', text: 'text-purple-300' },
   unmonitored: { bg: 'bg-neutral-900', border: 'border-neutral-700', dot: 'bg-neutral-600', text: 'text-neutral-400' }
 }
 

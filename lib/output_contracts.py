@@ -158,7 +158,7 @@ def evaluate(contract: Contract, now: datetime) -> dict:
     overdue = [p for p in pending if (now - p).days > contract.within_days]
     if pending and (last is None or (now - last).days > CUT_AFTER_DAYS):
         since = "never consumed" if last is None else f"last consumed {(now - last).days} days ago"
-        return {"id": cid, "label": label, "severity": "red",
+        return {"id": cid, "label": label, "severity": "amber",
                 "detail": f"{len(pending)} item(s) waiting, {since}: removal candidate (30-day cut rule) unless "
                           f"{contract.consumer} starts acting on it"}
     if overdue:

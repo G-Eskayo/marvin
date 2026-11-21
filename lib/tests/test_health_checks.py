@@ -12,7 +12,6 @@ from pathlib import Path
 LIB = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(LIB))
 
-import cron_health as ch  # noqa: E402
 import health_checks as hc  # noqa: E402
 import model_registry as mr  # noqa: E402
 
@@ -94,66 +93,148 @@ def test_check_dispatch_lock_green_shortly_after_start():
 
 # ── coverage / auto-discovery ────────────────────────────────────────────
 
-def test_coverage_flags_jobs_with_no_registered_check(monkeypatch):
-    monkeypatch.setattr(hc, "discover_launchd_jobs",
-                        lambda: ["daily-digest", "ticket-pipeline", "auto-fix"])
-    results = [{"id": "cron:daily-digest", "severity": "green"}]
-    cov = hc.coverage(results)
-    assert cov["total"] == 3
-    assert cov["covered"] == 1
-    assert set(cov["unmonitored_jobs"]) == {"ticket-pipeline", "auto-fix"}
-    assert cov["fraction"] == round(1 / 3, 2)
-
-
-def test_coverage_full_when_everything_discovered_has_a_check(monkeypatch):
-    monkeypatch.setattr(hc, "discover_launchd_jobs", lambda: ["daily-digest"])
-    cov = hc.coverage([{"id": "cron:daily-digest", "severity": "green"}])
-    assert cov["fraction"] == 1.0
+def test_coverage_includes_all_catalogued_jobs():
+    # coverage measures only loaded jobs on this machine
+    loaded = {"test-machine": ["daily-digest", "ticket-pipeline"]}
+    cov = hc.coverage(loaded)
+    # Total should be only loaded jobs (discovered on this machine)
+    expected_total = 2  # just the two loaded jobs
+    assert cov["total"] == expected_total
+    assert cov["covered"] == expected_total  # Both are catalogued
     assert cov["unmonitored_jobs"] == []
+    assert cov["fraction"] == 1.0
 
 
-def test_plist_label_to_job_name_strips_known_prefixes():
-    assert hc._plist_label_to_job_name("com.marvin.ticket-pipeline") == "ticket-pipeline"
-    assert hc._plist_label_to_job_name("com.giles.tidy-agent") == "tidy-agent"
-    assert hc._plist_label_to_job_name("com.apple.something") == "com.apple.something"
+def test_coverage_flags_uncatalogued_loaded_jobs():
+    # Test that loaded jobs not in the catalog are flagged as unmonitored
+    loaded = {"test-machine": ["daily-digest", "unknown-job"]}
+    cov = hc.coverage(loaded)
+    # daily-digest is catalogued, unknown-job is not
+    assert "unknown-job" in cov["unmonitored_jobs"]
+    # Total = only loaded jobs on this machine = 2
+    expected_total = 2
+    assert cov["total"] == expected_total
+    assert cov["covered"] == 1  # Only daily-digest is catalogued
 
 
-# ── cron job log scan (wraps cron_health.check_job -- its own offset-
-# tracking behavior is already covered by exercising it through here) ───
-
-def test_check_cron_job_log_establishes_baseline_on_first_run(tmp_path, monkeypatch):
-    # cron_health.check_job()'s own documented behavior: first-ever run for
-    # a log establishes a baseline offset and does NOT report pre-existing
-    # history as new -- exercised here since my earlier naive
-    # reimplementation regressed exactly this.
-    monkeypatch.setattr(ch, "HOME", tmp_path)
-    log_dir = tmp_path / ".claude" / "logs"
-    log_dir.mkdir(parents=True)
-    (log_dir / "daily-digest.log").write_text("old stuff")
-    (log_dir / "daily-digest-error.log").write_text("Traceback: old pre-existing failure\n")
-    state = {}
-    now = datetime(2026, 10, 1, 12, 0, tzinfo=timezone.utc)
-    result = hc.check_cron_job_log("daily-digest", state, now)
-    assert result["severity"] == "green"
+def test_coverage_ignores_a_catalogued_job_not_loaded_here():
+    # A catalogued job that's not loaded on this machine is neither in total nor unmonitored
+    loaded = {"test-machine": ["daily-digest"]}  # Only one job loaded
+    cov = hc.coverage(loaded)
+    # Total should be only loaded jobs (1), not all catalogued jobs
+    assert cov["total"] == 1
+    assert cov["covered"] == 1
+    assert cov["unmonitored_jobs"] == []
+    # ticket-pipeline is catalogued but not loaded here, so it's not in the counts
+    assert "ticket-pipeline" not in cov["known_jobs"]
 
 
-def test_check_cron_job_log_flags_genuinely_new_failures(tmp_path, monkeypatch):
-    monkeypatch.setattr(ch, "HOME", tmp_path)
-    log_dir = tmp_path / ".claude" / "logs"
-    log_dir.mkdir(parents=True)
-    err = log_dir / "daily-digest-error.log"
-    (log_dir / "daily-digest.log").write_text("")
-    err.write_text("")
-    state = {}
-    now = datetime(2026, 10, 1, 12, 0, tzinfo=timezone.utc)
-    hc.check_cron_job_log("daily-digest", state, now)  # baseline run
-    err.write_text("Traceback: a real new failure\n")
-    result = hc.check_cron_job_log("daily-digest", state, now)
-    assert result["severity"] == "red"
+def test_fold_uncalibrated_devices_exact_match():
+    # Device ID matching must be exact to avoid prefix collisions (mac-mini vs mac-mini-2012)
+    registry = {
+        "mac-mini": {"os": "linux", "calibrated": False},
+        "mac-mini-2012": {"os": "linux", "calibrated": True}
+    }
+    results = [
+        {"id": "machine:mac-mini", "severity": "green"},
+        {"id": "machine:mac-mini-2012", "severity": "green"},
+        {"id": "errors@mac-mini", "severity": "red"},
+        {"id": "other-check", "severity": "green"},
+    ]
+    folded = hc.fold_uncalibrated_devices(results, registry=registry)
+    # mac-mini should be folded (uncalibrated), but mac-mini-2012 should not
+    ids = [r["id"] for r in folded]
+    assert "machine:mac-mini" in ids
+    assert "machine:mac-mini-2012" in ids
+    assert "errors@mac-mini" not in ids  # This should be removed (folded)
+    # The machine:mac-mini row should have severity "uncalibrated"
+    mac_mini_rows = [r for r in folded if r["id"] == "machine:mac-mini"]
+    assert len(mac_mini_rows) == 1
+    assert mac_mini_rows[0]["severity"] == "uncalibrated"
 
 
-def test_check_cron_job_log_returns_none_for_unmapped_job():
-    assert hc.check_cron_job_log("some-job-with-no-known-logs", {}, datetime.now(timezone.utc)) is None
+def test_fold_uncalibrated_devices_handles_missing_rows():
+    # If an uncalibrated device has no rows, we don't add one
+    registry = {"unknown-device": {"os": "linux", "calibrated": False}}
+    results = [
+        {"id": "other-check", "severity": "green"},
+    ]
+    folded = hc.fold_uncalibrated_devices(results, registry=registry)
+    # Only the other-check should remain (unknown-device has no rows)
+    ids = [r["id"] for r in folded]
+    assert ids == ["other-check"]
+
+
+def test_fold_uncalibrated_devices_consolidates_rows():
+    # All rows for an uncalibrated device are removed and replaced with one uncalibrated row
+    registry = {"test-device": {"os": "linux", "calibrated": False}}
+    results = [
+        {"id": "machine:test-device", "severity": "green"},
+        {"id": "errors@test-device", "severity": "red"},
+        {"id": "mirror:sync@test-device", "severity": "yellow"},
+        {"id": "other-check", "severity": "green"},
+    ]
+    folded = hc.fold_uncalibrated_devices(results, registry=registry)
+    ids = [r["id"] for r in folded]
+    # Only one machine:test-device row (uncalibrated) and other-check should remain
+    assert ids == ["machine:test-device", "other-check"]
+    test_device_row = next(r for r in folded if r["id"] == "machine:test-device")
+    assert test_device_row["severity"] == "uncalibrated"
+
+
+def test_fold_uncalibrated_devices_raises_when_registry_load_fails(monkeypatch):
+    # If registry load fails, fold_uncalibrated_devices should raise, not silently continue
+    import machine_profile
+    monkeypatch.setattr(machine_profile, "_load_registry", lambda: (_ for _ in ()).throw(OSError("mock failure")))
+    results = [{"id": "machine:test", "severity": "green"}]
+    with pytest.raises(OSError, match="mock failure"):
+        hc.fold_uncalibrated_devices(results)
+
+
+def test_coverage_raises_when_job_discovery_fails(monkeypatch):
+    # If job discovery fails, coverage should raise, not silently fall back to {}
+    import job_catalog
+    monkeypatch.setattr(job_catalog, "_loaded_here", lambda: (_ for _ in ()).throw(OSError("mock failure")))
+    with pytest.raises(OSError, match="mock failure"):
+        hc.coverage()
+
+
+def test_coverage_raises_on_bad_type_from_loader(monkeypatch):
+    # If loader returns non-dict (like a list), coverage should raise with TypeError
+    import job_catalog
+    monkeypatch.setattr(job_catalog, "_loaded_here", lambda: ["not", "a", "dict"])
+    with pytest.raises(TypeError, match="expected dict"):
+        hc.coverage()
+
+
+def test_run_all_survives_fold_uncalibrated_failure(monkeypatch):
+    # run_all should catch fold_uncalibrated_devices failure and add unknown row, not crash
+    import machine_profile
+    monkeypatch.setattr(machine_profile, "_load_registry", lambda: (_ for _ in ()).throw(OSError("mock registry failure")))
+    result = hc.run_all(checks=[])
+    # Should have an unknown row for machine:uncalibrated
+    uncal_rows = [r for r in result["checks"] if r["id"] == "machine:uncalibrated"]
+    assert len(uncal_rows) == 1
+    assert uncal_rows[0]["severity"] == hc.UNKNOWN
+    assert "OSError" in uncal_rows[0]["detail"]
+    # Overall should be yellow (has unknown)
+    assert result["overall"] == "yellow"
+
+
+def test_run_all_survives_coverage_failure(monkeypatch):
+    # run_all should catch coverage failure and add unknown row, not crash
+    import job_catalog
+    monkeypatch.setattr(job_catalog, "_loaded_here", lambda: (_ for _ in ()).throw(OSError("mock job discovery failure")))
+    result = hc.run_all(checks=[])
+    # Should have an unknown row for coverage
+    cov_rows = [r for r in result["checks"] if r["id"] == "coverage"]
+    assert len(cov_rows) == 1
+    assert cov_rows[0]["severity"] == hc.UNKNOWN
+    assert "OSError" in cov_rows[0]["detail"]
+    # Coverage dict should be empty/minimal
+    assert result["coverage"]["total"] == 0
+    # Overall should be yellow (has unknown)
+    assert result["overall"] == "yellow"
 
 
 # ── machine reachability: a closed laptop is asleep, not broken ─────────────
@@ -251,6 +332,15 @@ def test_asleep_does_not_make_the_overall_status_red_or_yellow():
     assert hc.overall_severity(["green", "asleep", "green"]) == "green"
     assert hc.overall_severity(["green", "asleep", "red"]) == "red"
     assert hc.overall_severity(["yellow", "asleep"]) == "yellow"
+
+
+def test_amber_severity_ranks_between_red_and_yellow():
+    # Amber is between red (highest) and yellow (lowest non-green)
+    assert hc.overall_severity(["red", "amber"]) == "red"
+    assert hc.overall_severity(["amber", "yellow"]) == "amber"
+    assert hc.overall_severity(["amber", "green"]) == "amber"
+    assert hc.overall_severity(["amber", "asleep"]) == "amber"
+    assert hc.overall_severity(["amber"]) == "amber"
 
 
 def test_tailscale_peer_parses_online_state_and_last_seen(monkeypatch):
@@ -1151,9 +1241,9 @@ def test_gh_gate_yellow_when_not_installed(tmp_path):
     assert r["severity"] == "yellow"
 
 
-def test_missed_purposes_are_red_and_an_unreadable_list_is_yellow():
-    red = hc.check_missed_purposes(lambda: [{"number": 277, "title": "Allow read-only tools", "state": "closed"}])
-    assert red[0]["severity"] == "red" and "#277 Allow read-only tools" in red[0]["detail"]
+def test_missed_purposes_are_amber_and_an_unreadable_list_is_yellow():
+    amber = hc.check_missed_purposes(lambda: [{"number": 277, "title": "Allow read-only tools", "state": "closed"}])
+    assert amber[0]["severity"] == "amber" and "#277 Allow read-only tools" in amber[0]["detail"]
     assert hc.check_missed_purposes(lambda: [])[0]["severity"] == "green"
     assert hc.check_missed_purposes(lambda: (_ for _ in ()).throw(OSError("rate limited")))[0]["severity"] == "yellow"
 
