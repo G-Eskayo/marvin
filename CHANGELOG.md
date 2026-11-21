@@ -1,5 +1,7 @@
 # Changelog
 
+- Trim handoff/SKILL.md's now-redundant manual "check handoffs on resume" instructions ([#1350](https://github.com/G-Eskayo/marvin/pull/1350))
+
 - Model registry names qwen2.5:14b and 7b, which aren't installed on either Mac: audit callers, make config match reality, health check ([#1385](https://github.com/G-Eskayo/marvin/pull/1385))
 
 - Portfolio inventory captured 8 of 40+ pages (page_id URLs stopped redirecting) and the element capture then overwrote the library with 0 placements ([#1398](https://github.com/G-Eskayo/marvin/pull/1398))
