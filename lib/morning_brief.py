@@ -238,56 +238,59 @@ def _ref(item: dict, pr: bool = False) -> str:
 
 
 def render(brief: dict, now: datetime) -> str:
+    import brief_items as bi
     day = now.astimezone().strftime("%A %Y-%m-%d")
     lines = [f"# Morning brief, {day}", ""]
-    needs = [f"- {brief['auto_merge']}"] if brief.get("auto_merge") else []
-    prs = brief.get("open_prs") or []
-    needs += [f"- Review {_ref(p, pr=True)}" for p in prs if not p.get("waiting_on_marvin")]
-    needs += [f"- {c['label']}: {c['detail']}" for c in brief.get("red_checks") or []]
-    needs += [f"- Your task: {_ref(t)}" for t in brief.get("human_tickets") or []]
-    regressions = brief.get("regressions") or []
-    needs += [f"- {r['line']}" for r in regressions if r.get("kind") == "needs-you"]
-    lines += ["## Needs you", "", *(needs or ["- Nothing is waiting on you."]), ""]
-    marvin = [f"- {_ref(p, pr=True)}: your decisions are in{' and you asked a question' if p.get('question') else ''}"
-              for p in prs if p.get("waiting_on_marvin")]
-    if marvin:
-        lines += ["## Waiting on MARVIN", "", *marvin, ""]
 
-    runs = brief.get("launches") or []
-    merged = brief.get("merged") or []
-    revisited = brief.get("revisited") or []
-    overnight = []
-    if runs:
-        by_kind: dict[str, int] = {}
-        for r in runs:
-            by_kind[r.get("kind", "?")] = by_kind.get(r.get("kind", "?"), 0) + 1
-        cost = sum(r.get("cost_usd") or 0 for r in runs)
-        overnight.append(f"- {len(runs)} model runs (" + ", ".join(f"{n} {k}" for k, n in sorted(by_kind.items()))
-                         + f"), ${cost:.2f}")
-    overnight += [f"- Merged {_ref(p, pr=True)}" for p in merged]
-    overnight += [f"- Returned from hold: {_ref(t)}" for t in revisited]
-    overnight += [f"- {r['line']}" for r in regressions if r.get("kind") != "needs-you"]
-    lines += ["## Overnight", "", *(overnight or ["- Quiet: no model runs or merges in the last day."]), ""]
+    items = select_items(brief, now)
 
-    today = []
-    for d in brief.get("deadlines") or []:
-        days = _days_until(d["date"], now)
-        today.append(f"- {d['project']}: {days} days ({d['date']}{', hard deadline' if d['hard'] else ''})")
-    today += [f"- {t['priority']}: {_ref(t)}" for t in brief.get("top_tickets") or []]
-    lines += ["## Today", "", *(today or ["- No deadlines close and nothing marked p0/p1."]), ""]
+    # Render items by section in fixed order
+    items_by_section = {section: [] for section in bi.SECTIONS}
+    items_by_section["__ideas__"] = []  # Special section for ideas
+    for item in items:
+        items_by_section.setdefault(item.section, []).append(item)
 
-    ideas = [f"- **Compounding move:** {brief['digest_idea']}"] if brief.get("digest_idea") else []
-    ideas += [f"- **From research:** {brief['research_idea']}"] if brief.get("research_idea") else []
-    if ideas:
-        lines += ["## One idea each", "", *ideas, ""]
+    for section in bi.SECTIONS:
+        section_items = items_by_section[section]
+        if section_items:
+            lines.append(f"## {section}")
+            lines.append("")
+            for item in section_items:
+                lines.append(item.line)
+            lines.append("")
+        else:
+            # Fallback message for empty sections
+            if section == "Needs you":
+                lines += ["## Needs you", "", "- Nothing is waiting on you.", ""]
+            elif section == "Overnight":
+                lines += ["## Overnight", "", "- Quiet: no model runs or merges in the last day.", ""]
+            elif section == "Today":
+                lines += ["## Today", "", "- No deadlines close and nothing marked p0/p1.", ""]
 
+    # "One idea each" section (from ideas in __ideas__ section)
+    idea_items = items_by_section.get("__ideas__", [])
+    if idea_items:
+        lines += ["## One idea each", ""]
+        for item in idea_items:
+            lines.append(item.line)
+        lines.append("")
+
+    # Balance section (late-night note)
     if brief.get("late_night"):
         lines += ["## Balance", "",
                   f"- Last night's last session was still going at {brief['late_night']}. Today's list above is what "
                   "matters; the rest can wait for tomorrow.", ""]
+
+    # Gaps section (missing data)
     if brief.get("missing"):
         lines += ["## Gaps", "", *[f"- {m}" for m in brief["missing"]], ""]
+
     return "\n".join(lines).rstrip() + "\n"
+
+
+def select_items(brief: dict, now: datetime) -> list:
+    import brief_items as bi
+    return bi.select_items(brief, now)
 
 
 # ── files and consumption ──────────────────────────────────────────────────────────────────────────────────────
@@ -297,23 +300,65 @@ def _day(now: datetime) -> str:
 
 
 def write(now: datetime | None = None, sources: dict[str, Callable] | None = None, builder_reason: str = "primary") -> Path:
+    import tempfile
+    import brief_items as bi
+
     now = now or datetime.now(timezone.utc)
-    BRIEFS.mkdir(parents=True, exist_ok=True)
-    path = BRIEFS / f"{_day(now)}.md"
+    day_str = _day(now)
 
     # Idempotent: don't overwrite an existing brief for today
-    if path.exists():
-        return path
+    md_path = BRIEFS / f"{day_str}.md"
+    if md_path.exists():
+        return md_path
 
-    path.write_text(render(gather(now, sources), now))
+    # Ensure BRIEFS dir exists
+    try:
+        BRIEFS.mkdir(parents=True, exist_ok=True)
+    except OSError as e:
+        raise OSError(f"cannot write to {BRIEFS}: {e}")
+
+    # Gather data and render
+    gathered = gather(now, sources)
+    rendered = render(gathered, now)
+    items = select_items(gathered, now)
+
+    # Atomic write: md file via temp + rename
+    with tempfile.NamedTemporaryFile(mode="w", dir=BRIEFS, delete=False, suffix=".md") as f:
+        temp_md = Path(f.name)
+        f.write(rendered)
+    try:
+        temp_md.replace(md_path)
+    except OSError:
+        temp_md.unlink(missing_ok=True)
+        raise
+
+    # Atomic write: items JSON sidecar via temp + rename
+    items_path = BRIEFS / f"{day_str}.items.json"
+    items_data = [{"section": i.section, "rank": i.rank, "line": i.line, "summary": i.summary}
+                  for i in items]
+    with tempfile.NamedTemporaryFile(mode="w", dir=BRIEFS, delete=False, suffix=".json") as f:
+        temp_json = Path(f.name)
+        json.dump(items_data, f)
+    try:
+        temp_json.replace(items_path)
+    except OSError:
+        temp_json.unlink(missing_ok=True)
+        raise
 
     # Write sidecar tracking which machine built it
     import machine_profile
     label = machine_profile.machine_label()
-    sidecar_path = BRIEFS / f"{_day(now)}.built-by"
-    sidecar_path.write_text(f"{label}: {builder_reason}\n")
+    built_by_path = BRIEFS / f"{day_str}.built-by"
+    with tempfile.NamedTemporaryFile(mode="w", dir=BRIEFS, delete=False) as f:
+        temp_built = Path(f.name)
+        f.write(f"{label}: {builder_reason}\n")
+    try:
+        temp_built.replace(built_by_path)
+    except OSError:
+        temp_built.unlink(missing_ok=True)
+        raise
 
-    return path
+    return md_path
 
 
 def build(now: datetime | None = None, sources: dict[str, Callable] | None = None) -> Path:
@@ -331,11 +376,30 @@ def build(now: datetime | None = None, sources: dict[str, Callable] | None = Non
 
 def show_today(now: datetime | None = None) -> str | None:
     now = now or datetime.now(timezone.utc)
-    path = BRIEFS / f"{_day(now)}.md"
+    day_str = _day(now)
+    path = BRIEFS / f"{day_str}.md"
     if not path.exists():
         return None
-    (BRIEFS / f"{_day(now)}.read").write_text(now.isoformat())
-    return path.read_text()
+
+    # Try to read the brief markdown, fall back gracefully if JSON is stale
+    try:
+        content = path.read_text()
+    except OSError:
+        return None
+
+    # Mark as read (atomic write)
+    import tempfile
+    read_path = BRIEFS / f"{day_str}.read"
+    try:
+        with tempfile.NamedTemporaryFile(mode="w", dir=BRIEFS, delete=False) as f:
+            temp_read = Path(f.name)
+            f.write(now.isoformat())
+        temp_read.replace(read_path)
+    except OSError:
+        # Mark as read failed, but brief content is still valid
+        pass
+
+    return content
 
 
 def _dates(suffix: str) -> list[datetime]:

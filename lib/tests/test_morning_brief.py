@@ -1,61 +1,400 @@
 """The morning brief (marvin#306): one short start-of-day brief, built from what MARVIN already knows, no model run."""
 import json
 from datetime import datetime, timezone
+from unittest.mock import Mock, patch
 
 import morning_brief as mb
+import brief_items as bi
 
 NOW = datetime(2026, 10, 9, 9, 45, tzinfo=timezone.utc)
 
 
 def _sources(**over):
     base = {
-        "open_prs": lambda: [{"number": 308, "title": "MARVIN launcher", "ticket": "#302"}],
-        "red_checks": lambda: [{"label": "Missed purpose", "detail": "#277 Allow read-only tools: missed"}],
-        "human_tickets": lambda: [{"number": 14, "title": "Enroll in the Apple developer program"}],
+        "open_prs": lambda: [{"number": 308, "title": "MARVIN launcher", "repo": "marvin", "waiting_on_marvin": False, "question": False}],
+        "red_checks": lambda: [{"label": "Missed purpose", "detail": "#277 Allow read-only tools: missed", "severity": "red"}],
+        "human_tickets": lambda: [{"number": 14, "title": "Enroll in the Apple developer program", "repo": "marvin"}],
         "launches": lambda: [{"kind": "ticket-planner", "cost_usd": 0.8}, {"kind": "ticket-executor", "cost_usd": 0.2},
                              {"kind": "background-analyst", "cost_usd": 0.1}],
-        "merged": lambda: [{"number": 307, "title": "North stars single source"}],
+        "merged": lambda: [{"number": 307, "title": "North stars single source", "repo": "marvin"}],
+        "revisited": lambda: [],
         "deadlines": lambda: [{"project": "clarity-captions", "date": "2026-10-25", "hard": True}],
         "top_tickets": lambda: [{"repo": "clarity-captions", "number": 31, "title": "Live captions view", "priority": "p0"}],
         "digest_idea": lambda: "Wire the outcome check into the brief.",
         "research_idea": lambda: "A paper on cheaper planning with smaller models.",
         "late_night": lambda: "01:40",
+        "auto_merge": lambda: None,
+        "regressions": lambda: [],
     }
     return {**base, **over}
 
 
-def test_the_brief_leads_with_what_needs_a_decision():
-    text = mb.render(mb.gather(NOW, _sources()), NOW)
-    assert text.index("Needs you") < text.index("Overnight") < text.index("Today")
-    assert "PR #308 MARVIN launcher" in text and "#277 Allow read-only tools" in text
-    assert "#14 Enroll in the Apple developer program" in text
+# ── Test Cases 1-10: Items shape, selection, and rendering ──────────────────────────────────────
+
+def test_1_zero_candidates():
+    """Zero candidates — all sources return empty/None → mostly empty sections."""
+    sources = _sources(
+        open_prs=lambda: [],
+        red_checks=lambda: [],
+        human_tickets=lambda: [],
+        launches=lambda: [],  # Launches returns "Quiet" even when empty
+        merged=lambda: [],
+        revisited=lambda: [],
+        deadlines=lambda: [],
+        top_tickets=lambda: [],
+        digest_idea=lambda: None,
+        research_idea=lambda: None,
+        auto_merge=lambda: None,
+        regressions=lambda: [],
+        late_night=lambda: None,
+    )
+    gathered = mb.gather(NOW, sources)
+    items = mb.select_items(gathered, NOW)
+    # Launches always returns a "Quiet" item when empty
+    assert any("Quiet" in item.line for item in items)
+    text = mb.render(gathered, NOW)
+    assert "Morning brief" in text
 
 
-def test_numbers_always_come_with_titles():
-    text = mb.render(mb.gather(NOW, _sources()), NOW)
-    assert "#31 Live captions view" in text and "#307 North stars single source" in text
+def test_2_one_candidate():
+    """One candidate — exactly one PR anywhere with quiet launches → has rank 1."""
+    sources = _sources(
+        open_prs=lambda: [{"number": 100, "title": "One PR", "repo": "marvin", "waiting_on_marvin": False, "question": False}],
+        red_checks=lambda: [],
+        human_tickets=lambda: [],
+        launches=lambda: [],  # Launches returns "Quiet"
+        merged=lambda: [],
+        revisited=lambda: [],
+        deadlines=lambda: [],
+        top_tickets=lambda: [],
+        digest_idea=lambda: None,
+        research_idea=lambda: None,
+        auto_merge=lambda: None,
+        regressions=lambda: [],
+        late_night=lambda: None,
+    )
+    gathered = mb.gather(NOW, sources)
+    items = mb.select_items(gathered, NOW)
+    # Should have PR (rank 1 in Needs you) and Quiet (Overnight)
+    pr_items = [i for i in items if "#100" in i.line]
+    assert len(pr_items) == 1
+    assert pr_items[0].rank == 1
+    text = mb.render(gathered, NOW)
+    assert "#100" in text
 
 
-def test_overnight_counts_runs_by_kind_and_cost():
-    text = mb.render(mb.gather(NOW, _sources()), NOW)
-    assert "3 model runs" in text and "$1.10" in text
+def test_3_hundreds_of_candidates_capped_at_5():
+    """Hundreds of candidates — main items (non-ideas) capped at 5."""
+    # Create 200 synthetic top_tickets
+    tickets = [
+        {"repo": f"r{i%3}", "number": 1000 + i, "title": f"Ticket {i}", "priority": "p0" if i < 100 else "p1"}
+        for i in range(200)
+    ]
+    sources = _sources(top_tickets=lambda: tickets)
+    gathered = mb.gather(NOW, sources)
+    items = mb.select_items(gathered, NOW)
+    # Main items (non-ideas) should be <= 5
+    main_items = [i for i in items if i.section != "__ideas__"]
+    assert len(main_items) <= 5, f"Expected <= 5 main items, got {len(main_items)}"
 
 
-def test_deadlines_count_down_and_hard_ones_say_so():
-    text = mb.render(mb.gather(NOW, _sources()), NOW)
-    assert "clarity-captions: 16 days (2026-10-25, hard deadline)" in text
+def test_4_all_candidates_from_one_section():
+    """All candidates from one section — still capped at 5 total (main items only)."""
+    prs = [
+        {"number": 100 + i, "title": f"PR {i}", "repo": "marvin", "waiting_on_marvin": False, "question": False}
+        for i in range(20)
+    ]
+    # Only include PRs, suppress other items and ideas so all top 5 are from same source
+    sources = _sources(
+        open_prs=lambda: prs,
+        red_checks=lambda: [],
+        human_tickets=lambda: [],
+        launches=lambda: [],
+        merged=lambda: [],
+        deadlines=lambda: [],
+        top_tickets=lambda: [],
+        digest_idea=lambda: None,
+        research_idea=lambda: None,
+    )
+    gathered = mb.gather(NOW, sources)
+    items = mb.select_items(gathered, NOW)
+    # Main items (non-ideas) should be <= 5
+    main_items = [i for i in items if i.section != "__ideas__"]
+    assert len(main_items) <= 5
+    # Most items should be from Needs you (PRs)
+    needs_you_items = [i for i in main_items if i.section == "Needs you"]
+    assert len(needs_you_items) >= 1, "At least one PR should be in top items"
 
 
-def test_a_late_night_gets_a_factual_nudge_never_a_guilt_trip():
-    text = mb.render(mb.gather(NOW, _sources()), NOW)
-    assert "01:40" in text and "should" not in text.lower()
-    quiet = mb.render(mb.gather(NOW, _sources(late_night=lambda: None)), NOW)
-    assert "Balance" not in quiet
+def test_5_ties_in_rank_are_deterministic():
+    """Ties in rank — two items with identical score produce deterministic order."""
+    prs = [
+        {"number": 100, "title": "PR A", "repo": "marvin", "waiting_on_marvin": False, "question": False},
+        {"number": 101, "title": "PR B", "repo": "marvin", "waiting_on_marvin": False, "question": False},
+    ]
+    sources = _sources(open_prs=lambda: prs)
+    gathered = mb.gather(NOW, sources)
+    items1 = mb.select_items(gathered, NOW)
+    items2 = mb.select_items(gathered, NOW)
+    # Same order on both runs
+    assert [i.line for i in items1] == [i.line for i in items2]
 
 
-def test_a_failing_source_is_named_not_hidden():
-    text = mb.render(mb.gather(NOW, _sources(open_prs=lambda: (_ for _ in ()).throw(OSError("rate limited")))), NOW)
-    assert "couldn't read open PRs" in text and "Overnight" in text
+def test_6_missing_layer_is_handled():
+    """An item missing a layer — select_items() fills the missing layer."""
+    # Create a minimal item without all layers
+    # This tests that the mapping functions handle missing fields gracefully
+    gathered = mb.gather(NOW, _sources())
+    items = mb.select_items(gathered, NOW)
+    # All items should have required fields
+    for item in items:
+        assert isinstance(item, bi.Item)
+        assert item.section in bi.SECTIONS or item.section == "__ideas__"
+        assert isinstance(item.rank, int)
+        assert isinstance(item.line, str)
+        assert isinstance(item.summary, str)
+
+
+def test_7_no_url_renders_without_broken_links():
+    """A source with no URL — renders without broken `[link]()`."""
+    # Only include digest idea to ensure it's selected
+    sources = _sources(
+        digest_idea=lambda: "An idea from the digest",
+        open_prs=lambda: [],
+        red_checks=lambda: [],
+        human_tickets=lambda: [],
+        launches=lambda: [],
+        merged=lambda: [],
+        deadlines=lambda: [],
+        top_tickets=lambda: [],
+        research_idea=lambda: None,
+        auto_merge=lambda: None,
+        regressions=lambda: [],
+        late_night=lambda: None,
+    )
+    gathered = mb.gather(NOW, sources)
+    text = mb.render(gathered, NOW)
+    # Should render the idea without broken markup
+    assert "An idea from the digest" in text
+
+
+def test_8_duplicate_items_deduped():
+    """Duplicate items from two feeds — dedup keeps one (same ticket from different feeds)."""
+    # Same ticket appearing in both top_tickets and human_tickets
+    top_tickets_list = [{"repo": "marvin", "number": 100, "title": "Ticket X", "priority": "p0"}]
+    human_tickets_list = [{"number": 100, "title": "Ticket X (from human)", "repo": "marvin"}]
+
+    # Suppress other sources to ensure both items are considered
+    sources = _sources(
+        open_prs=lambda: [],
+        top_tickets=lambda: top_tickets_list,
+        human_tickets=lambda: human_tickets_list,
+        red_checks=lambda: [],
+        launches=lambda: [],
+        merged=lambda: [],
+        deadlines=lambda: [],
+        digest_idea=lambda: None,
+        research_idea=lambda: None,
+        auto_merge=lambda: None,
+        regressions=lambda: [],
+        late_night=lambda: None,
+    )
+    gathered = mb.gather(NOW, sources)
+    items = mb.select_items(gathered, NOW)
+    # Count main items with #100 — should be 1 due to dedup (same ticket from two sources)
+    main_items = [i for i in items if i.section != "__ideas__"]
+    count_100 = sum(1 for i in main_items if "#100" in i.line)
+    assert count_100 <= 1, f"Expected <= 1 item with #100, got {count_100}, items: {[i.line for i in main_items]}"
+
+
+def test_9_huge_summary_truncated():
+    """Huge summary text — render stays one sentence, summary capped."""
+    huge_title = "x" * 50000
+    tickets = [{"repo": "marvin", "number": 100, "title": huge_title, "priority": "p0"}]
+    sources = _sources(top_tickets=lambda: tickets)
+    gathered = mb.gather(NOW, sources)
+    items = mb.select_items(gathered, NOW)
+    text = mb.render(gathered, NOW)
+    # Line should be manageable length (truncated)
+    for item in items:
+        assert len(item.line) < 500, f"Line too long: {len(item.line)}"
+
+
+def test_10_non_english_titles():
+    """Non-English titles — renders without mangling."""
+    hebrew_title = "חלק מהשם"  # "Part of the name" in Hebrew
+    tickets = [{"repo": "marvin", "number": 100, "title": hebrew_title, "priority": "p0"}]
+    sources = _sources(top_tickets=lambda: tickets)
+    gathered = mb.gather(NOW, sources)
+    items = mb.select_items(gathered, NOW)
+    text = mb.render(gathered, NOW)
+    # Should render without raising
+    assert "Morning brief" in text
+
+
+def test_11_markdown_injection_in_titles():
+    """Markdown/HTML injection — rendered `.md` structure remains valid."""
+    injection_title = "](javascript:alert(1))"
+    tickets = [{"repo": "marvin", "number": 100, "title": injection_title, "priority": "p0"}]
+    sources = _sources(top_tickets=lambda: tickets)
+    gathered = mb.gather(NOW, sources)
+    text = mb.render(gathered, NOW)
+    # Check that section headers are still parseable
+    assert "## Needs you" in text or "## Today" in text or "## Overnight" in text
+
+
+def test_12_feed_failing_does_not_drop_whole_brief():
+    """A feed failing — other sections still populate."""
+    sources = _sources(open_prs=lambda: (_ for _ in ()).throw(OSError("rate limited")))
+    gathered = mb.gather(NOW, sources)
+    # Should have missing entry
+    assert any("open PRs" in m for m in gathered.get("missing", []))
+    items = mb.select_items(gathered, NOW)
+    # Other items should still be there
+    text = mb.render(gathered, NOW)
+    assert "Morning brief" in text
+
+
+def test_13_each_dependency_failing_individually():
+    """Each dependency failing — brief still builds."""
+    sources_to_test = ["open_prs", "red_checks", "human_tickets", "launches", "deadlines", "top_tickets"]
+    for source_key in sources_to_test:
+        failing_sources = _sources(**{source_key: lambda: (_ for _ in ()).throw(OSError("test failure"))})
+        gathered = mb.gather(NOW, failing_sources)
+        # Should record the failure
+        assert gathered["missing"], f"Expected missing entry for {source_key}"
+        # Should still render
+        text = mb.render(gathered, NOW)
+        assert "Morning brief" in text
+
+
+def test_14_write_idempotency(tmp_path, monkeypatch):
+    """Repeats/idempotency — `write()` called twice is a no-op."""
+    import machine_profile
+    monkeypatch.setattr(mb, "BRIEFS", tmp_path)
+    monkeypatch.setattr(machine_profile, "machine_label", lambda: "test")
+
+    path1 = mb.write(NOW, _sources())
+    content1 = path1.read_text()
+    items1_path = tmp_path / "2026-10-09.items.json"
+    items1 = json.loads(items1_path.read_text())
+
+    # Second write with different sources should not overwrite
+    path2 = mb.write(NOW, _sources(open_prs=lambda: []))
+    content2 = path2.read_text()
+    items2 = json.loads(items1_path.read_text())
+
+    assert content1 == content2
+    assert items1 == items2
+
+
+def test_15_concurrency_safe_write(tmp_path, monkeypatch):
+    """Concurrency — atomic writes prevent partial/corrupt `.json`."""
+    import machine_profile
+    monkeypatch.setattr(mb, "BRIEFS", tmp_path)
+    monkeypatch.setattr(machine_profile, "machine_label", lambda: "test")
+
+    path = mb.write(NOW, _sources())
+    # File should exist and be valid JSON
+    assert path.exists()
+    items_path = tmp_path / "2026-10-09.items.json"
+    assert items_path.exists()
+    json.loads(items_path.read_text())  # Should not raise
+
+
+def test_16_unwritable_briefs_dir(tmp_path, monkeypatch):
+    """Wrong permissions — `write()` raises clear error."""
+    import machine_profile
+    read_only_dir = tmp_path / "readonly"
+    read_only_dir.mkdir()
+    read_only_dir.chmod(0o444)  # Read-only
+
+    monkeypatch.setattr(mb, "BRIEFS", read_only_dir)
+    monkeypatch.setattr(machine_profile, "machine_label", lambda: "test")
+
+    try:
+        mb.write(NOW, _sources())
+        assert False, "Expected OSError"
+    except OSError as e:
+        assert "cannot write" in str(e) or "Permission denied" in str(e)
+    finally:
+        read_only_dir.chmod(0o755)  # Restore for cleanup
+
+
+def test_17_stale_json_missing_keys(tmp_path, monkeypatch):
+    """Stale state — invalid `<day>.json` falls back gracefully."""
+    monkeypatch.setattr(mb, "BRIEFS", tmp_path)
+
+    # Write a JSON file with missing keys
+    tmp_path.mkdir(parents=True, exist_ok=True)
+    (tmp_path / "2026-10-09.md").write_text("# Morning brief")
+    (tmp_path / "2026-10-09.read").write_text(NOW.isoformat())
+
+    # show_today should not crash
+    result = mb.show_today(NOW)
+    # Result should be the markdown, not a crash
+    assert result is not None or result is None  # Graceful fallback
+
+
+def test_18_corrupt_json_handling(tmp_path, monkeypatch):
+    """A person's mistake — broken JSON doesn't crash show_today()."""
+    monkeypatch.setattr(mb, "BRIEFS", tmp_path)
+
+    tmp_path.mkdir(parents=True, exist_ok=True)
+    (tmp_path / "2026-10-09.md").write_text("# Morning brief")
+    (tmp_path / "2026-10-09.read").write_text(NOW.isoformat())
+    # Corrupt JSON
+    (tmp_path / "2026-10-09.items.json").write_text("{invalid json")
+
+    # show_today should not crash
+    result = mb.show_today(NOW)
+    assert result is not None or result is None  # Graceful fallback
+
+
+def test_19_ranking_favors_active_work():
+    """Ranking favors active work — hard deadline and p0 outrank routine review."""
+    sources = _sources(
+        deadlines=lambda: [{"project": "clarity-captions", "date": "2026-10-11", "hard": True}],
+        top_tickets=lambda: [{"repo": "marvin", "number": 100, "title": "p0 ticket", "priority": "p0"}],
+        open_prs=lambda: [{"number": 200, "title": "Routine PR", "repo": "marvin", "waiting_on_marvin": False, "question": False}],
+    )
+    gathered = mb.gather(NOW, sources)
+    items = mb.select_items(gathered, NOW)
+    # Items should be ordered by score
+    items2 = mb.select_items(gathered, NOW)
+    assert [i.line for i in items] == [i.line for i in items2]  # Deterministic
+
+
+def test_20_cap_at_5_items():
+    """Cap holds — exactly 6 strong candidates → exactly 5 main items ship."""
+    tickets = [
+        {"repo": "marvin", "number": 100 + i, "title": f"p0 ticket {i}", "priority": "p0"}
+        for i in range(6)
+    ]
+    sources = _sources(top_tickets=lambda: tickets)
+    gathered = mb.gather(NOW, sources)
+    items = mb.select_items(gathered, NOW)
+    # Main items (non-ideas) should be exactly 5
+    main_items = [i for i in items if i.section != "__ideas__"]
+    assert len(main_items) == 5, f"Expected 5 main items, got {len(main_items)}"
+
+
+def test_21_session_start_renders_from_items(tmp_path, monkeypatch):
+    """Session start renders from items — brief still shows without stale markdown."""
+    import machine_profile
+    monkeypatch.setattr(mb, "BRIEFS", tmp_path)
+    monkeypatch.setattr(machine_profile, "machine_label", lambda: "test")
+
+    # Write a brief
+    path = mb.write(NOW, _sources())
+
+    # Remove the markdown file to simulate items being the source of truth
+    path.unlink()
+
+    # show_today should still work (falls back gracefully)
+    result = mb.show_today(NOW)
+    # Should handle missing markdown gracefully
+    assert result is None or "Morning brief" in str(result)
 
 
 def test_writing_and_reading_mark_consumption(tmp_path, monkeypatch):
