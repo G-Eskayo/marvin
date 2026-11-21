@@ -275,25 +275,6 @@ def print_table() -> None:
             cfg["alias"],
             cfg["savings"],
         ))
-    widths = [max(len(r[i]) for r in rows) for i in range(5)]
-    sep = "  ".join("-" * w for w in widths)
-    for i, row in enumerate(rows):
-        print("  ".join(f[i].ljust(widths[i]) for i, f in enumerate(zip(widths, row))))  # noqa
-        if i == 0:
-            print(sep)
-    print("\nKeyword threshold:", MIN_HITS, "hits required to override default.")
-
-
-def print_table_proper() -> None:
-    rows = [("INTENT", "PROFILE", "MODEL", "ALIAS", "SAVINGS")]
-    for intent, cfg in INTENTS.items():
-        rows.append((
-            intent,
-            cfg["profile"],
-            cfg["model"] or "default",
-            cfg["alias"],
-            cfg["savings"],
-        ))
     widths = [max(len(row[i]) for row in rows) for i in range(len(rows[0]))]
     sep = "  ".join("-" * w for w in widths)
     for idx, row in enumerate(rows):
@@ -386,7 +367,7 @@ def main() -> None:
     args = ap.parse_args()
 
     if args.table:
-        print_table_proper()
+        print_table()
         return
 
     if args.ask:
@@ -441,7 +422,7 @@ def main() -> None:
         intent, hits, method = resolve_intent(args.task, use_embed=_use_embed(args))
     else:
         # no task given and no explicit flag — show the table
-        print_table_proper()
+        print_table()
         return
 
     print_routing(intent, args.task, hits, method)
