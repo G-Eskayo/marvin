@@ -1,5 +1,7 @@
 # Changelog
 
+- A rebuild after a merge restarts the merge server mid-merge and the interrupted merge is never resumed ([#1264](https://github.com/G-Eskayo/marvin/pull/1264))
+
 - Extract diagnose/SKILL.md's growing gotcha log to a separate reference file ([#1349](https://github.com/G-Eskayo/marvin/pull/1349))
 
 - MARVIN's README rewritten for lay readers, and the audience ladder (READMEs → portfolio → LinkedIn) written into the README criteria ([#1342](https://github.com/G-Eskayo/marvin/pull/1342))
