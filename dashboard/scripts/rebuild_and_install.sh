@@ -82,6 +82,8 @@ fi
 # The merge server is a long-running node process: it keeps the code it started with until restarted (it ran Oct 5 code
 # on Oct 8, so a merged fix to the merge flow didn't apply). This script runs detached, so restarting it is safe.
 if launchctl print "gui/$(id -u)/com.marvin.dashboard-webhook" >/dev/null 2>&1; then
+  echo "${LOG_PREFIX} waiting for any running merges to finish..."
+  "$HOME/.agents/venv/bin/python" "$HOME/.agents/lib/merge_server_wait.py" || true
   echo "${LOG_PREFIX} restarting the merge server on the new code..."
   launchctl kickstart -k "gui/$(id -u)/com.marvin.dashboard-webhook" || echo "${LOG_PREFIX} merge server restart failed" >&2
 fi
