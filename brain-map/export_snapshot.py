@@ -277,15 +277,26 @@ def write_facts(out_dir: Path, gather=None) -> list[str]:
     A failure to gather writes nothing and never blocks the map: the page keeps the numbers it was written with."""
     sys.path.insert(0, str(HERE / "scripts"))
     import facts as facts_mod
+    out_dir = Path(out_dir)
+    # Read existing facts.json if it exists for carry-forward
+    previous = {}
+    facts_path = out_dir / "facts.json"
+    if facts_path.exists():
+        try:
+            previous = json.loads(facts_path.read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            pass
     try:
-        data = facts_mod.formatted((gather or facts_mod.gather)())
+        fresh = (gather or facts_mod.gather)()
+        data = facts_mod.formatted(facts_mod.merge_with_previous(fresh, previous))
     except Exception as e:  # noqa: BLE001
         print(f"facts not written: {e}", file=sys.stderr)
         return []
     text = json.dumps(data, indent=2, ensure_ascii=False)
     leaks = scan_for_leaks(text)
     if not leaks:
-        (Path(out_dir) / "facts.json").write_text(text + "\n", encoding="utf-8")
+        out_dir.mkdir(parents=True, exist_ok=True)
+        facts_path.write_text(text + "\n", encoding="utf-8")
     return leaks
 
 

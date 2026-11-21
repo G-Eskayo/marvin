@@ -1,0 +1,11 @@
+1. `brain-map/scripts/facts.py`: replace `_merged_pipeline_prs()`'s title search with `_board_repos()` (via `board_registry.list_boards(include_archived=True)`) + `_closed_prs(repo)` (paginated REST `/pulls?state=closed`) + `_merged_pipeline_prs_total(repos)` (fails whole-to-`None` on any repo error or empty repo list); drop the now-unused `import instance` / `bench/metrics` glob.
+2. `brain-map/scripts/facts.py`: add `_pytest_collected()`, `_vitest_listed(dashboard_dir)`, `_site_tests_collected(site_dir)`; change `compute_facts()`'s signature from `test_runs` to `tests_python`/`tests_js`/`tests_site`, writing each part when present and the `tests` total only when all three are present.
+3. `brain-map/scripts/facts.py`: add the pure `merge_with_previous(fresh: dict, previous: dict) -> dict` (per-figure carry-forward + `<figure>_counted_on`); update `gather()` to call the new helpers.
+4. `brain-map/scripts/facts.py`: rewrite the module docstring's field list to describe the new sources (no `"Implement G-Eskayo/..."` phrase).
+5. `brain-map/export_snapshot.py`: `write_facts()` reads the out_dir's existing `facts.json` (if any, tolerating corrupt/missing) as `previous` and calls `merge_with_previous` before writing.
+6. `lib/tests/instance_grandfathered.txt`: remove the `brain-map/scripts/facts.py` line.
+7. `lib/tests/test_instance_move.py`: delete `test_the_brain_map_facts_read_run_results_from_the_instance`.
+8. `lib/purpose_metrics.py`: add `_facts_tests_gap()` and register `PROBES["facts-tests-gap"]` (limit `5.0`).
+9. Write all tests listed above (`brain-map/scripts/test_facts.py`, `brain-map/scripts/test_export_snapshot.py`, `lib/tests/test_purpose_metrics.py`, `lib/tests/test_instance.py`/`test_instance_move.py` updates) before the corresponding implementation.
+10. Run the full Python suite (`pytest`, repo root) and the dashboard suite, confirm green.
+11. Before opening the PR: hand-count merged `pipeline/*` PRs across the board repos and the current collected-test totals on `main`, and put both the hand count and the computed count in the PR description (acceptance criteria 1 and 2 require the PR to show both).

@@ -7,7 +7,6 @@ brain-map/gif-experiments/capture_brainmap_v4.py
 brain-map/gif-experiments/capture_brainmap_v5.py
 brain-map/gif-experiments/capture_brainmap_v6.py
 brain-map/publish_map.py
-brain-map/scripts/facts.py
 dashboard/electron/main/activity.js
 dashboard/electron/main/boards.js
 dashboard/electron/main/deliverables.js

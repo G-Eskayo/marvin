@@ -817,3 +817,105 @@ def test_pipeline_verify_timeout_is_registered():
     assert "pipeline-verify-timeouts" in pm.PROBES
     fn, limit, what = pm.PROBES["pipeline-verify-timeouts"]
     assert limit == 0.0 and "#881" in what and "#1316" in what
+
+
+# ── facts-tests-gap: data freshness of the MARVIN page's test count ─────────────────────────
+
+def test_facts_tests_gap_is_registered():
+    """The probe is registered with target 5.0 to allow for minor variations."""
+    assert "facts-tests-gap" in pm.PROBES
+    fn, limit, what = pm.PROBES["facts-tests-gap"]
+    assert limit == 5.0 and "data freshness" in what
+
+
+def test_facts_tests_gap_returns_zero_on_missing_facts_file(monkeypatch, tmp_path):
+    """When facts.json doesn't exist, the gap is 0 (no stale data yet)."""
+    # Mock Path.home() to return a tmp_path where facts.json doesn't exist
+    import pathlib
+
+    def mock_home():
+        return tmp_path
+
+    monkeypatch.setattr(pathlib.Path, "home", mock_home)
+    # Create the directory structure but not the facts.json file
+    facts_path = tmp_path / ".agents" / "instance" / "docs" / "marvin-page" / "brain-map" / "snapshot"
+    facts_path.mkdir(parents=True, exist_ok=True)
+
+    gap = pm._facts_tests_gap()
+    assert gap == 0.0
+
+
+def test_facts_tests_gap_measures_percentage_difference(monkeypatch, tmp_path):
+    """Compare percentage difference between live and shown test counts."""
+    import pathlib
+    import sys
+    from pathlib import Path as PathlibPath
+
+    def mock_home():
+        return tmp_path
+
+    monkeypatch.setattr(pathlib.Path, "home", mock_home)
+
+    # Set up facts.json with 5000 tests shown
+    facts_path = tmp_path / ".agents" / "instance" / "docs" / "marvin-page" / "brain-map" / "snapshot"
+    facts_path.mkdir(parents=True, exist_ok=True)
+    facts_file = facts_path / "facts.json"
+    facts_file.write_text('{"tests": "5000", "counted_on": "14 November 2026"}')
+
+    # Mock the test collection functions to return 5500 fresh tests
+    def mock_pytest():
+        return 3000
+
+    def mock_vitest():
+        return 1500
+
+    def mock_site():
+        return 1000
+
+    sys.path.insert(0, str(PathlibPath(__file__).parent / ".." / ".." / "brain-map" / "scripts"))
+    import facts as facts_mod
+
+    monkeypatch.setattr(facts_mod, "_pytest_collected", mock_pytest)
+    monkeypatch.setattr(facts_mod, "_vitest_listed", mock_vitest)
+    monkeypatch.setattr(facts_mod, "_site_tests_collected", mock_site)
+
+    # The gap should be percentage: abs(5500 - 5000) / max(5500, 5000) * 100 = 500 / 5500 * 100 ≈ 9.09%
+    gap = pm._facts_tests_gap()
+    assert 9.0 < gap < 10.0  # approximately 9.09%
+
+
+def test_facts_tests_gap_returns_zero_when_fresh_incomplete(monkeypatch, tmp_path):
+    """When any fresh collection fails, gap returns 0 (can't measure if data incomplete)."""
+    import pathlib
+    import sys
+    from pathlib import Path as PathlibPath
+
+    def mock_home():
+        return tmp_path
+
+    monkeypatch.setattr(pathlib.Path, "home", mock_home)
+
+    facts_path = tmp_path / ".agents" / "instance" / "docs" / "marvin-page" / "brain-map" / "snapshot"
+    facts_path.mkdir(parents=True, exist_ok=True)
+    facts_file = facts_path / "facts.json"
+    facts_file.write_text('{"tests": "5000"}')
+
+    # Mock test collection: one part fails (returns None)
+    def mock_pytest():
+        return 3000
+
+    def mock_vitest():
+        return None  # This fails
+
+    def mock_site():
+        return 1000
+
+    sys.path.insert(0, str(PathlibPath(__file__).parent / ".." / ".." / "brain-map" / "scripts"))
+    import facts as facts_mod
+
+    monkeypatch.setattr(facts_mod, "_pytest_collected", mock_pytest)
+    monkeypatch.setattr(facts_mod, "_vitest_listed", mock_vitest)
+    monkeypatch.setattr(facts_mod, "_site_tests_collected", mock_site)
+
+    gap = pm._facts_tests_gap()
+    assert gap == 0.0

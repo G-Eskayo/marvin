@@ -387,3 +387,40 @@ def test_write_facts_failure_writes_nothing_and_does_not_block_the_map(tmp_path)
         raise RuntimeError("github down")
     assert write_facts(tmp_path, gather=boom) == []
     assert not (tmp_path / "facts.json").exists()
+
+
+def test_write_facts_does_not_write_on_gather_failure(tmp_path):
+    """When gathering fresh facts fails, write_facts does not write (keeps previous file unchanged)."""
+    from export_snapshot import write_facts
+    # Write an initial facts.json
+    write_facts(tmp_path, gather=lambda: {"skills": 35, "tests": 2780, "counted_on": "8 October 2026"})
+    initial_mtime = (tmp_path / "facts.json").stat().st_mtime
+    # Now fail the gather; write_facts should not write anything
+    def boom():
+        raise RuntimeError("network issue")
+    write_facts(tmp_path, gather=boom)
+    # Previous facts remain unchanged (not overwritten)
+    assert json.loads((tmp_path / "facts.json").read_text())["skills"] == "35"
+    assert (tmp_path / "facts.json").stat().st_mtime == initial_mtime
+
+
+def test_write_facts_carries_forward_missing_parts(tmp_path):
+    """When gather returns partial results, write_facts calls merge_with_previous and writes merged data."""
+    from export_snapshot import write_facts
+
+    # Initial write with all fields
+    write_facts(tmp_path, gather=lambda: {"skills": 35, "tests": 2780, "agents": 5, "counted_on": "8 October 2026"})
+    initial_data = json.loads((tmp_path / "facts.json").read_text())
+    assert initial_data["tests"] == "2,780"
+
+    # Next gather only returns partial (missing tests) and write_facts should merge with previous
+    def gather_partial():
+        return {"skills": 36, "agents": 5, "counted_on": "9 October 2026"}
+
+    write_facts(tmp_path, gather=gather_partial)
+
+    result = json.loads((tmp_path / "facts.json").read_text())
+    assert result["skills"] == "36"  # fresh
+    assert result["tests"] == "2,780"  # carried forward from previous
+    assert result["agents"] == "5"  # fresh
+    assert result["tests_counted_on"] == "8 October 2026"  # carries previous overall counted_on

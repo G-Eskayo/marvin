@@ -494,6 +494,53 @@ def _ci_onnx_download_failures(fetch=None, repo: str = "G-Eskayo/marvin", runs: 
     return float(count)
 
 
+def _facts_tests_gap() -> float:
+    """The gap between live-collected test counts and what facts.json shows (data freshness check).
+    Returns percentage difference: 100 * abs(fresh - shown) / max(fresh, shown).
+    Returns 0.0 if facts.json doesn't exist or can't be read."""
+    try:
+        from pathlib import Path as _Path
+        sys.path.insert(0, str(_Path(__file__).resolve().parent / ".." / "brain-map" / "scripts"))
+        import facts as facts_mod
+
+        # Read the current facts.json file
+        facts_path = _Path.home() / ".agents" / "instance" / "docs" / "marvin-page" / "brain-map" / "snapshot" / "facts.json"
+        if not facts_path.exists():
+            return 0.0
+        try:
+            current = json.loads(facts_path.read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            return 0.0
+
+        shown_total = current.get("tests")
+        if shown_total is None:
+            return 0.0
+        # Convert from formatted string if needed
+        if isinstance(shown_total, str):
+            shown_total = int(shown_total.replace(",", ""))
+        if shown_total <= 0:
+            return 0.0
+
+        # Collect fresh test counts only (skip expensive parts)
+        fresh_py = facts_mod._pytest_collected()
+        fresh_js = facts_mod._vitest_listed()
+        fresh_site = facts_mod._site_tests_collected()
+
+        # Only compute gap if we have all three fresh counts
+        if fresh_py is None or fresh_js is None or fresh_site is None:
+            return 0.0
+
+        fresh_total = fresh_py + fresh_js + fresh_site
+        if fresh_total <= 0:
+            return 0.0
+
+        # Percentage gap: 100 * abs(fresh - shown) / max(fresh, shown)
+        gap_pct = 100.0 * abs(fresh_total - shown_total) / max(fresh_total, shown_total)
+        return gap_pct
+    except Exception:  # noqa: BLE001
+        return 0.0
+
+
 # name -> (symptom counter, the most it may read while the fix holds, what it counts). Summed across Macs like any
 # measure; the logs are per Mac (~/.claude/logs doesn't sync), so nothing is counted twice.
 # Each counter takes `days` (default the 7-day window): a watched incident is re-measured over the time since its last
@@ -537,6 +584,9 @@ PROBES: dict[str, tuple[Callable[..., float], float, str]] = {
     # marvin#997: local skills that exist on live ~/.agents/skills but not in the repo's origin/main (missing upstream).
     "banner-skill-count-drift": (lambda days=PROBE_WINDOW_DAYS: _banner_skill_count_drift(), 0.0,
                                  "skills on live ~/.agents/skills but not in origin/main (marvin#997)"),
+    # Facts-tests-gap: percentage difference between collected test count and what the page shows (indicates stale data)
+    "facts-tests-gap": (lambda days=PROBE_WINDOW_DAYS: _facts_tests_gap(), 5.0,
+                        "percentage gap between live-collected test count and the MARVIN page's fact (data freshness, >5% triggers)"),
 }
 MEASURES.update({name: fn for name, (fn, _limit, _what) in PROBES.items()})
 MEASURES["stale-relay-caught"] = lambda: _stale_relay("caught")

@@ -59,12 +59,6 @@ def test_every_reader_and_writer_points_at_the_instance(inst_env, module, attr, 
     assert getattr(m, attr) == inst_env.joinpath(*rel)
 
 
-def test_the_brain_map_facts_read_run_results_from_the_instance():
-    src = (ROOT / "brain-map" / "scripts" / "facts.py").read_text()
-    assert 'REPO / "bench" / "metrics"' not in src
-    assert 'instance.path("bench", "metrics")' in src
-
-
 def test_the_retrospective_integrity_check_defaults_to_the_instance_repo(inst_env):
     import verify_retrospective_integrity as v
     assert v.default_repo() == inst_env
