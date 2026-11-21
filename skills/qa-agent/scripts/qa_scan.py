@@ -560,30 +560,26 @@ def store_entries(entries: list[dict], dry_run: bool = False) -> int:
     import chromadb
     client = chromadb.PersistentClient(path=str(CHROMA_PATH))
     col = client.get_or_create_collection(COLLECTION)
-    existing: set[str] = set()
-    PAGE = 5000
-    offset = 0
-    while True:
-        page = col.get(limit=PAGE, offset=offset, include=[])["ids"]
-        if not page:
-            break
-        existing.update(page)
-        offset += len(page)
     seen: set[str] = set()
     new = []
     for e in entries:
-        if e["id"] not in existing and e["id"] not in seen:
+        if e["id"] not in seen:
             seen.add(e["id"])
             new.append(e)
     BATCH = 500
+    total_added = 0
     for i in range(0, len(new), BATCH):
         chunk = new[i:i + BATCH]
-        col.add(
-            documents=[e["document"] for e in chunk],
-            metadatas=[e["metadata"] for e in chunk],
-            ids=[e["id"] for e in chunk],
-        )
-    return len(new)
+        found = set(col.get(ids=[e["id"] for e in chunk], include=[])["ids"])
+        to_add = [e for e in chunk if e["id"] not in found]
+        if to_add:
+            col.add(
+                documents=[e["document"] for e in to_add],
+                metadatas=[e["metadata"] for e in to_add],
+                ids=[e["id"] for e in to_add],
+            )
+        total_added += len(to_add)
+    return total_added
 
 
 # ── main ──────────────────────────────────────────────────────────────────────
