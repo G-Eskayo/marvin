@@ -1,5 +1,7 @@
 # Changelog
 
+- Fix duplicate section numbers and colliding FR-IDs in resume-tailor's requirements.md ([#1366](https://github.com/G-Eskayo/marvin/pull/1366))
+
 - Split write-a-skill/SKILL.md (129 lines) under its own 100-line rule ([#1367](https://github.com/G-Eskayo/marvin/pull/1367))
 
 - Point diagnose/SKILL.md at retrospective.md so past sessions' lessons get read ([#1368](https://github.com/G-Eskayo/marvin/pull/1368))
