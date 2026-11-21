@@ -17,7 +17,6 @@ Run without being asked when any of these are true:
 - The user is about to open a different project or codebase
 - A complete unit of work just finished (feature shipped, bug fixed, research done)
 - The topic is about to shift significantly from what's been discussed
-- The user starts a new session: check `~/.claude/handoffs/` for the most recent doc and resume from it
 
 ## Save Location
 
@@ -82,6 +81,6 @@ The SessionStart report already checks the newest handoff's ticket and PR claims
 (`lib/resume_check.py`). When it says "N of M changed since, treat as history" or "unverified", the handoff is
 history: re-derive the current state before acting on any of it, and never relay a struck step as current.
 
-When starting a new session, check `~/.claude/handoffs/` for the most recent file. If one exists and is recent (within 7 days), read it and use it to restore context before doing anything else.
+Session start already surfaces the newest handoff (`session_start_report.py`'s `check_handoff()`). Use what is in context; don't re-read it.
 
 **Before redoing a handoff's next steps, check whether the session that wrote it is still alive** — especially when resuming on a different machine (laptop died, switched hosts). A session left running on another node (e.g. in a mac-mini Terminal) may already have finished or be mid-way through those steps, so the handoff is stale by construction. Check live state first (PR/merge status, that machine's newest `~/.claude/projects/*/<session>.jsonl`, running `claude` processes). If it's still running, don't take over work in the same repo — two agents editing `~/.agents` concurrently collide; hand the stop-or-let-finish decision to Gil. Works well when the prior session's host is reachable; if it isn't, say the state is unknown rather than assuming it's dead. Confirmed 2026-10-06: after the laptop died, the "lost" session was still running on the mac-mini and had already merged everything the handoff listed as next steps.
