@@ -1,5 +1,7 @@
 # Changelog
 
+- Portfolio inventory captured 8 of 40+ pages (page_id URLs stopped redirecting) and the element capture then overwrote the library with 0 placements ([#1398](https://github.com/G-Eskayo/marvin/pull/1398))
+
 - Implement or correct qa-agent's promised cosine-similarity dedup check ([#1371](https://github.com/G-Eskayo/marvin/pull/1371))
 
 - Replace audit/SKILL.md's hardcoded Session Start step numbers with descriptive references ([#1381](https://github.com/G-Eskayo/marvin/pull/1381))
