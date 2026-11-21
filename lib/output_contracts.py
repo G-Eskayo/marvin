@@ -150,35 +150,41 @@ CONTRACTS: list[Contract] = [
 
 def evaluate(contract: Contract, now: datetime) -> dict:
     cid, label = f"contract:{contract.producer}", f"Output: {contract.producer}"
+    checked_at = now.isoformat()
     if contract.state is None:
         return {"id": cid, "label": label, "severity": "yellow",
-                "detail": f"consumption not measured yet; its consumer will be {contract.consumer}"}
+                "detail": f"consumption not measured yet; its consumer will be {contract.consumer}",
+                "checked_at": checked_at}
     pending, consumed = contract.state()
     last = max(consumed) if consumed else None
     overdue = [p for p in pending if (now - p).days > contract.within_days]
     if pending and (last is None or (now - last).days > CUT_AFTER_DAYS):
         since = "never consumed" if last is None else f"last consumed {(now - last).days} days ago"
-        return {"id": cid, "label": label, "severity": "red",
+        return {"id": cid, "label": label, "severity": "yellow",
                 "detail": f"{len(pending)} item(s) waiting, {since}: removal candidate (30-day cut rule) unless "
-                          f"{contract.consumer} starts acting on it"}
+                          f"{contract.consumer} starts acting on it",
+                "checked_at": checked_at}
     if overdue:
         oldest = (now - min(overdue)).days
         return {"id": cid, "label": label, "severity": "yellow",
                 "detail": f"{len(overdue)} item(s) past the {contract.within_days}-day deadline (oldest {oldest} days) "
-                          f"in {contract.output}; consumer: {contract.consumer}"}
+                          f"in {contract.output}; consumer: {contract.consumer}",
+                "checked_at": checked_at}
     return {"id": cid, "label": label, "severity": "green",
-            "detail": f"{len(pending)} waiting, all within {contract.within_days} days; consumer: {contract.consumer}"}
+            "detail": f"{len(pending)} waiting, all within {contract.within_days} days; consumer: {contract.consumer}",
+            "checked_at": checked_at}
 
 
 def health_findings(now: datetime | None = None) -> list[dict]:
     now = now or datetime.now(timezone.utc)
+    checked_at = now.isoformat()
     out = []
     for c in CONTRACTS:
         try:
             out.append(evaluate(c, now))
         except Exception as exc:  # noqa: BLE001
             out.append({"id": f"contract:{c.producer}", "label": f"Output: {c.producer}", "severity": "yellow",
-                        "detail": f"couldn't read its state: {exc}"})
+                        "detail": f"couldn't read its state: {exc}", "checked_at": checked_at})
     return out
 
 

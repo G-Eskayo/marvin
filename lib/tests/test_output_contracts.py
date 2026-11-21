@@ -47,9 +47,9 @@ def test_overdue_output_is_yellow_with_the_oldest_age():
 
 def test_a_producer_nobody_consumed_for_30_days_is_a_removal_candidate():
     f = oc.evaluate(_contract([d("2026-09-01")], [d("2026-08-20")]), NOW)
-    assert f["severity"] == "red" and "removal candidate" in f["detail"]
+    assert f["severity"] == "yellow" and "removal candidate" in f["detail"] and "checked_at" in f
     never = oc.evaluate(_contract([d("2026-09-01")], []), NOW)
-    assert never["severity"] == "red" and "never" in never["detail"]
+    assert never["severity"] == "yellow" and "never" in never["detail"] and "checked_at" in never
 
 
 def test_a_consumed_up_to_date_producer_is_green():

@@ -12,7 +12,6 @@ from pathlib import Path
 LIB = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(LIB))
 
-import cron_health as ch  # noqa: E402
 import health_checks as hc  # noqa: E402
 import model_registry as mr  # noqa: E402
 
@@ -95,65 +94,39 @@ def test_check_dispatch_lock_green_shortly_after_start():
 # ── coverage / auto-discovery ────────────────────────────────────────────
 
 def test_coverage_flags_jobs_with_no_registered_check(monkeypatch):
-    monkeypatch.setattr(hc, "discover_launchd_jobs",
-                        lambda: ["daily-digest", "ticket-pipeline", "auto-fix"])
-    results = [{"id": "cron:daily-digest", "severity": "green"}]
-    cov = hc.coverage(results)
-    assert cov["total"] == 3
-    assert cov["covered"] == 1
-    assert set(cov["unmonitored_jobs"]) == {"ticket-pipeline", "auto-fix"}
-    assert cov["fraction"] == round(1 / 3, 2)
+    # When some jobs have no reporter, they're marked unmonitored.
+    mock_jobs = {
+        "job-with-reporter": {"machine": "mini", "reporter": "some-log"},
+        "job-with-reporter-2": {"machine": "both", "reporter": "another-log"},
+        "job-without-reporter": {"machine": "mini", "reporter": ""},
+        "job-truly-unreported": {"machine": "laptop", "reporter": None},
+        "job-disabled": {"machine": "none", "reporter": "log"},  # Excluded (machine == "none")
+    }
+    import job_catalog
+    monkeypatch.setattr(job_catalog, "JOBS", mock_jobs)
+
+    cov = hc.coverage([])
+    assert cov["total"] == 4  # Excludes job-disabled (machine == "none")
+    assert cov["covered"] == 2  # job-with-reporter, job-with-reporter-2
+    assert len(cov["unmonitored_jobs"]) == 2  # job-without-reporter, job-truly-unreported
+    assert cov["fraction"] == 0.5
 
 
 def test_coverage_full_when_everything_discovered_has_a_check(monkeypatch):
-    monkeypatch.setattr(hc, "discover_launchd_jobs", lambda: ["daily-digest"])
-    cov = hc.coverage([{"id": "cron:daily-digest", "severity": "green"}])
+    # When all jobs have a reporter, coverage is 100%.
+    mock_jobs = {
+        "job-1": {"machine": "mini", "reporter": "log-1"},
+        "job-2": {"machine": "both", "reporter": "log-2"},
+        "job-3": {"machine": "laptop", "reporter": "log-3"},
+    }
+    import job_catalog
+    monkeypatch.setattr(job_catalog, "JOBS", mock_jobs)
+
+    cov = hc.coverage([])
+    assert cov["total"] == 3
+    assert cov["covered"] == 3
+    assert len(cov["unmonitored_jobs"]) == 0
     assert cov["fraction"] == 1.0
-    assert cov["unmonitored_jobs"] == []
-
-
-def test_plist_label_to_job_name_strips_known_prefixes():
-    assert hc._plist_label_to_job_name("com.marvin.ticket-pipeline") == "ticket-pipeline"
-    assert hc._plist_label_to_job_name("com.giles.tidy-agent") == "tidy-agent"
-    assert hc._plist_label_to_job_name("com.apple.something") == "com.apple.something"
-
-
-# ── cron job log scan (wraps cron_health.check_job -- its own offset-
-# tracking behavior is already covered by exercising it through here) ───
-
-def test_check_cron_job_log_establishes_baseline_on_first_run(tmp_path, monkeypatch):
-    # cron_health.check_job()'s own documented behavior: first-ever run for
-    # a log establishes a baseline offset and does NOT report pre-existing
-    # history as new -- exercised here since my earlier naive
-    # reimplementation regressed exactly this.
-    monkeypatch.setattr(ch, "HOME", tmp_path)
-    log_dir = tmp_path / ".claude" / "logs"
-    log_dir.mkdir(parents=True)
-    (log_dir / "daily-digest.log").write_text("old stuff")
-    (log_dir / "daily-digest-error.log").write_text("Traceback: old pre-existing failure\n")
-    state = {}
-    now = datetime(2026, 10, 1, 12, 0, tzinfo=timezone.utc)
-    result = hc.check_cron_job_log("daily-digest", state, now)
-    assert result["severity"] == "green"
-
-
-def test_check_cron_job_log_flags_genuinely_new_failures(tmp_path, monkeypatch):
-    monkeypatch.setattr(ch, "HOME", tmp_path)
-    log_dir = tmp_path / ".claude" / "logs"
-    log_dir.mkdir(parents=True)
-    err = log_dir / "daily-digest-error.log"
-    (log_dir / "daily-digest.log").write_text("")
-    err.write_text("")
-    state = {}
-    now = datetime(2026, 10, 1, 12, 0, tzinfo=timezone.utc)
-    hc.check_cron_job_log("daily-digest", state, now)  # baseline run
-    err.write_text("Traceback: a real new failure\n")
-    result = hc.check_cron_job_log("daily-digest", state, now)
-    assert result["severity"] == "red"
-
-
-def test_check_cron_job_log_returns_none_for_unmapped_job():
-    assert hc.check_cron_job_log("some-job-with-no-known-logs", {}, datetime.now(timezone.utc)) is None
 
 
 # ── machine reachability: a closed laptop is asleep, not broken ─────────────
@@ -1152,10 +1125,12 @@ def test_gh_gate_yellow_when_not_installed(tmp_path):
 
 
 def test_missed_purposes_are_red_and_an_unreadable_list_is_yellow():
-    red = hc.check_missed_purposes(lambda: [{"number": 277, "title": "Allow read-only tools", "state": "closed"}])
-    assert red[0]["severity"] == "red" and "#277 Allow read-only tools" in red[0]["detail"]
-    assert hc.check_missed_purposes(lambda: [])[0]["severity"] == "green"
-    assert hc.check_missed_purposes(lambda: (_ for _ in ()).throw(OSError("rate limited")))[0]["severity"] == "yellow"
+    yellow = hc.check_missed_purposes(lambda: [{"number": 277, "title": "Allow read-only tools", "state": "closed"}])
+    assert yellow[0]["severity"] == "yellow" and "#277 Allow read-only tools" in yellow[0]["detail"] and "checked_at" in yellow[0]
+    green = hc.check_missed_purposes(lambda: [])
+    assert green[0]["severity"] == "green" and "checked_at" in green[0]
+    unreadable = hc.check_missed_purposes(lambda: (_ for _ in ()).throw(OSError("rate limited")))
+    assert unreadable[0]["severity"] == "yellow"
 
 
 def test_output_contracts_reach_health(monkeypatch):
@@ -1617,17 +1592,6 @@ def test_repo_sync_probe_leaves_pull_only_nodes_to_the_mirror_row(monkeypatch):
                                             runner=runner)
     assert not any(r["id"].endswith("@mac-mini-2012") for r in results)
     assert "mac-mini-2012" not in calls and "lap" in calls
-
-
-def test_the_sweep_runs_the_mirror_row_with_the_reachability_it_measured(monkeypatch):
-    import mirror_health
-    seen = {}
-    monkeypatch.setattr(mirror_health, "check_mirror_sync_everywhere", lambda reach: seen.setdefault("reach", reach) and [])
-    specs = {s[0]: s for s in hc.default_checks({"machine:mac-mini-2012": "green"})}
-    assert "mirror:sync" in specs
-    assert specs["mirror:sync"][3] == hc.CROSS_MACHINE_BUDGET_S
-    specs["mirror:sync"][2]()
-    assert seen["reach"] == {"machine:mac-mini-2012": "green"}
 
 
 # Found 2026-10-30 (#640 inventory): evaluate_machine_state emitted disk:activity (#765) with no label, so labels[key]

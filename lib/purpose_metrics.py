@@ -1002,11 +1002,13 @@ def run(now: datetime | None = None, ladder_step: Callable | None = None) -> lis
 
 
 def health_findings(missed: list[dict]) -> list[dict]:
+    checked_at = datetime.now(timezone.utc).isoformat()
     if not missed:
         return [{"id": "purpose:missed", "label": "Purpose metrics", "severity": "green",
-                 "detail": "no ticket has missed its purpose"}]
-    return [{"id": f"purpose:missed:{i['number']}", "label": "Missed purpose", "severity": "red",
-             "detail": f"#{i['number']} {i['title']}: missed its purpose metric; the diagnosis and your options are on the ticket"}
+                 "detail": "no ticket has missed its purpose", "checked_at": checked_at}]
+    return [{"id": f"purpose:missed:{i['number']}", "label": "Missed purpose", "severity": "yellow",
+             "detail": f"#{i['number']} {i['title']}: missed its purpose metric; the diagnosis and your options are on the ticket",
+             "checked_at": checked_at}
             for i in missed]
 
 

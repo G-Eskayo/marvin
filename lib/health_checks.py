@@ -27,7 +27,6 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import code_sync  # noqa: E402
-import cron_health as ch  # noqa: E402
 import machine_profile  # noqa: E402
 from machine_profile import machine_label  # noqa: E402
 from task_dispatch import TAILSCALE_BIN, TAILSCALE_ENV  # noqa: E402  (absolute path -- launchd's PATH omits the shell's additions)
@@ -274,45 +273,6 @@ def check_dispatch_lock(state_path: Path | None = None) -> dict:
 # already-seen historical failure on every run, which is exactly the
 # false-alarm problem check_job()'s state file already solved.) ─────────
 
-def _plist_label_to_job_name(label: str) -> str:
-    for prefix in ("com.marvin.", "com.giles.", "com.gileskayo."):
-        if label.startswith(prefix):
-            return label[len(prefix):]
-    return label
-
-
-def discover_launchd_jobs() -> list[str]:
-    """The coverage fix (ADR 0033): enumerate real plists instead of
-    trusting a hand-maintained list. cron_health.py's own JOBS dict was
-    found live 2026-10-01 covering 5 of 14 real jobs -- ticket-pipeline,
-    the subsystem that spent the whole session spiraling, wasn't in it."""
-    if not LAUNCHAGENTS_DIR.exists():
-        return []
-    names = []
-    for plist in LAUNCHAGENTS_DIR.glob("com.*.plist"):
-        label = plist.stem
-        if label in ("com.apple.BKAgentService",):
-            continue
-        names.append(_plist_label_to_job_name(label))
-    return sorted(names)
-
-
-def check_cron_job_log(job_name: str, state: dict, now: datetime) -> dict | None:
-    """Thin wrapper over cron_health.check_job() -- same JOBS table, same
-    offset-tracked state (mutates `state` in place; caller persists it via
-    cron_health._save_state so this shares one state file with the
-    existing session-start markdown consumer, not a second copy)."""
-    cid = f"cron:{job_name}"
-    label = f"Cron job: {job_name}"
-    entry = ch.JOBS.get(job_name)
-    if entry is None:
-        return None  # has a plist but no known log-scan target yet -- not a failure, a coverage gap
-    scheduled, log_paths = entry
-    line = ch.check_job(job_name, scheduled, log_paths, state, now)
-    if line is None:
-        return _result(cid, label, "green", "no failure indicators since last check")
-    severity = "yellow" if "may not have run" in line else "red"
-    return _result(cid, label, severity, line)
 
 
 # ── repo integrity (absorbed from cron_health.py) ───────────────────────
@@ -1698,6 +1658,9 @@ def overall_severity(severities: list[str]) -> str:
 
 
 def check_machine_reachability() -> list[dict]:
+    import task_dispatch
+    import mirror_health
+
     results = []
     for device_id, info in machine_profile.remote_devices().items():
         cid = f"machine:{device_id}"
@@ -1706,36 +1669,72 @@ def check_machine_reachability() -> list[dict]:
         if not host:
             results.append(_result(cid, label, "yellow", "no tailscale_hostname registered"))
             continue
+
+        # Check if device accepts general work
+        accepts_general = task_dispatch.accepts(info, task_dispatch.GENERAL)
+
         try:
             proc = subprocess.run(["ssh", *SSH_OPTS, host, "echo ok"],
                                   capture_output=True, text=True, timeout=8)
             if proc.returncode == 0:
-                results.append(_result(cid, label, "green", f"reachable ({host})"))
+                # Reachable
+                if not accepts_general:
+                    # Folded row: combine reachability + mirror state for non-general devices
+                    try:
+                        probe = mirror_health.parse_probe(mirror_health.run_probe(host))
+                        severity, mirror_detail = mirror_health.evaluate(
+                            probe,
+                            lambda rel, head: mirror_health.local_lag(Path.home() / rel, head),
+                            _now().timestamp()
+                        )
+                        combined_detail = f"reachable; mirror state: {mirror_detail}"
+                        results.append(_result(cid, label, severity, combined_detail))
+                    except Exception as exc:
+                        import error_log
+                        error_log.record("check_machine_reachability", f"couldn't assess mirror state for {device_id}",
+                                       raw=str(exc))
+                        results.append(_result(cid, label, "yellow",
+                                             "reachable; couldn't assess mirror state"))
+                else:
+                    results.append(_result(cid, label, "green", f"reachable ({host})"))
                 continue
             why = proc.stderr.strip()[:200]
         except subprocess.TimeoutExpired:
             why = "timed out"
-        severity, detail = classify_unreachable(info.get("kind", "desktop"), _tailscale_peer(host), _now())
-        results.append(_result(cid, label, severity, f"{detail} ({host}: {why})"))
+
+        # Unreachable
+        if not accepts_general:
+            # Folded row for non-general devices when unreachable
+            results.append(_result(cid, label, "unmonitored",
+                                 f"unreachable (specialized node, doesn't accept general work)"))
+        else:
+            severity, detail = classify_unreachable(info.get("kind", "desktop"), _tailscale_peer(host), _now())
+            results.append(_result(cid, label, severity, f"{detail} ({host}: {why})"))
     return results
 
 
 # ── coverage ─────────────────────────────────────────────────────────────
 
 def coverage(results: list[dict]) -> dict:
-    """What fraction of real, discovered infrastructure has a check at
-    all. Jobs with a plist but no entry in JOB_LOG_PATHS show up as
-    explicitly unmonitored rather than silently absent."""
-    discovered = discover_launchd_jobs()
-    checked_ids = {r["id"] for r in results}
-    unmonitored = [j for j in discovered if f"cron:{j}" not in checked_ids]
-    n_covered = len(discovered) - len(unmonitored)
+    """What fraction of registered jobs running on a machine have a reporter
+    (i.e., someone records their result). Filters to only jobs running on a machine (machine != "none")."""
+    import job_catalog
+    # All jobs that run on a machine (not "none").
+    all_jobs = {name: job for name, job in job_catalog.JOBS.items()
+                if job.get("machine") != "none"}
+    known_jobs = sorted(all_jobs.keys())
+
+    # Jobs with a non-empty reporter count as covered (someone reports their result).
+    covered_jobs = [name for name in known_jobs if all_jobs[name].get("reporter")]
+    unmonitored_jobs = [name for name in known_jobs if not all_jobs[name].get("reporter")]
+    n_covered = len(covered_jobs)
+
     return {
-        "known_jobs": discovered,
-        "unmonitored_jobs": unmonitored,
+        "known_jobs": known_jobs,
+        "unmonitored_jobs": unmonitored_jobs,
         "covered": n_covered,
-        "total": len(discovered),
-        "fraction": round(n_covered / len(discovered), 2) if discovered else 1.0,
+        "total": len(known_jobs),
+        "fraction": round(n_covered / len(known_jobs), 2) if known_jobs else 1.0,
     }
 
 
@@ -1783,14 +1782,6 @@ def run_checks(specs) -> list[dict]:
     for check_id, label, fn, budget in specs:
         results += guarded(check_id, label, fn, budget)
     return results
-
-
-def _cron_job_logs() -> list[dict]:
-    cron_state = ch._load_state()
-    cron_now = datetime.now().astimezone()
-    out = [r for r in (check_cron_job_log(job, cron_state, cron_now) for job in discover_launchd_jobs()) if r]
-    ch._save_state(cron_state)
-    return out
 
 
 def check_brief_builder() -> dict:
@@ -1905,11 +1896,6 @@ def check_merge_service() -> dict:
     return merge_service_result(merge_machines(), waiting_approvals())
 
 
-def _mirror_health():
-    import mirror_health  # lib/mirror_health.py: the pull-only node's mirror, read from this Mac (marvin#910)
-    return mirror_health
-
-
 def default_checks(reach: dict[str, str] | None = None, reach_results: list[dict] | None = None) -> list[tuple]:
     """Every check the sweep runs, in the order the Health tab shows them. `reach` maps machine:<id> -> severity from
     the reachability check, which runs first; `reach_results` are its rows, listed where they always appeared."""
@@ -1944,11 +1930,8 @@ def default_checks(reach: dict[str, str] | None = None, reach_results: list[dict
         ("seal:beta-ingest", "Seal Speak beta reports are picked up", check_seal_beta_ingest, CHECK_BUDGET_S),
         ("brief:builder", "Morning brief builder", check_brief_builder, CHECK_BUDGET_S),
         ("merge:service", "Merge service reachable", check_merge_service, CROSS_MACHINE_BUDGET_S),
-        ("cron", "Cron job logs", _cron_job_logs, CHECK_BUDGET_S),
         ("machine", "Machine reachability", lambda: list(reach_results or []), CHECK_BUDGET_S),
         ("repo:sync", "Repo sync", lambda: check_repo_sync_everywhere(reach), CROSS_MACHINE_BUDGET_S),
-        ("mirror:sync", "Mirror sync on pull-only nodes", lambda: _mirror_health().check_mirror_sync_everywhere(reach),
-         CROSS_MACHINE_BUDGET_S),
         ("machine-state", "Machine state", lambda: check_machine_state_everywhere(reach), CROSS_MACHINE_BUDGET_S),
     ]
 

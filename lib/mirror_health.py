@@ -242,7 +242,8 @@ def run_probe(host: str) -> str:
 
 
 def _row(cid: str, label: str, severity: str, detail: str) -> dict:
-    return {"id": cid, "label": label, "severity": severity, "detail": detail, "value": None}
+    return {"id": cid, "label": label, "severity": severity, "detail": detail, "value": None,
+            "checked_at": datetime.now(timezone.utc).isoformat()}
 
 
 def check_mirror_sync_everywhere(reach: dict[str, str], devices: dict | None = None, runner=run_probe,

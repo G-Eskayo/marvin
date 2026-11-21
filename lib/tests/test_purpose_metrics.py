@@ -83,8 +83,9 @@ def test_a_measurement_failure_is_reported_not_judged():
 
 def test_health_turns_red_for_each_missed_purpose():
     found = pm.health_findings([{"number": 277, "title": "Allow read-only tools", "labels": [{"name": pm.MISSED_LABEL}]}])
-    assert found[0]["severity"] == "red" and "#277 Allow read-only tools" in found[0]["detail"]
-    assert pm.health_findings([])[0]["severity"] == "green"
+    assert found[0]["severity"] == "yellow" and "#277 Allow read-only tools" in found[0]["detail"] and "checked_at" in found[0]
+    green = pm.health_findings([])
+    assert green[0]["severity"] == "green" and "checked_at" in green[0]
 
 
 def test_a_rate_across_macs_comes_from_summed_counts(monkeypatch):

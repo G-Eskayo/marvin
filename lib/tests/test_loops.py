@@ -101,6 +101,17 @@ def test_a_contract_signal_reads_its_finding(tmp_path):
     assert row["status"] == "broken" and "70 waiting" in row["reason"]
 
 
+def test_research_digest_turning_yellow_does_not_break_research_action_loop(tmp_path):
+    # research-action loop (ticket #533) watches contract:research-digest with broken_when: "red".
+    # After downgrading contract:* from red to yellow (ADR 0033), the 30-day-cut case becomes
+    # yellow instead of red, so the loop no longer breaks on that condition. This is intentional:
+    # the loop was overfiring when it was red; now it only breaks on actual red signals, not amber.
+    loop = _loop(id="research-action", watches="contract:research-digest", broken_when="red", wired=True)
+    # Contract is yellow (30-day cut, was red before downgrade)
+    row = _one(tmp_path, loop, checks=[{"id": "contract:research-digest", "severity": "yellow", "detail": "removal candidate"}])
+    assert row["status"] != "broken", "loop should not be broken when contract is yellow (not red)"
+
+
 @pytest.mark.parametrize("health", ["{", "[]", '{"checks": 5}', '{"checks": [null, 3, {"id": 7}]}'])
 def test_a_mangled_health_file_means_unknown_signals_not_a_crash(tmp_path, health):
     reg = tmp_path / "loops.json"
