@@ -1,5 +1,7 @@
 # Changelog
 
+- Add a Type: HITL/AFK field to to-tasklist's persisted task template ([#1372](https://github.com/G-Eskayo/marvin/pull/1372))
+
 - Drop improve-codebase-architecture/SKILL.md's inline glossary, which repeats LANGUAGE.md and gets loaded twice ([#1373](https://github.com/G-Eskayo/marvin/pull/1373))
 
 - Update resume-tailor's design.md stale "Draft" status and open-items checklist to reflect completed implementation ([#1375](https://github.com/G-Eskayo/marvin/pull/1375))
