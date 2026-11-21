@@ -1,5 +1,7 @@
 # Changelog
 
+- Consolidate the priority-ranking pattern between improvement_sweep.py and sort_suggestions.py ([#1384](https://github.com/G-Eskayo/marvin/pull/1384))
+
 - Remove the non-functional `calls: [to-issues]` frontmatter field from to-tasklist ([#1386](https://github.com/G-Eskayo/marvin/pull/1386))
 
 - Bring back proposals dismissed until a linked ticket closes ([#1387](https://github.com/G-Eskayo/marvin/pull/1387))
