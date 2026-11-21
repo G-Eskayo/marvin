@@ -2,7 +2,7 @@ import { describe, it, expect, beforeEach, afterEach } from 'vitest'
 import { mkdtempSync, rmSync, readFileSync, writeFileSync } from 'fs'
 import { tmpdir } from 'os'
 import path from 'path'
-import { createMergeQueue, createQueueStore, outcomeFor } from '../webhook-server/merge_queue.js'
+import { createMergeQueue, createQueueStore, outcomeFor, stuckConflictNote } from '../webhook-server/merge_queue.js'
 import { enrichForOrder, mainStateFrom } from '../webhook-server/merge_order.js'
 import { unbuiltFrom, createUnbuiltCache } from '../webhook-server/merge_facts.js'
 
@@ -175,7 +175,7 @@ describe('merge queue runner', () => {
     await queue.approve(REPO, url(973))
     expect(w.merged).toEqual([973])
     expect(store.forRepo(REPO).items.map((i) => i.number)).toEqual([972])
-    expect(queue.view(REPO).entries[url(972)].reason).toBe('conflicts with main after #973 · MARVIN is fixing it')
+    expect(queue.view(REPO).entries[url(972)].reason).toBe('Held: conflicts with main after #973 · MARVIN is fixing it')
     expect(resolver).toContain('sha972')
     w.prs.get(972).headRefOid = 'resolved'                  // the resolver's push
     await queue.kick(REPO)
@@ -548,5 +548,14 @@ describe('a conflict held too long is told once (#1183)', () => {
     now += DAY + 1
     await queue.approve(REPO, url(2))
     expect(w.merged).toEqual([2])
+  })
+})
+
+describe('stuckConflictNote', () => {
+  it('formats the note for 1 day', () => {
+    expect(stuckConflictNote(123, 1)).toBe('PR #123 has been in the merge queue on a conflict for 1 day — the resolver couldn\'t fix it.')
+  })
+  it('formats the note for multiple days', () => {
+    expect(stuckConflictNote(456, 3)).toBe('PR #456 has been in the merge queue on a conflict for 3 days — the resolver couldn\'t fix it.')
   })
 })

@@ -3,8 +3,8 @@ import os from 'os'
 import path from 'path'
 import { createServer } from 'http'
 import { mergePr, baselineFailsOnMain, mergesAhead, execWithGroupTimeout, runDiskFirstAid, memoryGuardCheck, withMergeMark, forgetQueuedMerge, readMergeReady, sweepGateClones, repoJobsDone, triggerTicketPipeline } from './merge.js'
-import { createMergeQueue, createQueueStore } from './merge_queue.js'
-import { createUnbuiltCache, createFixTicketsCache, createQueueLoader, createBaseLookup, createFollowUpRequester, readMainHealth, readRepairFailures } from './merge_facts.js'
+import { createMergeQueue, createQueueStore, stuckConflictNote } from './merge_queue.js'
+import { createUnbuiltCache, createFixTicketsCache, createQueueLoader, createBaseLookup, createFollowUpRequester, readMainHealth, readRepairFailures, readRepairFiles } from './merge_facts.js'
 import { pendingCheckHeads } from '../electron/main/mr_repos.js'
 import { snapshotExec } from './pr_snapshot.js'
 import { createMergeTracker, createInflightStore, takeInterruptedMerges, recordMergeDuration, estimateMergeMs, machineLoad, approveResponder, wantsStream, createMergeLatch, alreadyMergingBody } from './merge_progress.js'
@@ -173,7 +173,7 @@ const server = createServer(async (req, res) => {
   if (req.method === 'GET' && req.url === '/merge-queue') {
     res.writeHead(200, { 'Content-Type': 'application/json' }).end(JSON.stringify({
       repos: mergeQueue.snapshot(),
-      facts: { unbuilt: [...unbuiltCache.get()], unbuiltAt: unbuiltCache.at(), repairFailed: readRepairFailures(), health: readMainHealth(), tickets: fixTickets.get(), gateCovers: { [engineRepo()]: gateCheckNames() } },
+      facts: { unbuilt: [...unbuiltCache.get()], unbuiltAt: unbuiltCache.at(), repairFailed: readRepairFailures(), repairFiles: readRepairFiles(), health: readMainHealth(), tickets: fixTickets.get(), gateCovers: { [engineRepo()]: gateCheckNames() } },
       machine: machineId
     }))
     return
@@ -460,6 +460,8 @@ const mergeQueue = createMergeQueue({
     execFile(venv, ['-c', code, path.dirname(notify), `#${pr.number} is stuck on a conflict`,
       `${repo} #${pr.number} has waited ${days} day${days === 1 ? '' : 's'} in the merge queue on a conflict the resolver couldn't fix. It needs main merged in by hand.`,
       pr.url], { timeout: 30_000 }, () => {})
+    // Post a PR comment as a fail-soft side effect (gh failures don't stop the queue)
+    execFile('gh', ['pr', 'comment', pr.url, '--body', stuckConflictNote(pr.number, days)], { timeout: 30_000 }, () => {})
   },
   log: (m) => console.log(m)
 })

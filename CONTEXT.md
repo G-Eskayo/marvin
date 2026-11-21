@@ -1594,8 +1594,10 @@ Mac has no push channel. Gil applies the hooks on each Mac with `marvin_hooks.py
   other PR waits for it.
 - **Queue line**: the one line under a PR's title in MR Review saying where it stands: its place ("queued · 2nd · starts
   after #971") or what it waits for ("waits for #936 (it's built on it)", "main is red · waits for #986", "checks
-  failing: …", "conflicts with main after #970 · MARVIN is fixing it"). A PR's own blockers are said before what it
-  waits for, since they need doing whatever merges first. Written so the next-step view (#860) can read it.
+  failing: …", "Held: conflicts with main after #970 · MARVIN is fixing it (app.py, main.ts, config.yml and 1 more)"). A PR's own blockers are said before what it
+  waits for, since they need doing whatever merges first. When a queued PR holds on a conflict, the reason is prefixed "Held: "; 
+  the first 3 conflicting files are named in the reason (capped at 40 chars each), with a "and N more" suffix if there are others.
+  Conflict files come from the resolver's repair history when available, else from the rebase status. Written so the next-step view (#860) can read it.
 - **Answers not built yet**: the owner answered a PR's Decisions, but no reply says they were acted on and no work
   commit came after them (merging main in doesn't count). It is MARVIN's move: the PR never merges like that, and
   approving it asks for the follow-up at once.

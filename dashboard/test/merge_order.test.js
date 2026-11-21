@@ -164,12 +164,12 @@ describe('mergeOrder: a PR\'s own blockers come first', () => {
   it('a conflict after a merge says which merge, and whether the resolver can fix it or it needs a rebuild', () => {
     const rebaseStatus = { [url(972)]: { state: 'conflict', after: 970 } }
     let prs = enrichForOrder([pr(972, { mergeable: 'CONFLICTING' })], { repo: REPO, rebaseStatus })
-    expect(line(mergeOrder(prs, green_main, q(972)), 972)).toMatchObject({ reason: 'conflicts with main after #970 · MARVIN is fixing it', conflict: true })
+    expect(line(mergeOrder(prs, green_main, q(972)), 972)).toMatchObject({ reason: 'Held: conflicts with main after #970 · MARVIN is fixing it', conflict: true })
     prs = enrichForOrder([pr(972, { mergeable: 'CONFLICTING' })], { repo: REPO, rebaseStatus, repairFailed: { [`${REPO}#972`]: 'sha972' } })
-    expect(line(mergeOrder(prs, green_main, q(972)), 972).reason).toBe('conflicts with main after #970 · needs a rebuild')
+    expect(line(mergeOrder(prs, green_main, q(972)), 972).reason).toBe('Held: conflicts with main after #970 · needs a rebuild')
     // A repair that failed on an OLDER commit says nothing about this one.
     prs = enrichForOrder([pr(972, { mergeable: 'CONFLICTING' })], { repo: REPO, repairFailed: { [`${REPO}#972`]: 'old' } })
-    expect(line(mergeOrder(prs, green_main, { ...q(972), lastMerged: 971 }), 972).reason).toBe('conflicts with main after #971 · MARVIN is fixing it')
+    expect(line(mergeOrder(prs, green_main, { ...q(972), lastMerged: 971 }), 972).reason).toBe('Held: conflicts with main after #971 · MARVIN is fixing it')
   })
 
   it('a stale post-merge conflict is overruled once GitHub says the PR merges', () => {
@@ -179,7 +179,7 @@ describe('mergeOrder: a PR\'s own blockers come first', () => {
 
   it('the gate\'s conflict on a commit holds that commit; a new commit (the resolver\'s push) is tried again', () => {
     const queue = { items: [{ url: url(5), approvedAt: 1, conflictHead: 'sha5' }], failed: {}, lastMerged: 4 }
-    expect(line(mergeOrder([pr(5)], green_main, queue), 5).reason).toBe('conflicts with main after #4 · MARVIN is fixing it')
+    expect(line(mergeOrder([pr(5)], green_main, queue), 5).reason).toBe('Held: conflicts with main after #4 · MARVIN is fixing it')
     expect(mergeOrder([pr(5, { headRefOid: 'new' })], green_main, queue).next).toBe(url(5))
   })
 
@@ -226,6 +226,40 @@ describe('mergeOrder: positions', () => {
 
   it('closesRefs reads every keyword form once, and skips other repos', () => {
     expect(closesRefs('Closes #1, fixes #2. Resolved G-Eskayo/marvin#3 and closes other/repo#4; Fixes #1', REPO)).toEqual([1, 2, 3])
+  })
+
+  it('a conflict shows repair files from repairFiles when sha matches', () => {
+    const rebaseStatus = { [url(972)]: { state: 'conflict', after: 970, files: ['app.py', 'test.py'] } }
+    const repairFiles = { [`${REPO}#972`]: { sha: 'sha972', files: ['config.yml', 'app.py', 'src/main.ts', 'docs/README.md'] } }
+    const prs = enrichForOrder([pr(972, { headRefOid: 'sha972', mergeable: 'CONFLICTING' })], { repo: REPO, rebaseStatus, repairFiles })
+    expect(line(mergeOrder(prs, green_main, q(972)), 972).reason).toContain('(config.yml, app.py, src/main.ts and 1 more)')
+  })
+
+  it('a conflict shows repairFiles files even when rebaseStatus has no files', () => {
+    const rebaseStatus = { [url(972)]: { state: 'conflict', after: 970 } }
+    const repairFiles = { [`${REPO}#972`]: { sha: 'sha972', files: ['a.js', 'b.js'] } }
+    const prs = enrichForOrder([pr(972, { headRefOid: 'sha972', mergeable: 'CONFLICTING' })], { repo: REPO, rebaseStatus, repairFiles })
+    expect(line(mergeOrder(prs, green_main, q(972)), 972).reason).toContain('(a.js, b.js)')
+  })
+
+  it('a conflict falls back to rebaseStatus.files when repairFiles does not match', () => {
+    const rebaseStatus = { [url(972)]: { state: 'conflict', after: 970, files: ['main.py', 'lib.py'] } }
+    const repairFiles = { [`${REPO}#972`]: { sha: 'old-sha', files: ['different.py', 'other.py'] } }
+    const prs = enrichForOrder([pr(972, { headRefOid: 'sha972', mergeable: 'CONFLICTING' })], { repo: REPO, rebaseStatus, repairFiles })
+    expect(line(mergeOrder(prs, green_main, q(972)), 972).reason).toContain('(main.py, lib.py)')
+  })
+
+  it('a conflict with no files shows no file list', () => {
+    const rebaseStatus = { [url(972)]: { state: 'conflict', after: 970 } }
+    const prs = enrichForOrder([pr(972, { mergeable: 'CONFLICTING' })], { repo: REPO, rebaseStatus })
+    expect(line(mergeOrder(prs, green_main, q(972)), 972).reason).toBe('Held: conflicts with main after #970 · MARVIN is fixing it')
+  })
+
+  it('files list is capped at 3 items plus a "and N more" suffix', () => {
+    const rebaseStatus = { [url(972)]: { state: 'conflict', after: 970 } }
+    const repairFiles = { [`${REPO}#972`]: { sha: 'sha972', files: ['a.js', 'b.js', 'c.js', 'd.js', 'e.js'] } }
+    const prs = enrichForOrder([pr(972, { headRefOid: 'sha972', mergeable: 'CONFLICTING' })], { repo: REPO, rebaseStatus, repairFiles })
+    expect(line(mergeOrder(prs, green_main, q(972)), 972).reason).toContain('(a.js, b.js, c.js and 2 more)')
   })
 })
 
