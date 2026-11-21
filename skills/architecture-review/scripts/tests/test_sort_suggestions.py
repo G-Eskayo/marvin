@@ -7,7 +7,11 @@ from pathlib import Path
 
 # Import the module being tested
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
-from sort_suggestions import _sort_key, _looks_merged  # noqa: E402
+from sort_suggestions import _sort_key, _looks_merged, DEFAULT_HEADER  # noqa: E402
+
+# Add lib to path for session_start_report import
+sys.path.insert(0, str(Path(__file__).resolve().parents[4] / "lib"))
+import session_start_report  # noqa: E402
 
 
 def test_missing_priority_field_sorts_below_every_real_priority():
@@ -229,3 +233,23 @@ def test_rank_by_missing_impact_falls_back_to_default():
     key = _sort_key(missing_impact)
     # Missing impact should get default rank of 99
     assert key[2] == 99, "Missing impact should use default rank of 99"
+
+
+def test_default_header_references_check_suggestions():
+    """DEFAULT_HEADER should reference check_suggestions by name, not by step number."""
+    assert "check_suggestions" in DEFAULT_HEADER, (
+        "DEFAULT_HEADER must reference check_suggestions function by name"
+    )
+    assert "session-start step" not in DEFAULT_HEADER.lower(), (
+        "DEFAULT_HEADER should not use old-style 'session-start step N' references"
+    )
+
+
+def test_default_header_check_function_exists():
+    """The check_suggestions function referenced in DEFAULT_HEADER must exist."""
+    assert hasattr(session_start_report, "check_suggestions"), (
+        "check_suggestions function must exist in session_start_report module"
+    )
+    assert callable(getattr(session_start_report, "check_suggestions")), (
+        "check_suggestions must be callable"
+    )

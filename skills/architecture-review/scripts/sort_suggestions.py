@@ -40,7 +40,7 @@ DEFAULT_HEADER = (
     "# Suggestions\n\n"
     "Priority-ordered backlog of architecture/optimization suggestions, fed by `architecture-review`\n"
     "and `audit`. Highest priority first — kept sorted by `sort_suggestions.py`, not insertion order.\n"
-    "Check every session (CLAUDE.md session-start step 2); never implement without explicit approval.\n"
+    "Check every session (the session-start report's suggestions check, `check_suggestions` in `lib/session_start_report.py`); never implement without explicit approval.\n"
 )
 
 

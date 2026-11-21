@@ -1,0 +1,6 @@
+1. Edit `skills/audit/SKILL.md` line 58: replace "Session Start step 8 already surfaces this." with wording naming the check — "the session-start report's auto-fix-log check (`check_auto_fix_log` in `lib/session_start_report.py`) already surfaces this."
+2. Edit `skills/audit/SKILL.md` line 59: replace "Session Start step 2 already surfaces the pending count." with "the session-start report's suggestions check (`check_suggestions` in `lib/session_start_report.py`) already surfaces the pending count."
+3. Edit `skills/architecture-review/scripts/sort_suggestions.py` line 42 (`DEFAULT_HEADER`): replace "CLAUDE.md session-start step 2" with a check-named reference, e.g. "the session-start report's suggestions check, `check_suggestions` in `lib/session_start_report.py`".
+4. Edit `docs/adr/0015-quarantine-review-feedback-loop.md` line 72: replace "CLAUDE.md's session-start step 5" with "CLAUDE.md's session-start quarantine-review check (`process_and_check_quarantine` in `lib/session_start_report.py`)".
+5. Run `rg -i "session.start step [0-9]" skills docs lib` and confirm zero matches.
+6. Re-read each edited line in context to confirm it still reads naturally and each named function/check genuinely exists in `lib/session_start_report.py`.
