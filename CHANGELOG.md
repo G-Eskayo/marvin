@@ -1,5 +1,7 @@
 # Changelog
 
+- test_stale_relay week test fails after 2026-11-16 12:00 UTC: the question log is stamped with the real clock ([#1346](https://github.com/G-Eskayo/marvin/pull/1346))
+
 - Fix self-contradicting write-target instruction in inbox-mode reviewer prompt ([#1336](https://github.com/G-Eskayo/marvin/pull/1336))
 
 - Research colony reads the owner's research newsletters ([#1356](https://github.com/G-Eskayo/marvin/pull/1356))
