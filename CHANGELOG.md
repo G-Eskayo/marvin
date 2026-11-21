@@ -1,5 +1,7 @@
 # Changelog
 
+- MARVIN's README rewritten for lay readers, and the audience ladder (READMEs → portfolio → LinkedIn) written into the README criteria ([#1342](https://github.com/G-Eskayo/marvin/pull/1342))
+
 - Architecture review: check for a symlink before calling a commands/ file a duplicate ([#1344](https://github.com/G-Eskayo/marvin/pull/1344))
 
 - Trim handoff/SKILL.md's now-redundant manual "check handoffs on resume" instructions ([#1350](https://github.com/G-Eskayo/marvin/pull/1350))
