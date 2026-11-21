@@ -1,5 +1,7 @@
 # Changelog
 
+- Update route/SKILL.md to describe the embedding classifier that's now the actual default, not the superseded… ([#1360](https://github.com/G-Eskayo/marvin/pull/1360))
+
 - Trim historical rationale from caveman/SKILL.md's frontmatter description ([#1361](https://github.com/G-Eskayo/marvin/pull/1361))
 
 - Cut index/SKILL.md's stale Examples section and correct its "unified index for all skills AND knowledge files" claim ([#1362](https://github.com/G-Eskayo/marvin/pull/1362))
