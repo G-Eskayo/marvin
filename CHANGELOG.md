@@ -1,5 +1,7 @@
 # Changelog
 
+- Drop improve-codebase-architecture/SKILL.md's inline glossary, which repeats LANGUAGE.md and gets loaded twice ([#1373](https://github.com/G-Eskayo/marvin/pull/1373))
+
 - Update resume-tailor's design.md stale "Draft" status and open-items checklist to reflect completed implementation ([#1375](https://github.com/G-Eskayo/marvin/pull/1375))
 
 - qa_scan.py's store_entries() loads every id in qa-knowledge on each scan just to dedup a few hundred candidates ([#1374](https://github.com/G-Eskayo/marvin/pull/1374))
