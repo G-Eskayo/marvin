@@ -1,5 +1,7 @@
 # Changelog
 
+- readme skill loads project profiles and review questions twice per run — dedupe criteria.md against TEMPLATES.md/SKILL.md ([#1388](https://github.com/G-Eskayo/marvin/pull/1388))
+
 - Trim academic_search.py JSON output to cut 5-9k tokens/call to ~2-3k ([#1389](https://github.com/G-Eskayo/marvin/pull/1389))
 
 - tdd skill contradicts ADR 0063 "tests try to break it" standard enforced by the merge gate ([#1390](https://github.com/G-Eskayo/marvin/pull/1390))
