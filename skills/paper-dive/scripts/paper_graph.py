@@ -21,6 +21,7 @@ sys.path[:0] = [str(Path(__file__).resolve().parent), str(Path.home() / ".agents
 from s2_client import get_with_retry as _get_with_retry
 from s2_client import s2_id as _s2_id
 from s2_client import S2_PAPER_BASE
+import model_calls  # noqa: E402
 
 
 def select_candidates(candidates: list[dict], top_k: int, relevance_floor: float) -> list[dict]:
@@ -207,15 +208,17 @@ def _real_specter2_embed(text: str) -> list[float]:
 
 
 def _real_nomic_embed(text: str) -> list[float]:
-    import requests
-
-    resp = requests.post(
-        "http://localhost:11434/api/embeddings",
-        json={"model": "nomic-embed-text", "prompt": text},
+    result = model_calls.embed(
+        text,
+        "nomic-embed-text",
+        caller="paper_graph._real_nomic_embed",
+        num_ctx=2048,
         timeout=30,
+        task="document",
     )
-    resp.raise_for_status()
-    return resp.json()["embedding"]
+    if result.error or not result.embeddings:
+        raise RuntimeError(f"Embedding failed: {result.error}")
+    return result.embeddings[0]
 
 
 def embed_paper(text: str, specter2_fn=None, nomic_fn=None) -> dict:

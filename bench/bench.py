@@ -33,8 +33,10 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent
 sys.path.insert(0, str(ROOT / "lib"))
+sys.path.insert(0, str(ROOT.parent / "lib"))
 from score import parse_stream, score_correctness  # noqa: E402
 from memory_rag import query_memory  # noqa: E402
+import model_calls  # noqa: E402
 
 PROFILES = {
     "clean":  ROOT / "profiles" / "clean",           # base Claude Code (control)
@@ -245,44 +247,35 @@ def run_once_ollama(task: dict, profile: str, ollama_model: str,
         messages.append({"role": "system", "content": system_content})
     messages.append({"role": "user", "content": task["prompt"]})
 
-    payload = json.dumps({
-        "model": ollama_model,
-        "messages": messages,
-        "stream": False,
-        "options": {"temperature": 0},
-    }).encode()
-    req = urllib.request.Request(
-        f"{OLLAMA_BASE}/api/chat",
-        data=payload,
-        headers={"Content-Type": "application/json"},
-        method="POST",
-    )
-
     base = {"profile": profile, "model": ollama_model, "runner": "ollama",
             "cost_usd": 0.0, "num_turns": 1, "tool_calls": 0}
     t0 = time.time()
-    try:
-        with urllib.request.urlopen(req, timeout=task.get("timeout", 300)) as resp:
-            data = json.loads(resp.read())
-    except Exception as exc:
-        return {**base, "result_text": "", "spawn_error": str(exc),
-                "wall_s": round(time.time() - t0, 1), "total_tokens": 0,
-                "correctness": {"score": 0.0}}
+
+    result = model_calls.chat(
+        ollama_model,
+        messages,
+        caller="bench.run_once_ollama",
+        num_ctx=8192,
+        timeout=task.get("timeout", 300),
+        options={"temperature": 0},
+        source="bench",
+    )
     wall = time.time() - t0
 
-    result_text = (data.get("message") or {}).get("content", "")
-    prompt_tokens = data.get("prompt_eval_count", 0)
-    gen_tokens = data.get("eval_count", 0)
+    if result.error:
+        return {**base, "result_text": "", "spawn_error": result.error,
+                "wall_s": round(wall, 1), "total_tokens": 0,
+                "correctness": {"score": 0.0}}
 
     return {
         **base,
-        "result_text":   result_text,
+        "result_text":   result.content,
         "wall_s":        round(wall, 1),
-        "total_tokens":  prompt_tokens + gen_tokens,
-        "correctness":    score_correctness(task, result_text, None),
+        "total_tokens":  result.total_tokens,
+        "correctness":    score_correctness(task, result.content, None),
         "context_mode":   context_mode if profile == "marvin" else "none",
-        "_prompt_tokens": prompt_tokens,
-        "_gen_tokens":    gen_tokens,
+        "_prompt_tokens": result.input_tokens,
+        "_gen_tokens":    result.output_tokens,
     }
 
 

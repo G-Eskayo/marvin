@@ -16,46 +16,42 @@ import intent_classify as ic  # noqa: E402
 def test_embed_text_uses_search_query_prefix_for_queries(monkeypatch):
     captured = {}
 
-    class _FakeResp:
-        def raise_for_status(self):
-            pass
+    def fake_embed(input_texts, model, **kwargs):
+        captured["input"] = input_texts
+        captured["task"] = kwargs.get("task")
+        from lib import model_calls
+        result = model_calls.EmbedResult(embeddings=[[0.1, 0.2, 0.3]])
+        return result
 
-        def json(self):
-            return {"embeddings": [[0.1, 0.2, 0.3]]}
-
-    def fake_post(url, json, timeout):
-        captured["input"] = json["input"]
-        return _FakeResp()
-
-    monkeypatch.setattr(ic.requests, "post", fake_post)
+    monkeypatch.setattr(ic.model_calls, "embed", fake_embed)
     ic.embed_text("fix the bug", task="query")
-    assert captured["input"] == "search_query: fix the bug"
+    assert captured["input"] == "fix the bug"
+    assert captured["task"] == "query"
 
 
 def test_embed_text_uses_search_document_prefix_for_documents(monkeypatch):
     captured = {}
 
-    class _FakeResp:
-        def raise_for_status(self):
-            pass
+    def fake_embed(input_texts, model, **kwargs):
+        captured["input"] = input_texts
+        captured["task"] = kwargs.get("task")
+        from lib import model_calls
+        result = model_calls.EmbedResult(embeddings=[[0.1, 0.2, 0.3]])
+        return result
 
-        def json(self):
-            return {"embeddings": [[0.1, 0.2, 0.3]]}
-
-    def fake_post(url, json, timeout):
-        captured["input"] = json["input"]
-        return _FakeResp()
-
-    monkeypatch.setattr(ic.requests, "post", fake_post)
+    monkeypatch.setattr(ic.model_calls, "embed", fake_embed)
     ic.embed_text("fix the date validator bug", task="document")
-    assert captured["input"] == "search_document: fix the date validator bug"
+    assert captured["input"] == "fix the date validator bug"
+    assert captured["task"] == "document"
 
 
 def test_embed_text_returns_none_on_request_failure(monkeypatch):
-    def fake_post(*a, **k):
-        raise ConnectionError("ollama not running")
+    def fake_embed(input_texts, model, **kwargs):
+        from lib import model_calls
+        result = model_calls.EmbedResult(error="Connection failed")
+        return result
 
-    monkeypatch.setattr(ic.requests, "post", fake_post)
+    monkeypatch.setattr(ic.model_calls, "embed", fake_embed)
     assert ic.embed_text("anything", task="query") is None
 
 
@@ -385,29 +381,26 @@ def test_classify_fast_is_unavailable_on_bad_query_vectors(tmp_path, monkeypatch
 def test_embed_text_passes_its_timeout_to_ollama(monkeypatch):
     seen = {}
 
-    class _R:
-        def raise_for_status(self):
-            pass
+    def fake_embed(input_texts, model, **kwargs):
+        seen["timeout"] = kwargs.get("timeout")
+        from lib import model_calls
+        result = model_calls.EmbedResult(embeddings=[[0.1]])
+        return result
 
-        def json(self):
-            return {"embeddings": [[0.1]]}
-
-    monkeypatch.setattr(ic.requests, "post", lambda url, json, timeout: seen.update(t=timeout) or _R())
+    monkeypatch.setattr(ic.model_calls, "embed", fake_embed)
     ic.embed_text("x", timeout=0.5)
-    assert seen["t"] == 0.5
+    assert seen["timeout"] == 0.5
     ic.embed_text("x")
-    assert seen["t"] == 10       # the default for every other caller is unchanged
+    assert seen["timeout"] == 10       # the default for every other caller is unchanged
 
 
 def test_embed_text_returns_none_on_a_malformed_reply(monkeypatch):
-    class _R:
-        def raise_for_status(self):
-            pass
+    def fake_embed(input_texts, model, **kwargs):
+        from lib import model_calls
+        result = model_calls.EmbedResult(embeddings=[])
+        return result
 
-        def json(self):
-            return {"embeddings": []}
-
-    monkeypatch.setattr(ic.requests, "post", lambda url, json, timeout: _R())
+    monkeypatch.setattr(ic.model_calls, "embed", fake_embed)
     assert ic.embed_text("x") is None
 
 

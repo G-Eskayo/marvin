@@ -36,10 +36,12 @@ from pathlib import Path
 
 import requests
 
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+import model_calls  # noqa: E402
+
 HOME = Path.home()
 CHROMA_PATH = HOME / ".claude" / "chroma"
 VECTORS_FILE = HOME / ".claude" / "intent-routing-vectors.json"
-OLLAMA_URL = "http://localhost:11434/api/embed"
 EMBED_MODEL = "nomic-embed-text"
 COLLECTION_NAME = "intent-routing"
 
@@ -261,17 +263,17 @@ def embed_text(text: str, task: str = "query", timeout: float = 10) -> list[floa
     """Embed via Ollama nomic-embed-text. task='query' for classify() input,
     'document' for reference examples -- nomic-embed is trained on this
     asymmetric prefix convention (matches rebuild-embeddings.py's usage)."""
-    prefix = "search_query: " if task == "query" else "search_document: "
-    try:
-        resp = requests.post(
-            OLLAMA_URL,
-            json={"model": EMBED_MODEL, "input": f"{prefix}{text}"},
-            timeout=timeout,
-        )
-        resp.raise_for_status()
-        return resp.json()["embeddings"][0]
-    except Exception:
+    result = model_calls.embed(
+        text,
+        EMBED_MODEL,
+        caller="intent_classify.embed_text",
+        num_ctx=2048,
+        timeout=timeout,
+        task=task,
+    )
+    if result.error or not result.embeddings:
         return None
+    return result.embeddings[0]
 
 
 def _get_collection():
