@@ -1,5 +1,7 @@
 # Changelog
 
+- Extract diagnose/SKILL.md's growing gotcha log to a separate reference file ([#1349](https://github.com/G-Eskayo/marvin/pull/1349))
+
 - MARVIN's README rewritten for lay readers, and the audience ladder (READMEs → portfolio → LinkedIn) written into the README criteria ([#1342](https://github.com/G-Eskayo/marvin/pull/1342))
 
 - Architecture review: check for a symlink before calling a commands/ file a duplicate ([#1344](https://github.com/G-Eskayo/marvin/pull/1344))
