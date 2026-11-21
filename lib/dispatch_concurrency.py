@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import subprocess
 import tempfile
 from datetime import datetime, timezone
@@ -22,6 +23,7 @@ TASKS_DIR = Path.home() / ".claude" / "dispatch" / "tasks"
 DISPATCH_STATE_PATH = Path.home() / ".claude" / "dispatch-state.json"
 DISPATCH_TOLERANCE_S = 3600
 MAX_LIMIT = 8
+REUSE_SLACK_S = 300  # process can be considered stale for reuse after 5 minutes of not updating
 
 DEFAULTS = {
     "parallel": False,
@@ -283,14 +285,28 @@ def others_running(task_id: str, reader=None) -> int:
     return sum(1 for r in records if r.get("task_id") != task_id)
 
 
-def partition_alive(records: list[dict], is_alive) -> tuple[list[dict], list[dict]]:
+def partition_alive(records: list[dict], is_alive, process_started_at=None) -> tuple[list[dict], list[dict]]:
     """Split records into (alive processes, dead processes). is_alive is an injected liveness checker
-    (e.g., _pid_alive or a fake for testing)."""
+    (e.g., _pid_alive or a fake for testing). process_started_at is optional and defaults to None (unchanged behaviour).
+    When provided, checks if the process start time matches the record's started_at; if they differ by more than
+    REUSE_SLACK_S, the PID was reused and the record is treated as dead."""
     alive = []
     dead = []
     for rec in records:
         pid = rec.get("pid")
         if pid and is_alive(pid):
+            if process_started_at:
+                start_time = process_started_at(pid)
+                record_start_str = rec.get("started_at")
+                if start_time and record_start_str:
+                    try:
+                        record_start = datetime.fromisoformat(record_start_str)
+                        if abs((start_time - record_start).total_seconds()) > REUSE_SLACK_S:
+                            dead.append(rec)
+                            continue
+                    except (ValueError, TypeError, AttributeError):
+                        dead.append(rec)
+                        continue
             alive.append(rec)
         else:
             dead.append(rec)
@@ -306,8 +322,55 @@ def _pid_alive(pid: int) -> bool:
         return False
 
 
+def _etime_to_seconds(etime: str) -> int | None:
+    """Parse etime output (dd-hh:mm:ss or hh:mm:ss) to seconds."""
+    if not etime or not isinstance(etime, str):
+        return None
+    # Strip whitespace
+    etime = etime.strip()
+    if not etime:
+        return None
+    days = 0
+    if "-" in etime:
+        try:
+            day_part, time_part = etime.split("-", 1)
+            days = int(day_part)
+            etime = time_part
+        except (ValueError, IndexError):
+            return None
+    try:
+        parts = etime.split(":")
+        if len(parts) == 3:
+            hours, minutes, seconds = int(parts[0]), int(parts[1]), int(parts[2])
+        elif len(parts) == 2:
+            hours, minutes, seconds = 0, int(parts[0]), int(parts[1])
+        else:
+            return None
+        return days * 86400 + hours * 3600 + minutes * 60 + seconds
+    except (ValueError, IndexError):
+        return None
+
+
+def _process_start_time(pid: int) -> datetime | None:
+    """Get process start time via ps -o etime, returning datetime or None if unreadable."""
+    try:
+        proc = subprocess.run(
+            ["ps", "-o", "etime=", "-p", str(pid)],
+            capture_output=True, text=True, timeout=5
+        )
+        if proc.returncode != 0:
+            return None
+        etime_str = proc.stdout.strip()
+        elapsed_s = _etime_to_seconds(etime_str)
+        if elapsed_s is None:
+            return None
+        return datetime.now(timezone.utc) - __import__('datetime').timedelta(seconds=elapsed_s)
+    except Exception:
+        return None
+
+
 def _read_task_records(tasks_dir: Path | None = None) -> list[dict]:
-    """Glob *.json files in tasks_dir, skip unreadable/malformed files. Returns list of task records."""
+    """Glob *.json files in tasks_dir, quarantine unreadable/malformed files. Returns list of task records."""
     tasks_dir = tasks_dir or TASKS_DIR
     records = []
     if not tasks_dir.exists():
@@ -315,8 +378,8 @@ def _read_task_records(tasks_dir: Path | None = None) -> list[dict]:
     for f in tasks_dir.glob("*.json"):
         try:
             records.append(json.loads(f.read_text()))
-        except (OSError, ValueError):
-            pass
+        except (OSError, ValueError) as e:
+            _quarantine_stale(f, tasks_dir, f"malformed JSON: {type(e).__name__}")
     return records
 
 
@@ -329,14 +392,31 @@ def _reap(dead: list[dict], tasks_dir: Path | None = None) -> None:
             (tasks_dir / f"{task_id}.json").unlink(missing_ok=True)
 
 
-def slots_in_use(machine: str | None = None, *, reader=None, is_alive=None, tasks_dir: Path | None = None) -> list[dict]:
+def _quarantine_stale(src: Path, tasks_dir: Path, reason: str) -> None:
+    """Move a malformed or stale task record to stale-records for inspection."""
+    try:
+        stale_dir = tasks_dir.parent / "stale-records"
+        stale_dir.mkdir(parents=True, exist_ok=True)
+        dest = stale_dir / src.name
+        import shutil
+        shutil.move(str(src), str(dest))
+        from hook_errors import log_hook_error
+        log_hook_error("dispatch_concurrency", f"quarantine: {reason}", None)
+    except Exception:
+        pass  # quarantine failures never block dispatch
+
+
+def slots_in_use(machine: str | None = None, *, reader=None, is_alive=None, process_started_at=None,
+                 tasks_dir: Path | None = None) -> list[dict]:
     """Read alive task records, reap the dead ones as a side effect. Filter to machine if provided.
     Returns the list of alive records (which can be counted for available slot logic).
-    reader and is_alive are injected for testing; defaults are _read_task_records and _pid_alive."""
+    reader and is_alive are injected for testing; defaults are _read_task_records and _pid_alive.
+    process_started_at is optional (default None = unchanged behaviour) for checking process age."""
     reader = reader or _read_task_records
     is_alive_fn = is_alive or _pid_alive
+    process_start_fn = process_started_at
     records = reader(tasks_dir)
-    alive, dead = partition_alive(records, is_alive_fn)
+    alive, dead = partition_alive(records, is_alive_fn, process_started_at=process_start_fn)
     if dead:
         _reap(dead, tasks_dir)
     if machine:
@@ -363,11 +443,12 @@ def slots_in_use_remote(host: str, machine: str, run=None) -> list[dict] | None:
         return None
 
 
-def refresh_dispatch_state_summary(tasks_dir: Path | None = None) -> None:
+def refresh_dispatch_state_summary(tasks_dir: Path | None = None, process_started_at=None) -> None:
     """Recompute dispatch-state.json from alive task records: {"busy": False} if none, else
-    {"busy": True, "task": ..., "task_id": ..., "started_at": ...} from the earliest-started record."""
+    {"busy": True, "task": ..., "task_id": ..., "started_at": ...} from the earliest-started record.
+    process_started_at is optional (default None = unchanged behaviour) for checking process age."""
     tasks_dir = tasks_dir or TASKS_DIR
-    alive = slots_in_use(tasks_dir=tasks_dir)
+    alive = slots_in_use(tasks_dir=tasks_dir, process_started_at=process_started_at)
     if not alive:
         state = {"busy": False}
     else:
@@ -386,7 +467,8 @@ def refresh_dispatch_state_summary(tasks_dir: Path | None = None) -> None:
 def _cli(argv: list[str]) -> int:
     """`dispatch_concurrency.py get` prints the settings; `set '<json>'` validates and saves them (the dashboard's
     control), exiting 1 with the reasons on stderr if any field is invalid. `slots-in-use [--machine ID]` prints
-    alive task records as JSON. `refresh-summary` updates dispatch-state.json."""
+    alive task records as JSON. `count-in-use [--machine ID]` prints the count of slots in use.
+    `refresh-summary` updates dispatch-state.json."""
     import sys
     if argv[:1] == ["get"]:
         print(json.dumps(load()))
@@ -404,6 +486,12 @@ def _cli(argv: list[str]) -> int:
             machine = argv[2]
         print(json.dumps(slots_in_use(machine)))
         return 0
+    if argv[:1] == ["count-in-use"]:
+        machine = None
+        if len(argv) >= 3 and argv[1] == "--machine":
+            machine = argv[2]
+        print(len(slots_in_use(machine)))
+        return 0
     if argv[:1] == ["credit-ready"]:
         print("true" if credit_ready_local() else "false")
         return 0
@@ -414,9 +502,9 @@ def _cli(argv: list[str]) -> int:
         print(others_running(argv[2]))
         return 0
     if argv[:1] == ["refresh-summary"]:
-        refresh_dispatch_state_summary()
+        refresh_dispatch_state_summary(process_started_at=_process_start_time)
         return 0
-    print("usage: dispatch_concurrency.py get | set '<json>' | slots-in-use [--machine ID] | refresh-summary", file=sys.stderr)
+    print("usage: dispatch_concurrency.py get | set '<json>' | slots-in-use [--machine ID] | count-in-use [--machine ID] | refresh-summary", file=sys.stderr)
     return 2
 
 

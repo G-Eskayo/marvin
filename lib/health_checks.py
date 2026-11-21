@@ -114,24 +114,17 @@ def check_intent_routing_collection() -> dict:
 
 MAX_DISPATCH_MINUTES_YELLOW = 45  # plan+exec timeouts sum to ~40min worst case per iteration
 MAX_DISPATCH_MINUTES_RED = 120    # well past any legitimate single-ticket run
+CROSS_MACHINE_BUDGET_S = 20  # SSH timeout for cross-machine checks
 
 
-def check_dispatch_lock(state_path: Path | None = None) -> dict:
-    """The exact lock that sat stuck 'busy: true' for 15 days after the
-    mac-mini's crash (found live 2026-10-01), silently blocking the hourly
-    ticket pipeline the whole time with no symptom other than 'nothing is
-    happening,' which nobody could see without SSHing in and reading the
-    raw file by hand."""
+def evaluate_dispatch_lock(text: str, now: datetime) -> dict:
+    """Evaluate dispatch lock state from JSON text. Returns a result dict."""
     cid = "dispatch:lock-age"
-    label = "Local dispatch lock"
-    import stamped
-    path = state_path or (HOME / ".claude" / "dispatch-state.json")
-    if not path.exists():
-        return _result(cid, label, "green", "no lock file (idle)")
-    copy = stamped.read(path)
-    if copy.missing:
+    label = "Dispatch lock"
+    try:
+        state = json.loads(text) if isinstance(text, str) else text
+    except (ValueError, TypeError):
         return _result(cid, label, "red", "lock file unreadable (not a JSON object)")
-    state = copy.value
     if not state.get("busy"):
         return _result(cid, label, "green", "idle")
     started_at = state.get("started_at")
@@ -141,13 +134,74 @@ def check_dispatch_lock(state_path: Path | None = None) -> dict:
         started = datetime.fromisoformat(started_at)
     except ValueError:
         return _result(cid, label, "yellow", f"busy, unparseable started_at: {started_at}")
-    age_min = (_now() - started).total_seconds() / 60
+    age_min = (now - started).total_seconds() / 60
     task = state.get("task", "unknown task")
     if age_min >= MAX_DISPATCH_MINUTES_RED:
         return _result(cid, label, "red", f"busy {age_min:.0f}min on '{task}' — almost certainly stuck", value=age_min)
     if age_min >= MAX_DISPATCH_MINUTES_YELLOW:
         return _result(cid, label, "yellow", f"busy {age_min:.0f}min on '{task}' — longer than a normal single attempt", value=age_min)
     return _result(cid, label, "green", f"busy {age_min:.0f}min on '{task}' — normal range", value=age_min)
+
+
+def _read_dispatch_state_remote(host: str) -> str:
+    """Read dispatch-state.json from a remote machine over SSH; raises on failure."""
+    script = "cat \"$HOME/.claude/dispatch-state.json\" 2>/dev/null || echo '{}'"
+    proc = subprocess.run(["ssh", *SSH_OPTS, host, script],
+                        capture_output=True, text=True, timeout=CROSS_MACHINE_BUDGET_S)
+    if proc.returncode != 0:
+        raise subprocess.CalledProcessError(proc.returncode, ["ssh", host, script],
+                                           output=proc.stdout, stderr=proc.stderr)
+    return proc.stdout
+
+
+def check_dispatch_lock(state_path: Path | None = None, reachability: dict[str, str] | None = None,
+                       remote=None, now: datetime | None = None) -> list[dict]:
+    """Cross-machine dispatch lock check: local + reachable remotes. Returns a list of result dicts
+    (one per machine). An asleep machine is skipped, an unreachable one is reported as unknown."""
+    remote = remote or _read_dispatch_state_remote
+    now = now or _now()
+    results = []
+    me = machine_profile.registry_id()
+    devices = [(me, None, "local")] + [
+        (dev, info.get("tailscale_hostname"), reachability.get(f"machine:{dev}", "yellow") if reachability else "yellow")
+        for dev, info in machine_profile.remote_macs().items()
+    ]
+
+    for dev, host, reach in devices:
+        cid = f"dispatch:lock-age@{dev}"
+        label = f"Dispatch lock — {dev}"
+        if reach == "asleep":
+            results.append(_result(cid, label, "asleep", "cannot check while the machine is asleep"))
+            continue
+        if reach not in ("local", "green"):
+            results.append(_unknown(cid, label, f"machine unreachable ({reach}) — cannot verify lock state"))
+            continue
+
+        try:
+            if host is None:
+                import stamped
+                path = state_path or (HOME / ".claude" / "dispatch-state.json")
+                if not path.exists():
+                    results.append(_result(cid, label, "green", "no lock file (idle)"))
+                    continue
+                copy = stamped.read(path)
+                if copy.missing:
+                    results.append(_result(cid, label, "red", "lock file unreadable"))
+                    continue
+                state_text = json.dumps(copy.value or {})
+            else:
+                state_text = remote(host)
+
+            result = evaluate_dispatch_lock(state_text, now)
+            result["id"] = cid
+            result["label"] = label
+            results.append(result)
+        except (subprocess.CalledProcessError, subprocess.TimeoutExpired, OSError) as exc:
+            results.append(_unknown(cid, label, f"could not read lock state from {host}: {type(exc).__name__}"))
+        except Exception as exc:
+            results.append(_unknown(cid, label, f"could not read lock state: {str(exc)[:100]}"))
+
+    return results
 
 
 # ── cron jobs (absorbed from cron_health.py -- literally the same

@@ -106,14 +106,17 @@ def _tailscale_online_hosts() -> set[str]:
 
 
 def _read_local_dispatch_state() -> dict:
+    import dispatch_concurrency as dc
     import stamped
+    dc.refresh_dispatch_state_summary(process_started_at=dc._process_start_time)
     return stamped.read(DISPATCH_STATE_PATH).value or {"busy": False}
 
 
 def _read_remote_dispatch_state(host: str) -> dict:
     try:
+        refresh_script = '''cd "$HOME/.agents" && "$HOME/.agents/venv/bin/python" -m lib.dispatch_concurrency refresh-summary 2>/dev/null; cat "$HOME/.claude/dispatch-state.json"'''
         proc = subprocess.run(
-            ["ssh", *SSH_OPTS, host, f"cat {SHELL_STATE_PATH}"],
+            ["ssh", *SSH_OPTS, host, refresh_script],
             capture_output=True, text=True, timeout=10,
         )
         if proc.returncode != 0:
@@ -207,7 +210,7 @@ def machine_load(device_id: str, info: dict) -> tuple[float, int, int] | None:
         except OSError:
             return None
         return load1, os.cpu_count() or 0, _live_task_count(Path.home() / ".claude" / "dispatch" / "tasks")
-    cmd = f"sysctl -n vm.loadavg hw.ncpu; ls {SHELL_TASKS_DIR} 2>/dev/null | grep -c '\\.json$'"
+    cmd = f"sysctl -n vm.loadavg hw.ncpu; cd \"$HOME/.agents\" && \"$HOME/.agents/venv/bin/python\" -m lib.dispatch_concurrency count-in-use"
     try:
         proc = subprocess.run(["ssh", *SSH_OPTS, info["tailscale_hostname"], cmd],
                               capture_output=True, text=True, timeout=10)
@@ -220,14 +223,8 @@ def machine_load(device_id: str, info: dict) -> tuple[float, int, int] | None:
 
 
 def _live_task_count(tasks_dir: Path) -> int:
-    n = 0
-    for f in tasks_dir.glob("*.json") if tasks_dir.is_dir() else []:
-        try:
-            if _pid_alive(int(json.loads(f.read_text()).get("pid", 0))):
-                n += 1
-        except Exception:
-            continue
-    return n
+    import dispatch_concurrency as dc
+    return len(dc.slots_in_use(tasks_dir=tasks_dir))
 
 
 def load_score(reading: tuple[float, int, int] | None) -> float | None:
@@ -259,18 +256,6 @@ def pick_fallback_mac() -> tuple[str, dict, float | None] | None:
     tied = [d for d in macs if scores[d] - scores[best] < TIE_MARGIN]
     choice = next((d for d in tied if d in minis), best)
     return choice, macs[choice], scores[choice]
-
-
-def _pid_alive(pid: int) -> bool:
-    if pid <= 0:
-        return False
-    try:
-        os.kill(pid, 0)
-    except ProcessLookupError:
-        return False
-    except PermissionError:
-        return True
-    return True
 
 
 def _fallback_runs_in_progress() -> int:
@@ -402,17 +387,16 @@ fi
     return f"""#!/bin/bash
 mkdir -p {tasks_dir}
 mkdir -p "$HOME/.claude"
-# The cleanup is armed before the record exists: a SIGTERM between writing the record and setting the trap left the
-# record behind and the machine looked busy for ever (main red at 4af4de6, #992). rm -f of a record not yet written is
-# harmless.
-trap 'rm -f "$0" {tasks_dir}/{task_id}.json; cat > {state} << 'DISPATCH_IDLE_EOF'
+# Write to .tmp file first, then atomically move into place. The cleanup trap removes both.
+trap 'rm -f "$0" {tasks_dir}/.{task_id}.json.tmp {tasks_dir}/{task_id}.json; cat > {state} << 'DISPATCH_IDLE_EOF'
 {idle_json}
 DISPATCH_IDLE_EOF
 (cd "$HOME/.agents" && "$HOME/.agents/venv/bin/python" -m lib.dispatch_concurrency refresh-summary)
 "$HOME/.agents/venv/bin/python" "$HOME/.agents/lib/memory_guard.py" kick >/dev/null 2>&1
 "$HOME/.agents/venv/bin/python" "$HOME/.agents/lib/job_hooks.py" stop >/dev/null 2>&1' EXIT
 # $$, not $BASHPID: macOS's /bin/bash is 3.2, which has no BASHPID, and an empty pid made every record unreadable.
-printf '%s, "pid": %s}}' '{record_prefix}' "$$" > {tasks_dir}/{task_id}.json
+printf '%s, "pid": %s}}' '{record_prefix}' "$$" > {tasks_dir}/.{task_id}.json.tmp
+mv {tasks_dir}/.{task_id}.json.tmp {tasks_dir}/{task_id}.json
 cat > {state} << 'DISPATCH_STATE_EOF'
 {busy_json}
 DISPATCH_STATE_EOF

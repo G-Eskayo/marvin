@@ -192,6 +192,67 @@ def test_tailscale_success_path_no_logging(hook_errors_log, monkeypatch):
 	assert "tailscale_online_hosts_or_none" not in logs
 
 
+# ── wrapper atomicity ────────────────────────────────────────────────────────
+
+def test_the_wrapper_writes_task_record_atomically_via_tmp_and_move():
+	# Task records must appear atomically to avoid stale state files. The wrapper writes to .{task_id}.json.tmp
+	# then moves atomically into place.
+	import task_dispatch as td
+	script = td._build_wrapper_script("true", "abc123", "label", "test-device")
+	assert '.abc123.json.tmp' in script
+	assert 'mv' in script and '.abc123.json.tmp' in script and 'abc123.json' in script
+	# Cleanup trap removes both the tmp and final file
+	assert 'rm -f' in script and '.abc123.json.tmp' in script
+
+
+# ── dispatch state reading ───────────────────────────────────────────────────
+
+def test_read_local_dispatch_state_calls_refresh_summary(monkeypatch, tmp_path):
+	import task_dispatch as td
+	import dispatch_concurrency as dc
+
+	calls = []
+	def mock_refresh(*args, **kwargs):
+		calls.append(('refresh', args, kwargs))
+		# Don't touch the real filesystem; just create the state file locally
+		import json
+		state_path = kwargs.get('tasks_dir') or dc.TASKS_DIR
+		state_path = state_path.parent / "dispatch-state.json"
+		state_path.parent.mkdir(parents=True, exist_ok=True)
+		state_path.write_text(json.dumps({"busy": False}))
+
+	monkeypatch.setattr(dc, "refresh_dispatch_state_summary", mock_refresh)
+	monkeypatch.setattr(td, "DISPATCH_STATE_PATH", tmp_path / "state.json")
+	monkeypatch.setattr(dc, "DISPATCH_STATE_PATH", tmp_path / "state.json")
+
+	# Create a dummy state file for stamped to read
+	import json
+	(tmp_path / "state.json").write_text(json.dumps({"busy": False}))
+
+	td._read_local_dispatch_state()
+	assert calls and calls[0][0] == 'refresh'
+	assert calls[0][2].get('process_started_at') is not None
+
+
+def test_live_task_count_delegates_to_dispatch_concurrency(monkeypatch):
+	import task_dispatch as td
+	import dispatch_concurrency as dc
+	from pathlib import Path
+
+	calls = []
+	def mock_slots_in_use(machine=None, **kwargs):
+		calls.append(('slots_in_use', machine, kwargs))
+		return [{"task_id": "t1"}, {"task_id": "t2"}]
+
+	monkeypatch.setattr(dc, "slots_in_use", mock_slots_in_use)
+
+	tasks_dir = Path("/tmp/tasks")
+	count = td._live_task_count(tasks_dir)
+
+	assert count == 2
+	assert calls == [('slots_in_use', None, {'tasks_dir': tasks_dir})]
+
+
 def test_read_remote_ssh_non_zero_is_logged(hook_errors_log, monkeypatch):
 	"""When ssh exits non-zero, a RuntimeError is logged."""
 	import subprocess as sp

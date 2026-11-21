@@ -249,3 +249,264 @@ def test_the_shipped_dispatch_config_is_valid_and_turns_box_builds_on():
     clean, problems = dc.validate(raw)
     assert problems == []
     assert dc.box_slots(clean) >= 1
+
+
+# --- process start time and reuse checking ---
+
+def test_etime_to_seconds_parses_elapsed_time():
+    assert dc._etime_to_seconds("1:30") == 90
+    assert dc._etime_to_seconds("1:00:30") == 3630
+    assert dc._etime_to_seconds("1-02:30:45") == 95445  # 1 day + 2h 30m 45s
+    assert dc._etime_to_seconds("0:00:05") == 5
+
+
+def test_etime_to_seconds_handles_invalid_input():
+    assert dc._etime_to_seconds("") is None
+    assert dc._etime_to_seconds("invalid") is None
+    assert dc._etime_to_seconds(None) is None
+
+
+def test_partition_alive_with_reuse_check_detects_pid_reuse():
+    from datetime import datetime, timezone, timedelta
+    now = datetime.now(timezone.utc)
+    # Task a: record says started 400s ago
+    t_a_record = now - timedelta(seconds=400)
+    # Task b: record says started 600s ago (much longer ago)
+    t_b_record = now - timedelta(seconds=600)
+
+    records = [
+        {"task_id": "a", "pid": 1, "machine": "m1", "started_at": t_a_record.isoformat()},
+        {"task_id": "b", "pid": 999999, "machine": "m1", "started_at": t_b_record.isoformat()},
+    ]
+    def is_alive(pid):
+        return pid in (1, 999999)
+
+    # PID 1 process actually started when the record says (400s ago) - same process
+    # PID 999999 process actually started 100s ago, but record says 600s ago - PID was reused (500s diff > 300s)
+    def fake_process_start(pid):
+        if pid == 1:
+            return t_a_record  # matches its record
+        elif pid == 999999:
+            return now - timedelta(seconds=100)  # 500s diff from record > REUSE_SLACK_S=300s
+        return None
+
+    alive, dead = dc.partition_alive(records, is_alive, process_started_at=fake_process_start)
+    assert [r["task_id"] for r in alive] == ["a"]  # only PID 1 matches its record
+    assert [r["task_id"] for r in dead] == ["b"]  # PID 999999 was reused
+
+
+def test_partition_alive_with_reuse_check_keeps_young_processes():
+    from datetime import datetime, timezone, timedelta
+    records = [
+        {"task_id": "a", "pid": 1, "machine": "m1"},  # init, always alive
+    ]
+    def is_alive(pid):
+        return pid == 1
+
+    # process_started_at returns a time 100 seconds ago (< REUSE_SLACK_S)
+    young_start = datetime.now(timezone.utc) - timedelta(seconds=100)
+    def young_process_start(pid):
+        return young_start if pid == 1 else None
+
+    alive, dead = dc.partition_alive(records, is_alive, process_started_at=young_process_start)
+    assert [r["task_id"] for r in alive] == ["a"]  # young process is kept
+    assert len(dead) == 0
+
+
+def test_quarantine_stale_moves_file_to_stale_records():
+    tmp = Path(__import__("tempfile").mkdtemp())
+    try:
+        tasks_dir = tmp / "tasks"
+        tasks_dir.mkdir()
+        stale_dir = tmp / "stale-records"
+
+        bad_file = tasks_dir / "bad.json"
+        bad_file.write_text("{malformed}")
+
+        dc._quarantine_stale(bad_file, tasks_dir, "test reason")
+
+        assert not bad_file.exists()
+        assert (stale_dir / "bad.json").exists()
+    finally:
+        import shutil
+        shutil.rmtree(tmp)
+
+
+def test_refresh_dispatch_state_summary_with_process_started_at(tmp_path, monkeypatch):
+    from datetime import datetime, timezone, timedelta
+
+    monkeypatch.setattr(dc, "DISPATCH_STATE_PATH", tmp_path / "state.json")
+    tasks_dir = tmp_path / "tasks"
+    tasks_dir.mkdir()
+
+    # Create two task records
+    now = datetime.now(timezone.utc)
+    # t1: process still matches its record (not reused)
+    # t2: PID reused (process start time doesn't match record)
+    t1_record_start = now - timedelta(seconds=50)
+    t2_record_start = now - timedelta(seconds=400)
+
+    records = [
+        {"task_id": "t1", "task": "matching task", "started_at": t1_record_start.isoformat(), "pid": 100},
+        {"task_id": "t2", "task": "reused pid task", "started_at": t2_record_start.isoformat(), "pid": 101},
+    ]
+    for r in records:
+        (tasks_dir / f"{r['task_id']}.json").write_text(json.dumps(r))
+
+    def fake_is_alive(pid):
+        return True
+
+    def fake_process_started_at(pid):
+        if pid == 100:
+            # Actual start time matches the record
+            return t1_record_start
+        elif pid == 101:
+            # Actual start time is now (doesn't match record which is 400s old)
+            return now
+        return None
+
+    monkeypatch.setattr(dc, "_pid_alive", fake_is_alive)
+
+    dc.refresh_dispatch_state_summary(tasks_dir, process_started_at=fake_process_started_at)
+    state = json.loads((tmp_path / "state.json").read_text())
+
+    # Only t1 should remain (t2 detected as reused PID and reaped)
+    assert state["busy"] is True
+    assert state["task_id"] == "t1"
+
+
+def test_cli_refresh_summary_with_process_started_at(tmp_path, monkeypatch, capsys):
+    from datetime import datetime, timezone
+    monkeypatch.setattr(dc, "DISPATCH_STATE_PATH", tmp_path / "state.json")
+    tasks_dir = tmp_path / "tasks"
+    tasks_dir.mkdir()
+    monkeypatch.setattr(dc, "TASKS_DIR", tasks_dir)
+
+    # Create a task record with a start time that matches the fake process
+    now = datetime.now(timezone.utc)
+    record_start = now.isoformat()
+    (tasks_dir / "t1.json").write_text(json.dumps({"task_id": "t1", "task": "test", "started_at": record_start, "pid": 1}))
+
+    def fake_is_alive(pid):
+        return pid == 1
+
+    def fake_process_start(pid):
+        return now if pid == 1 else None
+
+    monkeypatch.setattr(dc, "_pid_alive", fake_is_alive)
+    monkeypatch.setattr(dc, "_process_start_time", fake_process_start)
+
+    # Call the refresh-summary CLI command
+    assert dc._cli(["refresh-summary"]) == 0
+    state = json.loads((tmp_path / "state.json").read_text())
+    # Task record should still be there because process start matches record start
+    assert state.get("busy") is True
+    assert state.get("task_id") == "t1"
+
+
+def test_cli_count_in_use_prints_count(tmp_path, monkeypatch, capsys):
+    tasks_dir = tmp_path / "tasks"
+    tasks_dir.mkdir()
+
+    # Create some task records
+    for i in range(3):
+        (tasks_dir / f"t{i}.json").write_text(json.dumps({"task_id": f"t{i}", "pid": 1}))
+
+    def fake_is_alive(pid):
+        return pid == 1
+
+    monkeypatch.setattr(dc, "_pid_alive", fake_is_alive)
+    monkeypatch.setattr(dc, "TASKS_DIR", tasks_dir)
+
+    # Call count-in-use
+    assert dc._cli(["count-in-use"]) == 0
+    output = capsys.readouterr().out.strip()
+    assert output == "3"
+
+
+def test_partition_alive_with_mismatched_start_times_detects_reuse():
+    """Core bug fix: reuse check should compare start times, not elapsed time."""
+    from datetime import datetime, timezone, timedelta
+    now = datetime.now(timezone.utc)
+    record_started = now - timedelta(seconds=400)
+
+    records = [
+        {"task_id": "a", "pid": 1, "machine": "m1", "started_at": record_started.isoformat()},
+    ]
+    def is_alive(pid):
+        return pid == 1
+
+    # Process is alive but started at a different time than the record claims
+    # (time difference > REUSE_SLACK_S), so it's a reused PID
+    def process_start_time(pid):
+        if pid == 1:
+            return now - timedelta(seconds=750)  # 350 seconds off from record (> REUSE_SLACK_S=300)
+        return None
+
+    alive, dead = dc.partition_alive(records, is_alive, process_started_at=process_start_time)
+    assert len(alive) == 0
+    assert len(dead) == 1
+    assert dead[0]["task_id"] == "a"
+
+
+def test_partition_alive_with_matching_start_times_keeps_process():
+    """Reuse check: if start times match (within tolerance), process is not reused."""
+    from datetime import datetime, timezone, timedelta
+    now = datetime.now(timezone.utc)
+    record_started = now - timedelta(seconds=400)
+
+    records = [
+        {"task_id": "a", "pid": 1, "machine": "m1", "started_at": record_started.isoformat()},
+    ]
+    def is_alive(pid):
+        return pid == 1
+
+    # Process start time matches the record (within tolerance)
+    def process_start_time(pid):
+        if pid == 1:
+            return record_started + timedelta(seconds=1)  # Only 1 second off
+        return None
+
+    alive, dead = dc.partition_alive(records, is_alive, process_started_at=process_start_time)
+    assert len(alive) == 1
+    assert alive[0]["task_id"] == "a"
+    assert len(dead) == 0
+
+
+def test_partition_alive_with_unparseable_started_at_marks_dead():
+    """Reuse check: if started_at is unparseable, treat record as stale."""
+    from datetime import datetime, timezone, timedelta
+    records = [
+        {"task_id": "a", "pid": 1, "machine": "m1", "started_at": "not-a-valid-timestamp"},
+    ]
+    def is_alive(pid):
+        return pid == 1
+
+    def process_start_time(pid):
+        if pid == 1:
+            return datetime.now(timezone.utc)
+        return None
+
+    alive, dead = dc.partition_alive(records, is_alive, process_started_at=process_start_time)
+    assert len(alive) == 0
+    assert len(dead) == 1
+
+
+def test_partition_alive_without_started_at_keeps_process():
+    """Reuse check: if started_at is missing, don't use the reuse check (backward compat)."""
+    from datetime import datetime, timezone
+    records = [
+        {"task_id": "a", "pid": 1, "machine": "m1"},  # no started_at
+    ]
+    def is_alive(pid):
+        return pid == 1
+
+    def process_start_time(pid):
+        if pid == 1:
+            return datetime.now(timezone.utc)
+        return None
+
+    alive, dead = dc.partition_alive(records, is_alive, process_started_at=process_start_time)
+    # Without started_at, we can't compare, so the process is kept if it's alive
+    assert len(alive) == 1
+    assert len(dead) == 0

@@ -1,0 +1,14 @@
+1. `lib/dispatch_concurrency.py`: add `_process_start_time(pid) -> datetime | None` (via `ps -o etime= -p PID`, reusing `health_checks._ETIME_AWK`'s elapsed-seconds math, ported to Python); add `REUSE_SLACK_S`.
+2. `lib/dispatch_concurrency.py`: extend `partition_alive(records, is_alive, process_started_at=None)` with the reuse check (default `None` = today's behaviour, unchanged for direct callers).
+3. `lib/dispatch_concurrency.py`: add `_quarantine_stale(src, tasks_dir, reason)` (move into `tasks_dir.parent / "stale-records"`, log via `hook_errors.log_hook_error`); wire it into `_read_task_records` (malformed JSON) and `_reap` (dead records, replacing the unlink).
+4. `lib/dispatch_concurrency.py`: thread `process_started_at` through `slots_in_use` (default: the real `_process_start_time`) and `refresh_dispatch_state_summary` (default: `None`, i.e. unchanged unless a caller opts in).
+5. `lib/dispatch_concurrency.py`: `refresh-summary` CLI branch passes `process_started_at=_process_start_time` explicitly (the real production wiring); add a `count-in-use [--machine ID]` CLI branch (prints `len(slots_in_use(...))`).
+6. `lib/task_dispatch.py`: rewrite `_read_local_dispatch_state` to call `dispatch_concurrency.refresh_dispatch_state_summary(process_started_at=dc._process_start_time)` then read `dc.DISPATCH_STATE_PATH` via `stamped.read`.
+7. `lib/task_dispatch.py`: rewrite `_read_remote_dispatch_state` to ssh `refresh-summary` (output silenced) then `cat {SHELL_STATE_PATH}` in one call, keeping existing JSON-parse/error-handling unchanged.
+8. `lib/task_dispatch.py`: rewrite `_live_task_count` to delegate to `dispatch_concurrency.slots_in_use(tasks_dir=tasks_dir)`; delete the now-unused `task_dispatch._pid_alive`.
+9. `lib/task_dispatch.py`: `machine_load`'s remote branch: replace `ls {SHELL_TASKS_DIR} | grep -c '\.json$'` with the new `count-in-use` CLI call.
+10. `lib/task_dispatch.py`: `_build_wrapper_script` — write the task record to a `.{task_id}.json.tmp` file then `mv` it into place; also `rm -f` that tmp path in the `EXIT` trap.
+11. `lib/health_checks.py`: split `check_dispatch_lock`'s scoring into `evaluate_dispatch_lock(text, now)`, then rewrite `check_dispatch_lock(state_path=None, reachability=None, remote=None, now=None)` to return a list (local row + one row per reachable remote Mac, reusing `_reachable`/the `check_sync_stuck`-style remote-ssh pattern); update its `default_checks()` registration to `CROSS_MACHINE_BUDGET_S`.
+12. `dashboard/electron/main/dispatch_status.js`: `readDispatchStatus` cross-checks the referenced task record's pid liveness (via `process.kill(pid, 0)`) before trusting `busy: true`; accept an injectable `tasksDir` for tests.
+13. Write all tests listed above, confirming each fails against the old code and passes against the new.
+14. Run `pytest lib` and the dashboard vitest suite in full (not just the touched files) before calling this done, per the full-suite-before-merge rule.

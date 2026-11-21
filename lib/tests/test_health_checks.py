@@ -47,48 +47,99 @@ def test_check_token_files_green_when_clean(tmp_path, monkeypatch):
 
 # ── dispatch lock ────────────────────────────────────────────────────────
 
-def test_check_dispatch_lock_green_when_no_file(tmp_path):
-    result = hc.check_dispatch_lock(state_path=tmp_path / "nope.json")
+def test_evaluate_dispatch_lock_green_when_idle():
+    now = datetime.now(timezone.utc)
+    result = hc.evaluate_dispatch_lock(json.dumps({"busy": False}), now)
     assert result["severity"] == "green"
 
 
-def test_check_dispatch_lock_green_when_idle(tmp_path):
-    p = tmp_path / "dispatch-state.json"
-    p.write_text(json.dumps({"busy": False}))
-    assert hc.check_dispatch_lock(state_path=p)["severity"] == "green"
-
-
-def test_check_dispatch_lock_red_after_15_days():
+def test_evaluate_dispatch_lock_red_after_15_days():
     # The exact incident: a lock left busy since before the mac-mini's
     # 2026-09-15 crash, still busy 2026-09-30 when found live.
-    import tempfile
-    with tempfile.TemporaryDirectory() as d:
-        p = Path(d) / "dispatch-state.json"
-        stale = (datetime.now(timezone.utc) - timedelta(days=15)).isoformat()
-        p.write_text(json.dumps({"busy": True, "task": "ticket #30", "started_at": stale}))
-        result = hc.check_dispatch_lock(state_path=p)
+    stale = (datetime.now(timezone.utc) - timedelta(days=15)).isoformat()
+    result = hc.evaluate_dispatch_lock(json.dumps({"busy": True, "task": "ticket #30", "started_at": stale}),
+                                       datetime.now(timezone.utc))
     assert result["severity"] == "red"
     assert "ticket #30" in result["detail"]
 
 
-def test_check_dispatch_lock_yellow_in_warning_window():
-    import tempfile
-    with tempfile.TemporaryDirectory() as d:
-        p = Path(d) / "dispatch-state.json"
-        aged = (datetime.now(timezone.utc) - timedelta(minutes=60)).isoformat()
-        p.write_text(json.dumps({"busy": True, "task": "t", "started_at": aged}))
-        result = hc.check_dispatch_lock(state_path=p)
+def test_evaluate_dispatch_lock_yellow_in_warning_window():
+    aged = (datetime.now(timezone.utc) - timedelta(minutes=60)).isoformat()
+    result = hc.evaluate_dispatch_lock(json.dumps({"busy": True, "task": "t", "started_at": aged}),
+                                       datetime.now(timezone.utc))
     assert result["severity"] == "yellow"
 
 
-def test_check_dispatch_lock_green_shortly_after_start():
-    import tempfile
-    with tempfile.TemporaryDirectory() as d:
-        p = Path(d) / "dispatch-state.json"
-        fresh = (datetime.now(timezone.utc) - timedelta(minutes=2)).isoformat()
-        p.write_text(json.dumps({"busy": True, "task": "t", "started_at": fresh}))
-        result = hc.check_dispatch_lock(state_path=p)
+def test_evaluate_dispatch_lock_green_shortly_after_start():
+    fresh = (datetime.now(timezone.utc) - timedelta(minutes=2)).isoformat()
+    result = hc.evaluate_dispatch_lock(json.dumps({"busy": True, "task": "t", "started_at": fresh}),
+                                       datetime.now(timezone.utc))
     assert result["severity"] == "green"
+
+
+def test_check_dispatch_lock_returns_list(tmp_path, monkeypatch):
+    # check_dispatch_lock now returns a list of results (one per machine)
+    p = tmp_path / "dispatch-state.json"
+    p.write_text(json.dumps({"busy": False}))
+
+    # Mock machine_profile functions to avoid actual network calls
+    import machine_profile
+    monkeypatch.setattr(machine_profile, "registry_id", lambda: "mac-mini-1")
+    monkeypatch.setattr(machine_profile, "remote_macs", lambda: {})
+
+    results = hc.check_dispatch_lock(state_path=p)
+    assert isinstance(results, list)
+    assert len(results) > 0
+    assert all(isinstance(r, dict) for r in results)
+    assert all(r.get("severity") in ("green", "yellow", "red", "asleep", "unknown") for r in results)
+
+
+def test_check_dispatch_lock_remote_ssh_failure_is_unknown_not_idle(monkeypatch):
+    """Bug fix: failed remote ssh should return unknown, not silently treat as idle.
+    Without the fix, state_text becomes '{}' and evaluate_dispatch_lock returns green idle."""
+    import machine_profile
+
+    # Mock machine_profile to include a remote machine
+    monkeypatch.setattr(machine_profile, "registry_id", lambda: "mac-mini-1")
+    monkeypatch.setattr(machine_profile, "remote_macs", lambda: {
+        "macbook-pro-1": {"tailscale_hostname": "mbp"}
+    })
+
+    def failing_remote(host):
+        raise subprocess.CalledProcessError(1, ["ssh", host], stderr="Connection refused")
+
+    # Mark remote as reachable so the check is attempted
+    reachability = {"machine:macbook-pro-1": "green"}
+    results = hc.check_dispatch_lock(reachability=reachability, remote=failing_remote)
+    # Find the result for the remote machine
+    remote_results = [r for r in results if "@macbook-pro-1" in r["id"]]
+    assert len(remote_results) == 1
+    assert remote_results[0]["severity"] == "unknown"
+    assert "could not read lock state" in remote_results[0]["detail"]
+
+
+def test_check_dispatch_lock_uses_injected_remote_function(monkeypatch):
+    """The remote parameter should be used to fetch remote state, not direct subprocess."""
+    import machine_profile
+
+    monkeypatch.setattr(machine_profile, "registry_id", lambda: "mac-mini-1")
+    monkeypatch.setattr(machine_profile, "remote_macs", lambda: {
+        "macbook-pro-1": {"tailscale_hostname": "mbp"}
+    })
+
+    calls = []
+    def tracking_remote(host):
+        calls.append(("remote", host))
+        return json.dumps({"busy": False})
+
+    # Mark remote as reachable so the check is attempted
+    reachability = {"machine:macbook-pro-1": "green"}
+    results = hc.check_dispatch_lock(reachability=reachability, remote=tracking_remote)
+    # Verify the remote function was called
+    assert calls == [("remote", "mbp")]
+    # And the result should be green idle
+    remote_results = [r for r in results if "@macbook-pro-1" in r["id"]]
+    assert remote_results[0]["severity"] == "green"
 
 
 # ── coverage / auto-discovery ────────────────────────────────────────────
