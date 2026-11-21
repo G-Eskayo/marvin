@@ -209,6 +209,16 @@ def remote_macs() -> dict:
     return {k: v for k, v in remote_devices().items() if v.get("os", "macos") == "macos"}
 
 
+def is_calibrated(device_id: str) -> bool:
+    """True if the device is marked for health checks. Default True; only an explicit calibrated:false
+    disables it. Fails open on a missing or unreadable registry."""
+    registry = _load_registry()
+    if device_id not in registry:
+        return True
+    cal = registry[device_id].get("calibrated")
+    return cal is not False  # default True; only explicit false disables
+
+
 if __name__ == "__main__":
     profile = build_profile()
     PROFILE_PATH.parent.mkdir(parents=True, exist_ok=True)

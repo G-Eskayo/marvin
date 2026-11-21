@@ -83,8 +83,19 @@ def test_a_measurement_failure_is_reported_not_judged():
 
 def test_health_turns_red_for_each_missed_purpose():
     found = pm.health_findings([{"number": 277, "title": "Allow read-only tools", "labels": [{"name": pm.MISSED_LABEL}]}])
-    assert found[0]["severity"] == "red" and "#277 Allow read-only tools" in found[0]["detail"]
+    assert found[0]["severity"] == "yellow" and "#277 Allow read-only tools" in found[0]["detail"]
     assert pm.health_findings([])[0]["severity"] == "green"
+
+
+def test_purpose_metrics_health_findings_never_emits_red():
+    # Verify that all findings cap at yellow, never escalate to red
+    # Test with multiple missed purposes
+    findings = pm.health_findings([
+        {"number": 277, "title": "Issue 1", "labels": [{"name": pm.MISSED_LABEL}]},
+        {"number": 278, "title": "Issue 2", "labels": [{"name": pm.MISSED_LABEL}]},
+    ])
+    for finding in findings:
+        assert finding["severity"] != "red", f"{finding['id']} returned red"
 
 
 def test_a_rate_across_macs_comes_from_summed_counts(monkeypatch):

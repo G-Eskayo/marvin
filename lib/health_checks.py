@@ -27,7 +27,6 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import code_sync  # noqa: E402
-import cron_health as ch  # noqa: E402
 import machine_profile  # noqa: E402
 from machine_profile import machine_label  # noqa: E402
 from task_dispatch import TAILSCALE_BIN, TAILSCALE_ENV  # noqa: E402  (absolute path -- launchd's PATH omits the shell's additions)
@@ -53,6 +52,9 @@ def _result(id_, label, severity, detail, value=None) -> dict:
 # A check that couldn't be measured this sweep (it raised, hung or returned nonsense). Never green, never old data shown
 # as current: the card says why. Overall reads it as degraded (yellow), since nothing could be verified.
 UNKNOWN = "unknown"
+
+# A device awaiting calibration before its checks count toward Health. Never green, never counted in severity.
+UNCALIBRATED = "uncalibrated"
 
 
 def _unknown(id_, label, why) -> dict:
@@ -267,52 +269,6 @@ def check_dispatch_lock(state_path: Path | None = None) -> dict:
     return _result(cid, label, "green", f"busy {age_min:.0f}min on '{task}' — normal range", value=age_min)
 
 
-# ── cron jobs (absorbed from cron_health.py -- literally the same
-# check_job() + persistent offset-tracking state, not a reimplementation,
-# per ADR 0033. Reimplementing the log-scan naively (whole-tail regex, no
-# offset tracking) was tried first and rejected: it re-flagged every
-# already-seen historical failure on every run, which is exactly the
-# false-alarm problem check_job()'s state file already solved.) ─────────
-
-def _plist_label_to_job_name(label: str) -> str:
-    for prefix in ("com.marvin.", "com.giles.", "com.gileskayo."):
-        if label.startswith(prefix):
-            return label[len(prefix):]
-    return label
-
-
-def discover_launchd_jobs() -> list[str]:
-    """The coverage fix (ADR 0033): enumerate real plists instead of
-    trusting a hand-maintained list. cron_health.py's own JOBS dict was
-    found live 2026-10-01 covering 5 of 14 real jobs -- ticket-pipeline,
-    the subsystem that spent the whole session spiraling, wasn't in it."""
-    if not LAUNCHAGENTS_DIR.exists():
-        return []
-    names = []
-    for plist in LAUNCHAGENTS_DIR.glob("com.*.plist"):
-        label = plist.stem
-        if label in ("com.apple.BKAgentService",):
-            continue
-        names.append(_plist_label_to_job_name(label))
-    return sorted(names)
-
-
-def check_cron_job_log(job_name: str, state: dict, now: datetime) -> dict | None:
-    """Thin wrapper over cron_health.check_job() -- same JOBS table, same
-    offset-tracked state (mutates `state` in place; caller persists it via
-    cron_health._save_state so this shares one state file with the
-    existing session-start markdown consumer, not a second copy)."""
-    cid = f"cron:{job_name}"
-    label = f"Cron job: {job_name}"
-    entry = ch.JOBS.get(job_name)
-    if entry is None:
-        return None  # has a plist but no known log-scan target yet -- not a failure, a coverage gap
-    scheduled, log_paths = entry
-    line = ch.check_job(job_name, scheduled, log_paths, state, now)
-    if line is None:
-        return _result(cid, label, "green", "no failure indicators since last check")
-    severity = "yellow" if "may not have run" in line else "red"
-    return _result(cid, label, severity, line)
 
 
 # ── repo integrity (absorbed from cron_health.py) ───────────────────────
@@ -1692,7 +1648,7 @@ def classify_unreachable(kind: str, peer: dict | None, now: datetime, grace_hour
 
 
 def overall_severity(severities: list[str]) -> str:
-    """`asleep` is neutral: it never raises the overall status above green. A check that couldn't be measured is
+    """`asleep` and `uncalibrated` are neutral: they never raise the overall status above green. A check that couldn't be measured is
     degraded (yellow): Health can't say it's fine."""
     return "red" if "red" in severities else "yellow" if ("yellow" in severities or UNKNOWN in severities) else "green"
 
@@ -1722,20 +1678,33 @@ def check_machine_reachability() -> list[dict]:
 
 # ── coverage ─────────────────────────────────────────────────────────────
 
-def coverage(results: list[dict]) -> dict:
-    """What fraction of real, discovered infrastructure has a check at
-    all. Jobs with a plist but no entry in JOB_LOG_PATHS show up as
-    explicitly unmonitored rather than silently absent."""
-    discovered = discover_launchd_jobs()
-    checked_ids = {r["id"] for r in results}
-    unmonitored = [j for j in discovered if f"cron:{j}" not in checked_ids]
-    n_covered = len(discovered) - len(unmonitored)
+def coverage(loaded: dict[str, list[str]] | None = None) -> dict:
+    """What fraction of catalogued jobs are running on this machine.
+    `loaded` maps machine name -> list of loaded com.marvin.* job names (default from launchctl).
+    Uses job_catalog.JOBS as truth, applying the same `machine != "none"` filter as JOB_PLACEMENT.
+    Unmonitored jobs are those loaded but not in the catalog."""
+    if loaded is None:
+        try:
+            loaded = _job_catalog._loaded_here()
+        except Exception:
+            loaded = {}
+    loaded_names = set()
+    for job_names in loaded.values():
+        if isinstance(job_names, list):
+            loaded_names.update(job_names)
+
+    # Catalogued jobs on this machine (same filter as JOB_PLACEMENT)
+    catalogued = {n for n, j in _job_catalog.JOBS.items()
+                  if j.get("label", f"com.marvin.{n}").startswith("com.marvin.") and j["machine"] != "none"}
+
+    unmonitored = sorted(loaded_names - catalogued)
+    n_covered = len(catalogued)
     return {
-        "known_jobs": discovered,
+        "catalogued_jobs": sorted(catalogued),
         "unmonitored_jobs": unmonitored,
         "covered": n_covered,
-        "total": len(discovered),
-        "fraction": round(n_covered / len(discovered), 2) if discovered else 1.0,
+        "total": n_covered + len(unmonitored),
+        "fraction": round(1.0 if n_covered == 0 and len(unmonitored) == 0 else n_covered / (n_covered + len(unmonitored)), 2),
     }
 
 
@@ -1773,6 +1742,10 @@ def guarded(check_id: str, label: str, fn, budget_s: float = CHECK_BUDGET_S) -> 
         return []
     rows = value if isinstance(value, list) else [value]
     if all(isinstance(r, dict) and r.get("id") and r.get("severity") for r in rows):
+        now = _now().isoformat()
+        for r in rows:
+            if not r.get("checked_at"):
+                r["checked_at"] = now
         return rows
     return [_unknown(check_id, label, f"the check returned something that isn't a result ({type(value).__name__})")]
 
@@ -1783,14 +1756,6 @@ def run_checks(specs) -> list[dict]:
     for check_id, label, fn, budget in specs:
         results += guarded(check_id, label, fn, budget)
     return results
-
-
-def _cron_job_logs() -> list[dict]:
-    cron_state = ch._load_state()
-    cron_now = datetime.now().astimezone()
-    out = [r for r in (check_cron_job_log(job, cron_state, cron_now) for job in discover_launchd_jobs()) if r]
-    ch._save_state(cron_state)
-    return out
 
 
 def check_brief_builder() -> dict:
@@ -1944,13 +1909,25 @@ def default_checks(reach: dict[str, str] | None = None, reach_results: list[dict
         ("seal:beta-ingest", "Seal Speak beta reports are picked up", check_seal_beta_ingest, CHECK_BUDGET_S),
         ("brief:builder", "Morning brief builder", check_brief_builder, CHECK_BUDGET_S),
         ("merge:service", "Merge service reachable", check_merge_service, CROSS_MACHINE_BUDGET_S),
-        ("cron", "Cron job logs", _cron_job_logs, CHECK_BUDGET_S),
         ("machine", "Machine reachability", lambda: list(reach_results or []), CHECK_BUDGET_S),
         ("repo:sync", "Repo sync", lambda: check_repo_sync_everywhere(reach), CROSS_MACHINE_BUDGET_S),
         ("mirror:sync", "Mirror sync on pull-only nodes", lambda: _mirror_health().check_mirror_sync_everywhere(reach),
          CROSS_MACHINE_BUDGET_S),
         ("machine-state", "Machine state", lambda: check_machine_state_everywhere(reach), CROSS_MACHINE_BUDGET_S),
     ]
+
+
+def _extract_device_from_id(result_id: str) -> str | None:
+    """Extract device ID from result IDs: machine:<dev>, anything@<dev>, sync:stuck:<dev>:..."""
+    if result_id.startswith("machine:"):
+        return result_id.split(":", 1)[1]
+    if "@" in result_id:
+        return result_id.rsplit("@", 1)[1]
+    if result_id.startswith("sync:stuck:"):
+        parts = result_id.split(":")
+        if len(parts) >= 3:
+            return parts[2]
+    return None
 
 
 def run_all(checks=None, recent_errors=None) -> dict:
@@ -1973,7 +1950,21 @@ def run_all(checks=None, recent_errors=None) -> dict:
         results += run_checks(checks)
         recent_errors = recent_errors or []
 
-    cov = coverage(results)
+    # Fold results for uncalibrated devices: replace all with a single UNCALIBRATED row per device
+    uncalibrated_devices = set()
+    for r in results:
+        dev = _extract_device_from_id(r.get("id", ""))
+        if dev and not machine_profile.is_calibrated(dev):
+            uncalibrated_devices.add(dev)
+
+    if uncalibrated_devices:
+        # Remove all results for uncalibrated devices, add one per device
+        results = [r for r in results if _extract_device_from_id(r.get("id", "")) not in uncalibrated_devices]
+        for dev in sorted(uncalibrated_devices):
+            results.append(_result(f"machine:{dev}:uncalibrated", f"Machine: {dev}",
+                                   UNCALIBRATED, "not reporting yet — awaiting calibration before it counts toward the verdict"))
+
+    cov = coverage()
     return {
         "generated_at": _now().isoformat(),
         "overall": overall_severity([r["severity"] for r in results]),

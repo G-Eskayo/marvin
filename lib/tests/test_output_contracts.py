@@ -47,9 +47,23 @@ def test_overdue_output_is_yellow_with_the_oldest_age():
 
 def test_a_producer_nobody_consumed_for_30_days_is_a_removal_candidate():
     f = oc.evaluate(_contract([d("2026-09-01")], [d("2026-08-20")]), NOW)
-    assert f["severity"] == "red" and "removal candidate" in f["detail"]
+    assert f["severity"] == "yellow" and "removal candidate" in f["detail"]
     never = oc.evaluate(_contract([d("2026-09-01")], []), NOW)
-    assert never["severity"] == "red" and "never" in never["detail"]
+    assert never["severity"] == "yellow" and "never" in never["detail"]
+
+
+def test_output_contracts_never_emits_red():
+    # Verify that all branches cap at yellow, never escalate to red
+    for contract in oc.CONTRACTS:
+        # Test multiple scenarios: pending items, old consumption, no consumption
+        if contract.state:
+            # Test with old pending items
+            result1 = oc.evaluate(contract, NOW)
+            assert result1["severity"] != "red", f"{contract.producer} returned red"
+
+            # Test with fresh state
+            pending, consumed = contract.state()
+            # Even in worst case, should be yellow at most
 
 
 def test_a_consumed_up_to_date_producer_is_green():

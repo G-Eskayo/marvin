@@ -84,7 +84,7 @@ def test_a_sweep_with_a_crashing_check_still_writes_status_and_never_leaves_old_
     status_path = tmp_path / "health-status.json"
     status_path.write_text(json.dumps({"generated_at": "2026-10-15T19:40:17+00:00", "overall": "green", "checks": []}))
     monkeypatch.setattr(hc, "STATUS_PATH", status_path)
-    monkeypatch.setattr(hc, "coverage", lambda results: {"known_jobs": [], "unmonitored_jobs": [], "covered": 0, "total": 0, "fraction": 1.0})
+    monkeypatch.setattr(hc, "coverage", lambda: {"catalogued_jobs": [], "unmonitored_jobs": [], "covered": 0, "total": 0, "fraction": 1.0})
     specs = [("ok", "OK", lambda: hc._result("ok", "OK", "green", "fine"), 5), ("sync:stuck", "Code sync", _boom_timeout, 5)]
     out = hc.write_status(hc.run_all(checks=specs, recent_errors=[]))
     written = json.loads(status_path.read_text())
@@ -178,7 +178,7 @@ def test_a_sweep_never_writes_bench_metrics(tmp_path, monkeypatch):
     import metrics_registry as mr
     monkeypatch.setattr(mr, "METRICS_DIR", tmp_path / "metrics")
     monkeypatch.setattr(hc, "STATUS_PATH", tmp_path / "health-status.json")
-    monkeypatch.setattr(hc, "coverage", lambda results: {"known_jobs": [], "unmonitored_jobs": [], "covered": 0, "total": 0, "fraction": 1.0})
+    monkeypatch.setattr(hc, "coverage", lambda: {"catalogued_jobs": [], "unmonitored_jobs": [], "covered": 0, "total": 0, "fraction": 1.0})
     specs = [("n", "N", lambda: hc._result("n", "N", "green", "x", value=7), 5)]
     out = hc.run_all(checks=specs, recent_errors=[])
     assert not (tmp_path / "metrics").exists()

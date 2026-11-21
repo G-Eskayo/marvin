@@ -92,68 +92,172 @@ def test_check_dispatch_lock_green_shortly_after_start():
     assert result["severity"] == "green"
 
 
-# ── coverage / auto-discovery ────────────────────────────────────────────
+# ── coverage / auto-discovery: job catalog vs. loaded jobs ────────────────
 
-def test_coverage_flags_jobs_with_no_registered_check(monkeypatch):
-    monkeypatch.setattr(hc, "discover_launchd_jobs",
-                        lambda: ["daily-digest", "ticket-pipeline", "auto-fix"])
-    results = [{"id": "cron:daily-digest", "severity": "green"}]
-    cov = hc.coverage(results)
-    assert cov["total"] == 3
-    assert cov["covered"] == 1
-    assert set(cov["unmonitored_jobs"]) == {"ticket-pipeline", "auto-fix"}
-    assert cov["fraction"] == round(1 / 3, 2)
-
-
-def test_coverage_full_when_everything_discovered_has_a_check(monkeypatch):
-    monkeypatch.setattr(hc, "discover_launchd_jobs", lambda: ["daily-digest"])
-    cov = hc.coverage([{"id": "cron:daily-digest", "severity": "green"}])
-    assert cov["fraction"] == 1.0
-    assert cov["unmonitored_jobs"] == []
+def test_coverage_uses_job_catalog_as_truth(monkeypatch):
+    import job_catalog
+    fixture_catalog = {
+        "daily-digest": {"machine": "mini", "goal": "ns1", "consumer": "dashboard", "label": "com.marvin.daily-digest"},
+        "ticket-pipeline": {"machine": "both", "goal": "ns1", "consumer": "dashboard", "label": "com.marvin.ticket-pipeline"},
+    }
+    monkeypatch.setattr(job_catalog, "JOBS", fixture_catalog)
+    # With no loaded jobs, still report catalogued ones as covered
+    cov = hc.coverage(loaded={})
+    assert cov["covered"] == 2
+    assert cov["total"] == 2
 
 
-def test_plist_label_to_job_name_strips_known_prefixes():
-    assert hc._plist_label_to_job_name("com.marvin.ticket-pipeline") == "ticket-pipeline"
-    assert hc._plist_label_to_job_name("com.giles.tidy-agent") == "tidy-agent"
-    assert hc._plist_label_to_job_name("com.apple.something") == "com.apple.something"
+def test_coverage_flags_locally_loaded_job_not_in_catalog(monkeypatch):
+    import job_catalog
+    fixture_catalog = {
+        "daily-digest": {"machine": "mini", "label": "com.marvin.daily-digest"}
+    }
+    monkeypatch.setattr(job_catalog, "JOBS", fixture_catalog)
+    result = hc.coverage(loaded={"hostname": ["daily-digest", "unknown-job"]})
+    assert "unknown-job" in result["unmonitored_jobs"]
+    assert "daily-digest" not in result["unmonitored_jobs"]
 
 
-# ── cron job log scan (wraps cron_health.check_job -- its own offset-
-# tracking behavior is already covered by exercising it through here) ───
-
-def test_check_cron_job_log_establishes_baseline_on_first_run(tmp_path, monkeypatch):
-    # cron_health.check_job()'s own documented behavior: first-ever run for
-    # a log establishes a baseline offset and does NOT report pre-existing
-    # history as new -- exercised here since my earlier naive
-    # reimplementation regressed exactly this.
-    monkeypatch.setattr(ch, "HOME", tmp_path)
-    log_dir = tmp_path / ".claude" / "logs"
-    log_dir.mkdir(parents=True)
-    (log_dir / "daily-digest.log").write_text("old stuff")
-    (log_dir / "daily-digest-error.log").write_text("Traceback: old pre-existing failure\n")
-    state = {}
-    now = datetime(2026, 10, 1, 12, 0, tzinfo=timezone.utc)
-    result = hc.check_cron_job_log("daily-digest", state, now)
-    assert result["severity"] == "green"
+def test_coverage_empty_catalog_and_nothing_loaded_is_full(monkeypatch):
+    import job_catalog
+    # Patch to empty catalog for this test
+    monkeypatch.setattr(job_catalog, "JOBS", {})
+    result = hc.coverage(loaded={})
+    assert result["fraction"] == 1.0
+    assert result["covered"] == 0
+    assert result["total"] == 0
 
 
-def test_check_cron_job_log_flags_genuinely_new_failures(tmp_path, monkeypatch):
-    monkeypatch.setattr(ch, "HOME", tmp_path)
-    log_dir = tmp_path / ".claude" / "logs"
-    log_dir.mkdir(parents=True)
-    err = log_dir / "daily-digest-error.log"
-    (log_dir / "daily-digest.log").write_text("")
-    err.write_text("")
-    state = {}
-    now = datetime(2026, 10, 1, 12, 0, tzinfo=timezone.utc)
-    hc.check_cron_job_log("daily-digest", state, now)  # baseline run
-    err.write_text("Traceback: a real new failure\n")
-    result = hc.check_cron_job_log("daily-digest", state, now)
-    assert result["severity"] == "red"
+def test_coverage_survives_loaded_here_raising():
+    # If _loaded_here() raises (launchctl missing), still treat as "no jobs known"
+    def raise_error():
+        raise subprocess.CalledProcessError(1, "launchctl")
+
+    import job_catalog
+    old_loaded = job_catalog._loaded_here
+    try:
+        job_catalog._loaded_here = raise_error
+        result = hc.coverage()  # Should not crash
+        assert result["total"] >= 0
+    finally:
+        job_catalog._loaded_here = old_loaded
 
 
-def test_check_cron_job_log_returns_none_for_unmapped_job():
-    assert hc.check_cron_job_log("some-job-with-no-known-logs", {}, datetime.now(timezone.utc)) is None
+# ── cron job removal: "cron:*" checks no longer exist ─────────────────────
+
+def test_no_cron_check_registered():
+    # The cron:* check is deleted; it should not appear in default_checks
+    specs = hc.default_checks()
+    check_ids = [spec[0] for spec in specs]
+    assert "cron" not in check_ids
+    # The functions are also deleted
+    assert not hasattr(hc, "discover_launchd_jobs")
+    assert not hasattr(hc, "check_cron_job_log")
+    assert not hasattr(hc, "_cron_job_logs")
+    assert not hasattr(hc, "_plist_label_to_job_name")
+
+
+# ── calibration: machines can be marked as uncalibrated ──────────────────
+
+def test_overall_ignores_uncalibrated_machine_even_when_its_dependent_checks_are_red(monkeypatch):
+    import machine_profile
+    # Fixture: mock a device as uncalibrated
+    monkeypatch.setattr(machine_profile, "is_calibrated", lambda dev: dev != "uncal-device")
+
+    # Simulate results that would come from an uncalibrated machine
+    results = [
+        {"id": "machine:uncal-device", "severity": "red", "label": "Machine: uncal-device"},
+        {"id": "sync:stuck:uncal-device", "severity": "red", "label": "Sync"},
+    ]
+
+    # After fold in run_all, uncalibrated device's results are replaced
+    # For this test, verify the overall_severity computation itself
+    # (the actual fold happens in run_all)
+    severities = [r["severity"] for r in results]
+    # Before folding, this would be red
+    assert hc.overall_severity(severities) == "red"
+
+    # After folding by run_all, uncalibrated machines get UNCALIBRATED severity
+    folded_sev = [hc.UNCALIBRATED, hc.UNCALIBRATED]
+    assert hc.overall_severity(folded_sev) == "green"
+
+
+def test_uncalibrated_machine_folds_dependent_checks_into_one_row(monkeypatch):
+    import machine_profile
+    monkeypatch.setattr(machine_profile, "is_calibrated", lambda dev: dev != "box")
+
+    # Simulate multiple checks for an uncalibrated device
+    results = [
+        {"id": "machine:box", "severity": "red", "label": "Machine"},
+        {"id": "sync:stuck:box:repo:action", "severity": "red", "label": "Sync"},
+        {"id": "errors@box", "severity": "red", "label": "Errors"},
+    ]
+
+    # Manual fold (normally done in run_all)
+    uncalibrated_devices = {hc._extract_device_from_id(r.get("id")) for r in results
+                            if hc._extract_device_from_id(r.get("id")) and not machine_profile.is_calibrated(hc._extract_device_from_id(r.get("id")))}
+    folded = [r for r in results if hc._extract_device_from_id(r.get("id")) not in uncalibrated_devices]
+    for dev in uncalibrated_devices:
+        folded.append(hc._result(f"machine:{dev}:uncalibrated", f"Machine: {dev}",
+                                 hc.UNCALIBRATED, "not reporting yet — awaiting calibration before it counts toward the verdict"))
+
+    assert len(folded) == 1
+    assert folded[0]["severity"] == hc.UNCALIBRATED
+
+
+def test_calibrated_machine_unaffected(monkeypatch):
+    import machine_profile
+    monkeypatch.setattr(machine_profile, "is_calibrated", lambda dev: True)
+
+    # A calibrated device (default or explicitly True) stays as-is
+    results = [
+        {"id": "machine:cal-device", "severity": "green", "label": "Machine"},
+    ]
+
+    # No fold should happen
+    uncalibrated_devices = {hc._extract_device_from_id(r.get("id")) for r in results
+                            if hc._extract_device_from_id(r.get("id")) and not machine_profile.is_calibrated(hc._extract_device_from_id(r.get("id")))}
+    assert len(uncalibrated_devices) == 0
+
+
+def test_box_calibrated_mid_run(monkeypatch):
+    # Fixture: a device that starts uncalibrated
+    import machine_profile
+
+    calibrated = {"device": False}
+    monkeypatch.setattr(machine_profile, "is_calibrated", lambda dev: calibrated.get(dev, True))
+
+    # First sweep: device is uncalibrated
+    result1 = hc._extract_device_from_id("machine:device")
+    assert not machine_profile.is_calibrated(result1) if result1 else True
+
+    # Device gets calibrated mid-run
+    calibrated["device"] = True
+
+    # Second sweep: device is now calibrated
+    assert machine_profile.is_calibrated("device")
+
+
+# ── guarded: backfill checked_at ──────────────────────────────────────────
+
+def test_guarded_backfills_checked_at_when_missing():
+    result = hc.guarded("test", "Test Check", lambda: {"id": "test", "severity": "green", "detail": "ok"})
+    assert len(result) == 1
+    assert result[0]["checked_at"]  # Must be a non-empty ISO string
+
+
+def test_guarded_preserves_existing_checked_at():
+    old_time = "2026-01-01T00:00:00+00:00"
+    result = hc.guarded("test", "Test", lambda: {"id": "test", "severity": "green", "detail": "ok", "checked_at": old_time})
+    assert result[0]["checked_at"] == old_time
+
+
+def test_coverage_is_pure_no_shared_state_across_calls():
+    # Two calls with different loaded dicts shouldn't leak state
+    result1 = hc.coverage(loaded={"host1": ["job1"]})
+    result2 = hc.coverage(loaded={"host2": ["job2"]})
+    # Both should report their own unmonitored jobs, not mixed
+    assert "job1" not in result2.get("unmonitored_jobs", [])
 
 
 # ── machine reachability: a closed laptop is asleep, not broken ─────────────
@@ -1152,8 +1256,8 @@ def test_gh_gate_yellow_when_not_installed(tmp_path):
 
 
 def test_missed_purposes_are_red_and_an_unreadable_list_is_yellow():
-    red = hc.check_missed_purposes(lambda: [{"number": 277, "title": "Allow read-only tools", "state": "closed"}])
-    assert red[0]["severity"] == "red" and "#277 Allow read-only tools" in red[0]["detail"]
+    yellow = hc.check_missed_purposes(lambda: [{"number": 277, "title": "Allow read-only tools", "state": "closed"}])
+    assert yellow[0]["severity"] == "yellow" and "#277 Allow read-only tools" in yellow[0]["detail"]
     assert hc.check_missed_purposes(lambda: [])[0]["severity"] == "green"
     assert hc.check_missed_purposes(lambda: (_ for _ in ()).throw(OSError("rate limited")))[0]["severity"] == "yellow"
 

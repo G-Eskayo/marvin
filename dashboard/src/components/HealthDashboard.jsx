@@ -25,7 +25,8 @@ const SEVERITY_COLOR = {
   // "asleep" = a laptop that is simply closed/away (Tailscale offline, recent) -- neutral,
   // blue + moon, deliberately NOT red: red means "needs your immediate attention".
   asleep: { bg: 'bg-sky-950', border: 'border-sky-900', dot: 'bg-sky-400', text: 'text-sky-300' },
-  unmonitored: { bg: 'bg-neutral-900', border: 'border-neutral-700', dot: 'bg-neutral-600', text: 'text-neutral-400' }
+  unmonitored: { bg: 'bg-neutral-900', border: 'border-neutral-700', dot: 'bg-neutral-600', text: 'text-neutral-400' },
+  uncalibrated: { bg: 'bg-neutral-900', border: 'border-neutral-700', dot: 'bg-neutral-600', text: 'text-neutral-400' }
 }
 
 export function MoonIcon({ className = '' }) {
