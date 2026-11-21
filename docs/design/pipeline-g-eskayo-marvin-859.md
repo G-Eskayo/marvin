@@ -1,0 +1,55 @@
+## North-star fit
+
+**Reuses before adding anything new:**
+- `lib/owner_decisions.py`'s existing `run=subprocess.run` injection point (`fetch`, `sync`, `fetch_pr`, `request`, `main()`'s `status` subcommand) — already built to take a fake `run` callable; the loop test drives the *real* I3 code through this seam instead of re-implementing its logic.
+- `lib/tests/test_gh_gate.py`'s `_fake_gh`/`_run` pattern (a fake "real gh" placed first on PATH, a from-scratch env dict with `HOME=tmp_path`, `MARVIN_PULL_ONLY=0`, `GH_GATE_NO_BUDGET=1`) for driving the real `bin/gh` (I1 + I2's choke point) end-to-end as a subprocess, exactly as that file already does for narrower cases.
+- `lib/pr_images.py::verdict` and `lib/decisions_check.py::parse`/`refusal` (the real I1/I2 pure functions) as the loop test's own independent "is this invariant actually true" check — re-derived from GitHub-visible state, not trusted from a job's exit code. This mirrors what I5's future liveness checker will do, without building it.
+- `lib/affected_tests.py`'s `RULES` list (today just `test_instance*.py`) — the existing "this test judges every file, always run it" mechanism, for making the loop test unconditionally part of the merge gate's suite rather than relying on static import-graph detection (which can't see `bin/gh`'s dynamic `SourceFileLoader` load).
+- `lib/tests/test_owner_decisions.py`'s comment/PR fixture shapes (`### Decisions from the owner` heading, ` ```marvin-decisions ``` ` fenced JSON, `ADDRESSED_MARKER`) and `docs/agents/decisions-format.md`'s `<!-- marvin:decisions -->` format, so the fake ticket's Decisions section is byte-for-byte what the real parser (`dashboard/webhook-server/decisions_cli.js`, invoked for real, not mocked) expects.
+
+One new piece is added because none of the above compose into it: a stateful, multi-call **FakeGitHub** (issues/PRs/comments/labels/commits that persist across separate `bin/gh` subprocess invocations). Every existing `fake_gh`/`fakeGithub`/`mockGh` in this repo (checked: `lib/tests/test_gh_gate.py`, `dashboard/test/*.test.js`) is a single canned response, good for one call, not a loop. This is exactly the harness the ticket's own "What to build" asks for, and it is designed so later work (I4–I6) extends it rather than replaces it.
+
+**Simplicity:** one `GitHubState`/`dispatch()` pair is shared by both faces (an in-process `.run()` for `owner_decisions.py`'s injection seam, and a tiny CLI script for `bin/gh`'s subprocess) — one implementation of "what GitHub would do," not two copies that drift (the exact trap ADR 0080 names). No sqlite, no network, no real sleeps: state is one JSON file in `tmp_path`.
+
+**Cost:** spends one new test-helper file to buy a harness that stops exactly the class of regression (#724: a job that exits 0 and does nothing) that cost hours before. Runs in milliseconds-to-seconds (no real `sleep`, no real GitHub round-trips), so it fits inside the merge gate's test slot instead of adding to the pressure the issue's own comment shows (a 1200s slot timeout after a 4328s queue wait).
+
+**Phone-OS direction / capability:** this is pure reliability infrastructure — nothing a person does by hand gets automated away or taken over; it only makes a silent regression visible. Leaves the user more capable (trust that "the loop works" means something) and spends no human attention.
+
+**Machine:** runs wherever pytest already runs (the Mac mini's merge gate, main-health, and locally) — no new machine dependency.
+
+**North star that argues against scope creep:** ADR 0080's own stated order is "I1 → I2 → the loop test → I4 → I5 → I6" — the loop test at this stage is explicitly *for* I1–I3, before `next_step()`, the liveness checker, or any ship step exist. So this plan does **not** simulate a "ship step" or re-dispatch-after-stuck (#678, which is I5) — there is no invariant there yet to test, and inventing one would be testing nothing. It stops the walk at "merged to main, ticket closed," which is as far as I1–I3 reach.
+
+## Decisions
+
+None needed. The two places this could have forked (how far the walk goes, and how the test gets into the merge gate's suite) are already settled by ADR 0080's order and by the existing `RULES` precedent in `lib/affected_tests.py` — no open choice is left for the owner.
+
+## Tests, written first
+
+All in `lib/tests/test_loop.py`, built on `lib/tests/fake_github.py`. Each ticket bullet below maps to a named test.
+
+1. **Sandbox refuses to start outside itself** (the 2026-10-09 logs-wipe case): a `_sandbox(tmp_path)` helper asserts `tmp_path` is not under `Path.home()`/the real repo and that resolving `gh` on the built PATH never lands on `/usr/bin/gh`/`/opt/homebrew/bin/gh`; calling it with a real-looking path raises. A second test asserts the happy-path fixture itself passes this guard (it is exercised, not just defined).
+2. **Happy path, I1–I3 all hold:** file a fake ticket (`issue create`), open a mock-up PR through real `bin/gh` carrying pinned-SHA images and a well-formed `## Decisions` section (I1 + I2 pass), post the owner's Decisions comment, post MARVIN's `<!-- marvin:decisions-addressed -->` reply, merge a build PR that closes the ticket. After the walk, three independent re-checks against FakeGitHub's final state all come back clean: `pr_images.verdict(...)`, `decisions_check.parse(...)`, `owner_decisions.pr_built_status(...)`.
+3. **I1 bypass — stale images:** a later commit changes a UI file after the pinned images; `bin/gh pr ready` refuses (`STALE_UI_EVIDENCE`). A second variant calls the fake `gh` directly (skipping `bin/gh`) to simulate a surface that goes around the choke point, and shows the loop test's own `pr_images.verdict` re-check still catches it.
+4. **I2 bypass — prose decisions:** a PR body has `## Open questions` with no `<!-- marvin:decisions -->` block; `bin/gh pr create` refuses (`DECISIONS_NOT_ASKABLE`) through the real `decisions_check.gate` → real node parser. Same direct-fake-gh bypass variant, caught by the loop's own `decisions_check.parse` re-check.
+5. **I3 bypass — answered, never acted on:** owner's Decisions comment posted, no reply, no follow-up ticket, no commit after. `owner_decisions.pr_built_status(...)` reports `built: False`; once `grace_hours` has passed, `owner_decisions.sync(...)` must have filed exactly one follow-up issue.
+6. **The #724 shape — a job that exits 0 and does nothing:** a deliberately-broken stand-in for the scan step (computes status correctly, reports `{"ok": True, "filed": []}`, same as a real silent regression would) is wrapped by a shared `assert_i3_satisfied(fake, repo, pr)` helper that re-derives the invariant from FakeGitHub's state, independent of the job's return value; this must raise. The same helper called after the real `owner_decisions.sync(...)` in test 2/5 must not raise.
+7. **Order bypass — approve before decisions answered:** `owner_decisions.pr_built_status` on a PR with an open, unaddressed Decisions comment reports `built: False`, so the merge-time re-check (the real choke point `owner_decisions_gate.js`/`lib/owner_decisions.py status` wraps) would refuse (`OWNER_DECISIONS_UNBUILT`).
+8. **GitHub refusing mid-loop (rate limit):** FakeGitHub is told to answer the next `pr create` call with a secondary-rate-limit error; real `bin/gh`'s `decide()`/`after_refusal()` defer it (background priority, no real sleep); once the fault clears, the identical retry succeeds and the ticket is never silently marked done or dropped.
+9. **GitHub refusing mid-loop (5xx):** FakeGitHub answers the next `api graphql` call (owner_decisions' search) with a generic failure; `owner_decisions.fetch(...)` returns `None` and `sync(...)` returns `{"ok": False, ...}` — the PR stays absent from "closed," and a retry after the fault clears finds the same PR still waiting (nothing lost).
+10. **Misuse/edge inputs on `FakeGitHub` itself** (since it is new code, not a mock of something already tested elsewhere): commenting on a nonexistent issue/PR number, double-merging the same PR, an empty or malformed `-f query=` payload, concurrent-looking calls (two `issue create` calls racing for the same follow-up label, reusing `_dedupe`'s real logic against the fake) — each must fail the way the real `gh` would (a clear error, not a crash or silent no-op), since every other test's correctness depends on this double being honest.
+11. **Runs in the merge gate's suite:** a test (or a direct assertion in `test_affected_tests.py` if one exists, else a new one) that `lib/tests/test_loop.py` is in `affected_tests.RULES` and therefore selected regardless of what changed.
+
+## Task List
+
+1. Build `lib/tests/fake_github.py`: `GitHubState` (issues, PRs, comments, labels, commits-with-files, a monotonic numbering counter) with `to_dict`/`from_dict`; a pure `dispatch(state, argv, actor, fail_next) -> (rc, stdout_json_or_text, stderr)` covering `repo view`, `api repos/{repo}`, `api repos/{repo}/compare/...`, `issue create/list/comment/close/edit`, `pr create/view/edit/ready/merge`, `label create`, `api graphql` (owner_decisions' two queries, plus the rate-limit query), `api rate_limit`.
+2. Add the in-process face: `FakeGitHub.run(argv, **subprocess_run_kwargs)` returning a `subprocess.CompletedProcess`-shaped result, reading/writing a single JSON state file on disk (so it stays consistent with the subprocess face below); a `fail_next(match, kind, times=1)` fault injector.
+3. Add the subprocess face: the same module's `if __name__ == "__main__"` entry, plus a tiny `#!/bin/sh` shim named `gh` (mirroring `_fake_gh()` in `test_gh_gate.py`) that execs it, both reading `FAKE_GH_STATE`/`FAKE_GH_ACTOR` from the environment.
+4. Write test 10 (FakeGitHub's own misuse tests) first, against just the new module — nothing else depends on it being honest.
+5. Write `lib/tests/test_loop.py`'s `_sandbox(tmp_path)` helper and test 1.
+6. Write the walk helper (`file_ticket`, `open_mockup_pr`, `owner_answers`, `marvin_replies`, `merge_build_pr`) driving real `bin/gh` as a subprocess (test_gh_gate.py's `_run` pattern) for the PR/issue-writing steps, and real `owner_decisions.py` calls (in-process, via `FakeGitHub.run`) for the I3 steps.
+7. Write test 2 (happy path) and the three independent re-check helpers (`assert_i1_satisfied`, `assert_i2_satisfied`, `assert_i3_satisfied`).
+8. Write tests 3–7 (one bypass per invariant, plus the order bypass), reusing the walk helper with one deliberate mutation each.
+9. Write tests 8–9 (rate-limit / 5xx mid-loop) using `fail_next`.
+10. Add `lib/tests/test_loop.py` to `RULES` in `lib/affected_tests.py`; write test 11.
+11. Run the full new file plus `lib/tests/test_gh_gate.py`, `lib/tests/test_owner_decisions.py`, `lib/tests/test_decisions_check.py`, `lib/tests/test_pr_images.py` together to confirm no regression and real total runtime (must stay well under the merge gate's slot budget).
+12. One-line doc touch: in `docs/life-of-a-ticket.md`'s "Where every open piece fits" table, point the "new: the loop test" row at `lib/tests/test_loop.py`.

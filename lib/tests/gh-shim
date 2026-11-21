@@ -1,0 +1,8 @@
+#!/bin/sh
+# Shim to run fake_github.py as if it were the real gh binary.
+# Set FAKE_GH_STATE and FAKE_GH_ACTOR environment variables before calling.
+# Usage: FAKE_GH_STATE=/path/to/state.json FAKE_GH_ACTOR=username gh [command] [args...]
+VENV_PYTHON="${VENV_PYTHON:-${HOME}/.agents/venv/bin/python3}"
+REPO_ROOT="$(cd "$(dirname "$0")" && cd ../.. && pwd)"
+export PYTHONPATH="${REPO_ROOT}:${PYTHONPATH}"
+exec "$VENV_PYTHON" -m lib.tests.fake_github "$@"

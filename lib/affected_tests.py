@@ -40,7 +40,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parents[0]))
 import test_change_rule as tcr  # noqa: E402
 
-RULES = ["lib/tests/test_instance.py", "lib/tests/test_instance_move.py"]
+RULES = ["lib/tests/test_instance.py", "lib/tests/test_instance_move.py", "lib/tests/test_loop.py"]
 RUNS_EVERYTHING = re.compile(r"^conftest\.py$|^pytest\.ini$|^requirements-ci\.txt$|^lib/affected_tests\.py$|^\.github/")
 _TEST = re.compile(r"(^|/)(test_[^/]*|[^/]*_test)\.py$")
 _TOO_COMMON = {"__init__.py"}  # a name every package has says nothing about who reads it

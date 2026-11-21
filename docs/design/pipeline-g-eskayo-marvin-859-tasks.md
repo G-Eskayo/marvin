@@ -1,0 +1,12 @@
+1. Build `lib/tests/fake_github.py`: `GitHubState` (issues, PRs, comments, labels, commits-with-files, a monotonic numbering counter) with `to_dict`/`from_dict`; a pure `dispatch(state, argv, actor, fail_next) -> (rc, stdout_json_or_text, stderr)` covering `repo view`, `api repos/{repo}`, `api repos/{repo}/compare/...`, `issue create/list/comment/close/edit`, `pr create/view/edit/ready/merge`, `label create`, `api graphql` (owner_decisions' two queries, plus the rate-limit query), `api rate_limit`.
+2. Add the in-process face: `FakeGitHub.run(argv, **subprocess_run_kwargs)` returning a `subprocess.CompletedProcess`-shaped result, reading/writing a single JSON state file on disk (so it stays consistent with the subprocess face below); a `fail_next(match, kind, times=1)` fault injector.
+3. Add the subprocess face: the same module's `if __name__ == "__main__"` entry, plus a tiny `#!/bin/sh` shim named `gh` (mirroring `_fake_gh()` in `test_gh_gate.py`) that execs it, both reading `FAKE_GH_STATE`/`FAKE_GH_ACTOR` from the environment.
+4. Write test 10 (FakeGitHub's own misuse tests) first, against just the new module — nothing else depends on it being honest.
+5. Write `lib/tests/test_loop.py`'s `_sandbox(tmp_path)` helper and test 1.
+6. Write the walk helper (`file_ticket`, `open_mockup_pr`, `owner_answers`, `marvin_replies`, `merge_build_pr`) driving real `bin/gh` as a subprocess (test_gh_gate.py's `_run` pattern) for the PR/issue-writing steps, and real `owner_decisions.py` calls (in-process, via `FakeGitHub.run`) for the I3 steps.
+7. Write test 2 (happy path) and the three independent re-check helpers (`assert_i1_satisfied`, `assert_i2_satisfied`, `assert_i3_satisfied`).
+8. Write tests 3–7 (one bypass per invariant, plus the order bypass), reusing the walk helper with one deliberate mutation each.
+9. Write tests 8–9 (rate-limit / 5xx mid-loop) using `fail_next`.
+10. Add `lib/tests/test_loop.py` to `RULES` in `lib/affected_tests.py`; write test 11.
+11. Run the full new file plus `lib/tests/test_gh_gate.py`, `lib/tests/test_owner_decisions.py`, `lib/tests/test_decisions_check.py`, `lib/tests/test_pr_images.py` together to confirm no regression and real total runtime (must stay well under the merge gate's slot budget).
+12. One-line doc touch: in `docs/life-of-a-ticket.md`'s "Where every open piece fits" table, point the "new: the loop test" row at `lib/tests/test_loop.py`.

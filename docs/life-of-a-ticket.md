@@ -237,7 +237,7 @@ everything else calls it. The full reasoning is in [ADR 0080](adr/0080-the-work-
 | #678 (a fix after a refusal doesn't bring Approve back) | I5 | The liveness checker sees "fix pushed, Approve missing" as stuck. The PR-head event is part of the fix. |
 | new: liveness checker, failing-job alarm | I5 | Built on `next_step`. |
 | #652 (replaced decisions update repo and memory) | I6 | As written, plus the recurring-mistake link. |
-| new: the loop test | all | Starts with I1–I3 and grows with each rule. |
+| `lib/tests/test_loop.py` (the loop test) | all | Starts with I1–I3 and grows with each rule. |
 
 ### Order
 
