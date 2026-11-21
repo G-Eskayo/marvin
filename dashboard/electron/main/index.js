@@ -180,6 +180,7 @@ import { isPullOnlyNode, createFeedSource, feedOnlyGh, readNetworkRegistry, asse
 import { createAccounts } from './accounts.js'
 import { createAlerts } from './alerts.js'
 import { createLoops } from './loops.js'
+import { createCpuSampler, appendCpuSampleLog } from './cpu_sampler.js'
 
 // The pipeline's screenshot copy runs unattended beside the real dashboard: log, never show a modal (#384).
 if (isEvidenceCapture(process.env)) installCaptureGuard(process)
@@ -1359,13 +1360,25 @@ protocol.registerSchemesAsPrivileged([
   { scheme: MOCKUP_SCHEME, privileges: { standard: true, secure: true, stream: true, supportFetchAPI: true } }
 ])
 
+// Hardware acceleration: on Linux (mac-mini-2012's Ivy Bridge GPU), software canvas is steadier; darwin doesn't need this.
+// Must be called BEFORE app.whenReady(), not after, or Electron ignores it.
+if (process.platform === 'linux') {
+  app.disableHardwareAcceleration()
+}
+
 app.whenReady().then(() => {
+
   protocol.handle('prmedia', (request) => {
     const found = mediaFileFor(prMediaDir(), new URL(request.url).pathname.replace(/^\/+/, ''))
     if (!found) return new Response('not found', { status: 404 })
     return net.fetch(pathToFileURL(found.file).toString(), { headers: request.headers })
   })
   installDevSiteCors(session.defaultSession)   // previews need the dev site's web fonts (see dev_site_cors.js)
+
+  // CPU/GPU sampler for diagnostics (5s interval, bounded log): AC#1 and AC#2.
+  const cpuSampler = createCpuSampler(app, { appName: 'dashboard', appendLog: (line) => appendCpuSampleLog(line) })
+  cpuSampler.start()
+
   registerMetricsHandlers()
   registerMrReviewHandlers()
   registerDispatchHandlers()

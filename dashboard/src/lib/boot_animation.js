@@ -2,6 +2,7 @@
 // (docs/design/celestial-navigation/boot.html on #428). Everything uses the Web Animations API, so the whole
 // sequence can be seeked frame by frame (that's how its recordings are made).
 import { bannerTone, lineTone, lineTarget, bannerTarget, subtitleText } from './boot_view.js'
+import { createBootHoldController } from './boot_hold.js'
 
 // The mark: same geometry as the app icon (icon.html, 1024 grid). Moving a star here moves it in the boot.
 const ICON = { pts: [[262, 772], [262, 262], [512, 560], [762, 262], [762, 772]], core: 2, star: 44, coreR: 68, orbit: 118, line: 26 }
@@ -179,28 +180,14 @@ export function runBoot(root, data, { onDone = () => {}, onNavigate = () => {} }
   }
   // Hovering a clickable item holds the boot (#433). Leaving starts a short grace period, so moving from one item to
   // the next never starts the fade; once the fade has started it always runs to the end (no half-fade-then-stop).
-  const GRACE_MS = 2000
-  const fadeStart = out.effect.getTiming().delay
-  let held = false, grace = null
-  // Releasing a hold starts the dissolve right away: you've already had your look (plus the grace period), so it
-  // doesn't make you sit through whatever was left of the normal hold.
-  const release = () => {
-    clearTimeout(grace); grace = null
-    if (!held) return
-    held = false
-    if ((out.currentTime ?? 0) < fadeStart) out.currentTime = fadeStart
-    out.play()
-  }
-  const hold = (on) => {
-    if (finished) return
-    if (released) return release()
-    if (on) {
-      clearTimeout(grace); grace = null
-      if (!held && (out.currentTime ?? 0) < fadeStart) { held = true; out.pause() }
-      return
-    }
-    if (held && !grace) grace = setTimeout(() => { grace = null; if (!hovered()) release() }, GRACE_MS)
-  }
+  // Extracted to boot_hold.js with max-hold bound to prevent indefinite hold when no mouse is attached.
+  const holdController = createBootHoldController(out, {
+    maxHoldMs: 8000,
+    graceMs: 2000,
+    getFinished: () => finished,
+    getReleased: () => released
+  })
+  const hold = holdController.hold
   // Chromium sends synthetic pointerover events while things animate under a still cursor, so the hold follows the
   // pointer's actual position, checked every frame, rather than enter/leave events.
   let ptr = null

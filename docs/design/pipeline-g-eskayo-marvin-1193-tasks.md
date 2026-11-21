@@ -1,0 +1,10 @@
+1. On mac-mini-2012 (`ssh mac-mini-2012`), check `~/.claude/logs/dashboard-linux.log` for recent "build failed" lines and the currently-running build's git commit, to settle whether the evidence's gh-auth-login-shaped error came from a stale pre-#954 build or a still-unfound call site — don't re-assert "predates the fix" without checking.
+2. Write tests 6, 8, 9, 10 (sampler resilience, module-level singleton guard, polling-guard allowlist, bounded-log reuse) before writing the sampler.
+3. Add the CPU/GPU-process sampler (`app.getAppMetrics()` on a 5s interval, reusing `error_log.js`'s bounded-append idiom) to `dashboard/electron/main/index.js` and, per the `scope` decision, `brain-map/desktop-live-linux/main.js`; wire the module-level singleton guard from test 8; add the file+reason to `polling_guard.test.js`'s allowlist.
+4. Write tests 1-3 (pull-only detection, feed-degrade states, log dedupe) pinning the already-working AC#3 mechanism — fix only if a test exposes a real gap.
+5. Write tests 4-5 (hold-bound, RAF watchdog); extract the hold/release decision in `boot_animation.js` into a pure function beside `boot_view.js`, add the max-hold bound from the `hold-bound` decision and the RAF watchdog.
+6. Write test 7; add `app.disableHardwareAcceleration()` to `dashboard/electron/main/index.js`, gated on `process.platform === 'linux'`.
+7. Deploy to mac-mini-2012 over SSH (reusing `lib/box_build.py`'s `SSH_OPTS`), restart both Electron processes, and capture a real profile — confirms or kills H1 (missing GPU mitigation) and H2 (unbounded boot-animation hold), satisfying AC#1.
+8. Per the `deploy-window` decision: either schedule the 2h follow-up read-back now, or hand off the manual confirmation step explicitly.
+9. Once the 2h idle-CPU log comes back under 10%, attach it as AC#2's evidence; per the `sampler-lifetime` decision, either leave the sampler running or remove it.
+10. `marvin-show` the before/after CPU log to Gil instead of describing it in prose.

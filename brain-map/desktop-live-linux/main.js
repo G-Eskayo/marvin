@@ -150,11 +150,54 @@ function checkStall() {
 
 if (!app.requestSingleInstanceLock()) app.exit(0)   // one wallpaper per session; a second launch just leaves
 app.disableHardwareAcceleration()   // Ivy Bridge GPU: software canvas is steadier for a 24 fps ambient view
+
+// CPU/GPU sampler for diagnostics (5s interval, bounded log): AC#1 and AC#2.
+const CPU_SAMPLE_LOG = path.join(os.homedir(), '.claude', 'logs', 'cpu-samples.jsonl')
+const MAX_SAMPLE_BYTES = 10 * 1024 * 1024
+const KEEP_SAMPLE_LINES = 10000
+
+function appendCpuSample(entry) {
+  try {
+    const line = JSON.stringify(entry) + '\n'
+    fs.appendFileSync(CPU_SAMPLE_LOG, line)
+    let size = 0
+    try { size = fs.statSync(CPU_SAMPLE_LOG).size } catch { /* ok */ }
+    if (size > MAX_SAMPLE_BYTES) {
+      const lines = fs.readFileSync(CPU_SAMPLE_LOG, 'utf-8').split('\n').filter(Boolean)
+      fs.writeFileSync(CPU_SAMPLE_LOG, lines.slice(-KEEP_SAMPLE_LINES).join('\n') + '\n')
+    }
+  } catch { /* logging never breaks the app */ }
+}
+
+function sampleCpu() {
+  try {
+    const metrics = app.getAppMetrics()
+    if (!Array.isArray(metrics)) return
+    const t = new Date().toISOString()
+    for (const m of metrics) {
+      if (!m || typeof m !== 'object') continue
+      const cpu = m.cpu?.percentCPUUsage
+      if (typeof cpu !== 'number') continue
+      appendCpuSample({
+        app: 'brain-map',
+        t,
+        type: String(m.type || 'unknown').slice(0, 50),
+        pid: Number(m.pid) || 0,
+        cpu: Math.round(cpu * 100) / 100
+      })
+    }
+  } catch { /* getAppMetrics failures never break the wallpaper */ }
+}
+
 app.whenReady().then(() => {
   log('start', PAGE)
   activityLast = h.linesAfter(read(ACTIVITY), null, true).last
   demoCount = lineCount(DEMO)
   try { lastTreeMtime = fs.statSync(TREE).mtimeMs } catch { /* first generate.py run creates it */ }
+
+  // Start CPU sampler (5s interval)
+  setInterval(sampleCpu, 5000)
+
   reconcile()
   screen.on('display-added', reconcile)
   screen.on('display-removed', reconcile)
