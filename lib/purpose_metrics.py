@@ -494,6 +494,39 @@ def _ci_onnx_download_failures(fetch=None, repo: str = "G-Eskayo/marvin", runs: 
     return float(count)
 
 
+def _label_problems(days: float = PROBE_WINDOW_DAYS, path: Path | None = None, now: datetime | None = None) -> float:
+    """Count of label heals and refusals in this machine's gh-calls.jsonl over the window.
+
+    Every time the gate tries to fix or refuses to fix an invalid label, it logs a line
+    with label_healed or label_refused key. This probe counts those lines (each one is
+    a label problem that the gate encountered).
+    """
+    import github_usage
+    now = now or datetime.now(timezone.utc)
+    cut = _cut(now, days)
+    count = 0
+    try:
+        for entry in github_usage.read_jsonl(path or github_usage.LOGS / "gh-calls.jsonl"):
+            if not isinstance(entry, dict):
+                continue
+            # Handle both unix timestamp (float/int) and ISO string formats
+            t_val = entry.get("t")
+            if isinstance(t_val, (int, float)):
+                # Unix timestamp
+                when = datetime.fromtimestamp(t_val, tz=timezone.utc)
+            else:
+                # ISO format string
+                when = _when(t_val)
+            if not when or when < cut:
+                continue
+            # Count each heal attempt and each refusal
+            if "label_healed" in entry or "label_refused" in entry:
+                count += 1
+    except OSError:
+        pass
+    return float(count)
+
+
 # name -> (symptom counter, the most it may read while the fix holds, what it counts). Summed across Macs like any
 # measure; the logs are per Mac (~/.claude/logs doesn't sync), so nothing is counted twice.
 # Each counter takes `days` (default the 7-day window): a watched incident is re-measured over the time since its last
@@ -537,6 +570,9 @@ PROBES: dict[str, tuple[Callable[..., float], float, str]] = {
     # marvin#997: local skills that exist on live ~/.agents/skills but not in the repo's origin/main (missing upstream).
     "banner-skill-count-drift": (lambda days=PROBE_WINDOW_DAYS: _banner_skill_count_drift(), 0.0,
                                  "skills on live ~/.agents/skills but not in origin/main (marvin#997)"),
+    # Label catalog: how many times the gate tried to fix invalid labels or gave up.
+    "label-problems": (lambda days=PROBE_WINDOW_DAYS: _label_problems(days=days), 0.0,
+                       "invalid labels (heals and refusals) in gh-calls.jsonl over 7 days, per Mac, summed (#1160)"),
 }
 MEASURES.update({name: fn for name, (fn, _limit, _what) in PROBES.items()})
 MEASURES["stale-relay-caught"] = lambda: _stale_relay("caught")

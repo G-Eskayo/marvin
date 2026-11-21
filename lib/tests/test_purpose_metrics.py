@@ -1,5 +1,7 @@
 """Purpose metrics and outcome checks (marvin#304): a ticket that promises a measurable effect gets measured."""
+import json
 from datetime import datetime, timezone
+from pathlib import Path
 
 import pytest
 
@@ -817,3 +819,47 @@ def test_pipeline_verify_timeout_is_registered():
     assert "pipeline-verify-timeouts" in pm.PROBES
     fn, limit, what = pm.PROBES["pipeline-verify-timeouts"]
     assert limit == 0.0 and "#881" in what and "#1316" in what
+
+
+# ── Label problems: tickets with invalid labels (marvin#XXXX) ────────────────────────────
+
+def test_label_problems_counts_heals_and_refusals(tmp_path):
+    """_label_problems() counts label_healed and label_refused lines in gh-calls.jsonl."""
+    import datetime as dt
+
+    # Create a fake gh-calls.jsonl with some label heal/refusal entries
+    logs_path = tmp_path / "gh-calls.jsonl"
+    now = dt.datetime.now(dt.timezone.utc)
+
+    # Write some entries within the window
+    entries = [
+        {"t": now.timestamp(), "caller": "test", "cmd": "issue edit", "label_healed": "bug"},
+        {"t": now.timestamp(), "caller": "test", "cmd": "issue edit", "label_refused": "unknown"},
+        {"t": now.timestamp(), "caller": "test", "cmd": "pr edit", "label_healed": "enhancement"},
+        # This one is outside the window (more than 7 days ago)
+        {"t": (now - dt.timedelta(days=8)).timestamp(), "caller": "test", "cmd": "issue edit", "label_healed": "old"},
+        # This one is a regular call log, not a heal/refusal
+        {"t": now.timestamp(), "caller": "test", "cmd": "issue list", "rc": 0},
+    ]
+
+    # Write all entries as JSONL
+    with open(logs_path, "w") as f:
+        for entry in entries:
+            f.write(json.dumps(entry) + "\n")
+
+    # Count should be 3 (the two heals and one refusal within the window, not the old one or regular call)
+    result = pm._label_problems(path=logs_path, now=now)
+    assert result == 3.0
+
+
+def test_label_problems_returns_zero_when_no_logs():
+    """_label_problems() returns 0 when log file doesn't exist."""
+    result = pm._label_problems(path=Path("/nonexistent/gh-calls.jsonl"))
+    assert result == 0.0
+
+
+def test_label_problems_is_registered_in_probes():
+    """The label-problems probe is registered with target 0."""
+    assert "label-problems" in pm.PROBES
+    fn, limit, what = pm.PROBES["label-problems"]
+    assert limit == 0.0 and "invalid labels" in what.lower()

@@ -38,6 +38,7 @@ BG_SLOTS = 2
 BG_GAP = 0.25
 LOG_MAX_BYTES = 5 * 1024 * 1024
 FALLBACKS = ("/opt/homebrew/bin/gh", "/usr/local/bin/gh")
+MAX_LABEL_HEALS = 3  # max label additions/removals per call before giving up
 
 
 # ── pure decisions ──────────────────────────────────────────────────────────
@@ -302,6 +303,126 @@ def ui_evidence_refusal(argv: list[str], ask, read_file=None, current_branch=Non
     return f"{code}: {message}"
 
 
+# ── marvin#XXXX: heal invalid labels (fix or remove) ────────────────────────────────────────────
+
+def _heal_labels(real: str, argv: list[str], env: dict, say, log) -> list[str] | None:
+    """Heal invalid labels in an issue/pr edit call by trying the call and catching failures.
+
+    Returns the original argv if no healing was needed, modified argv if healed successfully,
+    or None if unable to heal (healing gave up or importing label_catalog failed).
+
+    Every heal and refusal is logged to gh-calls.jsonl with label_healed/label_refused keys.
+    """
+    try:
+        sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "lib"))
+        import label_catalog as lc
+    except ImportError:
+        return None
+
+    call = lc.label_call(argv)
+    if not call:
+        return None  # not a label-edit call
+
+    cur_argv = argv[:]
+    heals_made = 0
+    stdin_data = None
+
+    # Check for --body-file - and read stdin once if present
+    for i, arg in enumerate(cur_argv):
+        if arg == "--body-file" and i + 1 < len(cur_argv) and cur_argv[i + 1] == "-":
+            if stdin_data is None:
+                stdin_data = sys.stdin.buffer.read()
+            break
+
+    while heals_made < MAX_LABEL_HEALS:
+        # Try the current argv
+        env_copy = {**env, "MARVIN_GH_GATE_INSIDE": "1"}
+        try:
+            if stdin_data is not None:
+                p = subprocess.Popen([real, *cur_argv], stdin=subprocess.PIPE, stdout=subprocess.PIPE,
+                                    stderr=subprocess.PIPE, env=env_copy)
+                stdout, stderr = p.communicate(input=stdin_data, timeout=60)
+            else:
+                p = subprocess.Popen([real, *cur_argv], stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+                                    env=env_copy, timeout=60)
+                stdout, stderr = p.communicate()
+
+            rc = p.returncode
+            stderr_text = stderr.decode("utf-8", "replace") if stderr else ""
+            stdout_text = stdout.decode("utf-8", "replace") if stdout else ""
+        except (OSError, subprocess.SubprocessError, subprocess.TimeoutExpired) as e:
+            # Couldn't run gh at all - not a label problem, give up
+            return None
+
+        # Success - no healing needed
+        if rc == 0:
+            return cur_argv if cur_argv != argv else None
+
+        # Check if it's a label problem
+        label_problem = lc.failed_label(stderr_text, call)
+        if not label_problem:
+            # Not a label problem - give up and let the original error through
+            return None
+
+        label, is_add = label_problem
+
+        if is_add:
+            # It was an --add-label or --label value that's missing
+            if lc.lookup(label):
+                # It's catalogued - create it and retry
+                repo = lc.call_repo(cur_argv, env) or "."
+                label_info = lc.lookup(label)
+                color = label_info.get("color", "000000")
+                desc = label_info.get("description", "")
+
+                create_argv = ["label", "create", label, "--repo", repo, "--color", color]
+                if desc:
+                    create_argv.extend(["--description", desc])
+
+                try:
+                    env_copy2 = {**env, "MARVIN_GH_GATE_INSIDE": "1"}
+                    p = subprocess.Popen([real, *create_argv], stdout=subprocess.PIPE,
+                                        stderr=subprocess.PIPE, env=env_copy2, timeout=60)
+                    stdout, stderr = p.communicate()
+                    # If create fails with "already exists", treat as success
+                    if p.returncode != 0:
+                        err = stderr.decode("utf-8", "replace") if stderr else ""
+                        if "already exists" not in err.lower():
+                            # Create failed for real - give up
+                            log({"t": time.time(), "caller": _caller(), "cmd": " ".join(a for a in argv[:2] if not a.startswith("-")),
+                                 "label_refused": label, "reason": "create_failed"})
+                            say(f"Could not create label '{label}' — check ~/lib/label_catalog.py")
+                            return None
+
+                    # Create succeeded or already exists - retry the original call
+                    log({"t": time.time(), "caller": _caller(), "cmd": " ".join(a for a in argv[:2] if not a.startswith("-")),
+                         "label_healed": label})
+                    heals_made += 1
+                    continue  # Retry the original argv
+
+                except (OSError, subprocess.SubprocessError, subprocess.TimeoutExpired):
+                    # Couldn't create - give up
+                    log({"t": time.time(), "caller": _caller(), "cmd": " ".join(a for a in argv[:2] if not a.startswith("-")),
+                         "label_refused": label, "reason": "create_error"})
+                    return None
+            else:
+                # Not catalogued - refuse and suggest catalog
+                log({"t": time.time(), "caller": _caller(), "cmd": " ".join(a for a in argv[:2] if not a.startswith("-")),
+                     "label_refused": label, "reason": "uncatalogued"})
+                say(f"Label '{label}' not found — check ~/lib/label_catalog.py")
+                return None
+        else:
+            # It was a --remove-label value that's missing - just drop it and retry
+            cur_argv = lc.without_label(cur_argv, label)
+            log({"t": time.time(), "caller": _caller(), "cmd": " ".join(a for a in argv[:2] if not a.startswith("-")),
+                 "label_healed": label, "reason": "removed_missing"})
+            heals_made += 1
+            continue
+
+    # Hit the heal limit
+    return None
+
+
 # ── marvin#954: a pull-only node holds no GitHub credential (ADR 0069) ─────────────────────────────────────────────
 
 def pull_only_node(env, platform: str, hostname: str, registry: dict) -> bool:
@@ -373,6 +494,16 @@ def main(argv: list[str]) -> int:
         if pr_ticket_check.gate(argv, _say, lambda e: _log({"t": time.time(), "caller": _caller(), **e})):
             return 1
     except ImportError:
+        pass
+    # Heal invalid labels in issue/pr edit calls (lib/label_catalog.py): fix or remove unknown labels.
+    try:
+        healed_argv = None
+        if not (sys.stdin.isatty() and sys.stderr.isatty()):  # non-interactive only
+            if len(argv) >= 2 and argv[0] in ("issue", "pr") and argv[1] == "edit":
+                healed_argv = _heal_labels(real, argv, os.environ, _say, lambda e: _log({"t": time.time(), "caller": _caller(), **e}))
+        if healed_argv is not None:
+            argv = healed_argv
+    except Exception:
         pass
     if len(argv) >= 2 and argv[0] == "pr" and argv[1] in ("create", "ready", "merge"):
         override = os.environ.get(UI_EVIDENCE_OK, "").strip()
