@@ -235,6 +235,7 @@ def test_a_du_that_never_returns_is_killed_and_reported_not_measured(monkeypatch
     say so, and leave no du behind."""
     pidfile = tmp_path / "pid"
     monkeypatch.setattr(dl, "DU_CMD", [_script(tmp_path, "du", f"echo $$ > {pidfile}; exec sleep 3600"), "-sk"])
+    monkeypatch.setattr(dl, "PROBE_CMD", [_script(tmp_path, "probe", "exit 0")])
     monkeypatch.setattr(dl, "DU_TIMEOUT_S", 1)
     t0 = time.monotonic()
     got = dl._default_du_kb(tmp_path)
@@ -248,7 +249,9 @@ def test_the_du_dies_on_its_own_even_when_its_parent_is_killed(tmp_path):
     left to kill du, and it sat under launchd for 15 hours. The time limit must live in du itself."""
     pidfile = tmp_path / "pid"
     du = _script(tmp_path, "du", f"echo $$ > {pidfile}; exec sleep 3600")
+    probe = _script(tmp_path, "probe", "exit 0")
     code = (f"import sys; sys.path.insert(0, {str(LIB)!r}); import disk_ledger as dl; dl.DU_CMD = [{du!r}, '-sk']; "
+            f"dl.PROBE_CMD = [{probe!r}, '-f']; "
             f"dl.DU_TIMEOUT_S = 2; dl._default_du_kb(__import__('pathlib').Path({str(tmp_path)!r}))")
     parent = subprocess.Popen([sys.executable, "-c", code], env={**os.environ, "HOME": str(tmp_path)})
     end = time.monotonic() + 10
@@ -283,20 +286,28 @@ def test_a_probe_that_blocks_on_a_privacy_prompt_counts_as_protected(monkeypatch
 NICE_CAP = 19  # the most a process can raise its own nice value on macOS and Linux (os.nice stops here)
 
 
-def _du_nice_under(monkeypatch, tmp_path, parent_nice: int) -> int:
+def _du_nice_under(monkeypatch, tmp_path, parent_nice: int, du_cmd_script: str | None = None, probe_cmd_script: str | None = None) -> int:
     """The nice value du runs at when the caller itself already runs at parent_nice. Forks so the suite's own
     priority is untouched; main-health runs the whole suite niced (#457)."""
     out = tmp_path / "nice"
-    monkeypatch.setattr(dl, "DU_CMD", [_script(tmp_path, "du", f'ps -o nice= -p $$ > {out}; printf "1\\t%s\\n" "$2"'), "-sk"])
+    result = tmp_path / "result"
+    du_script = du_cmd_script or f'ps -o nice= -p $$ > {out}; printf "1\\t%s\\n" "$2"'
+    probe_script = probe_cmd_script or "exit 0"
+    monkeypatch.setattr(dl, "DU_CMD", [_script(tmp_path, "du", du_script), "-sk"])
+    monkeypatch.setattr(dl, "PROBE_CMD", [_script(tmp_path, "probe", probe_script)])
     pid = os.fork()
     if pid == 0:
         try:
             os.nice(max(0, parent_nice - os.nice(0)))
-            os._exit(0 if dl._default_du_kb(tmp_path) == 1 else 1)
+            ret = dl._default_du_kb(tmp_path)
+            result.write_text(str(ret))
+            os._exit(0 if ret == 1 else 1)
         except BaseException:
             os._exit(2)
     _, status = os.waitpid(pid, 0)
-    assert os.waitstatus_to_exitcode(status) == 0
+    actual_result = result.read_text().strip() if result.exists() else "NO_RESULT"
+    exitcode = os.waitstatus_to_exitcode(status)
+    assert exitcode == 0, f"_du_nice_under exit code {exitcode}, _default_du_kb returned: {actual_result}"
     return int(out.read_text().strip())
 
 
@@ -308,13 +319,30 @@ def test_du_runs_at_low_priority(monkeypatch, tmp_path, parent_nice):
     assert _du_nice_under(monkeypatch, tmp_path, parent_nice) == min(start + 10, NICE_CAP)
 
 
+def test_du_nice_under_reports_cause_on_failure(monkeypatch, tmp_path):
+    """When _default_du_kb returns a non-int, _du_nice_under's error message names the cause."""
+    # Failing probe triggers NOT_MEASURED_PROTECTED, which is not an int (like 1), so assertion fails
+    with pytest.raises(AssertionError) as exc_info:
+        _du_nice_under(
+            monkeypatch, tmp_path, parent_nice=0,
+            probe_cmd_script='echo "Operation not permitted" >&2; exit 1'
+        )
+
+    # The assertion message should include the actual result returned by _default_du_kb
+    assert dl.NOT_MEASURED_PROTECTED in str(exc_info.value), (
+        f"Error message should name the cause, got: {exc_info.value}"
+    )
+
+
 def test_garbage_du_output_is_not_measured_not_a_crash(monkeypatch, tmp_path):
     monkeypatch.setattr(dl, "DU_CMD", [_script(tmp_path, "du", "echo lots of bytes"), "-sk"])
+    monkeypatch.setattr(dl, "PROBE_CMD", [_script(tmp_path, "probe", "exit 0")])
     assert dl._default_du_kb(tmp_path) == 0
 
 
 def test_a_du_that_cannot_start_is_not_measured(monkeypatch, tmp_path):
     monkeypatch.setattr(dl, "DU_CMD", [str(tmp_path / "no-such-du"), "-sk"])
+    monkeypatch.setattr(dl, "PROBE_CMD", [_script(tmp_path, "probe", "exit 0")])
     assert isinstance(dl._default_du_kb(tmp_path), str)
 
 
