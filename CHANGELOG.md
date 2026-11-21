@@ -1,5 +1,7 @@
 # Changelog
 
+- Fix self-contradicting write-target instruction in inbox-mode reviewer prompt ([#1336](https://github.com/G-Eskayo/marvin/pull/1336))
+
 - Research colony reads the owner's research newsletters ([#1356](https://github.com/G-Eskayo/marvin/pull/1356))
 
 - Leave gitignored caches (__pycache__, .pytest_cache, *.pyc) out of the background reviewer's chunk file lists ([#1358](https://github.com/G-Eskayo/marvin/pull/1358))
