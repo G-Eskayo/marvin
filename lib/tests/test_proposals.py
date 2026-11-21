@@ -18,6 +18,7 @@ LIB = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(LIB))
 
 import proposals as p  # noqa: E402
+from test_resume_check import FakeGitHub, issue  # noqa: E402
 
 TODAY = date(2026, 10, 15)
 
@@ -197,8 +198,8 @@ def test_dismiss_needs_a_real_reason_and_keeps_it(root):
 def test_until_ticket_then_backup_date_brings_it_back(root):
     a = p.add(root, idea(), today=TODAY)
     p.act(root, a["id"], "until", {"ticket": 123, "backup": "2027-01-15"}, today=TODAY)
-    assert p.load_all(root, today=date(2027, 1, 14))["proposals"] == []
-    back = p.load_all(root, today=date(2027, 1, 15))["proposals"][0]
+    assert p.load_all(root, today=date(2027, 1, 14), run=FakeGitHub())["proposals"] == []
+    back = p.load_all(root, today=date(2027, 1, 15), run=FakeGitHub())["proposals"][0]
     assert "2027-01-15" in back["returned"]
 
 
@@ -285,6 +286,159 @@ def test_concurrent_actions_never_corrupt_the_file(root):
     assert results.count("ok") == 1  # exactly one wins, the rest see it isn't open
     json.loads((root / f"{a['id']}.json").read_text())  # still valid JSON
     assert not list(root.glob("*.tmp"))
+
+
+# --- ticket-linked return (#534) ---
+
+def test_dismissed_until_with_closed_ticket_returns_immediately(root):
+    a = p.add(root, idea(), today=TODAY)
+    p.act(root, a["id"], "until", {"ticket": 123, "backup": "2027-01-15"}, today=TODAY)
+    # Ticket 123 is closed, so the proposal should return even before the backup date
+    items = {"G-Eskayo/marvin#123": issue(state="CLOSED")}
+    result = p.load_all(root, today=date(2026, 10, 16), run=FakeGitHub(items))
+    assert len(result["proposals"]) == 1
+    assert result["proposals"][0]["id"] == a["id"]
+    assert "ticket #123 closed" in result["proposals"][0]["returned"]
+
+
+def test_dismissed_until_with_open_ticket_stays_dismissed(root):
+    a = p.add(root, idea(), today=TODAY)
+    p.act(root, a["id"], "until", {"ticket": 456, "backup": "2027-01-15"}, today=TODAY)
+    # Ticket 456 is open, so it stays dismissed until the backup date
+    items = {"G-Eskayo/marvin#456": issue(state="OPEN")}
+    result = p.load_all(root, today=date(2026, 10, 16), run=FakeGitHub(items))
+    assert result["proposals"] == []
+
+
+def test_dismissed_until_with_text_still_uses_backup_date(root):
+    a = p.add(root, idea(), today=TODAY)
+    p.act(root, a["id"], "until", {"text": "waiting for something", "backup": "2027-01-15"}, today=TODAY)
+    # No ticket, so only backup date matters
+    result = p.load_all(root, today=date(2026, 10, 16), run=FakeGitHub())
+    assert result["proposals"] == []
+    result = p.load_all(root, today=date(2027, 1, 15), run=FakeGitHub())
+    assert len(result["proposals"]) == 1 and "2027-01-15" in result["proposals"][0]["returned"]
+
+
+def test_dismissed_until_with_nonexistent_ticket_uses_backup_date(root):
+    a = p.add(root, idea(), today=TODAY)
+    p.act(root, a["id"], "until", {"ticket": 999, "backup": "2027-01-15"}, today=TODAY)
+    # Ticket 999 doesn't exist in GitHub (not in items), so it stays dismissed until backup
+    result = p.load_all(root, today=date(2026, 10, 16), run=FakeGitHub({}))
+    assert result["proposals"] == []
+    result = p.load_all(root, today=date(2027, 1, 15), run=FakeGitHub({}))
+    assert len(result["proposals"]) == 1 and "2027-01-15" in result["proposals"][0]["returned"]
+
+
+def test_dismissed_until_multiple_proposals_checks_all_tickets(root):
+    a = p.add(root, idea(title="idea-a"), today=TODAY)
+    b = p.add(root, idea(title="idea-b"), today=TODAY)
+    c = p.add(root, idea(title="idea-c"), today=TODAY)
+    p.act(root, a["id"], "until", {"ticket": 111, "backup": "2027-01-15"}, today=TODAY)
+    p.act(root, b["id"], "until", {"ticket": 222, "backup": "2027-01-15"}, today=TODAY)
+    p.act(root, c["id"], "snooze", {"days": 365}, today=TODAY)
+    # Ticket 111 is closed, 222 is open
+    items = {
+        "G-Eskayo/marvin#111": issue(state="CLOSED"),
+        "G-Eskayo/marvin#222": issue(state="OPEN"),
+    }
+    result = p.load_all(root, today=date(2026, 10, 16), run=FakeGitHub(items))
+    # Only a should return; b is still dismissed, c is snoozed
+    assert len(result["proposals"]) == 1
+    assert result["proposals"][0]["id"] == a["id"]
+
+
+def test_load_all_checks_tickets_exactly_once(root):
+    a = p.add(root, idea(), today=TODAY)
+    b = p.add(root, idea(title="idea-b"), today=TODAY)
+    p.act(root, a["id"], "until", {"ticket": 111, "backup": "2027-01-15"}, today=TODAY)
+    p.act(root, b["id"], "until", {"ticket": 111, "backup": "2027-01-15"}, today=TODAY)
+    # Same ticket linked from two proposals; should only be checked once
+    gh = FakeGitHub({"G-Eskayo/marvin#111": issue(state="CLOSED")})
+    result = p.load_all(root, today=date(2026, 10, 16), run=gh)
+    assert len(result["proposals"]) == 2
+    # Verify only one GraphQL call was made
+    assert len(gh.calls) == 1
+
+
+def test_ticket_closed_has_priority_over_backup_date_on_same_day(root):
+    a = p.add(root, idea(), today=TODAY)
+    p.act(root, a["id"], "until", {"ticket": 123, "backup": "2026-10-16"}, today=TODAY)
+    # On the backup date, if ticket is closed, it should return with ticket reason (not backup reason)
+    items = {"G-Eskayo/marvin#123": issue(state="CLOSED")}
+    result = p.load_all(root, today=date(2026, 10, 16), run=FakeGitHub(items))
+    assert len(result["proposals"]) == 1
+    assert "ticket #123 closed" in result["proposals"][0]["returned"]
+
+
+def test_check_tickets_catches_github_errors(root):
+    a = p.add(root, idea(), today=TODAY)
+    p.act(root, a["id"], "until", {"ticket": 123, "backup": "2027-01-15"}, today=TODAY)
+    # Simulate actual error conditions: gh missing, timeout, network issues
+    # All should be caught and treated as "can't check; use backup date"
+    import subprocess
+    def missing_gh(*args, **kw):
+        raise OSError("gh: command not found")
+    result = p.load_all(root, today=date(2026, 10, 16), run=missing_gh)
+    assert result["proposals"] == []
+    result = p.load_all(root, today=date(2027, 1, 15), run=missing_gh)
+    assert len(result["proposals"]) == 1 and "2027-01-15" in result["proposals"][0]["returned"]
+
+    # Test timeout scenario
+    def timeout_run(*args, **kw):
+        raise subprocess.TimeoutExpired("gh", 5.0)
+    result = p.load_all(root, today=date(2026, 10, 16), run=timeout_run)
+    assert result["proposals"] == []
+    result = p.load_all(root, today=date(2027, 1, 15), run=timeout_run)
+    assert len(result["proposals"]) == 1 and "2027-01-15" in result["proposals"][0]["returned"]
+
+
+def test_no_tickets_to_check_skips_github_call(root):
+    a = p.add(root, idea(), today=TODAY)
+    p.act(root, a["id"], "snooze", {"days": 365}, today=TODAY)
+    # No dismissed_until with ticket, so no GitHub call should be made
+    gh = FakeGitHub()
+    result = p.load_all(root, today=date(2026, 10, 16), run=gh)
+    assert gh.calls == []
+
+
+def test_load_all_with_no_dismissed_until_proposals(root):
+    a = p.add(root, idea(), today=TODAY)
+    p.act(root, a["id"], "snooze", {"days": 1}, today=TODAY)
+    # No dismissed_until proposals, so load_all with ticket checking should still work
+    result = p.load_all(root, today=date(2026, 10, 15), run=FakeGitHub())
+    assert result["proposals"] == []
+
+
+def test_dismissed_until_without_ticket_field_ignores_github_check(root):
+    a = p.add(root, idea(), today=TODAY)
+    p.act(root, a["id"], "until", {"text": "waiting for something", "backup": "2027-01-15"}, today=TODAY)
+    # dismissed_until with text (no ticket field); GitHub should not be called
+    gh = FakeGitHub()
+    result = p.load_all(root, today=date(2026, 10, 16), run=gh)
+    assert result["proposals"] == [] and gh.calls == []
+    result = p.load_all(root, today=date(2027, 1, 15), run=gh)
+    assert len(result["proposals"]) == 1 and "2027-01-15" in result["proposals"][0]["returned"] and gh.calls == []
+
+
+def test_returned_field_explains_why_ticket_returned_it(root):
+    a = p.add(root, idea(), today=TODAY)
+    p.act(root, a["id"], "until", {"ticket": 999, "backup": "2027-01-15"}, today=TODAY)
+    items = {"G-Eskayo/marvin#999": issue(state="CLOSED")}
+    result = p.load_all(root, today=date(2026, 10, 16), run=FakeGitHub(items))
+    assert result["proposals"][0]["returned"] == "ticket #999 closed"
+
+
+def test_act_on_proposal_returned_by_closed_ticket(root):
+    a = p.add(root, idea(), today=TODAY)
+    p.act(root, a["id"], "until", {"ticket": 555, "backup": "2027-01-15"}, today=TODAY)
+    # Ticket 555 is closed, so proposal is returned
+    items = {"G-Eskayo/marvin#555": issue(state="CLOSED")}
+    result = p.load_all(root, today=date(2026, 10, 16), run=FakeGitHub(items))
+    assert len(result["proposals"]) == 1
+    # Should be able to act on the returned proposal (e.g., dismiss it again)
+    out = p.act(root, a["id"], "dismiss", {"reason": "implement later"}, today=date(2026, 10, 16), run=FakeGitHub(items))
+    assert out["status"]["state"] == "dismissed"
 
 
 # --- CLI (what the dashboard calls) ----------------------------------------------------------------------------------
