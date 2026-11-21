@@ -138,3 +138,118 @@ Full report: [`knowledge-graphs-2026-10-26.md`](knowledge-graphs-2026-10-26.md).
 - **Confidence:** Ours (a model judge, written text only).
 - **Drives:** STE not adopted as a default.
 - **Public use:** Careful.
+
+---
+
+## Rooting a 1st-gen HomePod to retire Siri, 2026-11-20
+
+Research for marvin#651: can we checkm8-root one 1st-gen HomePod (AudioAccessory1,1, on HomePod
+software 27.2), take over its mics and speaker, and keep it rooted. These are hobbyist/forensic
+sources (general web + two vendor forensics blogs + three GitHub repos); no academic tier applies.
+
+### E10. Opening the glued base is the real risk; the diagnostic port is a known USB/UART pad
+- **Source:** [ElcomSoft, HomePod Forensics I](https://blog.elcomsoft.com/2023/03/homepod-forensics-i-pwning-the-homepod/);
+  [UnbendableStraw/homepwn-simple](https://github.com/UnbendableStraw/homepwn-simple).
+- **What we took:** the bottom lid is glued; warm it with a fan in 10–15 s bursts and pry with a flat
+  screwdriver. Over-heating melts the material and the lid can be damaged — this voids the warranty and
+  is "not for casual users." Under the lid is a combined USB/UART port. Pinout (top row, port up):
+  NC, TX, RX, CTRL, D+, D-, GND. USB-only restore/root needs four probes (+5V, D+, D-, GND); UART is
+  **1.8 V only** (3.3/5 V damages it), console at 115200 baud via an FTDI 1.8 V adapter. Pogo pins
+  P75-D2/P75-J1, held by four M2x6 screws.
+- **Confidence:** Strong (two independent sources, one a detailed build repo).
+- **Drives:** the mechanical step is the gating risk; buy or print the adapter, don't solder to pads.
+- **Public use:** Careful.
+
+### E11. The adapter is open-source and also sold pre-made; no published price
+- **Source:** [UnbendableStraw/homepwn-simple](https://github.com/UnbendableStraw/homepwn-simple) (OpenSCAD
+  + STL for adapter, stand and dock); author's shop at nicsfix.com/shop.
+- **What we took:** the PCB-less pogo-pin adapter, a table stand and a dock are free STL/OpenSCAD files;
+  BOM is 4x M2x6 screws, pogo pins, a USB cable, and (for UART) a 1.8 V FTDI adapter such as a DSD TECH
+  SH-U09C5. Pre-assembled docks/adapters are sold at nicsfix.com/shop, but no price appeared in the
+  sources (Unknown as of Nov 2026).
+- **Confidence:** Strong (files) / Weak (shop price unseen).
+- **Drives:** buy-vs-print decision on #651.
+- **Public use:** Careful.
+
+### E12. checkm8 root is real and unpatchable, but no published tooling produces a working jailbroken boot on audioOS 26/27
+- **Source:** [checkra1n 0.12.1 partial HomePod support, 2020](https://9to5mac.com/2020/11/20/first-generation-homepod-can-now-be-jailbroken-with-checkra1n/)
+  (CLI-only, tested audioOS 13/14); [ElcomSoft, Nov 2025](https://blog.elcomsoft.com/2025/11/exploring-ipados-tvos-and-audioos-17-and-18-devices-file-system-and-keychain-extraction/)
+  (EIFT 8.81 extends checkm8 to 1st-gen HomePod on OS 17/18, but "does not support checkm8 extractions"
+  on audioOS/tvOS 26 builds); [UnbendableStraw/homepod-restore](https://github.com/UnbendableStraw/homepod-restore)
+  (gaster + idevicerestore; warns builds newer than 18.3 "may restore fine but boot loop after a reset").
+- **What we took:** the A8 bootrom flaw (checkm8) cannot be patched by any OS update, so 27.2 does not
+  close the door. But every published HomePod path tops out well below 27: checkra1n tested at 13/14,
+  restore/boot stable only up to ~18.3, forensic extraction not yet on 26. So on 27.2 root is possible
+  in principle, but the known-good jailbreak+boot path has **not** been demonstrated. Practical route:
+  restore/downgrade the target to a known-good version (≤18.3) first, then root — not root 27.2 directly.
+  Current tooling is **gaster** (maintained checkm8 impl) + `idevicerestore` + a custom ipsw, not the
+  stale checkra1n.
+- **Confidence:** Moderate (bootrom fact Strong; the "no working 27.x boot" is absence-of-evidence across
+  the maintained sources, not a proof of impossibility).
+- **Drives:** plan #651 should budget a downgrade step; don't assume 27.2 roots as-is.
+- **Public use:** Careful.
+
+### E13. Host can be the Mac mini M4; a Pi can't yet run the exploit, only automate DFU entry
+- **Source:** [UnbendableStraw/homepod-restore](https://github.com/UnbendableStraw/homepod-restore)
+  (Mac tested on Apple Silicon and Intel; Linux "should work" untested; Homebrew + libimobiledevice +
+  `gaster` + pinned `idevicerestore`); [ElcomSoft, Automating DFU with a Raspberry Pi Pico](https://blog.elcomsoft.com/2023/04/automating-dfu-mode-with-raspberry-pi-pico/)
+  (Pi Pico drives the Lightning ID lines to force DFU on iPhones, not HomePods);
+  [MatthewPierson/PyBoot](https://github.com/MatthewPierson/PyBoot) (tether-boots checkm8 iOS devices,
+  macOS-only, author warns it is "most likely extremely broken").
+- **What we took:** the Mac mini M4 is a confirmed-good host. A Raspberry Pi is not a demonstrated host
+  for the exploit itself — the only Pi work automates the DFU-entry button sequence, not the jailbreak.
+- **Confidence:** Moderate.
+- **Drives:** run the exploit from the Mini; a Pi is a candidate only for DFU automation, unproven.
+- **Public use:** Careful.
+
+### E14. Tethered re-root on every boot is unbuilt for HomePod
+- **Source:** checkm8 is tethered (re-run each boot) per all sources above; no project automates HomePod
+  re-root. [joeblackwaslike/homepod-update](https://github.com/joeblackwaslike/homepod-update) blueprint
+  says only "you can always re-jailbreak" (manual).
+- **What we took:** an always-attached Pi/Pico that re-runs `gaster pwn` + tether-boot on power-up is
+  feasible in principle but nobody has published it for the HomePod. This is net-new engineering.
+- **Confidence:** Moderate (feasibility is inference from how checkm8 tethered boot works elsewhere).
+- **Drives:** scope a bespoke re-root rig as its own task; don't assume an off-the-shelf solution.
+- **Public use:** Careful.
+
+### E15. Blocking OTA updates on a rooted HomePod is undocumented
+- **Source:** web search returned no method; [joeblackwaslike blueprint](https://github.com/joeblackwaslike/homepod-update)
+  notes checkm8 "cannot be patched" by OTA but that updates still wipe tweaks (reinstall needed).
+- **What we took:** no published HomePod-specific OTA block. Generic options (block Apple update
+  endpoints at the router/DNS, or disable the update daemon on the rooted filesystem) are untested here.
+- **Confidence:** Weak (absence of sources).
+- **Drives:** treat OTA-blocking as unsolved; likely a router/DNS block plus keeping the device off
+  Apple's update path.
+- **Public use:** Careful.
+
+### E16. Mic access from root: a concrete blueprint now exists, but nothing working has been demonstrated
+- **Source:** [joeblackwaslike/homepod-update](https://github.com/joeblackwaslike/homepod-update) and its
+  [docs/blueprint.md](https://raw.githubusercontent.com/joeblackwaslike/homepod-update/main/docs/blueprint.md)
+  (© 2026, 6 stars, 0 forks, 5 commits, no releases).
+- **What we took:** the project proposes a MobileSubstrate tweak that `MSHookFunction`s `AudioUnitRender`
+  inside `mediaserverd`, copies the bus-1 buffer (assumed to be the beamformed mic array), and streams it
+  48 kHz/16-bit mono over the Wyoming protocol (TCP 10700) to a server; a Go dashboard on port 8080
+  monitors it. Replies come back via AirPlay/Shairport Sync, so the **speaker is not driven directly** —
+  "no speaker-side injection code needed." Crucially the doc is an **untested blueprint**: it hedges
+  throughout ("assumed," "likely," "update asbd_* constants if they differ") and has unfinished code.
+  This updates our prior "nobody has published mic access": a published *design* exists, but no working
+  demonstration, and the mic-array-on-bus-1 assumption is unverified.
+- **Confidence:** Weak (single unverified hobby repo, self-described as untested).
+- **Drives:** the mic-capture daemon is still the research risk on #651; the blueprint is a starting
+  point, not a solution. Direct speaker injection into the render graph remains unpublished.
+- **Public use:** Careful.
+
+### E17. DFU restore through the same port recovers software bricks; speaker works as a stock USB gadget
+- **Source:** [UnbendableStraw/homepod-restore](https://github.com/UnbendableStraw/homepod-restore)
+  (`gaster pwn` → `gaster reset` → `idevicerestore -d -e signed.ipsw`, pre-built signed 18.3 ipsw provided,
+  10–15 min, Mac + Homebrew); [9to5Mac, Aug 2024](https://9to5mac.com/2024/08/09/fix-software-bricked-homepods/);
+  the diagnostic port also exposes a stock USB-audio gadget (HomePod appears as a USB speaker to a
+  connected Mac) on HomePod software 14.0+ (homepwn-simple README).
+- **What we took:** the software side is recoverable — the same port that roots it also DFU-restores it,
+  so a bad flash is not a brick. That de-risks everything except the one-time mechanical act of opening
+  the base. Separately, the speaker can be driven over USB with no jailbreak at all (output-only, needs a
+  permanent USB host), which is a lower-risk fallback for playback.
+- **Confidence:** Strong (restore) / Moderate (USB-gadget audio).
+- **Drives:** mechanical risk dominates; software failures are reversible. USB-audio is a no-root
+  fallback for the speaker if root stalls.
+- **Public use:** Careful.
