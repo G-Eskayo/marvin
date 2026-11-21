@@ -33,7 +33,7 @@ def main() -> int:
     correlated = correlate.correlate()
 
     print("[colony] === digest generator ===", file=sys.stderr)
-    out = research_digest.generate()
+    out = research_digest.generate(correlated=correlated)
 
     if out:
         print(f"[colony] done — digest at {out}", file=sys.stderr)
