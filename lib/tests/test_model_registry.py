@@ -134,6 +134,82 @@ class TestResolveCapability:
                 model_registry.resolve_capability("unknown-capability-xyz", reg=reg)
 
 
+# ── model_present function ────────────────────────────────────────────────
+
+class TestModelPresent:
+    """Test model_present() for matching models in available lists."""
+
+    def test_exact_match(self):
+        """Exact match: qwen2.5:14b present as qwen2.5:14b."""
+        available = ["qwen2.5:14b", "qwen2.5:3b", "nomic-embed-text:latest"]
+        assert model_registry.model_present(available, "qwen2.5:14b") is True
+
+    def test_tag_variant_match(self):
+        """Tag-variant match: qwen2.5:14b matches qwen2.5:14b-instruct-q4_K_M."""
+        available = ["qwen2.5:14b-instruct-q4_K_M", "qwen2.5:3b"]
+        assert model_registry.model_present(available, "qwen2.5:14b") is True
+
+    def test_regression_guard_different_size(self):
+        """Regression guard: checking qwen2.5:14b when only 3b is installed → absent."""
+        available = ["qwen2.5:3b", "nomic-embed-text:latest"]
+        assert model_registry.model_present(available, "qwen2.5:14b") is False
+
+    def test_case_sensitive_mismatch(self):
+        """Case-sensitive mismatch: qwen2.5:14B vs qwen2.5:14b → absent."""
+        available = ["qwen2.5:14b", "qwen2.5:3b"]
+        assert model_registry.model_present(available, "qwen2.5:14B") is False
+
+    def test_empty_available_list(self):
+        """Empty available-list input → absent, no crash."""
+        available = []
+        assert model_registry.model_present(available, "qwen2.5:14b") is False
+
+    def test_bare_name_as_latest(self):
+        """Bare, untagged registry name matches Ollama's :latest report."""
+        available = ["nomic-embed-text:latest", "qwen2.5:3b"]
+        assert model_registry.model_present(available, "nomic-embed-text") is True
+
+    def test_empty_capability_in_check_consistency(self):
+        """check_consistency() flags empty capability model-list as hard error."""
+        with TemporaryRegistry() as reg:
+            data = reg._read()
+            data.setdefault("capabilities", {})["test-empty"] = []
+            reg._write(data)
+            result = model_registry.check_consistency(reg=reg)
+            assert len(result.get("hard_errors", [])) > 0
+            assert any("test-empty" in e for e in result["hard_errors"])
+
+    def test_consistency_bootstrap_matches_config(self):
+        """Bootstrap dict is internally consistent."""
+        # Load the real config/models.json (may differ from bootstrap due to pending decisions)
+        repo_root = Path(__file__).resolve().parents[2]
+        config_path = repo_root / "config" / "models.json"
+
+        if config_path.exists():
+            real_config = json.loads(config_path.read_text())
+        else:
+            real_config = None
+
+        # Create a fresh bootstrap registry and verify it's internally consistent
+        with TemporaryRegistry() as reg:
+            bootstrap_data = reg._read()
+
+            # The bootstrap must be internally consistent: all capabilities reference
+            # registered models, and no lists are empty
+            result = model_registry.check_consistency(reg=reg)
+            hard_errs = result.get("hard_errors", [])
+            assert len(hard_errs) == 0, \
+                f"Bootstrap has hard errors (capabilities must reference registered models): {hard_errs}"
+
+            # If real config exists, check that it's also consistent (guards against config drift)
+            if real_config:
+                real_reg = model_registry.ModelRegistry(config_path)
+                real_result = model_registry.check_consistency(reg=real_reg)
+                real_hard_errs = real_result.get("hard_errors", [])
+                assert len(real_hard_errs) == 0, \
+                    f"config/models.json has hard errors: {real_hard_errs}"
+
+
 # ── is_heavy function ──────────────────────────────────────────────────────
 
 class TestIsHeavy:

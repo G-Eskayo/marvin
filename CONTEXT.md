@@ -642,6 +642,12 @@ ever been closed unmerged. Gil approves almost everything; the wait is the cost.
   generically, without anyone having pre-written a rule naming the specific failure shape — how a
   ticket retry storm's comment-velocity spike would be caught without a "storm detector" ever
   having been written.
+- **Configuration coverage rule**: a config entry that names a resource (a model, a device, a file,
+  a network host) has a health row that probes it. This prevents silent configuration drift: if you
+  say "build on this machine" or "use this model," the health dashboard immediately shows whether
+  that resource actually exists and works. Examples: `model:availability` probes every Ollama model
+  in `config/models.json`'s capabilities; `profile:machines` probes every device listed in a
+  project profile's `machines` list.
 
 ## Entity IDs (ADR 0079, accepted 2026-10-27, marvin#697)
 

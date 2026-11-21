@@ -8,12 +8,14 @@ import pytest
 import sys
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
+from unittest.mock import patch
 
 LIB = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(LIB))
 
 import cron_health as ch  # noqa: E402
 import health_checks as hc  # noqa: E402
+import model_registry  # noqa: E402
 
 
 # ── token files ──────────────────────────────────────────────────────────
@@ -1688,6 +1690,167 @@ def test_react_to_accounts_summarises_and_never_raises():
     assert hc.react_to_accounts(lambda: {"accounts": rows}) == "1 expiring, 2 works"
     assert hc.react_to_accounts(lambda: {}).startswith("skipped")
     assert hc.react_to_accounts(lambda: 1 / 0).startswith("could not check accounts: ZeroDivisionError")
+
+
+# ── model availability (models.json vs installed) ─────────────────────────
+
+def test_model_availability_green_when_all_ollama_models_present():
+    """Model present on the local machine only → green."""
+    import tempfile
+    from unittest.mock import patch, MagicMock
+
+    with tempfile.TemporaryDirectory() as tmpdir:
+        reg_path = Path(tmpdir) / "models.json"
+        data = {
+            "models": {
+                "qwen2.5:14b": {"size_gb": 9.0, "runtime": "ollama", "used_by": "test", "reason": "test", "heavy": True, "location": "/tmp", "last_used": None},
+                "qwen2.5:3b": {"size_gb": 1.9, "runtime": "ollama", "used_by": "test", "reason": "test", "heavy": False, "location": "/tmp", "last_used": None},
+            },
+            "capabilities": {
+                "local-classify-medium": ["qwen2.5:14b"],
+                "local-extract-small": ["qwen2.5:3b"],
+            },
+        }
+        reg_path.write_text(json.dumps(data))
+
+        # Mock the HTTP call to return both models
+        mock_response_data = {
+            "models": [
+                {"name": "qwen2.5:14b"},
+                {"name": "qwen2.5:3b"},
+            ]
+        }
+
+        original_path = model_registry.REGISTRY_PATH
+        try:
+            model_registry.REGISTRY_PATH = reg_path
+            with patch("urllib.request.urlopen") as mock_urlopen:
+                mock_resp = MagicMock()
+                mock_resp.read.return_value = json.dumps(mock_response_data).encode()
+                mock_resp.__enter__.return_value = mock_resp
+                mock_urlopen.return_value = mock_resp
+
+                with patch.object(hc.machine_profile, "remote_macs", return_value={}):
+                    result = hc.check_model_availability(reachability={})
+
+                    assert result["id"] == "model:availability"
+                    assert result["severity"] == "green", f"Expected green but got {result['severity']}: {result.get('detail')}"
+                    assert "2" in result["detail"] or "models" in result["detail"]
+        finally:
+            model_registry.REGISTRY_PATH = original_path
+
+
+def test_model_availability_unknown_when_no_machines_answered():
+    """Zero machines answered (local server not running, remotes unreachable) → unknown."""
+    import tempfile
+    with tempfile.TemporaryDirectory() as tmpdir:
+        reg_path = Path(tmpdir) / "models.json"
+        data = {
+            "models": {"qwen2.5:14b": {"size_gb": 9.0, "runtime": "ollama", "used_by": "test", "reason": "test", "heavy": True, "location": "/tmp", "last_used": None}},
+            "capabilities": {"local-classify-medium": ["qwen2.5:14b"]},
+        }
+        reg_path.write_text(json.dumps(data))
+
+        original_path = model_registry.REGISTRY_PATH
+        try:
+            model_registry.REGISTRY_PATH = reg_path
+            with patch("urllib.request.urlopen", side_effect=Exception("refused")):
+                with patch.object(hc.machine_profile, "remote_macs", return_value={}):
+                    result = hc.check_model_availability(reachability={})
+                    assert result["severity"] == hc.UNKNOWN or result.get("measured") is False
+        finally:
+            model_registry.REGISTRY_PATH = original_path
+
+
+def test_model_availability_ignores_non_ollama_models():
+    """Models with runtime != 'ollama' (hf, mlx, flux) are ignored."""
+    import tempfile
+    from unittest.mock import patch, MagicMock
+
+    with tempfile.TemporaryDirectory() as tmpdir:
+        reg_path = Path(tmpdir) / "models.json"
+        data = {
+            "models": {
+                "qwen2.5:3b": {"size_gb": 1.9, "runtime": "ollama", "used_by": "test", "reason": "test", "heavy": False, "location": "/tmp", "last_used": None},
+                "specter2": {"size_gb": 0.84, "runtime": "hf", "used_by": "test", "reason": "test", "heavy": False, "location": "/tmp", "last_used": None},
+            },
+            "capabilities": {
+                "local-extract-small": ["qwen2.5:3b"],
+                "search": ["specter2"],
+            },
+        }
+        reg_path.write_text(json.dumps(data))
+
+        original_path = model_registry.REGISTRY_PATH
+        try:
+            model_registry.REGISTRY_PATH = reg_path
+            # Mock urlopen to return only qwen2.5:3b (specter2 would fail in real life since it's not ollama)
+            mock_response_data = {
+                "models": [
+                    {"name": "qwen2.5:3b"},
+                ]
+            }
+            with patch("urllib.request.urlopen") as mock_urlopen:
+                mock_resp = MagicMock()
+                mock_resp.read.return_value = json.dumps(mock_response_data).encode()
+                mock_resp.__enter__.return_value = mock_resp
+                mock_urlopen.return_value = mock_resp
+
+                with patch.object(hc.machine_profile, "remote_macs", return_value={}):
+                    result = hc.check_model_availability(reachability={})
+                    # specter2 should not be checked, only qwen2.5:3b
+                    # Result should be green (qwen2.5:3b present)
+                    assert result["severity"] == "green", f"Expected green but got {result['severity']}: {result.get('detail')}"
+                    assert "specter2" not in result.get("detail", "")
+        finally:
+            model_registry.REGISTRY_PATH = original_path
+
+
+# ── profile machines validation ────────────────────────────────────────────
+
+def test_profile_machines_check_green_when_all_machines_known():
+    """All of a profile's machines resolve to known devices → green."""
+    import tempfile
+    from unittest.mock import patch
+    with tempfile.TemporaryDirectory() as tmpdir:
+        profiles_dir = Path(tmpdir)
+        profile_path = profiles_dir / "test-project.json"
+        profile_path.write_text(json.dumps({
+            "repo": "org/test-project",
+            "machines": ["mac-mini"],
+            "verify": [{"id": "tests", "command": "make test"}]
+        }))
+
+        with patch.object(hc.machine_profile, "registry_id", return_value="mac-mini"):
+            with patch.object(hc.machine_profile, "remote_devices", return_value={"macbook-pro": {}}):
+                results = hc.check_profile_machines(profiles_dir)
+
+        # test-project lists "mac-mini" which exists, so should emit a green row
+        assert len(results) > 0, "Expected at least one result"
+        assert any(r["severity"] == "green" and "profile:machines" in r["id"] for r in results), \
+            f"Expected green result for profile:machines but got: {results}"
+        assert all(r["severity"] != "yellow" for r in results if "machines" in r["id"]), \
+            f"Expected no yellow results but got: {[r for r in results if 'machines' in r['id'] and r['severity'] == 'yellow']}"
+
+
+def test_profile_machines_check_yellow_for_unknown_device():
+    """A profile's machines entry names unknown device id → yellow."""
+    import tempfile
+    from unittest.mock import patch
+    with tempfile.TemporaryDirectory() as tmpdir:
+        profiles_dir = Path(tmpdir)
+        profile_path = profiles_dir / "test-project.json"
+        profile_path.write_text(json.dumps({
+            "repo": "org/test-project",
+            "machines": ["nonexistent-device"],
+            "verify": [{"id": "tests", "command": "make test"}]
+        }))
+
+        with patch.object(hc.machine_profile, "registry_id", return_value="mac-mini"):
+            with patch.object(hc.machine_profile, "remote_devices", return_value={}):
+                results = hc.check_profile_machines(profiles_dir)
+
+        assert any(r["severity"] == "yellow" and "unknown" in r["detail"] for r in results)
 
 
 def test_the_health_sweep_entry_point_runs_the_accounts_check():

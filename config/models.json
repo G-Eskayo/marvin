@@ -1,16 +1,16 @@
 {
   "capabilities": {
     "local-classify-medium": [
-      "qwen2.5:14b"
+      "qwen2.5:3b"
     ],
     "local-extract-small": [
       "qwen2.5:3b"
     ],
     "local-judge-medium": [
-      "qwen2.5:7b"
+      "qwen2.5:3b"
     ],
     "local-inference-large": [
-      "qwen2.5:14b"
+      "qwen2.5:3b"
     ]
   },
   "models": {

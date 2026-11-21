@@ -212,6 +212,36 @@ def is_heavy(model_name: str, reg: ModelRegistry | None = None) -> bool:
     return meta.get("heavy", False)
 
 
+def model_present(available: list[str], model: str) -> bool:
+    """Check if a model is present in an available-models list.
+
+    Matches on:
+    - Exact match: "qwen2.5:14b" in ["qwen2.5:14b", ...]
+    - Tag variant: "qwen2.5:14b" matches "qwen2.5:14b-instruct-q4_K_M" (prefix "{model}-")
+    - Bare name as latest: "nomic-embed-text" matches "nomic-embed-text:latest"
+
+    Case-sensitive (a typo like "14B" vs "14b" is a mismatch, not a match).
+    Returns False for empty available list (no crash on empty input).
+    """
+    if not available:
+        return False
+
+    # Exact match
+    if model in available:
+        return True
+
+    # Tag-variant match: "qwen2.5:14b" should match "qwen2.5:14b-instruct-q4_K_M"
+    # This handles Ollama's convention of tagging models with quantization variants
+    if any(a.startswith(f"{model}-") for a in available):
+        return True
+
+    # Bare name as latest: "nomic-embed-text" should match "nomic-embed-text:latest"
+    if f"{model}:latest" in available:
+        return True
+
+    return False
+
+
 def check_consistency(reg: ModelRegistry | None = None) -> dict[str, list[str]]:
     """Validate registry consistency: all capabilities point to registered models,
     all models are well-described. Returns {"hard_errors": [...], "soft_warnings": [...]}."""
@@ -225,8 +255,10 @@ def check_consistency(reg: ModelRegistry | None = None) -> dict[str, list[str]]:
     hard_errors = []
     soft_warnings = []
 
-    # Hard error: capability references non-existent model
+    # Hard error: capability references non-existent model or empty model list
     for cap_name, model_list in capabilities.items():
+        if not model_list:
+            hard_errors.append(f"Capability {cap_name!r} has an empty model list")
         for model_name in model_list:
             if model_name not in models:
                 hard_errors.append(f"Capability {cap_name!r} references unknown model {model_name!r}")

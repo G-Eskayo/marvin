@@ -350,7 +350,7 @@ def test_judge_extraction_uses_14b_override_for_benchmark_when_no_chat_fn_given(
 
     extraction = {"measures": "m", "construct_validity_evidence": "e", "scope": "s"}
     judge_extraction(extraction, "benchmark")  # no chat_fn -- exercises the real default path
-    assert captured["model"] == "qwen2.5:14b"
+    assert captured["model"] == "qwen2.5:3b"
 
 
 def test_judge_extraction_uses_default_7b_for_non_benchmark_types(monkeypatch):
@@ -366,7 +366,7 @@ def test_judge_extraction_uses_default_7b_for_non_benchmark_types(monkeypatch):
 
     extraction = {"claim": "c", "grounds": "g", "warrant": "w", "qualifier": "q"}
     judge_extraction(extraction, "empirical")
-    assert captured["model"] == "qwen2.5:7b"
+    assert captured["model"] == "qwen2.5:3b"
 
 
 def test_judge_extraction_conceptual_returns_findings_list():

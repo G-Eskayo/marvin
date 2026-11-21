@@ -29,6 +29,8 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 import code_sync  # noqa: E402
 import cron_health as ch  # noqa: E402
 import machine_profile  # noqa: E402
+import model_registry  # noqa: E402
+import urllib.request  # noqa: E402
 from machine_profile import machine_label  # noqa: E402
 from task_dispatch import TAILSCALE_BIN, TAILSCALE_ENV  # noqa: E402  (absolute path -- launchd's PATH omits the shell's additions)
 
@@ -719,6 +721,166 @@ def check_github_budget(query=None) -> dict:
     except (KeyError, ValueError):
         when = str(b.get("resetAt", "?"))
     return _result(cid, label, sev, f"{left:,} of {limit:,} left, resets {when}", value=left)
+
+
+def check_model_availability(reachability: dict[str, str] | None = None) -> dict:
+    """Verify installed Ollama models match config/models.json.
+
+    For each (capability, model) where runtime == "ollama", query:
+    - Local Ollama: GET http://localhost:11434/api/tags (5s timeout)
+    - Each reachable remote Mac via SSH (10s timeout)
+
+    Severity: green if present anywhere queried; yellow if ≥1 machine answered
+    and absent everywhere that answered; unknown only if zero machines answered.
+    Returns a single dict (not a list) for use in default_checks().
+    """
+    cid, label = "model:availability", "Model registry matches what's installed"
+
+    # Read registry for capabilities and models
+    reg = model_registry.ModelRegistry()
+    data = reg._read()
+    capabilities = data.get("capabilities", {})
+    models = data.get("models", {})
+
+    # Check for config drift (empty capability lists) first
+    consistency = model_registry.check_consistency(reg)
+    if consistency.get("hard_errors"):
+        return _result(cid, label, "red",
+                      f"Config drift: {consistency['hard_errors'][0]}", value=0)
+
+    # Gather (capability, model) pairs where runtime == "ollama"
+    ollama_models = set()
+    for cap_name, model_list in capabilities.items():
+        for model_name in model_list:
+            meta = models.get(model_name, {})
+            if meta.get("runtime") == "ollama":
+                ollama_models.add((cap_name, model_name))
+
+    if not ollama_models:
+        return _result(cid, label, "green", "no Ollama models configured", value=0)
+
+    # Query local Ollama
+    local_models = []
+    try:
+        with urllib.request.urlopen("http://localhost:11434/api/tags", timeout=5) as resp:
+            data = json.loads(resp.read())
+        local_models = [m.get("name", "") for m in data.get("models", []) if isinstance(m, dict)]
+    except Exception as exc:
+        local_models = None  # None = couldn't measure
+
+    # Query remote Macs
+    remote_models_by_dev = {}
+    for dev, info in machine_profile.remote_macs().items():
+        if not _reachable(reachability, dev):
+            continue
+        host = info.get("tailscale_hostname")
+        if not host:
+            continue
+        script = "curl -s http://localhost:11434/api/tags 2>/dev/null | python3 -c \"import sys, json; d=json.load(sys.stdin); print(json.dumps([m.get('name', '') for m in d.get('models', []) if isinstance(m, dict)]))\""
+        cmd = ["ssh", *SSH_OPTS, host, script]
+        try:
+            proc = subprocess.run(cmd, capture_output=True, text=True, timeout=10)
+            if proc.returncode == 0:
+                try:
+                    remote_models_by_dev[dev] = json.loads(proc.stdout)
+                except (json.JSONDecodeError, ValueError):
+                    remote_models_by_dev[dev] = None  # Invalid JSON response
+            else:
+                remote_models_by_dev[dev] = None
+        except (subprocess.SubprocessError, OSError):
+            remote_models_by_dev[dev] = None
+
+    # Aggregate results: check each model across all queried machines
+    missing_models = []
+    any_machine_answered = local_models is not None or any(m is not None for m in remote_models_by_dev.values())
+
+    for cap_name, model_name in sorted(ollama_models):
+        found_anywhere = False
+
+        # Check local
+        if local_models is not None and model_registry.model_present(local_models, model_name):
+            found_anywhere = True
+
+        # Check remote
+        for dev, available in remote_models_by_dev.items():
+            if available is not None and model_registry.model_present(available, model_name):
+                found_anywhere = True
+                break
+
+        if not found_anywhere:
+            missing_models.append((cap_name, model_name))
+
+    # Determine final severity
+    if not missing_models:
+        where = []
+        if local_models is not None:
+            where.append("local")
+        for dev in remote_models_by_dev:
+            if remote_models_by_dev[dev] is not None:
+                where.append(dev)
+        location = " and ".join(where) if where else "local"
+        return _result(cid, label, "green", f"all {len(ollama_models)} models present on {location}", value=len(ollama_models))
+
+    if not any_machine_answered:
+        # Zero machines answered: unknown
+        return _unknown(cid, label, "couldn't query any Ollama instance (local server not running, remote Macs not reachable)")
+
+    # At least one machine answered and models are missing: yellow
+    missing_str = ", ".join(f"{cap}:{model}" for cap, model in missing_models[:3])
+    if len(missing_models) > 3:
+        missing_str += f" (+ {len(missing_models) - 3} more)"
+    return _result(cid, label, "yellow", f"missing: {missing_str}. Pull with: ollama pull <model>", value=len(missing_models))
+
+
+def check_profile_machines(profiles_dir: Path | None = None) -> list[dict]:
+    """Verify each project profile's `machines` entries name real devices.
+
+    A profile with unknown machines can't dispatch (the ticket pipeline silently
+    returns None from select_machine). This check surfaces the typo/decommissioned case.
+    Returns a single green row if all profiles' machines are known, yellow rows for
+    each profile with unknown machines, or empty list if no profiles exist.
+    """
+    import project_profile
+
+    out = []
+    known_devices = {machine_profile.registry_id()} | set(machine_profile.remote_devices().keys())
+
+    # Iterate over all project profiles
+    profiles_dir = profiles_dir or project_profile.PROFILES_DIR
+    if not profiles_dir.exists():
+        return []
+
+    profiles_checked = 0
+    for profile_path in sorted(profiles_dir.glob("*.json")):
+        try:
+            profile = json.loads(profile_path.read_text())
+        except (OSError, json.JSONDecodeError):
+            continue
+
+        profiles_checked += 1
+        repo = profile.get("repo", "")
+        machines = profile.get("machines", [])
+
+        # Find unknown machines
+        unknown = [m for m in machines if m not in known_devices]
+
+        if unknown:
+            name = repo.split("/")[-1] if repo else profile_path.stem
+            unknown_str = ", ".join(unknown[:3])
+            if len(unknown) > 3:
+                unknown_str += f" (+ {len(unknown) - 3} more)"
+            out.append(_result(f"profile:machines:{repo}", f"{name}: unknown machines",
+                             "yellow", f"machines list names unknown device(s): {unknown_str}. "
+                             f"Check config/projects/{name}.json against known devices: {', '.join(sorted(known_devices))}"))
+
+    # If no profiles exist, return empty; if all checked are OK, emit a green row
+    if profiles_checked == 0:
+        return []
+    if not out:  # All profiles have known machines
+        out.append(_result("profile:machines", "Project profiles name known machines",
+                          "green", f"{profiles_checked} profiles checked, all machines known", value=profiles_checked))
+
+    return out
 
 
 def check_missing_profiles(snapshot: dict | None = None, repos: list[str] | None = None, gh=None, profiles_dir: Path | None = None) -> list[dict]:
@@ -1809,8 +1971,10 @@ def default_checks(reach: dict[str, str] | None = None, reach_results: list[dict
         ("freshness:stale-relay", "Stale claims: caught vs leaked", lambda: check_stale_relay(reach), CROSS_MACHINE_BUDGET_S),
         ("parked:overdue", "Parked choices come back when due", check_parked, CHECK_BUDGET_S),
         ("contract", "Output contracts", check_output_contracts, CHECK_BUDGET_S),
+        ("model:availability", "Model registry matches what's installed", lambda: check_model_availability(reach), CROSS_MACHINE_BUDGET_S),
         ("profile:missing", "Projects without an execution profile", check_missing_profiles, CHECK_BUDGET_S),
         ("profile:no-machines", "Projects with no machines", check_unrunnable_profiles, CHECK_BUDGET_S),
+        ("profile:machines", "Project profiles name known machines", check_profile_machines, CHECK_BUDGET_S),
         ("triggers:missed", "Dashboard triggers cover every change", check_trigger_coverage, CHECK_BUDGET_S),
         ("catalog:fresh", "Project catalog is current", check_catalog_fresh, CHECK_BUDGET_S),
         ("graphify:fresh", "Code graph is current", check_graphify_fresh, CHECK_BUDGET_S),

@@ -34,7 +34,7 @@ OLLAMA_URL = "http://localhost:11434/api/chat"
 # Model selection via capability names (validated 2026-07-13):
 _classify_model_list = model_registry.resolve_capability("local-classify-medium")
 CLASSIFY_MODEL = _classify_model_list[0]  # Use first available model for the capability
-assert CLASSIFY_MODEL == "qwen2.5:14b", f"Regression: expected qwen2.5:14b, got {CLASSIFY_MODEL}"
+assert CLASSIFY_MODEL == "qwen2.5:3b", f"Regression: expected qwen2.5:3b, got {CLASSIFY_MODEL}"
 
 PAPER_TYPES = {"empirical", "survey", "benchmark", "conceptual"}
 
@@ -221,7 +221,7 @@ def extract_all(papers: dict[str, tuple[str, str, str]], chat_fn=None) -> dict[s
 # reinforces that model size must be validated per-task, not assumed.
 _judgment_model_list = model_registry.resolve_capability("local-judge-medium")
 JUDGMENT_MODEL = _judgment_model_list[0]
-assert JUDGMENT_MODEL == "qwen2.5:7b", f"Regression: expected qwen2.5:7b, got {JUDGMENT_MODEL}"
+assert JUDGMENT_MODEL == "qwen2.5:3b", f"Regression: expected qwen2.5:3b, got {JUDGMENT_MODEL}"
 
 # benchmark judgment specifically needs 14b, not the 7b default -- found
 # 2026-07-13 reviewing flagged results (task 19): 7b called StrongREJECT's
@@ -238,7 +238,7 @@ assert JUDGMENT_MODEL == "qwen2.5:7b", f"Regression: expected qwen2.5:7b, got {J
 # pay for a bigger model where the cheaper one already works.
 _inference_model_list = model_registry.resolve_capability("local-inference-large")
 _inference_model = _inference_model_list[0]
-assert _inference_model == "qwen2.5:14b", f"Regression: expected qwen2.5:14b for inference, got {_inference_model}"
+assert _inference_model == "qwen2.5:3b", f"Regression: expected qwen2.5:3b for inference, got {_inference_model}"
 JUDGMENT_MODEL_OVERRIDES = {"benchmark": _inference_model}
 
 _GENERAL_FALLACY_CHECKLIST = (

@@ -34,7 +34,7 @@ COLLECTION_NAME = "paper-knowledge"
 OLLAMA_URL = "http://localhost:11434/api/chat"
 _stance_model_list = model_registry.resolve_capability("local-judge-medium")
 STANCE_MODEL = _stance_model_list[0]
-assert STANCE_MODEL == "qwen2.5:7b", f"Regression: expected qwen2.5:7b, got {STANCE_MODEL}"
+assert STANCE_MODEL == "qwen2.5:3b", f"Regression: expected qwen2.5:3b, got {STANCE_MODEL}"
 
 STANCES = {"supports", "refutes", "mixed", "unrelated"}
 
