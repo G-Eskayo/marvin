@@ -1,5 +1,7 @@
 # Changelog
 
+- Update resume-tailor's design.md stale "Draft" status and open-items checklist to reflect completed implementation ([#1375](https://github.com/G-Eskayo/marvin/pull/1375))
+
 - qa_scan.py's store_entries() loads every id in qa-knowledge on each scan just to dedup a few hundred candidates ([#1374](https://github.com/G-Eskayo/marvin/pull/1374))
 
 - Add pipeline-logic to architecture-review's documented Impact values so its sort rank is usable ([#1376](https://github.com/G-Eskayo/marvin/pull/1376))
