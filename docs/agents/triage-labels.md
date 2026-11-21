@@ -21,6 +21,7 @@ not be manually changed.
   issue that's well-written but still assumes tribal knowledge only a human maintainer has.
 - `ready-for-human` specifically means the ticket tells the person exactly what to do: a `## Your task` section with what is needed, where,
   how, and what to send back (`human-task-template.md`). Triage enforces it; a person-ticket without it is `needs-info`.
+- A parent PRD (title `PRD: ...`) carries no triage-role label — triage skips it, as it's not agent-sized work.
 - Category roles (`bug` / `enhancement`) already exist as GitHub's stock labels on this repo —
   use those as-is, don't create duplicates.
 - A `bug` carries an **outcome check** (decided 2026-10-26): a `## Purpose metric` or a `## Recurrence check`

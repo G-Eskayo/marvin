@@ -95,12 +95,22 @@ def test_a_week_counts_caught_and_both_kinds_of_leaked(env):
             {"at": ts(2), "handoff": "h2.md", "changed_keys": ["G-Eskayo/x#17"]},
             {"at": ts(9), "handoff": "h0.md", "changed_keys": ["G-Eskayo/old#1"]}]     # outside the week
     env["resume_log"].write_text("\n".join(json.dumps(r) for r in rows) + "\nnot json\n")
-    ql.add("Why did you say #17 was urgent?", kind="stale", path=env["question_log"])
+    ql.add("Why did you say #17 was urgent?", kind="stale", path=env["question_log"], ts=ts(1))
     ql.add("Where is the build running?", path=env["question_log"])
     transcript(env["transcripts"], "s1", [user("that's already fixed", 1), user("ok go on", 0.9)])
     w = week(env)
     assert w["caught"] == 3 and w["logged"] == 1 and w["said"] == 1 and w["leaked"] == 2
     assert w["sessions"] == 1 and w["known"] is True and w["machine"] == "macbook-pro-1"
+
+
+def test_logged_row_outside_week_is_excluded(env):
+    env["resume_log"].parent.mkdir(parents=True)
+    env["resume_log"].write_text("")
+    ql.add("Why did you say #17 was urgent?", kind="stale", path=env["question_log"], ts=ts(1))
+    ql.add("Why did you say #99 was urgent?", kind="stale", path=env["question_log"], ts=ts(9))
+    transcript(env["transcripts"], "s1", [user("hi", 1)])
+    w = week(env)
+    assert w["logged"] == 1, "only the row within the week window should be counted"
 
 
 def test_a_week_with_no_sessions_is_unknown_not_zero(env):

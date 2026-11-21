@@ -41,7 +41,7 @@ Entry format:
 ## [Title]
 **Priority**: [1-10, 10 = highest — see scoring guidance below]
 **Status**: pending
-**Impact**: [token-reduction | speed | reliability | organization | robustness]
+**Impact**: [token-reduction | speed | organization | pipeline-logic | reliability | robustness]
 **Effort**: [low | medium | high]
 **Why**: [one line — the problem]
 **What**: [exact change]

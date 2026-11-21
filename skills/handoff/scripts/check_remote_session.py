@@ -158,9 +158,17 @@ def main() -> None:
                         str(Path.home() / CLAUDE_DIR_REL)], capture_output=True)
     except OSError:
         pass  # fail quiet: surface whatever handoff is already here
-    ranked = resume_check.ranked_handoffs(Path.home() / ".claude" / "handoffs", pattern="*.md")
-    if ranked:
-        _surface_resume_prompt(ranked[0][0])
+    ranked = resume_check.ranked_handoffs(Path.home() / ".claude" / "handoffs")
+    for handoff_path, _ in ranked:
+        try:
+            text = handoff_path.read_text(errors="ignore")
+        except OSError:
+            continue
+        if resume_check.resume_prompt(text):
+            _surface_resume_prompt(handoff_path)
+            break
+    else:
+        print(f"rebuilt a handoff on {device_id} but found no resume prompt in handoffs/")
 
     state[device_id] = freshest["mtime"]
     _save_state(state)

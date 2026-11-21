@@ -72,6 +72,19 @@ query($q: String!, $f: String!, $after: String) {
 }
 """ % (COMMITS_PER_PR, COMMENTS_PER_PR)
 
+_QUERY_SINGLE_PR = """
+query($owner: String!, $name: String!, $number: Int!) {
+  repository(owner: $owner, name: $name) {
+    pullRequest(number: $number) {
+      number title url headRefName body
+      repository { nameWithOwner }
+      commits(last: %d) { nodes { commit { committedDate authoredDate parents { totalCount } } } }
+      comments(last: %d) { nodes { databaseId url createdAt body author { login } } }
+    }
+  }
+}
+""" % (COMMITS_PER_PR, COMMENTS_PER_PR)
+
 
 def grace_hours(env=None) -> float:
     """MARVIN_DECISIONS_GRACE_HOURS when it is a sane number of hours (0 < h <= 168), else the default."""
@@ -143,9 +156,10 @@ def _as_built(body: str) -> bool:
     return decisions_check.as_built(body)
 
 
-def pr_status(pr: dict, now: datetime, grace: float, completed_comments: set[int] | frozenset = frozenset(),
-              as_built=None) -> dict | None:
-    """Where this PR's latest owner Decisions comment stands, or None if it has none."""
+def _fresh_status(pr: dict, now: datetime, completed_comments: set[int] | frozenset = frozenset(),
+                  as_built=None) -> dict | None:
+    """Where this PR's latest owner Decisions comment stands, without grace period checks (for a fresh re-check at merge).
+    Returns the same dict as pr_status, but addressed_by is based only on what has happened since the decisions."""
     repo = pr.get("repo") or ""
     owner = repo.split("/")[0].lower()
     comments = sorted((c for c in pr.get("comments") or [] if isinstance(c, dict) and _ts(c.get("createdAt"))),
@@ -159,11 +173,7 @@ def pr_status(pr: dict, now: datetime, grace: float, completed_comments: set[int
         return None
     since = _ts(latest["createdAt"])
     last_commit = _ts(pr.get("last_commit_at"))
-    # A commit alone tells the owner nothing (marvin #733: on clarity-captions #155 he couldn't tell whether the
-    # screenshots were redone), so only a marked reply or a completed follow-up counts; the commit is noted for the ask.
     committed_since = bool(last_commit and last_commit > since)
-    # The merge queue's "your answers aren't built yet" (marvin#231): no work commit after the answers. A list without
-    # last_work_at (an older caller) falls back to the last commit.
     last_work = _ts(pr["last_work_at"]) if "last_work_at" in pr else last_commit
     built_since = bool(last_work and last_work > since)
     by = None
@@ -173,8 +183,6 @@ def pr_status(pr: dict, now: datetime, grace: float, completed_comments: set[int
     elif latest.get("databaseId") in completed_comments:
         by = "follow-up"
     elif pr.get("body") and (as_built or _as_built)(pr["body"]):
-        # Owner decision on PR #987 (2026-11-02): answers that only pick the built option, with no Note and no written
-        # answer, count as built: the PR can merge and MARVIN owes no reply (decisions.js answersAsBuilt has the rule).
         by = "as-built"
     age = (now - since).total_seconds() / 3600
     return {"repo": repo, "number": pr.get("number"), "title": pr.get("title") or "", "url": pr.get("url") or "",
@@ -182,7 +190,30 @@ def pr_status(pr: dict, now: datetime, grace: float, completed_comments: set[int
             "comment_url": latest.get("url") or "", "since": latest["createdAt"], "question": parsed["question"],
             "malformed": parsed["malformed"], "texts": parsed["texts"], "addressed_by": by, "age_hours": age,
             "committed_since": committed_since, "built_since": built_since,
-            "overdue": by is None and age >= grace, "body": pr.get("body") or ""}
+            "overdue": False, "body": pr.get("body") or ""}
+
+
+def pr_status(pr: dict, now: datetime, grace: float, completed_comments: set[int] | frozenset = frozenset(),
+              as_built=None) -> dict | None:
+    """Where this PR's latest owner Decisions comment stands, or None if it has none."""
+    s = _fresh_status(pr, now, completed_comments, as_built)
+    if not s:
+        return None
+    age = (now - _ts(s["since"])).total_seconds() / 3600
+    s["age_hours"] = age
+    s["overdue"] = s["addressed_by"] is None and age >= grace
+    return s
+
+
+def pr_built_status(pr: dict, now: datetime | None = None, completed_comments: set[int] | frozenset = frozenset()) -> dict | None:
+    """Whether this PR's latest owner Decisions answers are built yet (merge-time re-check). Returns a dict with
+    keys: number, url, branch, since (when the latest decisions were posted), addressed_by (reply|follow-up|as-built|None),
+    built (True when answers have been built since the decisions), or None if this PR has no decisions."""
+    s = _fresh_status(pr, now or datetime.now(timezone.utc), completed_comments, None)
+    if not s:
+        return None
+    return {"number": s["number"], "url": s["url"], "branch": s["branch"], "since": s["since"],
+            "addressed_by": s["addressed_by"], "built": s["addressed_by"] in ("reply", "follow-up", "as-built") or s["built_since"]}
 
 
 # ── GitHub (one call) ──────────────────────────────────────────────────────────────────────────────────────────
@@ -231,6 +262,47 @@ def fetch(repos, run=subprocess.run) -> dict | None:
             break
         after = page["pageInfo"]["endCursor"]
     return {"prs": prs, "followups": followups, "complete": complete}
+
+
+class _GitHubError(Exception):
+    """GitHub API or response error; don't treat as "PR doesn't exist"."""
+    pass
+
+
+def fetch_pr(repo: str, number: int, run=subprocess.run) -> dict | None:
+    """One PR's decisions data, or None if the PR does not exist. Raises _GitHubError on API failure."""
+    if not repo or "/" not in repo:
+        return None
+    try:
+        owner, name = repo.split("/", 1)
+    except ValueError:
+        return None
+    args = ["api", "graphql", "-f", f"query={_QUERY_SINGLE_PR}", "-f", f"owner={owner}", "-f", f"name={name}",
+            "-F", f"number={number}"]
+    out = _gh(args, run)
+    if out.returncode != 0:
+        raise _GitHubError(f"gh command failed: {out.stderr[:100]}")
+    try:
+        response = json.loads(out.stdout)
+        if "errors" in response:
+            raise _GitHubError(f"GraphQL error: {response.get('errors')}")
+        data = response.get("data")
+        if data is None:
+            raise _GitHubError("GraphQL returned null data")
+        repository = data.get("repository")
+        if repository is None:
+            return None  # Repository not found: PR doesn't exist, not an API error
+        pr = repository.get("pullRequest")
+        if not pr or not pr.get("number"):
+            return None
+        commits = (pr.get("commits") or {}).get("nodes") or []
+        return {"repo": pr["repository"]["nameWithOwner"], "number": pr["number"], "title": pr["title"],
+                "url": pr["url"], "headRefName": pr.get("headRefName"), "body": pr.get("body") or "",
+                "last_commit_at": commits[-1]["commit"]["committedDate"] if commits else None,
+                "last_work_at": last_work_at(commits),
+                "comments": (pr.get("comments") or {}).get("nodes") or []}
+    except (ValueError, KeyError, TypeError) as e:
+        raise _GitHubError(f"Failed to parse GitHub response: {e}") from e
 
 
 def last_work_at(commit_nodes) -> str | None:
@@ -403,11 +475,26 @@ def sync(repos, now: datetime | None = None, run=subprocess.run, dry_run: bool =
             filed.append({"repo": s["repo"], "pr": s["number"], "result": _file(s, run, dry_run)})
     for (repo, pr), items in open_fu.items():
         s = by_pr.get((repo, pr))
-        if s and s["addressed_by"] in ("reply", "as-built"):
+        why = None
+        if s and s["addressed_by"] in ("reply", "as-built", "follow-up"):
             why = f"PR #{pr} was addressed (a {s['addressed_by']} after the decisions)."
-        elif (repo, pr) not in open_prs and data["complete"]:
-            why = f"PR #{pr} is no longer open."
-        else:
+        elif (repo, pr) not in open_prs:
+            # Fresh re-check: PR is not in the open list, but verify it's really gone and not just a list truncation.
+            if data["complete"]:
+                try:
+                    fresh = fetch_pr(repo, pr, run)
+                    if fresh is None:
+                        why = f"PR #{pr} is no longer open."
+                    else:
+                        # PR still exists: re-check whether it's addressed now
+                        fresh_status = pr_built_status(fresh, now, _completed_comments(data.get("followups")))
+                        if fresh_status and fresh_status["addressed_by"] in ("reply", "as-built", "follow-up"):
+                            why = f"PR #{pr} was addressed (a {fresh_status['addressed_by']} after the decisions)."
+                except _GitHubError:
+                    # Transient API error: don't close the follow-up, might succeed next scan
+                    pass
+            # else: list was truncated, don't close (might not have all info)
+        if not why:
             continue
         for x in items:
             if not dry_run:
@@ -476,7 +563,30 @@ def main(argv=None) -> int:
             return 2
         print(request(repo, number, dry_run="--dry-run" in argv))
         return 0
-    print("usage: owner_decisions.py waiting [--json] | scan [--dry-run] | request --repo R --pr N [--dry-run]", file=sys.stderr)
+    if argv[:1] == ["status"] and "--repo" in argv and "--pr" in argv:
+        try:
+            repo, number = argv[argv.index("--repo") + 1], int(argv[argv.index("--pr") + 1])
+        except (IndexError, ValueError):
+            print("usage: owner_decisions.py status --repo OWNER/NAME --pr N", file=sys.stderr)
+            return 2
+        try:
+            pr = fetch_pr(repo, number)
+        except _GitHubError:
+            print(json.dumps({"error": "could not fetch PR"}))
+            return 1
+        if pr is None:
+            print(json.dumps({"error": "could not fetch PR"}))
+            return 1
+        # Fetch followups to check for completed follow-ups that addressed the answers
+        data = fetch([repo])
+        completed = _completed_comments(data.get("followups")) if data else frozenset()
+        status = pr_built_status(pr, completed_comments=completed)
+        if status is None:
+            print(json.dumps({"has_decisions": False}))
+        else:
+            print(json.dumps({**status, "has_decisions": True}))
+        return 0
+    print("usage: owner_decisions.py waiting [--json] | scan [--dry-run] | request --repo R --pr N [--dry-run] | status --repo R --pr N", file=sys.stderr)
     return 2
 
 

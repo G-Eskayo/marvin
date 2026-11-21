@@ -34,8 +34,8 @@ says a README is *good*: that judgement is the review step below.
 1. **Audit first.** Run the audit; keep the report. It shows what is broken and what is missing.
 2. **Understand the repo from the repo, not from the old README.** Read the code layout, the docs, the entry points, recent
    commits. The old README is a claim to check, not a source.
-3. **Pick the profile** (app / library-CLI / skill-or-tooling / research project / infrastructure) from the criteria doc and
-   start from [`TEMPLATES.md`](TEMPLATES.md).
+3. **Pick the profile** (app / library-CLI / skill-or-tooling / research project / infrastructure) from
+   [`TEMPLATES.md`](TEMPLATES.md).
 4. **Decide what to show** before writing prose: list the 2-4 things a visitor should *see*. Produce them: take the
    screenshot, run the command and paste its real output, draw the diagram (Mermaid in the README, or an SVG in
    `docs/images/`). Never invent output: run it.

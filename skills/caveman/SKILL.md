@@ -7,10 +7,7 @@ description: >
   answer and 39% on a coding task's output, with no quality loss either
   time — see ~/.agents/bench/RESULTS.md. Works by dropping filler, articles, and
   pleasantries while keeping full technical accuracy. Must be explicitly
-  triggered per-request (opt-in only, not session-wide) — an earlier
-  always-on configuration appeared to backfire but that test was later
-  found to be confounded, not a real flaw in this mechanism.
-  Use when user says "caveman mode", "talk like caveman", "use caveman",
+  triggered per-request (opt-in only, not session-wide). Use when user says "caveman mode", "talk like caveman", "use caveman",
   "less tokens", "be brief", or invokes /caveman.
 tags: [intent:communicate, intent:compress, type:skill]
 ---

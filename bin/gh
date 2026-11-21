@@ -367,10 +367,11 @@ def main(argv: list[str]) -> int:
     except ImportError:
         pass
     # A PR names its ticket, "Closes #N" or "Part of #N" (marvin#1004): lib/pr_ticket_check.py. Onboarded repos only;
-    # MARVIN_NO_TICKET="<reason>" lets one call through, logged.
+    # MARVIN_NO_TICKET="<reason>" lets one call through, logged. marvin#1147: a part-of red ticket prints a warning.
     try:
         import pr_ticket_check
-        if pr_ticket_check.gate(argv, _say, lambda e: _log({"t": time.time(), "caller": _caller(), **e})):
+        if pr_ticket_check.gate(argv, _say, lambda e: _log({"t": time.time(), "caller": _caller(), **e}),
+                                ask=lambda a: _gh_json(real, a)):
             return 1
     except ImportError:
         pass

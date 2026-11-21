@@ -96,7 +96,7 @@ def _fmt_item(item: dict) -> str:
     return f"  [{item.get('source', '?')}] {item.get('title', '')[:80]} <{item.get('url', '')}>"
 
 
-def generate() -> Path | None:
+def generate(correlated: list[dict] | None = None) -> Path | None:
     today = date.today().isoformat()
     out_path = DIGEST_DIR / f"{today}.md"
 
@@ -110,7 +110,8 @@ def generate() -> Path | None:
         notify("MARVIN research-colony failed", "no items fetched (all sources failed?)", open_target=str(Path.home() / ".claude" / "logs" / "research-colony-error.log"))
         return None
 
-    correlated = load_correlated_from_chroma()
+    if correlated is None:
+        correlated = load_correlated_from_chroma()
 
     correlated_text = "\n".join(_fmt_item(i) for i in correlated) if correlated else "  (none matched today)"
     all_text = "\n".join(_fmt_item(i) for i in all_items[:30])

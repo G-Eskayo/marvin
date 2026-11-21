@@ -103,6 +103,41 @@ describe('mergeOrder: main is red', () => {
     expect(mainStateFrom({ issues: [{ ...issues[0], state: 'CLOSED' }] }).red).toBe(false)
     expect(mainStateFrom({ issues: [{ number: 5, title: 'x', labels: ['incident'] }] }).red).toBe(false)
   })
+
+  it('a PR part of a red ticket (but not closing it) waits for a closer, with a different reason', () => {
+    const out = mergeOrder([pr(970, { body: 'Part of #978' }), pr(986, { body: 'Closes #978' })], red, q(970, 986))
+    expect(out.next).toBe(url(986))
+    expect(line(out, 986).reason).toBe('queued · 1st · starts next')
+    expect(line(out, 970).reason).toBe('main is red · waits for #986')
+  })
+
+  it('part of alone without a close PR also waits, still naming what it needs', () => {
+    const out = mergeOrder([pr(970, { body: 'Part of #978' }), pr(971)], red, q(970, 971))
+    expect(out.next).toBeNull()
+    expect(line(out, 970).reason).toBe('waits for a PR that closes #978, and none does yet')
+    expect(line(out, 971).reason).toBe('main is red · waits for #978')
+  })
+
+  it('with two red tickets, part-of one and closes the other', () => {
+    const issue978 = { number: 978, title: 'Main red', labels: ['main-red'] }
+    const issue979 = { number: 979, title: 'Main is red in webhook', labels: ['bug', 'priority:p0'] }
+    const twoRed = mainStateFrom({ issues: [issue978, issue979] })
+    const out = mergeOrder([pr(970, { body: 'Part of #978\nCloses #979' }), pr(971)], twoRed, q(970, 971))
+    expect(out.next).toBe(url(970))
+    expect(line(out, 971).reason).toBe('main is red · waits for #970')
+  })
+
+  it('a PR closed by hand (no Closes/Part-of) still waits for red', () => {
+    const out = mergeOrder([pr(970, { body: 'Manual fix' }), pr(971)], red, q(970, 971))
+    expect(line(out, 970).reason).toBe('main is red · waits for #978')
+    expect(out.next).toBeNull()
+  })
+
+  it('null body is treated safely', () => {
+    const out = mergeOrder([pr(970, { body: null }), pr(971, { body: 'Closes #978' })], red, q(970, 971))
+    expect(out.next).toBe(url(971))
+    expect(line(out, 970).reason).toBe('main is red · waits for #971')
+  })
 })
 
 describe('mergeOrder: a PR\'s own blockers come first', () => {

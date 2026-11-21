@@ -64,6 +64,9 @@ ROUTING_ENTRY_THRESHOLD = 20
 COOLDOWN_SECONDS = 20 * 60 * 60  # don't double-run same day even if re-triggered
 CLAUDE_CALL_TIMEOUT = 300  # generous for ONE bounded chunk, not the whole system
 
+_SKIP_PARTS = {"__pycache__", ".pytest_cache", ".mypy_cache", ".ruff_cache", "node_modules", ".git"}
+_SKIP_SUFFIXES = {".pyc", ".pyo"}
+
 
 # ── chunk enumeration ─────────────────────────────────────────────────────────
 
@@ -155,7 +158,10 @@ def _render_chunk_paths(paths: list[str]) -> str:
     for raw in paths:
         expanded = Path(raw).expanduser()
         if expanded.is_dir():
-            files = sorted(str(f) for f in expanded.rglob("*") if f.is_file())
+            files = sorted(str(f) for f in expanded.rglob("*")
+                          if f.is_file()
+                          and not (set(f.relative_to(expanded).parts) & _SKIP_PARTS)
+                          and f.suffix not in _SKIP_SUFFIXES)
             if files:
                 lines.extend(f"- {f}" for f in files)
                 continue

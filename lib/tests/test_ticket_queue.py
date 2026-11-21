@@ -70,3 +70,48 @@ def test_a_ticket_whose_project_cannot_be_read_still_shows_by_number():
 
 def test_nothing_running_is_empty():
     assert tq.running_tickets([], fetch=lambda r: []) == []
+
+
+# --- deduplication: one repo queried twice should not duplicate its tickets ---
+
+def test_duplicate_repos_in_queue_are_deduplicated():
+    """If build_queue receives the same repo twice, each ticket should appear only once."""
+    per_repo = {"o/a": [issue(1, score=1.0), issue(2, score=2.0)]}
+    q = tq.build_queue(
+        repos=["o/a", "o/a"],  # same repo twice
+        ready=lambda repo: per_repo[repo],
+        machines=lambda repo: ["m1"])
+    # Should still have 2 tickets, not 4
+    assert len(q) == 2
+    assert [r["number"] for r in q] == [2, 1]  # sorted by score
+    # Positions should be 1, 2 not 1, 2, 3, 4
+    assert [r["position"] for r in q] == [1, 2]
+
+
+def test_same_ticket_number_from_different_repos_are_kept_separate():
+    """Multiple repos with the same ticket number keep both (different (repo, number) keys)."""
+    q = tq.build_queue(
+        repos=["o/a", "o/b"],
+        ready=lambda repo: {
+            "o/a": [issue(1, score=5.0)],
+            "o/b": [issue(1, score=1.0)]  # same ticket #1, different repo
+        }[repo],
+        machines=lambda repo: ["m1"])
+    # Should have both tickets since they have different (repo, number) keys
+    assert len(q) == 2
+    assert [r["number"] for r in q] == [1, 1]
+    assert q[0]["repo"] == "o/a"  # o/a's ticket 1 first (higher score)
+    assert q[1]["repo"] == "o/b"
+
+
+def test_all_duplicate_tickets_across_multiple_identical_repos():
+    """Edge case: same repo appears multiple times with same tickets; each ticket appears once."""
+    per_repo = {"o/a": [issue(3, score=3.0), issue(7, score=7.0)]}
+    q = tq.build_queue(
+        repos=["o/a", "o/a", "o/a"],  # same repo three times
+        ready=lambda repo: per_repo[repo],
+        machines=lambda repo: ["m1"])
+    # Should have only 2 tickets, with positions 1 and 2
+    assert len(q) == 2
+    assert [r["number"] for r in q] == [7, 3]  # sorted by score descending
+    assert [r["position"] for r in q] == [1, 2]

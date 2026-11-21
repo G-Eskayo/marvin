@@ -128,7 +128,7 @@ one job, starting with the history store.
   job is discovery and classification (is this fixable within `auto_fix.py`'s existing narrow
   safety boundaries, or does it need real judgment?), not new fixing infrastructure.
 - **Output routing, by risk tier**: low-risk findings it fixes itself go through `auto_fix.py`, which
-  (since 2026-10-26) fixes queued NAMING/VERBOSITY/KISS items in its own worktree on `auto-fix/<date>`, runs the
+  (since 2026-10-26) fixes queued NAMING/KISS items in its own worktree on `auto-fix/<date>`, runs the
   covering tests before and after, and opens one PR a day for Gil's merge gate; it never edits the shared checkout.
   Each run is logged in `auto-fix-log.md`, same as any other auto-fix. Findings needing real judgment (like
   2026-07-09's rubric/prompt fixes — genuine design decisions, not mechanical pattern-matching) go
@@ -924,6 +924,13 @@ unbounded: any chat, either machine, raw `gh`, the GitHub UI). Polling stays onl
   repo's open PRs (last commit, last 30 comments) and the follow-up tickets (2 points). An unanswered owner Decisions
   comment becomes one `ready-for-agent` follow-up ticket after 4 h; the dashboard ranks it first from the issue list it
   already caches. Rules in `docs/agents/decisions-format.md`.
+
+- **Answers aren't built yet** (marvin#1261, merge-time re-check): when the owner approved a PR after answering
+  Decisions, the merge server checks whether work has been committed since the answers (a reply, a completed follow-up,
+  or as-built answers). If not, merge refuses (`OWNER_DECISIONS_UNBUILT`) and re-queues the same Approve so it retries
+  when the answers are tested and built. This fresh re-check happens just before the gate runs, right after UI images
+  and decision structure have been verified, and gates both the gate and the merge itself. Code:
+  `lib/owner_decisions.py::pr_built_status`, `dashboard/webhook-server/owner_decisions_gate.js`.
 
 ### Dashboard actions render their true result locally at once, and confirm in the background (decided 2026-10-21)
 

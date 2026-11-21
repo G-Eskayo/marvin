@@ -1,5 +1,10 @@
 # Diagnose — Retrospective
 
+## 2026-11-16 — Box builds unblocked + UI-evidence fix (11-11..13 MacBook session)
+**I:** Added two gotchas. (1) Validation that resets an over-limit config value to 0 turns an over-ask into a silent outage: the box asked for 2 slots under a cap of 1 and sat off (#1304); it built its first tickets the same night once fixed. (2) Change-detection that runs before the commit sees an empty diff: `ticket_touches_ui` labelled dashboard PRs "no UI" and skipped screenshots (#1300).
+**S:** Both were found by asking why a capability that should be firing wasn't, rather than by an error, which fits the existing silent-failure gotchas (crash-as-0, silent fallback).
+**F:** #1300 is merged, but the handoff doesn't confirm that later dashboard PRs carry screenshots. Recheck when the next UI PR lands. Left out: scan offering only queue heads (#1292, a code bug, already logged on 11-10 as a ticket); triage-by-model-in-batches (project policy in config); MARVIN can't self-approve PRs (harness rule, not a diagnosis pattern); queue/answer tallies (point-in-time).
+
 ## 2026-10-22 — Gate send-backs from machine load, not the PR
 **I:** Added a gotcha: when the gate fails a PR on a test that passes on main and isn't related to the diff, check machine load first. Parallel helpers plus the gate, each running full suites with `-n auto`, pushed the MacBook to load 34–37 on 8 cores. That made `changelog.test.js` flaky and sent back #606. Merging #604 then restarted the webhook and interrupted #606 a second time.
 **S:** For now: put `hold` on the ticket so the pipeline doesn't rebuild a good PR, and re-approve when the machine is quiet.

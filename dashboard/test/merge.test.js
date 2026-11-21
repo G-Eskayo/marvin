@@ -19,6 +19,8 @@ vi.mock('../webhook-server/rebase_status.js', () => ({ writeRebaseStatus: vi.fn(
 vi.mock('../webhook-server/ui_evidence.js', () => ({ assertUiEvidence: vi.fn(async () => {}) }))
 // Same for the decisions gate (its own tests are in decisions.test.js).
 vi.mock('../webhook-server/decisions_gate.js', () => ({ assertDecisions: vi.fn(async () => {}) }))
+// Same for the owner decisions gate (marvin#1261).
+vi.mock('../webhook-server/owner_decisions_gate.js', () => ({ assertOwnerDecisionsBuilt: vi.fn(async () => {}) }))
 // Versioning (changelog) is tested separately; mock it here to avoid needing real git repos in merge tests.
 vi.mock('../webhook-server/changelog.js', () => ({ applyVersionBump: vi.fn().mockResolvedValue(undefined) }))
 
@@ -58,13 +60,19 @@ function noopRebuild() {
 }
 function noopRedispatch() {}
 
-// Wrapper for exec mocks that handles code review gate Python calls.
-// By default, all PRs pass code review (clean). Tests can override.
+// Wrapper for exec mocks that handles code review and owner decisions gate Python calls.
+// By default, all PRs pass code review (clean) and have no owner decisions. Tests can override.
 function execWithCodeReviewDefaults(innerMockFn) {
   return vi.fn(async (cmd, args, ...rest) => {
-    if (String(cmd).endsWith('/python') && Array.isArray(args) && args.some(a => a && a.includes('review'))) {
-      // Code review gate Python call: return clean by default
-      return Promise.resolve({ stdout: JSON.stringify({ clean: true, findings: [] }), stderr: '' })
+    if (String(cmd).endsWith('/python') && Array.isArray(args)) {
+      if (args.some(a => a && a.includes('review'))) {
+        // Code review gate Python call: return clean by default
+        return Promise.resolve({ stdout: JSON.stringify({ clean: true, findings: [] }), stderr: '' })
+      }
+      if (args.some(a => a && a.includes('owner_decisions')) && args.includes('status')) {
+        // Owner decisions status check: return no decisions by default
+        return Promise.resolve({ stdout: JSON.stringify({ has_decisions: false }), stderr: '' })
+      }
     }
     // Forward to the inner mock
     return innerMockFn(cmd, args, ...rest)

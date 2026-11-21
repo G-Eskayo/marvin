@@ -30,27 +30,19 @@ tools built on paper-knowledge don't hit the same gap.
 from __future__ import annotations
 import json
 import sys
-import urllib.request
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[3] / "lib"))
 import model_registry  # noqa: E402
 
+from ollama_chat import ollama_chat  # noqa: E402
+
 CHROMA_PATH = Path.home() / ".claude" / "chroma"
 COLLECTION_NAME = "paper-knowledge"
-OLLAMA_URL = "http://localhost:11434/api/chat"
 _claim_model_list = model_registry.resolve_capability("local-extract-small")
 CLAIM_MODEL = _claim_model_list[0]
 assert CLAIM_MODEL == "qwen2.5:3b", f"Regression: expected qwen2.5:3b, got {CLAIM_MODEL}"
 OPENALEX_WORKS_BASE = "https://api.openalex.org/works"
-
-
-def ollama_chat(model: str, messages: list[dict], timeout: int = 60) -> str:
-    payload = json.dumps({"model": model, "messages": messages, "stream": False}).encode()
-    req = urllib.request.Request(OLLAMA_URL, data=payload, headers={"Content-Type": "application/json"})
-    with urllib.request.urlopen(req, timeout=timeout) as resp:
-        data = json.loads(resp.read())
-    return data["message"]["content"]
 
 
 CLAIM_PROMPT = """Below is an academic paper's title and abstract. State its single core claim or finding in ONE crisp sentence -- what did they actually show or argue, not what topic they cover. No preamble, no "This paper...", just the claim itself.

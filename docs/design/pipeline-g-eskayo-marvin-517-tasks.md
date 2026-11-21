@@ -1,0 +1,5 @@
+1. Edit `skills/grill-with-docs/SKILL.md`: under `### Update CONTEXT.md inline` (currently lines 72–76), append one paragraph after the existing two sentences, before the `### Offer ADRs sparingly` heading. Content: state that `CONTEXT.md` holds only project-specific meaning, and that a term meeting lexicon's own reuse trigger (used 2+ times with a stable meaning, per `lexicon/SKILL.md`) is also added to the shared lexicon via the `lexicon` skill — the two are not exclusive; a term can get both a CONTEXT.md entry and a lexicon.md entry.
+2. Leave `calls: [grill-me, lexicon]` (line 5) and every other section of the file untouched.
+3. Run `rg -n lexicon skills/grill-with-docs/SKILL.md` to confirm acceptance criterion 1.
+4. Run `git diff` on the file to confirm only the one paragraph changed (acceptance criterion 3).
+5. Re-read the new paragraph to confirm it explicitly names CONTEXT.md and the lexicon skill and says which terms go where (acceptance criterion 2).

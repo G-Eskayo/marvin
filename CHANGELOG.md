@@ -1,5 +1,93 @@
 # Changelog
 
+- Research colony reads the owner's research newsletters ([#1356](https://github.com/G-Eskayo/marvin/pull/1356))
+
+- Leave gitignored caches (__pycache__, .pytest_cache, *.pyc) out of the background reviewer's chunk file lists ([#1358](https://github.com/G-Eskayo/marvin/pull/1358))
+
+- Pass run_colony.py's already-computed correlated-items list into research_digest.py instead of re-querying ChromaDB… ([#1359](https://github.com/G-Eskayo/marvin/pull/1359))
+
+- Update route/SKILL.md to describe the embedding classifier that's now the actual default, not the superseded… ([#1360](https://github.com/G-Eskayo/marvin/pull/1360))
+
+- Trim historical rationale from caveman/SKILL.md's frontmatter description ([#1361](https://github.com/G-Eskayo/marvin/pull/1361))
+
+- Cut index/SKILL.md's stale Examples section and correct its "unified index for all skills AND knowledge files" claim ([#1362](https://github.com/G-Eskayo/marvin/pull/1362))
+
+- Incident 2026-10-22..26: the Macs drifted apart (sync stuck 4 days); fixed, watched by a recurrence check ([#1363](https://github.com/G-Eskayo/marvin/pull/1363))
+
+- Collapse cross_machine_merge.py's two identical ChromaDB sync functions into one parameterized helper ([#1364](https://github.com/G-Eskayo/marvin/pull/1364))
+
+- Flaky test: test_du_runs_at_low_priority fails only in the parallel run ([#1365](https://github.com/G-Eskayo/marvin/pull/1365))
+
+- Fix duplicate section numbers and colliding FR-IDs in resume-tailor's requirements.md ([#1366](https://github.com/G-Eskayo/marvin/pull/1366))
+
+- Split write-a-skill/SKILL.md (129 lines) under its own 100-line rule ([#1367](https://github.com/G-Eskayo/marvin/pull/1367))
+
+- Point diagnose/SKILL.md at retrospective.md so past sessions' lessons get read ([#1368](https://github.com/G-Eskayo/marvin/pull/1368))
+
+- A main-red fix that says Part of instead of Closes stalls the queue silently: warn at PR time and say why the queue is held ([#1369](https://github.com/G-Eskayo/marvin/pull/1369))
+
+- Remove improve-codebase-architecture/SKILL.md's unused calls: [zoom-out] ([#1378](https://github.com/G-Eskayo/marvin/pull/1378))
+
+- Share one ollama_chat() and one extract_core_claim() across paper-dive's synthesis scripts ([#1370](https://github.com/G-Eskayo/marvin/pull/1370))
+
+- Add a Type: HITL/AFK field to to-tasklist's persisted task template ([#1372](https://github.com/G-Eskayo/marvin/pull/1372))
+
+- Drop improve-codebase-architecture/SKILL.md's inline glossary, which repeats LANGUAGE.md and gets loaded twice ([#1373](https://github.com/G-Eskayo/marvin/pull/1373))
+
+- Update resume-tailor's design.md stale "Draft" status and open-items checklist to reflect completed implementation ([#1375](https://github.com/G-Eskayo/marvin/pull/1375))
+
+- qa_scan.py's store_entries() loads every id in qa-knowledge on each scan just to dedup a few hundred candidates ([#1374](https://github.com/G-Eskayo/marvin/pull/1374))
+
+- Add pipeline-logic to architecture-review's documented Impact values so its sort rank is usable ([#1376](https://github.com/G-Eskayo/marvin/pull/1376))
+
+- grill-with-docs/SKILL.md: say when a resolved term also goes to the shared lexicon ([#1377](https://github.com/G-Eskayo/marvin/pull/1377))
+
+- Remove route.py's dead print_table() function, superseded by print_table_proper() ([#1379](https://github.com/G-Eskayo/marvin/pull/1379))
+
+- Wire tdd/SKILL.md's dangling `calls: [diagnose]` frontmatter into the body (or remove it) ([#1380](https://github.com/G-Eskayo/marvin/pull/1380))
+
+- Reconcile prototype/SKILL.md's "No tests" rule with the always-on tdd default, and say how a validated prototype… ([#1382](https://github.com/G-Eskayo/marvin/pull/1382))
+
+- Specify which triage label (if any) to-prd's published PRD issue should receive ([#1383](https://github.com/G-Eskayo/marvin/pull/1383))
+
+- Consolidate the priority-ranking pattern between improvement_sweep.py and sort_suggestions.py ([#1384](https://github.com/G-Eskayo/marvin/pull/1384))
+
+- Remove the non-functional `calls: [to-issues]` frontmatter field from to-tasklist ([#1386](https://github.com/G-Eskayo/marvin/pull/1386))
+
+- Bring back proposals dismissed until a linked ticket closes ([#1387](https://github.com/G-Eskayo/marvin/pull/1387))
+
+- readme skill loads project profiles and review questions twice per run — dedupe criteria.md against TEMPLATES.md/SKILL.md ([#1388](https://github.com/G-Eskayo/marvin/pull/1388))
+
+- Trim academic_search.py JSON output to cut 5-9k tokens/call to ~2-3k ([#1389](https://github.com/G-Eskayo/marvin/pull/1389))
+
+- tdd skill contradicts ADR 0063 "tests try to break it" standard enforced by the merge gate ([#1390](https://github.com/G-Eskayo/marvin/pull/1390))
+
+- to-issues template hardcodes stale purpose-metric values instead of placeholders ([#1391](https://github.com/G-Eskayo/marvin/pull/1391))
+
+- Test-pattern rule misclassifies lib/test_slot.py and lib/test_change_rule.py, letting merge-gate changes merge with no test ([#1393](https://github.com/G-Eskayo/marvin/pull/1393))
+
+- to-prd: drop "which modules get tests" question and fix self-contradiction in interview rule ([#1394](https://github.com/G-Eskayo/marvin/pull/1394))
+
+- Decisions answered after Approve can be lost when the PR merges first ([#1396](https://github.com/G-Eskayo/marvin/pull/1396))
+
+- Dispatch: when the Mini is held for a merge, send the ticket to the laptop instead of waiting ([#1395](https://github.com/G-Eskayo/marvin/pull/1395))
+
+- Drop the VERBOSITY (filler word) category from the improvement queue ([#1397](https://github.com/G-Eskayo/marvin/pull/1397))
+
+- Skip SKILL.md's manual tag-matching replay when retrieve.py already returned tag-fallback results ([#1352](https://github.com/G-Eskayo/marvin/pull/1352))
+
+- Main is red at 5faa676: fix forward ([#1351](https://github.com/G-Eskayo/marvin/pull/1351))
+
+- Purpose probe pipeline-verify-timeouts: count timed-out verify runs per machine ([#1337](https://github.com/G-Eskayo/marvin/pull/1337))
+
+- Ticket queue lists some tickets twice, and lists ready tickets that already have an open PR ([#1338](https://github.com/G-Eskayo/marvin/pull/1338))
+
+- background_architecture_review tests leak into real ~/.claude once the suggestions pile exists ([#1335](https://github.com/G-Eskayo/marvin/pull/1335))
+
+- Fix check_remote_session.py handoff selection: exclude non-handoff .md files and skip entries with no resume prompt ([#1334](https://github.com/G-Eskayo/marvin/pull/1334))
+
+- Session banner counts command files, not skills: says 36, the repo has 33 ([#1333](https://github.com/G-Eskayo/marvin/pull/1333))
+
 - Research colony silently exits 0 when all sources fail or claude call fails ([#1330](https://github.com/G-Eskayo/marvin/pull/1330))
 
 - Fix non-additive diff skip and destructive quarantine revert in background_review.py ([#1329](https://github.com/G-Eskayo/marvin/pull/1329))

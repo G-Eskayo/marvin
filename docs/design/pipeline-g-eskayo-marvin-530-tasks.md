@@ -1,0 +1,5 @@
+1. Edit `skills/to-tasklist/SKILL.md`: delete line 5 (`calls: [to-issues]`) from the frontmatter. Leave the "Sibling of `to-issues`" body sentence as-is.
+2. Add test (AC1) to `lib/tests/test_rebuild_manifest.py`: `parse_frontmatter` on the real `to-tasklist/SKILL.md` path has no `calls` key.
+3. Add test (AC2) to `lib/tests/test_rebuild_manifest.py`: monkeypatch `SKILLS_DIR` to the repo's own `skills/` dir, run `scan_skills()`, assert the `to-tasklist` entry has no `calls` key.
+4. Run `~/.agents/venv/bin/python -m pytest lib/tests/test_rebuild_manifest.py -v` to confirm both new tests pass and nothing existing regresses.
+5. In the PR description, note that live `~/.claude/manifest.json`/brain-map regeneration happens automatically post-merge (hook + mac-mini-2012 mirror, ADR 0069) and is intentionally not part of this diff.

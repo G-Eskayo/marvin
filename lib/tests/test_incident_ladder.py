@@ -202,6 +202,94 @@ def test_first_aid_that_makes_it_worse_is_flagged_and_not_run_again(env):
     assert len(env["aid"]) == n
 
 
+def test_first_aid_that_changes_nothing_is_not_blamed_for_a_worse_reading(env):
+    """Regression test for incident ladder self-disabling bug (issue #707).
+    First aid that doesn't change anything should not be blamed if the probe
+    happens to read worse after it runs — the worse reading is unrelated."""
+    gh = FakeGitHub()
+    env["run"](gh, Probe(0))
+
+    def no_change_aid(name, only):
+        """First aid that runs but doesn't change anything."""
+        env["aid"].append((name, only))
+        return [{"step": name, "ok": True, "changed": False, "mac": "mac-a", "detail": "nothing to do"}]
+
+    # Probe: trip at 2, live before 1, after first aid reads 3 (worse, but aid changed nothing)
+    out = env["run"](gh, Probe(1, 1, 3), now=DAY1 + timedelta(days=1), aid=no_change_aid)
+    # Without the fix: aid="worse" is set even though changed_anything=False, causing reopened+blame
+    # With the fix: aid="ran" since nothing changed, so it reopens as a normal regression, not blamed on aid
+    assert out["action"] == "reopened"
+    # Key assertion: the message should NOT say first aid made it worse
+    assert "made it worse" not in gh.thread[-1]["body"]
+    # The state should be "fail" not "worse"
+    assert "aid=worse" not in gh.thread[-1]["body"]
+    # But first aid result should still be shown
+    assert "nothing to do" in gh.thread[-1]["body"]
+
+
+def test_first_aid_that_changes_something_and_makes_it_worse_is_still_blamed(env):
+    """Guard against overcorrection: when first aid changes something and makes
+    it worse, it should still be marked as "worse" and not run again."""
+    gh = FakeGitHub()
+    env["run"](gh, Probe(0))
+
+    def changing_aid(name, only):
+        """First aid that actually changes something."""
+        env["aid"].append((name, only))
+        return [{"step": name, "ok": True, "changed": True, "mac": "mac-a", "detail": "did something"}]
+
+    # Probe: trip at 2, live before 1, after first aid reads 3 (worse, and aid DID change)
+    out = env["run"](gh, Probe(1, 1, 3), now=DAY1 + timedelta(days=1), aid=changing_aid)
+    assert out["action"] == "reopened"
+    # This one SHOULD say first aid made it worse
+    assert "made it worse" in gh.thread[-1]["body"]
+    assert "aid=worse" in gh.thread[-1]["body"]
+    # Verify it won't run again
+    n = len(env["aid"])
+    env["run"](gh, Probe(1), now=DAY1 + timedelta(days=2))
+    assert len(env["aid"]) == n
+
+
+def test_first_aid_with_missing_changed_key_defaults_to_no_change(env):
+    """Malformed input: when aid results lack a 'changed' key, treat as False."""
+    gh = FakeGitHub()
+    env["run"](gh, Probe(0))
+
+    def malformed_aid(name, only):
+        """First aid with incomplete result dict (no 'changed' key)."""
+        env["aid"].append((name, only))
+        return [{"step": name, "ok": True, "mac": "mac-a", "detail": "no changed key"}]
+
+    # Probe: trip at 2, live before 1, after first aid reads 3 (worse, but no changed key → False)
+    out = env["run"](gh, Probe(1, 1, 3), now=DAY1 + timedelta(days=1), aid=malformed_aid)
+    assert out["action"] == "reopened"
+    # With missing key treated as False, should NOT be blamed on first aid
+    assert "made it worse" not in gh.thread[-1]["body"]
+    assert "aid=worse" not in gh.thread[-1]["body"]
+
+
+def test_empty_first_aid_results_dont_set_worse_verdict(env):
+    """When first aid runs all steps but none of them change anything, it shouldn't be blamed."""
+    gh = FakeGitHub()
+    env["run"](gh, Probe(0))
+
+    def no_op_aid(name, only):
+        """First aid that runs but all steps report no changes."""
+        env["aid"].append((name, only))
+        # Return empty list (not a result for each step) — a step that finds nothing to do
+        return []
+
+    # Probe: trip at 2, live before 1, after first aid reads 3 (worse, but no changes happened)
+    out = env["run"](gh, Probe(1, 1, 3), now=DAY1 + timedelta(days=1), aid=no_op_aid)
+    assert out["action"] == "reopened"
+    # When aid runs but aids_results is empty, it means nothing was done
+    # So it should NOT be marked as "worse"
+    assert "aid=worse" not in gh.thread[-1]["body"]
+    # The state mark should show aid=ran not aid=worse
+    assert "<!-- marvin:watch state=fail at=" in gh.thread[-1]["body"]
+    assert "aid=ran" in gh.thread[-1]["body"]
+
+
 # ── rung 2 + 3: reopen with evidence, queue the fix ────────────────────────────────────────────────────────────
 
 def test_a_regression_reopens_with_evidence_and_queues_one_fix_build(env):
