@@ -171,6 +171,10 @@ export function retryAt(reason, now) {
 // marvin#1183: a PR held on the same conflicting commit this long is told to the owner (onStuck), once per commit.
 export const CONFLICT_TELL_MS = 24 * 60 * 60 * 1000
 
+export function stuckConflictNote(prNumber, days) {
+  return `#${prNumber} has been held in the merge queue on a conflict for ${days} day${days === 1 ? '' : 's'}. The resolver couldn't fix it automatically. It needs main merged in by hand, or the branch updated to current main.`
+}
+
 export function createMergeQueue({ store, load, run, afterRun = async () => {}, onWaiting = () => {}, onStuck = () => {}, log = () => {}, clock = Date.now }) {
   const busy = new Set()
   const again = new Set()

@@ -70,9 +70,10 @@ export function mainStateFrom({ issues = [], health = null, base = 'main', headS
 // The facts mergeOrder reads off each PR, from what each side already has. One implementation for both.
 //   issues: the repo's open tickets (labels) · unbuilt: Set of PR urls with answered-but-unbuilt Decisions
 //   repairFailed: {"repo#n": headSha} whose conflict repair failed (lib/conflict_repair.py)
+//   repairFiles: {"repo#n": {sha, files}} for conflict repairs that found conflicting files (lib/conflict_repair.py)
 //   rebaseStatus: the post-merge conflict check by url (#225) · sentBack: Set of "repo#ticket" (optional)
 // gateCovers (marvin#1099): names of the checks the merge gate runs itself; GitHub's copy of those doesn't hold a PR.
-export function enrichForOrder(prs, { repo = null, issues = [], unbuilt = new Set(), repairFailed = {}, rebaseStatus = {}, sentBack = null, gateCovers = null } = {}) {
+export function enrichForOrder(prs, { repo = null, issues = [], unbuilt = new Set(), repairFailed = {}, repairFiles = {}, rebaseStatus = {}, sentBack = null, gateCovers = null } = {}) {
   const covers = Array.isArray(gateCovers) ? gateCovers.filter((n) => typeof n === 'string') : []
   const sentBackTickets = sentBack || new Set((issues || []).filter((i) => labelNames(i).includes('needs-reengagement')).map((i) => `${repo}#${i.number}`))
   return (prs || []).map((p) => {
@@ -81,6 +82,8 @@ export function enrichForOrder(prs, { repo = null, issues = [], unbuilt = new Se
     const rb = rebaseStatus?.[p.url]
     const rbConflict = rb?.state === 'conflict'
     const conflict = p.mergeable === 'CONFLICTING' || (rbConflict && (!p.mergeable || p.mergeable === 'UNKNOWN'))
+    const repairRecord = repairFiles?.[`${r}#${p.number}`]
+    const conflictFiles = repairRecord?.sha === p.headRefOid && repairRecord?.files?.length ? repairRecord.files : (rbConflict && rb?.files?.length ? rb.files : null)
     return {
       ...p,
       repo: r,
@@ -89,6 +92,7 @@ export function enrichForOrder(prs, { repo = null, issues = [], unbuilt = new Se
       decisionsUnbuilt: unbuilt.has(p.url) && !answersAsBuilt(p.body || ''),
       conflict,
       conflictAfter: rbConflict && Number.isFinite(rb.after) ? rb.after : null,
+      conflictFiles,
       repairFailed: !!p.headRefOid && repairFailed?.[`${r}#${p.number}`] === p.headRefOid,
       gateCovers: covers
     }
@@ -156,7 +160,11 @@ function ownReason(pr, base) {
   if (ci.state === 'failing') return { reason: `checks failing: ${ci.failing.join(', ')}` }
   if (pr.conflict) {
     const after = pr.conflictAfter ? ` after #${pr.conflictAfter}` : ''
-    return { reason: `conflicts with ${base}${after} · ${pr.repairFailed ? 'needs a rebuild' : 'MARVIN is fixing it'}`, conflict: true }
+    const files = pr.conflictFiles && pr.conflictFiles.length > 0
+      ? ` (${pr.conflictFiles.slice(0, 3).join(', ')}${pr.conflictFiles.length > 3 ? ` and ${pr.conflictFiles.length - 3} more` : ''})`
+      : ''
+    const status = pr.repairFailed ? 'needs a rebuild' : 'MARVIN is fixing it'
+    return { reason: `conflicts with ${base}${after} · ${status}${files}`, conflict: true }
   }
   if (pr.sentBack) return { reason: 'sent back for rework' }
   return null
@@ -254,8 +262,10 @@ export function mergeOrder(openPrs, mainState, queue) {
         why = { reason: redWaitsFor ? `main is red · waits for #${redWaitsFor}` : 'main is red · waits for a fix' }
       }
     }
+    const reasonText = why?.reason || null
+    const prefixedReason = why?.conflict && queued ? `Held: ${reasonText}` : reasonText
     entries[p.url] = { url: p.url, number: p.number, queued, state: why ? 'waiting' : queued ? 'queued' : 'ready', tone: why ? 'amber' : queued ? 'sky' : null,
-      reason: why?.reason || null, position: null, waitsFor, ...(why?.unbuilt ? { unbuilt: true } : {}), ...(why?.conflict ? { conflict: true } : {}) }
+      reason: prefixedReason, position: null, waitsFor, ...(why?.unbuilt ? { unbuilt: true } : {}), ...(why?.conflict ? { conflict: true } : {}) }
   }
 
   // Every queued PR in merge order: base before what is built on it (topological), then fixes for a red main first,

@@ -311,7 +311,7 @@ export function queueLines(prs, { queue = null, issuesFor = () => [], sentBackKe
     let issues = []
     try { issues = issuesFor(repo) || [] } catch { issues = [] }
     if (!issues.length && Array.isArray(facts.tickets?.[repo])) issues = facts.tickets[repo]
-    const enriched = enrichForOrder(list, { repo, issues, unbuilt, repairFailed: facts.repairFailed || {}, rebaseStatus: rebased, sentBack: sentBackKeys, gateCovers: facts.gateCovers?.[repo] || null })
+    const enriched = enrichForOrder(list, { repo, issues, unbuilt, repairFailed: facts.repairFailed || {}, repairFiles: facts.repairFiles || {}, rebaseStatus: rebased, sentBack: sentBackKeys, gateCovers: facts.gateCovers?.[repo] || null })
     const main = mainStateFrom({ issues, health: repo === MARVIN_REPO ? facts.health || null : null })
     const q = queue?.repos?.[repo] || {}
     const order = mergeOrder(enriched, main, { items: q.items || [], failed: q.failed || {}, lastMerged: q.lastMerged ?? null, running: q.running || null })

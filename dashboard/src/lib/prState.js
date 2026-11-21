@@ -208,7 +208,7 @@ const SAID_BY_HEADLINE = {
   'checks-failed': /^checks failing\b/,
   'decisions-pending': /\bDecisions? (?:is|are) waiting for you$/,
   'needs-options': /^asks you to choose without options$/,
-  conflict: /^conflicts with\b/,
+  conflict: /^(?:Held: )?conflicts with\b/,
   'sent-back': /^sent back for rework$/,
   stacked: /^waits for #\d+ \(it's built on it\)$/,
   'wrong-base': /^targets\b/,

@@ -32,6 +32,13 @@ export const readRepairFailures = () => {
   return out
 }
 
+export const readRepairFiles = () => {
+  const all = readJson(path.join(logs(), 'conflict-repair.json'), {})
+  const out = {}
+  for (const [k, v] of Object.entries(all && typeof all === 'object' ? all : {})) if (v?.files && Array.isArray(v.files) && v.files.length > 0) out[k] = { sha: v.failed_sha, files: v.files }
+  return out
+}
+
 // owner_decisions.py rows that are MARVIN's move: the owner answered, nothing replied, and no work commit came after.
 export function unbuiltFrom(rows) {
   return (Array.isArray(rows) ? rows : []).filter((r) => r && r.url && !r.addressed_by && !r.built_since).map((r) => r.url)
@@ -120,7 +127,7 @@ const PR_FIELDS = 'number,title,url,body,baseRefName,headRefName,headRefOid,merg
 
 // load(repo) for the queue runner: { openPrs (enriched), mainState }. Throws when GitHub can't be read: the runner
 // then decides nothing (a queue never merges on a guess).
-export function createQueueLoader({ exec, unbuilt, baseOf, health = readMainHealth, repairs = readRepairFailures, rebase = readRebaseStatus, covers = () => gateCheckNames() }) {
+export function createQueueLoader({ exec, unbuilt, baseOf, health = readMainHealth, repairs = readRepairFailures, repairFiles = readRepairFiles, rebase = readRebaseStatus, covers = () => gateCheckNames() }) {
   return async (repo) => {
     const [prsOut, issuesOut] = await Promise.all([
       exec('gh', ['pr', 'list', '--repo', repo, '--state', 'open', '--limit', '100', '--json', PR_FIELDS]),
@@ -139,7 +146,7 @@ export function createQueueLoader({ exec, unbuilt, baseOf, health = readMainHeal
       } catch { headSha = null }
     }
     return {
-      openPrs: enrichForOrder(prs.filter((p) => !p.isCrossRepository).map((p) => ({ ...p, repo })), { repo, issues, unbuilt: unbuilt(), repairFailed: repairs(), rebaseStatus: rebase(), gateCovers: repo === engineRepo() ? covers() : null }),
+      openPrs: enrichForOrder(prs.filter((p) => !p.isCrossRepository).map((p) => ({ ...p, repo })), { repo, issues, unbuilt: unbuilt(), repairFailed: repairs(), repairFiles: repairFiles(), rebaseStatus: rebase(), gateCovers: repo === engineRepo() ? covers() : null }),
       mainState: mainStateFrom({ issues, health: repo === engineRepo() ? health() : null, base, headSha })
     }
   }

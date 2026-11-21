@@ -1,10 +1,10 @@
 import { describe, it, expect, beforeEach, afterEach } from 'vitest'
-import { mkdtempSync, rmSync, readFileSync, writeFileSync } from 'fs'
+import { mkdtempSync, rmSync, readFileSync, writeFileSync, mkdirSync } from 'fs'
 import { tmpdir } from 'os'
 import path from 'path'
 import { createMergeQueue, createQueueStore, outcomeFor } from '../webhook-server/merge_queue.js'
 import { enrichForOrder, mainStateFrom } from '../webhook-server/merge_order.js'
-import { unbuiltFrom, createUnbuiltCache } from '../webhook-server/merge_facts.js'
+import { unbuiltFrom, createUnbuiltCache, readRepairFiles } from '../webhook-server/merge_facts.js'
 
 // marvin#231: the queue runner against a small fake GitHub that behaves like the real one: a merge closes the PR, and
 // the post-merge step moves PRs stacked on it onto main (post_merge_rebase.js does that for real). Real store on disk.
@@ -175,7 +175,7 @@ describe('merge queue runner', () => {
     await queue.approve(REPO, url(973))
     expect(w.merged).toEqual([973])
     expect(store.forRepo(REPO).items.map((i) => i.number)).toEqual([972])
-    expect(queue.view(REPO).entries[url(972)].reason).toBe('conflicts with main after #973 · MARVIN is fixing it')
+    expect(queue.view(REPO).entries[url(972)].reason).toBe('Held: conflicts with main after #973 · MARVIN is fixing it')
     expect(resolver).toContain('sha972')
     w.prs.get(972).headRefOid = 'resolved'                  // the resolver's push
     await queue.kick(REPO)
@@ -605,5 +605,49 @@ describe('resume() restores interrupted merges to the front of the queue', () =>
     // Resume 302 to move it to the front
     store.resume(REPO, url(302))
     expect(store.forRepo(REPO).items.map((i) => i.number)).toEqual([302, 301])
+  })
+})
+
+describe('readRepairFiles: reads conflicted files from repair history', () => {
+  let dir
+  let logsDir
+  let originalHome
+  beforeEach(() => {
+    dir = mkdtempSync(path.join(tmpdir(), 'repair-files-'))
+    logsDir = path.join(dir, '.claude', 'logs')
+    originalHome = process.env.HOME
+    process.env.HOME = dir
+  })
+  afterEach(() => {
+    rmSync(dir, { recursive: true, force: true })
+    if (originalHome) process.env.HOME = originalHome
+    else delete process.env.HOME
+  })
+
+  it('reads repair entries with failed_sha (not sha), extracting only entries with non-empty files arrays', () => {
+    const conflictRepair = {
+      'G-Eskayo/marvin#972': { failed_sha: 'abc123def', files: ['a.js', 'b.js'], reason: 'conflict' },
+      'G-Eskayo/marvin#973': { failed_sha: 'xyz789', files: [], reason: 'conflict' },
+      'G-Eskayo/marvin#974': { failed_sha: 'old456', files: ['c.js'], reason: 'conflict' }
+    }
+    mkdirSync(logsDir, { recursive: true })
+    const conflictFile = path.join(logsDir, 'conflict-repair.json')
+    writeFileSync(conflictFile, JSON.stringify(conflictRepair))
+
+    // Call the real readRepairFiles function
+    const repairFiles = readRepairFiles()
+
+    expect(repairFiles).toEqual({
+      'G-Eskayo/marvin#972': { sha: 'abc123def', files: ['a.js', 'b.js'] },
+      'G-Eskayo/marvin#974': { sha: 'old456', files: ['c.js'] }
+    })
+    expect(repairFiles['G-Eskayo/marvin#973']).toBeUndefined()  // empty files array excluded
+  })
+
+  it('handles missing or malformed conflict-repair.json gracefully', () => {
+    // Set HOME to temp dir but don't create the file
+    const repairFiles = readRepairFiles()
+
+    expect(repairFiles).toEqual({})
   })
 })
