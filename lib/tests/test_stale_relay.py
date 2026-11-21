@@ -95,8 +95,9 @@ def test_a_week_counts_caught_and_both_kinds_of_leaked(env):
             {"at": ts(2), "handoff": "h2.md", "changed_keys": ["G-Eskayo/x#17"]},
             {"at": ts(9), "handoff": "h0.md", "changed_keys": ["G-Eskayo/old#1"]}]     # outside the week
     env["resume_log"].write_text("\n".join(json.dumps(r) for r in rows) + "\nnot json\n")
+    # Both rows stamped inside the pinned week, not with the real clock (#1345: after NOW a row fell out of the window).
     ql.add("Why did you say #17 was urgent?", kind="stale", path=env["question_log"], ts=ts(1))
-    ql.add("Where is the build running?", path=env["question_log"])
+    ql.add("Where is the build running?", path=env["question_log"], ts=ts(1))
     transcript(env["transcripts"], "s1", [user("that's already fixed", 1), user("ok go on", 0.9)])
     w = week(env)
     assert w["caught"] == 3 and w["logged"] == 1 and w["said"] == 1 and w["leaked"] == 2
