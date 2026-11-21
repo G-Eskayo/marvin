@@ -1,5 +1,7 @@
 # Changelog
 
+- Wire tdd/SKILL.md's dangling `calls: [diagnose]` frontmatter into the body (or remove it) ([#1380](https://github.com/G-Eskayo/marvin/pull/1380))
+
 - Reconcile prototype/SKILL.md's "No tests" rule with the always-on tdd default, and say how a validated prototype… ([#1382](https://github.com/G-Eskayo/marvin/pull/1382))
 
 - Specify which triage label (if any) to-prd's published PRD issue should receive ([#1383](https://github.com/G-Eskayo/marvin/pull/1383))
