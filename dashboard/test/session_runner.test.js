@@ -177,6 +177,51 @@ describe('session_runner', () => {
       expect(capturedOptions.env.PATH).toBe(process.env.PATH)
     })
 
+    it('readOnly (a voice turn): only read tools, no MCP servers, nothing else allowed (ADR 0005, ADR 0075)', async () => {
+      let capturedArgs = null
+      const mockSpawn = (bin, args) => {
+        capturedArgs = args
+        return createMockChildProcess(loadFixture('resume.ndjson'))
+      }
+      for await (const _ of runSession({ message: '[Voice turn] is main green', sessionId: 's-1', readOnly: true, spawnFn: mockSpawn })) {
+        // consume events
+      }
+      const after = (flag) => capturedArgs[capturedArgs.indexOf(flag) + 1]
+      expect(after('--tools')).toBe('Read,Grep,Glob,WebSearch,WebFetch')
+      expect(after('--allowedTools')).toBe('Read,Grep,Glob,WebSearch,WebFetch')
+      expect(after('--permission-mode')).toBe('dontAsk')
+      expect(capturedArgs).toContain('--strict-mcp-config')
+      expect(capturedArgs.join(' ')).not.toMatch(/\b(Bash|Edit|Write|NotebookEdit)\b/)
+      expect(capturedArgs).not.toContain('--settings') // no hook can widen it
+      expect(after('--resume')).toBe('s-1')
+    })
+
+    it('readOnly wins over a permission hook path', async () => {
+      let capturedArgs = null
+      const mockSpawn = (bin, args) => {
+        capturedArgs = args
+        return createMockChildProcess(loadFixture('resume.ndjson'))
+      }
+      for await (const _ of runSession({ message: 'x', readOnly: true, permissionHookPath: '/tmp/hook.js', spawnFn: mockSpawn })) {
+        // consume events
+      }
+      expect(capturedArgs).not.toContain('--settings')
+      expect(capturedArgs).toContain('--strict-mcp-config')
+    })
+
+    it('without readOnly, the tool set is left alone (Chat is unchanged)', async () => {
+      let capturedArgs = null
+      const mockSpawn = (bin, args) => {
+        capturedArgs = args
+        return createMockChildProcess(loadFixture('resume.ndjson'))
+      }
+      for await (const _ of runSession({ message: 'x', spawnFn: mockSpawn })) {
+        // consume events
+      }
+      expect(capturedArgs).not.toContain('--tools')
+      expect(capturedArgs).not.toContain('--strict-mcp-config')
+    })
+
     it('surfaces spawn ENOENT as error event', async () => {
       const mockSpawn = () => {
         const err = new Error('ENOENT: no such file or directory')

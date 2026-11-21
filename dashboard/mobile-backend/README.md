@@ -1,6 +1,6 @@
 # Mobile backend service
 
-Standalone Node service that vets Tailscale device identity via allowlist and exposes a `/status` endpoint for mobile clients. Runs under launchd supervision: restarts on crash, listens only on this machine's Tailscale IPv4 address.
+Standalone Node service that vets Tailscale device identity via allowlist and serves MARVIN Mobile: dashboard data, the Thread, the permission bridge and the voice endpoint. Runs under launchd supervision: restarts on crash, listens only on this machine's Tailscale IPv4 address.
 
 ## Device gate
 
@@ -280,6 +280,80 @@ Deny a PR with structured feedback (send feedback + re-engagement tag, or drop e
 - `400 { "ok": false, "error": "<message>" }` on invalid `action` or bad JSON
 - `500 { "ok": false, "error": "<message>" }` on webhook failure
 - `403 { "ok": false, "error": "Confirmed action required" }` if `confirmed` is missing or false
+
+## Voice endpoint (ADR 0075)
+
+The one place spoken words reach MARVIN. The Siri doorway (HomePods), the Mac voice loop, the iPhone Voice surface
+and any later endpoint (Apple TV, a Dot) all call it and name themselves in `source`. Every exchange lands in the
+Thread with `source: "voice"` and `meta.device`, so a question asked on a HomePod shows on the phone.
+
+### `POST /voice`
+
+**Request body**: `{ "text": "<what was said>", "source": "homepod" | "mac" | "iphone" | "watch" | "appletv" | <registered>, "abilities"?: [...], "sttMs"?: <n>, "stream"?: true }`
+
+- `source` must be a registered endpoint (below), or the request is refused (`403`, "unknown device"). This is on top
+  of the Tailscale device gate, which every route already passes through.
+- `abilities` can only narrow the registered ones. An endpoint without `show` never gets a `display` field.
+- `sttMs`: the device's speech-to-text time, logged with the turn.
+
+**Response (not streaming, for the Siri doorway)**: `200 { "ok": true, "data": { turnId, brain, speech, display?, pendingActionId?, deepPending?, timings } }`
+
+- `speech` is always speakable: no Markdown, code or URLs, at most three sentences / 400 characters. A longer reply is
+  cut at a sentence boundary with "I'll put the rest in the Thread on your phone", and the whole text goes to the
+  Thread (and to `display` if the endpoint can show).
+- `brain`: `fast` (the local model answered), `deep` (the Thread's MARVIN session) or `action` (a side effect, see
+  below).
+- `deepPending: true`: the deep brain didn't finish within 8 s. `speech` says the answer will come to the Thread,
+  and it lands there when ready.
+
+**Response (`stream: true`, for the Mac loop and the phone)**: `application/x-ndjson`, one event per line:
+`{type:"turn", turnId, brain}`, then `{type:"sentence", text, holding?}` as each sentence finishes (a deep turn
+starts with a holding line such as "Checking."), `{type:"pending", actionId, summary}` for an action, and finally
+`{type:"done", speech, timings, ...}`.
+
+**Errors are spoken too**: every refusal or failure carries a `speech` field ("I didn't catch anything", "I can't reach
+my models right now"). The endpoint never answers with silence.
+
+### Two brains
+
+- **Routing** (`voice_router.js`): a side-effect request becomes an `action`. Otherwise the route classifier
+  (`skills/route/scripts/route.py`, keyword pass, ~30 ms) picks the brain: zero-hit short small talk goes to the
+  fast brain, and anything it recognises, anything long, or anything about MARVIN's state or the world right now
+  (PRs, tickets, the board, weather) goes deep.
+- **Fast brain** (`fast_brain.js`): `qwen2.5:3b` in Ollama, warmed at startup and kept loaded (`keep_alive` 60 min).
+  Override the model with `MARVIN_VOICE_FAST_MODEL`. It replies `DEEP` to hand a turn up. If it is down or slow
+  (no first token in 1.5 s), the turn goes to the deep brain.
+- **Deep brain**: `claude -p` resuming the Thread's current Session, **read-only**: `--tools` and `--allowedTools`
+  limited to Read, Grep, Glob, WebSearch and WebFetch, `--strict-mcp-config` (no MCP servers), `dontAsk`. It can look
+  things up but cannot change anything.
+
+### Side effects: the phone confirms (ADR 0005, ADR 0043)
+
+Nothing with a side effect runs on a voice request alone, whatever the request body says (a `confirmed` flag in a
+voice request is ignored). The reply is the plan ("I'd merge PR 657. Confirm on your phone."), and the request is
+stored as a pending action with `toolName: "VoiceRequest"`. It shows in `GET /pending-actions`. When the phone
+resolves it with Face ID through `POST /pending-actions/resolve`, `allow` runs the request as a normal Thread turn
+(the same `claude -p` as Chat), and `deny` records the cancellation. A voice request that waits more than 15 minutes
+expires and is not run.
+
+### `POST /voice/timing`
+
+**Request body**: `{ "turnId": "<from the turn>", "firstSoundMs": <n> }`. The device reports when it started speaking.
+
+### Measurement
+
+Each turn appends one line to `~/.claude/logs/voice-turns.jsonl`: `turnId, device, brain, sttMs, routingMs,
+firstTokenMs, firstSentenceMs, totalMs, truncated, ok`. First-sound reports are added as their own lines, keyed by
+`turnId`. The log holds timings only, never what was said.
+
+### Endpoints registry
+
+Built in: `homepod` (listen, speak), `mac`, `iphone`, `watch` (show, touch, listen, speak), `appletv` (show, listen,
+speak). Add or change one in `~/.claude/voice-endpoints.json`, without a restart:
+
+```json
+{ "endpoints": { "kitchen-dot": { "abilities": ["listen", "speak"] } } }
+```
 
 ## Deliberately out of scope
 

@@ -249,4 +249,37 @@ describe('permission_api', () => {
       expect(handled).toBe(false)
     })
   })
+  describe('onResolved (the voice approval hook)', () => {
+    it('is told about each resolved action, after the reply is sent', async () => {
+      const seen = []
+      const r = createPermissionApiRouter({ pendingActionStore: store, onResolved: (a) => { seen.push(a) } })
+      const action = store.create({ toolName: 'VoiceRequest', toolInput: { text: 'merge 657' }, summary: 's', sessionId: null })
+      const res = new MockResponse()
+      await r(new MockRequest('POST', '/pending-actions/resolve', JSON.stringify({ id: action.id, decision: 'allow' })), res)
+      expect(res.statusCode).toBe(200)
+      await new Promise((resolve) => setTimeout(resolve, 0))
+      expect(seen).toHaveLength(1)
+      expect(seen[0]).toMatchObject({ id: action.id, status: 'approved', decision: 'allow' })
+    })
+
+    it('a failing hook never breaks the resolve reply', async () => {
+      const r = createPermissionApiRouter({ pendingActionStore: store, onResolved: async () => { throw new Error('boom') } })
+      const action = store.create({ toolName: 'VoiceRequest', toolInput: {}, summary: 's', sessionId: null })
+      const res = new MockResponse()
+      await r(new MockRequest('POST', '/pending-actions/resolve', JSON.stringify({ id: action.id, decision: 'deny' })), res)
+      expect(res.statusCode).toBe(200)
+      await new Promise((resolve) => setTimeout(resolve, 10))
+    })
+
+    it('is not called when the resolve fails (already resolved)', async () => {
+      const seen = []
+      const r = createPermissionApiRouter({ pendingActionStore: store, onResolved: (a) => { seen.push(a) } })
+      const action = store.create({ toolName: 'VoiceRequest', toolInput: {}, summary: 's', sessionId: null })
+      store.resolve(action.id, 'deny')
+      const res = new MockResponse()
+      await r(new MockRequest('POST', '/pending-actions/resolve', JSON.stringify({ id: action.id, decision: 'allow' })), res)
+      expect(res.statusCode).toBe(400)
+      expect(seen).toHaveLength(0)
+    })
+  })
 })

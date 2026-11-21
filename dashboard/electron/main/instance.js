@@ -10,6 +10,7 @@ import { supportRole } from './support.js'
 //   engineRepo()   the engine checkout's GitHub `origin` > instance.json "engine_repo" > the upstream
 //   owner()        instance.json "owner" > the owner part of engineRepo()
 //   ticketsRepo()  instance.json "tickets_repo" > engineRepo()
+//   ownerName()    instance.json "owner_name" (the name MARVIN says aloud), or null
 //   featureEnabled(name)  only a real `true` in instance.json "features" turns one on
 // A missing, corrupt or wrong-shaped instance.json is a blank instance. Values are computed once per process
 // (O(1) after); reset() forgets them. MARVIN_ENGINE_DIR / MARVIN_INSTANCE_DIR override the locations (tests).
@@ -62,6 +63,7 @@ const str = (key) => {
 export const engineRepo = () => load().origin || str('engine_repo') || UPSTREAM
 export const owner = () => str('owner') || engineRepo().split('/')[0]
 export const ticketsRepo = () => str('tickets_repo') || engineRepo()
+export const ownerName = () => str('owner_name')?.trim() || null
 
 export function featureEnabled(name) {
   const f = load().config.features

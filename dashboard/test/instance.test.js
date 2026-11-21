@@ -67,6 +67,15 @@ describe('instance', () => {
     expect(inst.ticketsRepo()).toBe('pat-example/marvin-instance')
   })
 
+  it('gives the spoken name of the person only when the instance names them (the voice endpoint)', () => {
+    at({ origin: 'https://github.com/pat-example/marvin.git', config: { owner_name: 'Pat' } })
+    expect(inst.ownerName()).toBe('Pat')
+    for (const config of [{}, { owner_name: '' }, { owner_name: '   ' }, { owner_name: 7 }, '{corrupt']) {
+      at({ origin: 'https://github.com/pat-example/marvin.git', config })
+      expect(inst.ownerName()).toBeNull() // never the GitHub account: "pat-example" isn't a name to say aloud
+    }
+  })
+
   it('switches a feature on only for a real true', () => {
     at({ config: { features: { a: 'false', b: 'yes', c: 1, d: true } } })
     expect(['a', 'b', 'c', 'd', 'missing'].map(inst.featureEnabled)).toEqual([false, false, false, true, false])
