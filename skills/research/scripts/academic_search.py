@@ -11,7 +11,45 @@ import json
 import sys
 import xml.etree.ElementTree as ET
 from pathlib import Path
-from typing import Optional
+from typing import Optional, Union
+
+
+def _clean(s: Union[str, None], limit: int) -> Union[str, None]:
+    """Clean text: collapse whitespace, optionally truncate at word boundary.
+
+    Args:
+        s: String to clean, or None (passed through unchanged)
+        limit: Character limit (> 0 triggers truncation, 0/negative skips it)
+
+    Returns:
+        Cleaned string or None; if truncated, appends '…' (not counted toward limit)
+    """
+    if s is None:
+        return None
+
+    # Collapse whitespace
+    collapsed = " ".join(s.split())
+
+    if limit <= 0 or len(collapsed) <= limit:
+        return collapsed
+
+    # Truncate at word boundary if possible
+    truncated = collapsed[:limit]
+    last_space = truncated.rfind(" ")
+
+    if last_space > 0:
+        return collapsed[:last_space] + "…"
+
+    # No word boundary found, hard-cut
+    return truncated + "…"
+
+
+def _nonneg_int(value: str) -> int:
+    """Argparse type for non-negative integers."""
+    num = int(value)
+    if num < 0:
+        raise argparse.ArgumentTypeError(f"argument must be non-negative (got {value})")
+    return num
 
 
 def _get_s2_client():
@@ -129,6 +167,17 @@ def main() -> None:
         default="json",
         help="Output format (default: json)",
     )
+    ap.add_argument(
+        "--abstract-chars",
+        type=_nonneg_int,
+        default=300,
+        help="Max characters for abstract/summary (default: 300, 0 = no truncation)",
+    )
+    ap.add_argument(
+        "--full",
+        action="store_true",
+        help="Include full results (no cleaning)",
+    )
     args = ap.parse_args()
 
     results = {}
@@ -153,8 +202,26 @@ def main() -> None:
     if errors:
         results["errors"] = errors
 
+    # Clean results if not in --full mode
+    if not args.full:
+        for paper in results.get("semantic_scholar", []):
+            if "title" in paper:
+                paper["title"] = _clean(paper["title"], args.abstract_chars)
+            if "abstract" in paper:
+                paper["abstract"] = _clean(paper["abstract"], args.abstract_chars)
+            paper.pop("externalIds", None)
+
+        for paper in results.get("arxiv", []):
+            if "title" in paper:
+                paper["title"] = _clean(paper["title"], args.abstract_chars)
+            if "summary" in paper:
+                paper["summary"] = _clean(paper["summary"], args.abstract_chars)
+
     if args.format == "json":
-        print(json.dumps(results, indent=2))
+        if args.full:
+            print(json.dumps(results, indent=2))
+        else:
+            print(json.dumps(results, separators=(",", ":"), ensure_ascii=False))
     elif args.format == "markdown":
         _print_markdown(results, args.source)
 
@@ -188,7 +255,7 @@ def _print_markdown(results: dict, source: str) -> None:
             if year:
                 print(f"- **Year:** {year}")
             if abstract:
-                print(f"- **Abstract:** {abstract[:200]}...")
+                print(f"- **Abstract:** {abstract}")
             print()
 
     if source in ("arxiv", "both") and results.get("arxiv"):
@@ -208,7 +275,7 @@ def _print_markdown(results: dict, source: str) -> None:
             if year:
                 print(f"- **Year:** {year}")
             if summary:
-                print(f"- **Summary:** {summary[:200]}...")
+                print(f"- **Summary:** {summary}")
             print()
 
 

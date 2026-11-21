@@ -19,7 +19,7 @@ See [epistemic-framework.md](~/.agents/skills/research/epistemic-framework.md) f
 Two different question types need two different source ladders — don't apply the academic ladder to a practical question or vice versa.
 
 **Scientific/academic claims** (does X cause Y, what does the evidence say, evaluate this theory):
-1. **Structured academic search** — run `scripts/academic_search.py --query "<question>" --source both` (searches Semantic Scholar + arXiv together, handles rate-limiting automatically). Parse the resulting structured JSON rather than browsing. 
+1. **Structured academic search** — run `scripts/academic_search.py --query "<question>" --source both` (searches Semantic Scholar + arXiv together, handles rate-limiting automatically). Parse the resulting structured JSON rather than browsing. Results are trimmed for triage. Re-run with `--full --limit 3` for the papers worth reading.
    - Semantic Scholar (200M+ papers, comprehensive indexing)
    - arXiv (CS/math/physics/ML preprints, real-time)
    - **Important**: Check the JSON output for an `errors` key; if present, one source failed. State which source failed and note that results are incomplete. Never report a missing source's absent results as an absence of literature in the field — that's a technical failure, not evidence.

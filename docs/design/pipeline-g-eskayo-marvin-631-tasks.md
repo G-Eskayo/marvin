@@ -1,0 +1,7 @@
+1. Write `tests/test_tdd_skill_break_it_standard.py` with the 8 failing tests above (RED), following `tests/test_skill_doc_links.py`'s `Path(__file__).resolve().parents[1]` pattern.
+2. Edit `skills/tdd/SKILL.md` line 62: replace "Focus testing effort on critical paths and complex logic, not every possible edge case." with wording that prioritizes by risk but requires break-it cases for every behavior, citing `docs/north-stars.md` (ADR 0063) instead of restating it. (Satisfies tests 1–2.)
+3. Edit `skills/tdd/SKILL.md` "Checklist Per Cycle" (~line 103–111): add one line for break-it cases (empty/malformed/huge input, a dependency failing, repeats/wrong order, stale state) and one line for outward-facing adversarial cases (injection, traversal, oversized payload, secrets in logs, fail closed). (Satisfies tests 3–4.)
+4. Edit `skills/tdd/mocking.md`: add the temp-HOME rule next to the existing ChromaDB `tmp_path` example, citing the 2026-10-09 logs-wipe incident; leave "Mock at the true external boundary only" untouched. (Satisfies tests 5, 6, 8.)
+5. Edit `skills/tdd/tests.md`: add a second "Good" example demonstrating a failure path (malformed/empty input rejected without raising) plus one sentence stating failure paths are behavior too. (Satisfies test 7.)
+6. Run the new test file and confirm all 8 pass (GREEN); run the full `tests/` suite to confirm no existing test (e.g. `test_skill_doc_links.py`) regressed.
+7. Commit with a stated reason per ADR 0063 gate 4 (docs-only change), referencing #631.

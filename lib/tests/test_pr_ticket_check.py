@@ -105,9 +105,9 @@ def test_repo_here_outside_a_checkout_is_none(tmp_path):
 
 # ── gate: what bin/gh calls ─────────────────────────────────────────────────
 
-def run_gate(argv, registry, env=None, here=lambda: "G-Eskayo/marvin", read_file=None):
+def run_gate(argv, registry, env=None, here=lambda: "G-Eskayo/marvin", read_file=None, ask=None):
     said, logged = [], []
-    rc = pt.gate(argv, said.append, logged.append, env=env or {}, registry=registry, here=here, read_file=read_file)
+    rc = pt.gate(argv, said.append, logged.append, env=env or {}, registry=registry, here=here, read_file=read_file, ask=ask)
     return rc, said, logged
 
 
@@ -238,3 +238,165 @@ def test_the_shadow_mutation_score_edit_names_why(monkeypatch):
     seen = _captured_env(monkeypatch)
     auto_merge_shadow._gh(["pr", "edit", "u", "--body", "x"])
     assert seen.get(pt.OVERRIDE, "").strip()
+
+
+# ── red ticket warnings (marvin#1147) ──────────────────────────────────────
+
+def test_is_red_ticket_with_main_red_label():
+    assert pt.is_red_ticket({"labels": [{"name": "main-red"}]})
+    assert pt.is_red_ticket({"labels": ["main-red"]})
+
+
+def test_is_red_ticket_with_bug_p0_and_title():
+    assert pt.is_red_ticket({"labels": [{"name": "bug"}, {"name": "priority:p0"}], "title": "Main is red at 9f4ac8d"})
+    assert pt.is_red_ticket({"labels": ["bug", "priority:p0"], "title": "Main red: webhook issue"})
+
+
+def test_is_red_ticket_needs_both_labels():
+    assert not pt.is_red_ticket({"labels": [{"name": "bug"}], "title": "Main is red"})
+    assert not pt.is_red_ticket({"labels": [{"name": "priority:p0"}], "title": "Main is red"})
+
+
+def test_is_red_ticket_case_insensitive_on_labels():
+    assert pt.is_red_ticket({"labels": ["BUG", "PRIORITY:P0"], "title": "Main is red"})
+
+
+def test_is_red_ticket_defensively_handles_missing_data():
+    assert not pt.is_red_ticket(None)
+    assert not pt.is_red_ticket({})
+    assert not pt.is_red_ticket({"labels": None})
+    assert not pt.is_red_ticket({"labels": "not-a-list"})
+
+
+def test_red_ticket_warning_part_of_red_ticket(registry):
+    def fake_ask(args):
+        if "issue" in args and "1234" in args:
+            return {"labels": [{"name": "main-red"}], "title": "Main is red"}
+        return {}
+    rc, said, logged = run_gate(
+        ["pr", "create", "--body", "Part of #1234"],
+        registry,
+        ask=fake_ask
+    )
+    assert rc is None
+    assert any("red ticket" in s for s in said)
+    assert any("red_ticket_warning" in str(e) for e in logged)
+
+
+def test_red_ticket_warning_caps_lookups(registry):
+    lookups = []
+    def fake_ask(args):
+        if "issue" in args:
+            lookups.append(args)
+            # Only return red for tickets beyond the cap (they shouldn't be looked up)
+            return {"labels": [], "title": "Some ticket", "state": "OPEN"}
+        return {}
+    # Create 20 separate "Part of" statements to trigger the cap
+    body_parts = [f"Part of #{i}" for i in range(20)]
+    rc, said, logged = run_gate(
+        ["pr", "create", "--body", "\n".join(body_parts)],
+        registry,
+        ask=fake_ask
+    )
+    # Exactly MAX_PART_OF_LOOKUPS lookups, no more
+    assert len(lookups) == pt.MAX_PART_OF_LOOKUPS
+    # No warning since we returned non-red tickets
+    assert not any("red ticket" in s for s in said)
+
+
+def test_red_ticket_warning_closes_red_gives_no_warning(registry):
+    def fake_ask(args):
+        if "issue" in args and "1234" in args:
+            return {"labels": [{"name": "main-red"}], "title": "Main is red", "state": "OPEN"}
+        return {}
+    rc, said, logged = run_gate(
+        ["pr", "create", "--body", "Closes #1234"],
+        registry,
+        ask=fake_ask
+    )
+    assert rc is None
+    assert not any("red ticket" in s for s in said)
+    assert not any("red_ticket_warning" in str(e) for e in logged)
+
+
+def test_red_ticket_warning_cross_repo_target(registry):
+    def fake_ask(args):
+        if "issue" in args and "1234" in args:
+            # Check if the --repo argument is correct
+            if "--repo" in args:
+                repo_idx = args.index("--repo") + 1
+                if repo_idx < len(args) and args[repo_idx] == "other/repo":
+                    return {"labels": [{"name": "main-red"}], "title": "Main is red", "state": "OPEN"}
+        return {}
+    rc, said, logged = run_gate(
+        ["pr", "create", "--body", "Part of other/repo#1234"],
+        registry,
+        ask=fake_ask
+    )
+    assert rc is None
+    assert any("red ticket" in s for s in said)
+    assert any("red_ticket_warning" in str(e) for e in logged)
+
+
+def test_red_ticket_warning_closes_one_red_part_of_another(registry):
+    def fake_ask(args):
+        if "issue" in args:
+            if "1234" in args:
+                return {"labels": [{"name": "main-red"}], "title": "Main is red", "state": "OPEN"}
+            elif "5678" in args:
+                return {"labels": [{"name": "bug"}, {"name": "priority:p0"}], "title": "Main is red in webhook", "state": "OPEN"}
+        return {}
+    rc, said, logged = run_gate(
+        ["pr", "create", "--body", "Closes #1234\nPart of #5678"],
+        registry,
+        ask=fake_ask
+    )
+    assert rc is None
+    # Should warn about the part-of red ticket
+    assert any("red ticket" in s for s in said)
+    assert any("red_ticket_warning" in str(e) for e in logged)
+
+
+def test_red_ticket_warning_part_of_non_red_ticket(registry):
+    def fake_ask(args):
+        if "issue" in args and "1234" in args:
+            return {"labels": [{"name": "enhancement"}], "title": "Add feature X", "state": "OPEN"}
+        return {}
+    rc, said, logged = run_gate(
+        ["pr", "create", "--body", "Part of #1234"],
+        registry,
+        ask=fake_ask
+    )
+    assert rc is None
+    assert not any("red ticket" in s for s in said)
+    assert not any("red_ticket_warning" in str(e) for e in logged)
+
+
+def test_red_ticket_warning_part_of_closed_red_ticket(registry):
+    def fake_ask(args):
+        if "issue" in args and "1234" in args:
+            return {"labels": [{"name": "main-red"}], "title": "Main is red", "state": "CLOSED"}
+        return {}
+    rc, said, logged = run_gate(
+        ["pr", "create", "--body", "Part of #1234"],
+        registry,
+        ask=fake_ask
+    )
+    assert rc is None
+    assert not any("red ticket" in s for s in said)
+    assert not any("red_ticket_warning" in str(e) for e in logged)
+
+
+
+
+def test_red_ticket_warning_fails_open(registry):
+    def fake_ask(args):
+        raise RuntimeError("network error")
+    rc, said, logged = run_gate(
+        ["pr", "create", "--body", "Part of #1234"],
+        registry,
+        ask=fake_ask
+    )
+    # Still lets the PR through (no refusal, no warning said)
+    assert rc is None
+    assert not any("red ticket" in s for s in said)

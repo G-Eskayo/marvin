@@ -25,6 +25,7 @@ SAFETY_MONITOR_SCRIPTS = Path.home() / ".agents" / "skills" / "safety-monitor" /
 sys.path.insert(0, str(Path.home() / ".agents" / "lib"))
 from hook_errors import log_hook_error  # noqa: E402
 import inbox  # noqa: E402
+from ticket_policy import rank_by  # noqa: E402
 
 PILE = "improvement-queue"
 
@@ -74,19 +75,20 @@ def extract_project(text: str) -> str:
 
 # ── issue prioritisation ───────────────────────────────────────────────────────
 
-KIND_PRIORITY = ["logic", "naming", "verbosity", "style", "kiss", "oop",
+KIND_PRIORITY = ["logic", "naming", "style", "kiss", "oop",
                  "complexity", "comment"]
 
 
 def top_issues(entries: list[dict], limit: int = 5) -> list[dict]:
-    anti = [e for e in entries if e["metadata"]["category"] == "anti-pattern"]
+    anti = [e for e in entries if e["metadata"]["category"] == "anti-pattern"
+            and "[VERBOSITY]" not in e["document"]]
 
     def sort_key(e):
         doc = e["document"]
-        for i, kind in enumerate(KIND_PRIORITY):
+        for kind in KIND_PRIORITY:
             if f"[{kind.upper()}]" in doc:
-                return i
-        return len(KIND_PRIORITY)
+                return rank_by(kind, KIND_PRIORITY)
+        return rank_by(None, KIND_PRIORITY)
 
     anti.sort(key=sort_key)
     # deduplicate by first 80 chars of document

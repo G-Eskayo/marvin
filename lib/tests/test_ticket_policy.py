@@ -88,6 +88,53 @@ def test_existing_priority_label_is_read_as_a_rank():
     assert tp.priority_rank(issue(labels=["bug"])) is None
 
 
+# ── rank_by (generic ranking helper) ───────────────────────────────────────
+
+def test_rank_by_finds_index_in_a_list():
+    order = ["stale_claims", "refeed", "revisit", "triage", "prioritize", "project_tag"]
+    assert tp.rank_by("stale_claims", order) == 0
+    assert tp.rank_by("refeed", order) == 1
+    assert tp.rank_by("project_tag", order) == 5
+
+
+def test_rank_by_returns_len_order_for_missing_values_in_list():
+    order = ["a", "b", "c"]
+    assert tp.rank_by("missing", order) == 3
+    assert tp.rank_by("x", order) == 3
+
+
+def test_rank_by_first_match_wins_in_a_list():
+    order = ["a", "b", "a", "c"]
+    assert tp.rank_by("a", order) == 0  # first "a" is at index 0
+
+
+def test_rank_by_handles_empty_list():
+    assert tp.rank_by("x", []) == 0  # len([]) == 0
+    assert tp.rank_by("anything", []) == 0
+
+
+def test_rank_by_finds_value_in_a_dict():
+    order = {"impact": 1, "effort": 2, "status": 3}
+    assert tp.rank_by("impact", order) == 1
+    assert tp.rank_by("effort", order) == 2
+    assert tp.rank_by("status", order) == 3
+
+
+def test_rank_by_returns_len_order_for_missing_dict_key_no_default():
+    order = {"a": 1, "b": 2}
+    assert tp.rank_by("missing", order) == 2  # len(order) == 2
+
+
+def test_rank_by_uses_explicit_default_in_dict():
+    order = {"a": 1, "b": 2}
+    assert tp.rank_by("missing", order, default=99) == 99
+    assert tp.rank_by("a", order, default=99) == 1
+
+
+def test_rank_by_handles_empty_dict():
+    assert tp.rank_by("x", {}) == 0  # len({}) == 0
+
+
 # ── triage ──────────────────────────────────────────────────────────────────
 
 GOOD = "## What to build\n\nA thing.\n\n## How we'll try to break it\n\nEmpty input, a dependency down.\n\n## Acceptance criteria\n\n- [ ] works\n- [ ] tested\n"

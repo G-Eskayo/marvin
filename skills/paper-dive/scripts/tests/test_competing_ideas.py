@@ -315,3 +315,17 @@ def test_render_markdown_counts_papers_by_stance():
     assert "(3 papers)" in md  # supports
     assert "(2 papers)" in md  # refutes
     assert "(1 paper)" in md   # mixed
+
+
+# ── ollama_chat import ──────────────────────────────────────────────────────
+
+def test_ollama_chat_imported_from_shared_module():
+    """Verify that ollama_chat is imported from the shared ollama_chat module, not defined locally."""
+    import ollama_chat as om_module
+
+    # Check that the module has ollama_chat defined
+    assert hasattr(om_module, "ollama_chat")
+    # Verify competing_ideas imports the same function
+    from competing_ideas import ollama_chat as imported_chat
+    # They should be the same function object
+    assert imported_chat is om_module.ollama_chat

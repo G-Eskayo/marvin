@@ -1,0 +1,5 @@
+1. Create `skills/write-a-skill/REFERENCE.md` with a `# write-a-skill Reference` H1, followed by the verbatim `## SKILL.md Template` section (code block + Frontmatter fields list) and the verbatim `## Description Requirements` section (including both good and bad examples), copied exactly from current `SKILL.md` lines 38–97.
+2. Edit `skills/write-a-skill/SKILL.md`: delete lines 38–97 and replace with a short section containing exactly: "Template, frontmatter fields and description rules: see [REFERENCE.md](REFERENCE.md). The description is the only thing the agent sees when choosing a skill: say what it does, then 'Use when ...' triggers, max 1024 chars." under an appropriate short heading.
+3. Verify `## When to Add Scripts`, `## When to Split Files`, and `## Review Checklist` are unchanged and immediately follow the new short section.
+4. Run `wc -l skills/write-a-skill/SKILL.md` and confirm it reports under 100; run the verification checks listed under Tests (steps 2–7 above) by inspection/grep.
+5. Run `git diff` to review the full change before handing off, confirming no unrelated whitespace or formatting drift.

@@ -13,12 +13,13 @@ import pytest
 SCRIPTS = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(SCRIPTS))
 
-import qa_scan
 import qa_capture
 import qa_query
-from qa_scan import detect_stack, extract_dependencies, extract_imports, extract_markers, analyze_python_file
+from qa_scan import detect_stack, extract_dependencies, extract_imports, extract_markers, analyze_python_file, store_entries
 from qa_capture import build_entry
 from qa_query import filter_results
+import chromadb
+import qa_scan
 
 
 # ── qa_scan ──────────────────────────────────────────────────────────────────
@@ -130,6 +131,206 @@ def test_build_entry_dedup_id_stable():
     e1 = build_entry(content="Use venv", category="pattern")
     e2 = build_entry(content="Use venv", category="pattern")
     assert e1["id"] == e2["id"]  # same content → same id → dedup in ChromaDB
+
+
+# ── store_entries ────────────────────────────────────────────────────────────
+
+def test_store_entries_basic(monkeypatch, tmp_path):
+    """Test that store_entries stores new entries correctly."""
+    monkeypatch.setattr(qa_scan, "CHROMA_PATH", tmp_path)
+    entries = [
+        build_entry(content="Pattern A", category="pattern"),
+        build_entry(content="Pattern B", category="pattern"),
+    ]
+    count = store_entries(entries)
+    assert count == 2
+
+    # Verify entries are in the database
+    client = chromadb.PersistentClient(path=str(tmp_path))
+    col = client.get_or_create_collection(qa_scan.COLLECTION)
+    all_ids = col.get(include=[])["ids"]
+    assert len(all_ids) == 2
+
+
+def test_store_entries_duplicate_within_batch(monkeypatch, tmp_path):
+    """Test that duplicate entries within a batch are deduplicated."""
+    monkeypatch.setattr(qa_scan, "CHROMA_PATH", tmp_path)
+    # Create two entries with the same content (same ID)
+    entry = build_entry(content="Pattern X", category="pattern")
+    entries = [entry, entry]  # Same entry twice
+    count = store_entries(entries)
+    assert count == 1  # Only one should be stored
+
+    client = chromadb.PersistentClient(path=str(tmp_path))
+    col = client.get_or_create_collection(qa_scan.COLLECTION)
+    all_ids = col.get(include=[])["ids"]
+    assert len(all_ids) == 1
+
+
+def test_store_entries_skip_existing(monkeypatch, tmp_path):
+    """Test that existing entries in the database are skipped."""
+    monkeypatch.setattr(qa_scan, "CHROMA_PATH", tmp_path)
+
+    # Add initial entry
+    entry1 = build_entry(content="Existing pattern", category="pattern")
+    store_entries([entry1])
+
+    # Try to add the same entry again
+    count = store_entries([entry1])
+    assert count == 0  # Should not add duplicates
+
+    client = chromadb.PersistentClient(path=str(tmp_path))
+    col = client.get_or_create_collection(qa_scan.COLLECTION)
+    all_ids = col.get(include=[])["ids"]
+    assert len(all_ids) == 1
+
+
+def test_store_entries_partial_batch(monkeypatch, tmp_path):
+    """Test that batches work correctly when not all entries are new."""
+    monkeypatch.setattr(qa_scan, "CHROMA_PATH", tmp_path)
+
+    # Add some initial entries
+    e1 = build_entry(content="Pattern 1", category="pattern")
+    e2 = build_entry(content="Pattern 2", category="pattern")
+    store_entries([e1, e2])
+
+    # Now add a mix of existing and new entries
+    e3 = build_entry(content="Pattern 3", category="pattern")
+    e4 = build_entry(content="Pattern 4", category="pattern")
+    count = store_entries([e1, e3, e2, e4])  # e1 and e2 exist, e3 and e4 are new
+    assert count == 2  # Only e3 and e4 should be added
+
+    client = chromadb.PersistentClient(path=str(tmp_path))
+    col = client.get_or_create_collection(qa_scan.COLLECTION)
+    all_ids = col.get(include=[])["ids"]
+    assert len(all_ids) == 4
+
+
+def test_store_entries_chunk_boundary(monkeypatch, tmp_path):
+    """Test that batching at chunk boundaries works correctly."""
+    monkeypatch.setattr(qa_scan, "CHROMA_PATH", tmp_path)
+
+    # Create exactly 1000 entries to test across two batches (BATCH=500)
+    entries = [
+        build_entry(content=f"Pattern {i}", category="pattern")
+        for i in range(1000)
+    ]
+    count = store_entries(entries)
+    assert count == 1000
+
+    client = chromadb.PersistentClient(path=str(tmp_path))
+    col = client.get_or_create_collection(qa_scan.COLLECTION)
+    all_ids = col.get(include=[])["ids"]
+    assert len(all_ids) == 1000
+
+
+def test_store_entries_mixed_across_batches(monkeypatch, tmp_path):
+    """Test that mixed existing/new entries across batch boundaries work."""
+    monkeypatch.setattr(qa_scan, "CHROMA_PATH", tmp_path)
+
+    # Add 300 initial entries
+    initial = [
+        build_entry(content=f"Initial {i}", category="pattern")
+        for i in range(300)
+    ]
+    store_entries(initial)
+
+    # Create 1000 entries where some already exist
+    # First 300 are duplicates of initial entries
+    mixed = initial + [
+        build_entry(content=f"New {i}", category="pattern")
+        for i in range(700)
+    ]
+    count = store_entries(mixed)
+    assert count == 700  # Only the new ones
+
+    client = chromadb.PersistentClient(path=str(tmp_path))
+    col = client.get_or_create_collection(qa_scan.COLLECTION)
+    all_ids = col.get(include=[])["ids"]
+    assert len(all_ids) == 1000
+
+
+def test_store_entries_dry_run(monkeypatch, tmp_path):
+    """Test that dry_run returns count without storing anything."""
+    monkeypatch.setattr(qa_scan, "CHROMA_PATH", tmp_path)
+
+    entries = [
+        build_entry(content="Pattern A", category="pattern"),
+        build_entry(content="Pattern B", category="pattern"),
+    ]
+    count = store_entries(entries, dry_run=True)
+    assert count == 2
+
+    # Database should be empty
+    client = chromadb.PersistentClient(path=str(tmp_path))
+    col = client.get_or_create_collection(qa_scan.COLLECTION)
+    all_ids = col.get(include=[])["ids"]
+    assert len(all_ids) == 0
+
+
+def test_store_entries_empty_list(monkeypatch, tmp_path):
+    """Test that storing empty list returns 0."""
+    monkeypatch.setattr(qa_scan, "CHROMA_PATH", tmp_path)
+
+    count = store_entries([])
+    assert count == 0
+
+
+def test_store_entries_no_limit_offset_via_code_inspection():
+    """Verify store_entries never uses limit/offset pagination (code inspection test)."""
+    import inspect
+    source = inspect.getsource(store_entries)
+    assert "limit=" not in source, "store_entries should not call col.get with limit="
+    assert "offset=" not in source, "store_entries should not call col.get with offset="
+    # Verify the while loop for pagination is gone
+    assert "while True:" not in source or "PAGE" not in source, "store_entries should not have pagination loop"
+
+
+def test_store_entries_large_batch_scales_efficiently(monkeypatch, tmp_path):
+    """Test that col.get is called O(batches) not O(total_entries): 2 calls for 1000 entries."""
+    monkeypatch.setattr(qa_scan, "CHROMA_PATH", tmp_path)
+
+    import chromadb
+
+    # Spy on col.get calls by wrapping the collection's get method
+    get_call_count = []
+    original_client = chromadb.PersistentClient
+
+    def spy_client(*args, **kwargs):
+        client = original_client(*args, **kwargs)
+        original_get_or_create = client.get_or_create_collection
+
+        def wrapped_get_or_create(*col_args, **col_kwargs):
+            col = original_get_or_create(*col_args, **col_kwargs)
+            original_get = col.get
+
+            def spy_get(*get_args, **get_kwargs):
+                get_call_count.append(1)
+                return original_get(*get_args, **get_kwargs)
+
+            col.get = spy_get
+            return col
+
+        client.get_or_create_collection = wrapped_get_or_create
+        return client
+
+    monkeypatch.setattr(chromadb, "PersistentClient", spy_client)
+
+    # Add 1000 brand new entries (should trigger 2 col.get calls: one per BATCH=500 chunk)
+    entries = [
+        build_entry(content=f"Pattern {i}", category="pattern")
+        for i in range(1000)
+    ]
+
+    count = store_entries(entries)
+    assert count == 1000
+    assert len(get_call_count) == 2, f"Expected 2 col.get calls (one per 500-entry batch), got {len(get_call_count)}"
+
+    # Verify all entries are present
+    client = chromadb.PersistentClient(path=str(tmp_path))
+    col = client.get_or_create_collection(qa_scan.COLLECTION)
+    all_ids = col.get(include=[])["ids"]
+    assert len(all_ids) == 1000
 
 
 # ── qa_query ─────────────────────────────────────────────────────────────────

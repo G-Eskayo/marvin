@@ -308,7 +308,7 @@ class TestRunColonyReturnCode:
         monkeypatch.setattr("correlate.correlate", lambda: [])
 
         # Mock research_digest to fail (return None)
-        monkeypatch.setattr("research_digest.generate", lambda: None)
+        monkeypatch.setattr("research_digest.generate", lambda correlated=None: None)
 
         result = run_colony.main()
 
@@ -337,7 +337,7 @@ class TestRunColonyReturnCode:
 
         # Mock research_digest to succeed
         fake_path = tmp_path / "digest.md"
-        monkeypatch.setattr("research_digest.generate", lambda: fake_path)
+        monkeypatch.setattr("research_digest.generate", lambda correlated=None: fake_path)
 
         result = run_colony.main()
 
@@ -347,3 +347,196 @@ class TestRunColonyReturnCode:
         # Verify success message printed
         captured = capsys.readouterr()
         assert "done — digest at" in captured.err
+
+
+class TestCorrelatedParameter:
+    """Test the correlated parameter functionality in research_digest.generate()."""
+
+    def test_generate_uses_provided_correlated_list(self, tmp_path, monkeypatch):
+        """When correlated is provided, use it directly instead of loading from ChromaDB."""
+        import research_digest
+
+        cache_dir = tmp_path / "research-feed"
+        digest_dir = tmp_path / "research-digest"
+        monkeypatch.setattr("research_digest.CACHE_DIR", cache_dir)
+        monkeypatch.setattr("research_digest.DIGEST_DIR", digest_dir)
+
+        # Mock load_today_cache with valid data
+        monkeypatch.setattr("research_digest.load_today_cache",
+                           lambda: [{"title": "item1", "url": "http://example.com", "source": "test"}])
+
+        # Track whether load_correlated_from_chroma was called
+        chroma_called = []
+        def mock_load_correlated():
+            chroma_called.append(True)
+            return [{"title": "chroma_item", "url": "http://chroma.com", "source": "chroma"}]
+        monkeypatch.setattr("research_digest.load_correlated_from_chroma", mock_load_correlated)
+
+        # Provide correlated items directly
+        provided_correlated = [
+            {"title": "provided_item1", "url": "http://provided1.com", "source": "provided"},
+            {"title": "provided_item2", "url": "http://provided2.com", "source": "provided"}
+        ]
+
+        # Mock marvin_launcher to return success
+        def mock_launch(*args, **kwargs):
+            class Result:
+                exit_code = 0
+                text = "# Test digest\n\nTest content."
+                stderr = ""
+            return Result()
+        monkeypatch.setattr("research_digest.marvin_launcher.launch", mock_launch)
+
+        # Call generate with provided correlated
+        result = research_digest.generate(correlated=provided_correlated)
+
+        # Verify generate succeeded
+        assert result is not None
+        # Verify load_correlated_from_chroma was NOT called
+        assert len(chroma_called) == 0
+
+    def test_generate_falls_back_to_chroma_when_correlated_none(self, tmp_path, monkeypatch):
+        """When correlated is None, fall back to loading from ChromaDB."""
+        import research_digest
+
+        cache_dir = tmp_path / "research-feed"
+        digest_dir = tmp_path / "research-digest"
+        monkeypatch.setattr("research_digest.CACHE_DIR", cache_dir)
+        monkeypatch.setattr("research_digest.DIGEST_DIR", digest_dir)
+
+        # Mock load_today_cache with valid data
+        monkeypatch.setattr("research_digest.load_today_cache",
+                           lambda: [{"title": "item1", "url": "http://example.com", "source": "test"}])
+
+        # Track whether load_correlated_from_chroma was called
+        chroma_called = []
+        def mock_load_correlated():
+            chroma_called.append(True)
+            return [{"title": "chroma_item", "url": "http://chroma.com", "source": "chroma"}]
+        monkeypatch.setattr("research_digest.load_correlated_from_chroma", mock_load_correlated)
+
+        # Mock marvin_launcher to return success
+        def mock_launch(*args, **kwargs):
+            class Result:
+                exit_code = 0
+                text = "# Test digest\n\nTest content."
+                stderr = ""
+            return Result()
+        monkeypatch.setattr("research_digest.marvin_launcher.launch", mock_launch)
+
+        # Call generate with None (explicit)
+        result = research_digest.generate(correlated=None)
+
+        # Verify generate succeeded
+        assert result is not None
+        # Verify load_correlated_from_chroma WAS called
+        assert len(chroma_called) == 1
+
+    def test_generate_falls_back_to_chroma_when_no_argument(self, tmp_path, monkeypatch):
+        """When no correlated argument provided, fall back to loading from ChromaDB."""
+        import research_digest
+
+        cache_dir = tmp_path / "research-feed"
+        digest_dir = tmp_path / "research-digest"
+        monkeypatch.setattr("research_digest.CACHE_DIR", cache_dir)
+        monkeypatch.setattr("research_digest.DIGEST_DIR", digest_dir)
+
+        # Mock load_today_cache with valid data
+        monkeypatch.setattr("research_digest.load_today_cache",
+                           lambda: [{"title": "item1", "url": "http://example.com", "source": "test"}])
+
+        # Track whether load_correlated_from_chroma was called
+        chroma_called = []
+        def mock_load_correlated():
+            chroma_called.append(True)
+            return [{"title": "chroma_item", "url": "http://chroma.com", "source": "chroma"}]
+        monkeypatch.setattr("research_digest.load_correlated_from_chroma", mock_load_correlated)
+
+        # Mock marvin_launcher to return success
+        def mock_launch(*args, **kwargs):
+            class Result:
+                exit_code = 0
+                text = "# Test digest\n\nTest content."
+                stderr = ""
+            return Result()
+        monkeypatch.setattr("research_digest.marvin_launcher.launch", mock_launch)
+
+        # Call generate with no arguments
+        result = research_digest.generate()
+
+        # Verify generate succeeded
+        assert result is not None
+        # Verify load_correlated_from_chroma WAS called
+        assert len(chroma_called) == 1
+
+    def test_run_colony_passes_correlated_to_generate(self, tmp_path, monkeypatch):
+        """run_colony.main() should pass correlated from correlate.correlate() to generate()."""
+        import run_colony
+        import source_monitor
+        import correlate
+
+        # Mock should_run to allow the run
+        def mock_should_run(*args, **kwargs):
+            return brief_fallback.Decision(True, "proceed")
+        monkeypatch.setattr("run_colony.brief_fallback.should_run", mock_should_run)
+
+        # Mock source_monitor.main
+        monkeypatch.setattr("source_monitor.main", lambda: 0)
+
+        # Mock correlate.correlate to return test data
+        test_correlated = [
+            {"title": "test_item", "url": "http://test.com", "source": "test"}
+        ]
+        monkeypatch.setattr("correlate.correlate", lambda: test_correlated)
+
+        # Track the correlated argument passed to generate
+        generate_calls = []
+        def mock_generate(correlated=None):
+            generate_calls.append(correlated)
+            fake_path = tmp_path / "digest.md"
+            return fake_path
+        monkeypatch.setattr("run_colony.research_digest.generate", mock_generate)
+
+        # Run main
+        result = run_colony.main()
+
+        # Verify generate was called with the correlated data
+        assert len(generate_calls) == 1
+        assert generate_calls[0] == test_correlated
+
+    def test_empty_correlated_list_uses_provided(self, tmp_path, monkeypatch):
+        """When correlated is an empty list, use it (don't fall back to ChromaDB)."""
+        import research_digest
+
+        cache_dir = tmp_path / "research-feed"
+        digest_dir = tmp_path / "research-digest"
+        monkeypatch.setattr("research_digest.CACHE_DIR", cache_dir)
+        monkeypatch.setattr("research_digest.DIGEST_DIR", digest_dir)
+
+        # Mock load_today_cache with valid data
+        monkeypatch.setattr("research_digest.load_today_cache",
+                           lambda: [{"title": "item1", "url": "http://example.com", "source": "test"}])
+
+        # Track whether load_correlated_from_chroma was called
+        chroma_called = []
+        def mock_load_correlated():
+            chroma_called.append(True)
+            return [{"title": "chroma_item", "url": "http://chroma.com", "source": "chroma"}]
+        monkeypatch.setattr("research_digest.load_correlated_from_chroma", mock_load_correlated)
+
+        # Mock marvin_launcher to return success
+        def mock_launch(*args, **kwargs):
+            class Result:
+                exit_code = 0
+                text = "# Test digest\n\nTest content."
+                stderr = ""
+            return Result()
+        monkeypatch.setattr("research_digest.marvin_launcher.launch", mock_launch)
+
+        # Call generate with empty list
+        result = research_digest.generate(correlated=[])
+
+        # Verify generate succeeded
+        assert result is not None
+        # Verify load_correlated_from_chroma was NOT called (empty list is falsy but provided)
+        assert len(chroma_called) == 0

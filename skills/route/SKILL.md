@@ -31,7 +31,12 @@ When triggered, run the classifier and print the routing recommendation:
 ~/.agents/venv/bin/python ~/.agents/skills/route/scripts/route.py "<task description>"
 ```
 
-For **in-session auto-routing** (session start only): if the user's first message clearly signals a specific task type (≥2 keyword matches from the routing table), surface the routing suggestion briefly:
+For **in-session auto-routing** (session start only): if the user's first message clearly signals a specific task type, surface the routing suggestion briefly via three-step classification:
+1. keyword pass first (`route.classify()`, ≥`MIN_HITS`=2 hits decide it, with no network cost),
+2. else the embedding classifier (`intent_classify.classify_fast()`, short timeout),
+3. else — on a first run with no vector cache — silent background build; any failure also falls silent to the default intent.
+
+Fires once per session, silent on architecture/no-match:
 > "This looks like a **recall** task — `claude-recall` (marvin + haiku) handles it at ~60% of this session's cost."
 
 Only say this once, at the top of the session. Don't repeat it mid-session.
@@ -45,6 +50,7 @@ route "fix the bug" --launch              # classify + exec claude
 route --recall --launch                   # explicit mode + launch
 route --table                             # full routing table
 route --aliases                           # print alias definitions
+route "query" --keyword                   # opt out from embedding classifier, use keyword only
 
 # Aliases (after install):
 claude-recall       # marvin profile + Haiku
@@ -70,3 +76,4 @@ source ~/.zshrc
 | On HARD coding tasks lean is NOT reliably cheaper than marvin — flips per task, high variance; clean is cheapest on both but lacks lean's TDD/grill quality benefit | bench Run 15 (N=3), tasks 012/013 |
 | Haiku fails navigational recall without MARVIN | bench Run 8, task-007 |
 | Haiku matches Sonnet on recall independently confirmed via a second method | bench Run 15, `select_model.py` sweep on task-002-recall |
+| Embedding classifier reaches 87.5% accuracy on fresh validation; keyword classifier 25–30% | ADR 0023, bench Run 21 (70% held-out) and bench Run 29 (87.5% validated) |

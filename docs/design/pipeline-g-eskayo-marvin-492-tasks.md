@@ -1,0 +1,4 @@
+1. Edit `skills/caveman/SKILL.md` frontmatter: delete the clause `— an earlier always-on configuration appeared to backfire but that test was later found to be confounded, not a real flaw in this mechanism.`, keeping everything else (Run 16/31 figures, `RESULTS.md` pointer, "opt-in only, not session-wide", all 6 trigger phrases) verbatim, re-flowing the YAML block scalar so it stays valid.
+2. Run `rebuild-manifest.py` directly and confirm it completes without error (acceptance criterion 3).
+3. Grep-verify acceptance criteria 1 and 2 (no "backfire"/"confounded"; all 6 trigger phrases present).
+4. Open PR against `main`.

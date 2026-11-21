@@ -21,7 +21,7 @@ GENERATED = ("graphify-out/**", "bench/metrics/**", "**/package-lock.json", "**/
 CODE_EXT = (".py", ".js", ".jsx", ".mjs", ".cjs", ".ts", ".tsx", ".swift", ".go", ".rs", ".java", ".kt", ".rb", ".php", ".sh")
 
 MARVIN_RULES = {
-    "test": ["lib/tests/**", "dashboard/test/**", "**/tests/**", "**/test_*.py", "**/*_test.py", "**/*.test.*", "**/*.spec.*"],
+    "test": ["lib/tests/**", "dashboard/test/**", "**/tests/**", "brain-map/scripts/test_*.py", "**/*.test.*", "**/*.spec.*"],
     "code": ["lib/**", "skills/**/scripts/**", "skills/**/*.py", "dashboard/src/**", "dashboard/electron/**",
              "dashboard/webhook-server/**", "dashboard/mobile-backend/**", "brain-map/**", "bin/**"],
     "generated": list(GENERATED),
@@ -44,6 +44,9 @@ def _match(path: str, patterns) -> bool:
 
 def kind(path: str, rules: dict) -> str:
     """code | test | other"""
+    while path.startswith("./"):
+        path = path[2:]
+    path = path.lstrip("/")
     if _match(path, rules.get("generated", [])):
         return "other"
     if _match(path, rules["test"]):

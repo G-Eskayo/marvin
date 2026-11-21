@@ -5,7 +5,7 @@ tags: [intent:plan, intent:prd, intent:document, type:skill]
 calls: [to-issues]
 ---
 
-This skill takes the current conversation context and codebase understanding and produces a PRD. Do NOT interview the user — just synthesize what you already know.
+This skill takes the current conversation context and codebase understanding and produces a PRD. Do NOT interview the user — just synthesize what you already know. Exception: in step 2 (module sketching), confirm the modules with the user when interactive; skip confirmation and record the decision instead when headless.
 
 The issue tracker and triage label vocabulary should have been provided to you — run `/setup-matt-pocock-skills` if not.
 
@@ -17,9 +17,9 @@ The issue tracker and triage label vocabulary should have been provided to you �
 
 A deep module (as opposed to a shallow module) is one which encapsulates a lot of functionality in a simple, testable interface which rarely changes.
 
-Check with the user that these modules match their expectations. Check with the user which modules they want tests written for.
+When interactive, confirm the modules with the user; when headless, skip confirmation and record your module-sketch decision in the PRD's Implementation Decisions section in the format: choice / options considered / why.
 
-3. Write the PRD using the template below, then publish it to the project issue tracker as a reference issue (not `ready-for-agent` — a PRD is a spec, not a single unit of work). Its own template demands a LONG, extensive user-story list, which will essentially always fail `to-issues`'s granularity self-check if published as one issue.
+3. Write the PRD using the template below, then publish it to the project issue tracker as a reference issue (not `ready-for-agent` — a PRD is a spec, not a single unit of work). Its own template demands a LONG, extensive user-story list, which will essentially always fail `to-issues`'s granularity self-check if published as one issue. Title it `PRD: <name>`, apply `enhancement` + project label + priority label, apply none of the five triage-role labels (the `PRD:` prefix is how triage knows to leave it alone).
 
 4. Invoke `to-issues` with this PRD issue as the source (already declared via `calls: [to-issues]` above) to break it into the actual vertical-slice implementation issues, each referencing this PRD via the `## Parent` field. Do not skip this step or hand-apply `ready-for-agent` to the PRD issue itself.
 
@@ -65,8 +65,8 @@ Exception: if a prototype produced a snippet that encodes a decision more precis
 
 A list of testing decisions that were made. Include:
 
-- A description of what makes a good test (only test external behavior, not implementation details)
-- Which modules will be tested
+- Tests try to break it: each test should try to break the work in every feasible way a person or system could use or misuse it (misuse cases, bad input, edge cases, failures of dependencies), plus security attacks for anything outward-facing (injection, XSS, auth bypass, etc.).
+- Which break-it cases matter most for each module
 - Prior art for the tests (i.e. similar types of tests in the codebase)
 
 ## Out of Scope
