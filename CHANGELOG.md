@@ -1,5 +1,7 @@
 # Changelog
 
+- grill-with-docs/SKILL.md: say when a resolved term also goes to the shared lexicon ([#1377](https://github.com/G-Eskayo/marvin/pull/1377))
+
 - Remove route.py's dead print_table() function, superseded by print_table_proper() ([#1379](https://github.com/G-Eskayo/marvin/pull/1379))
 
 - Wire tdd/SKILL.md's dangling `calls: [diagnose]` frontmatter into the body (or remove it) ([#1380](https://github.com/G-Eskayo/marvin/pull/1380))
