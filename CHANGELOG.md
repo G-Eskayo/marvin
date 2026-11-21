@@ -1,5 +1,7 @@
 # Changelog
 
+- qa_scan.py's store_entries() loads every id in qa-knowledge on each scan just to dedup a few hundred candidates ([#1374](https://github.com/G-Eskayo/marvin/pull/1374))
+
 - Add pipeline-logic to architecture-review's documented Impact values so its sort rank is usable ([#1376](https://github.com/G-Eskayo/marvin/pull/1376))
 
 - grill-with-docs/SKILL.md: say when a resolved term also goes to the shared lexicon ([#1377](https://github.com/G-Eskayo/marvin/pull/1377))
