@@ -120,3 +120,40 @@ def test_a_garbled_hook_payload_is_still_logged(monkeypatch):
     monkeypatch.setattr(rebuild_manifest, "log_hook_error", lambda *a, **k: logged.append(a))
     assert rebuild_manifest._hook_should_skip() is False
     assert logged
+
+
+class TestCallsField:
+    """Tests for 'calls' field handling in rebuild-manifest."""
+
+    def test_parse_frontmatter_on_real_to_tasklist_has_no_calls_key(self):
+        """AC1: parse_frontmatter on the real to-tasklist/SKILL.md has no 'calls' key."""
+        # Resolve path relative to repo root
+        repo_root = Path(__file__).resolve().parents[2]
+        to_tasklist_file = repo_root / "skills" / "to-tasklist" / "SKILL.md"
+
+        assert to_tasklist_file.exists(), f"Expected {to_tasklist_file} to exist"
+
+        fm = rebuild_manifest.parse_frontmatter(to_tasklist_file)
+        assert "calls" not in fm, f"Expected no 'calls' key in frontmatter, but got: {fm.get('calls')}"
+
+    def test_scan_skills_to_tasklist_entry_has_no_calls_key(self, monkeypatch):
+        """AC2: scan_skills() returns to-tasklist entry with no 'calls' key."""
+        # Get repo root
+        repo_root = Path(__file__).resolve().parents[2]
+        skills_dir = repo_root / "skills"
+
+        assert skills_dir.exists(), f"Expected {skills_dir} to exist"
+
+        # Monkeypatch SKILLS_DIR to point to repo's own skills/ dir
+        monkeypatch.setattr(rebuild_manifest, "SKILLS_DIR", skills_dir)
+
+        # Run scan_skills()
+        entries = rebuild_manifest.scan_skills()
+
+        # Find the to-tasklist entry
+        to_tasklist_entry = next(
+            (e for e in entries if e.get("name") == "to-tasklist"),
+            None
+        )
+        assert to_tasklist_entry is not None, "Expected to-tasklist entry in scan_skills() output"
+        assert "calls" not in to_tasklist_entry, f"Expected no 'calls' key in to-tasklist entry, but got: {to_tasklist_entry.get('calls')}"

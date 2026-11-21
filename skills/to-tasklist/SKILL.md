@@ -2,7 +2,6 @@
 name: to-tasklist
 description: Convert a confirmed design/requirements doc into a persisted markdown task list with per-task status checkboxes, for projects that have no issue tracker (private/local-only repos). Use when a design doc has just been approved and the project has no GitHub issues (e.g. local-only git repos holding sensitive data), instead of to-issues/to-prd.
 tags: [intent:plan, intent:tasks, intent:breakdown, type:skill]
-calls: [to-issues]
 ---
 
 # To Tasklist
