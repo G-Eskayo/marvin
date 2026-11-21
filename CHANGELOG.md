@@ -1,5 +1,7 @@
 # Changelog
 
+- Incident 2026-10-22..26: the Macs drifted apart (sync stuck 4 days); fixed, watched by a recurrence check ([#1363](https://github.com/G-Eskayo/marvin/pull/1363))
+
 - Collapse cross_machine_merge.py's two identical ChromaDB sync functions into one parameterized helper ([#1364](https://github.com/G-Eskayo/marvin/pull/1364))
 
 - Flaky test: test_du_runs_at_low_priority fails only in the parallel run ([#1365](https://github.com/G-Eskayo/marvin/pull/1365))
