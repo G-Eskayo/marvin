@@ -524,3 +524,27 @@ def test_in_propose_mode_nothing_is_released_or_notified(tmp_path, monkeypatch):
                  {"mode": "propose", "agents": {}}, NOW, audit_path=tmp_path / "a.jsonl", proposals_path=tmp_path / "p.json",
                  project_rules={"projects": {}}, running=lambda repo: set())
     assert calls == [] and sent == [] and res["by_agent"]["stale_claims"]["planned"] == 2
+
+
+def test_planned_actions_are_sorted_by_apply_order_using_rank_by(tmp_path):
+    """Verify that planned actions are sorted correctly using rank_by with APPLY_ORDER."""
+    issues = [
+        issue(1, labels=["priority:p3"]),
+        issue(2, body=GOOD, labels=["needs-triage"]),
+        issue(3, labels=["claimed:mac-mini"], updated=3),
+    ]
+    snap = {R: {"issues": issues, "prs": []}}
+    ta.run(snap, lambda args: "",
+           {"mode": "propose", "agents": {}}, NOW,
+           audit_path=tmp_path / "a.jsonl", proposals_path=tmp_path / "p.json",
+           project_rules={"projects": {}}, running=lambda repo: set())
+    # Read proposals to verify sort order
+    p = json.loads((tmp_path / "p.json").read_text())
+    proposals = p["proposals"]
+    # Extract agent sequence to verify APPLY_ORDER: stale_claims, refeed, revisit, triage, prioritize, project_tag
+    agent_sequence = [a["agent"] for a in proposals]
+    # Should have stale_claims before triage, etc., per APPLY_ORDER
+    assert "stale_claims" in agent_sequence, f"stale_claims not found in {agent_sequence}"
+    assert "triage" in agent_sequence, f"triage not found in {agent_sequence}"
+    assert agent_sequence.index("stale_claims") < agent_sequence.index("triage"),\
+        f"stale_claims should come before triage in {agent_sequence}"

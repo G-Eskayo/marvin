@@ -168,3 +168,64 @@ def test_looks_merged_whitespace_variations():
 **Status**: pending
 """
     assert _looks_merged(entry), "Entry with multiple **Added**: regardless of whitespace should look merged"
+
+
+# Tests for rank_by integration in sort_key function
+def test_rank_by_impact_sorts_before_effort():
+    """Impact and effort are sorted as independent factors in _sort_key result."""
+    from sort_suggestions import _sort_key
+    low_impact = """## Test
+**Priority**: 1
+**Status**: pending
+**Impact**: organization
+**Effort**: low
+**Added**: 2026-11-12
+"""
+    high_impact = """## Test
+**Priority**: 1
+**Status**: pending
+**Impact**: token-reduction
+**Effort**: low
+**Added**: 2026-11-12
+"""
+    key_low = _sort_key(low_impact)
+    key_high = _sort_key(high_impact)
+    # token-reduction should rank better (lower) than organization
+    assert key_high[2] < key_low[2], "token-reduction should sort before organization"
+
+
+def test_rank_by_effort_uses_rank_dict():
+    """Effort rankings should be looked up in the EFFORT_RANK dict."""
+    from sort_suggestions import _sort_key
+    low_effort = """## Test
+**Priority**: 1
+**Status**: pending
+**Impact**: token-reduction
+**Effort**: low
+**Added**: 2026-11-12
+"""
+    high_effort = """## Test
+**Priority**: 1
+**Status**: pending
+**Impact**: token-reduction
+**Effort**: medium
+**Added**: 2026-11-12
+"""
+    key_low = _sort_key(low_effort)
+    key_high = _sort_key(high_effort)
+    # low effort should sort before medium effort
+    assert key_low[3] < key_high[3], "low effort should sort before medium"
+
+
+def test_rank_by_missing_impact_falls_back_to_default():
+    """Missing impact values should use the default rank."""
+    from sort_suggestions import _sort_key
+    missing_impact = """## Test
+**Priority**: 1
+**Status**: pending
+**Effort**: low
+**Added**: 2026-11-12
+"""
+    key = _sort_key(missing_impact)
+    # Missing impact should get default rank of 99
+    assert key[2] == 99, "Missing impact should use default rank of 99"

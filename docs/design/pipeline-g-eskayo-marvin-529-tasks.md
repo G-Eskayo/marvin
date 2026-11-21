@@ -1,0 +1,10 @@
+1. Add `rank_by(value, order, default=None)` to `lib/ticket_policy.py`, next to `priority_rank` — `order.index(value)`/fallback for a sequence, `order.get(value, default)` for a dict, default `len(order)` either way, first-match-wins on duplicates (free from `list.index()`).
+2. Write the `rank_by` unit tests (items 1-8 above) in `lib/tests/test_ticket_policy.py`; confirm they fail against `main` (no `rank_by` exists yet) before step 1 lands, then pass after.
+3. In `lib/ticket_agents.py:426`, replace the inline `APPLY_ORDER.index(...) if ... else len(APPLY_ORDER)` with `pol.rank_by(a["agent"], APPLY_ORDER)`.
+4. In `skills/architecture-review/scripts/sort_suggestions.py`: add `from ticket_policy import rank_by` (lib already on `sys.path` via the existing `inbox` import at line 25-26); replace the two `IMPACT_RANK.get(...)`/`EFFORT_RANK.get(...)` lines (72-79) with `rank_by(..., IMPACT_RANK)` / `rank_by(..., EFFORT_RANK)`.
+5. Add tests 9-11 to `skills/architecture-review/scripts/tests/test_sort_suggestions.py`.
+6. In `skills/improve/scripts/improvement_sweep.py`: add `from ticket_policy import rank_by` (lib already on `sys.path`, line 25); rewrite `sort_key` (84-89) to find the first present `kind` via the existing substring loop, then return `rank_by(found, KIND_PRIORITY)` instead of the raw loop index.
+7. Add tests 12-14 to `skills/improve/scripts/tests/test_improvement_sweep.py`.
+8. Add integration test 15 to `lib/tests/test_ticket_agents.py`.
+9. Run the full suite for the three touched modules plus `ticket_policy`'s own tests (`lib/tests/test_ticket_policy.py`, `lib/tests/test_ticket_agents.py`, `lib/tests/test_ticket_agents_revisit.py`, `lib/tests/test_ticket_policy_revisit.py`, `skills/architecture-review/scripts/tests/test_sort_suggestions.py`, `skills/improve/scripts/tests/test_improvement_sweep.py`) and confirm everything passes with unchanged sort orders (acceptance criterion 2).
+10. Grep the three touched files (and `lib/inbox.py`, to confirm it's untouched) for any remaining inline `.index(...) if ... else len(...)` ranking to verify acceptance criterion 1 is actually satisfied, not just believed.
