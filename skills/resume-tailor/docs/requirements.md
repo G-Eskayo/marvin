@@ -71,25 +71,25 @@ Every application generates a complete package at `~/.claude/resume/tailored/[co
 | `cover-letter.md` | Tailored cover letter (Markdown) |
 | `cover-letter.pdf` | Tailored cover letter (PDF) |
 
-### 2.3 Master Resume Updates
+### 2.6 Master Resume Updates
 
 | ID | Requirement |
 |---|---|
-| FR-12 | The skill SHALL support a `add-to-master` command that accepts a natural language description of a new experience, project, skill, or certification and inserts it as a correctly formatted entry in the appropriate section. |
-| FR-13 | The skill SHALL support a `merge-resume` command that accepts an uploaded resume file (`.md`, `.pdf`, `.docx`) and merges its content into the master resume using a union rule. |
-| FR-14 | Merge SHALL never silently delete any content from the master resume. |
-| FR-15 | When merge encounters ambiguous duplicates (same company, overlapping dates, different content), it SHALL keep all content and annotate conflicts with `<!-- REVIEW: ... -->` comments for manual resolution. |
-| FR-16 | After merge, the skill SHALL output a summary of what was added, what was flagged, and what was unchanged. |
+| FR-25 | The skill SHALL support a `add-to-master` command that accepts a natural language description of a new experience, project, skill, or certification and inserts it as a correctly formatted entry in the appropriate section. |
+| FR-26 | The skill SHALL support a `merge-resume` command that accepts an uploaded resume file (`.md`, `.pdf`, `.docx`) and merges its content into the master resume using a union rule. |
+| FR-27 | Merge SHALL never silently delete any content from the master resume. |
+| FR-28 | When merge encounters ambiguous duplicates (same company, overlapping dates, different content), it SHALL keep all content and annotate conflicts with `<!-- REVIEW: ... -->` comments for manual resolution. |
+| FR-29 | After merge, the skill SHALL output a summary of what was added, what was flagged, and what was unchanged. |
 
-### 2.4 Transcript Parsing
+### 2.7 Transcript Parsing
 
 | ID | Requirement |
 |---|---|
-| FR-17 | The skill SHALL support a `parse-transcript` command that accepts an academic transcript and extracts skills, domain knowledge, tools, and project-relevant coursework into the master resume. |
-| FR-18 | Transcript parsing SHALL extract skills from ALL courses regardless of grade or pass/fail status. Grade outcome reflects institutional factors, not capability. |
-| FR-19 | Courses from a non-graduated discipline (e.g. ~80% of an aerospace engineering degree) SHALL be treated as equivalent to completed coursework for skill extraction purposes. |
-| FR-20 | Extracted aerospace/engineering coursework SHALL be categorised into a dedicated `Engineering & Domain Knowledge` skills section in the master resume, distinct from Technical Skills, to signal the cross-disciplinary background. |
-| FR-21 | Where coursework implies hands-on projects (labs, capstone work, design courses), the skill SHALL prompt the user to confirm or expand on those as potential Projects entries. |
+| FR-30 | The skill SHALL support a `parse-transcript` command that accepts an academic transcript and extracts skills, domain knowledge, tools, and project-relevant coursework into the master resume. |
+| FR-31 | Transcript parsing SHALL extract skills from ALL courses regardless of grade or pass/fail status. Grade outcome reflects institutional factors, not capability. |
+| FR-32 | Courses from a non-graduated discipline (e.g. ~80% of an aerospace engineering degree) SHALL be treated as equivalent to completed coursework for skill extraction purposes. |
+| FR-33 | Extracted aerospace/engineering coursework SHALL be categorised into a dedicated `Engineering & Domain Knowledge` skills section in the master resume, distinct from Technical Skills, to signal the cross-disciplinary background. |
+| FR-34 | Where coursework implies hands-on projects (labs, capstone work, design courses), the skill SHALL prompt the user to confirm or expand on those as potential Projects entries. |
 
 ---
 

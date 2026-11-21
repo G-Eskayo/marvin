@@ -25,6 +25,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parents[3] / "lib"))
 import inbox  # noqa: E402
 from inbox import EFFORT_RANK, IMPACT_RANK  # noqa: E402  (one copy of ADR 0017's ranks)
+from ticket_policy import rank_by  # noqa: E402
 
 SUGGESTIONS_FILE = Path.home() / ".claude" / "suggestions.md"
 
@@ -73,10 +74,10 @@ def _sort_key(block: str) -> tuple:
     priority = -int(priority_m.group(1)) if priority_m else 0  # negate: higher priority sorts first
 
     impact_m = IMPACT_RE.search(block)
-    impact_rank = IMPACT_RANK.get(impact_m.group(1) if impact_m else "", 99)
+    impact_rank = rank_by(impact_m.group(1) if impact_m else "", IMPACT_RANK, default=99)
 
     effort_m = EFFORT_RE.search(block)
-    effort_rank = EFFORT_RANK.get(effort_m.group(1) if effort_m else "", 99)
+    effort_rank = rank_by(effort_m.group(1) if effort_m else "", EFFORT_RANK, default=99)
 
     return (is_resolved, priority, impact_rank, effort_rank)
 

@@ -1,0 +1,8 @@
+1. In `lib/test_change_rule.py`: replace `MARVIN_RULES["test"]`'s `"**/test_*.py", "**/*_test.py"` with `"brain-map/scripts/test_*.py"`, keeping `lib/tests/**`, `dashboard/test/**`, `**/tests/**`, `**/*.test.*`, `**/*.spec.*`. Leave `DEFAULT_RULES` untouched.
+2. In `lib/test_change_rule.py`'s `kind()`: strip a leading `./` and leading `/` from `path` before matching, so prefix variants classify identically.
+3. In `lib/tests/test_test_change_rule.py`: add the assertions listed in tests 1–8 above (extend `test_paths_are_code_tests_or_other`, add a new `test_every_top_level_lib_module_is_code`, extend the `check()` test cases, add the `./`/leading-`/` cases).
+4. In `lib/affected_tests.py`: `import test_change_rule as tcr` at module load, and change `all_tests()` to `return sorted(p for p in _tracked(repo, untracked, "*.py") if _TEST.search(p) and tcr.kind(p, tcr.MARVIN_RULES) != "code")`.
+5. In `lib/tests/test_affected_tests.py`: add test 9 above (the `lib/test_widget.py` / `lib/tests/test_test_widget.py` fixture case).
+6. Run `pytest --collect-only -q lib | rg 'lib/test_(slot|change_rule)\.py'`; only if it shows a hit, add the minimal `testpaths`/`python_files`-equivalent exclusion to `pytest.ini` in this same PR (per the ticket's closing note) — otherwise leave `pytest.ini` untouched.
+7. Run the full `lib/` and `brain-map/scripts/` test suites and confirm green (acceptance criterion).
+8. Re-run `git ls-files | rg '(^|/)test_[^/]*\.py$' | rg -v '/tests?/'` to confirm the only matches left outside a `tests/` dir are the two production modules, `brain-map/scripts/test_*.py`, and the `bench/tasks/**` fixtures — i.e. no other file needs the new pattern or got missed.

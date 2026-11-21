@@ -34,6 +34,16 @@ def test_paths_are_code_tests_or_other():
     assert tcr.kind("config/ticket_agents.json", R) == "other"
     assert tcr.kind("graphify-out/graph.json", R) == "other"      # generated
     assert tcr.kind("bench/metrics/x.json", R) == "other"         # generated
+    # Acceptance criteria: lib/test_*.py files are code, not tests (tests 1–2)
+    assert tcr.kind("lib/test_slot.py", R) == "code"
+    assert tcr.kind("lib/test_change_rule.py", R) == "code"
+    # Test that brain-map/scripts/test_*.py is a test (test 2)
+    assert tcr.kind("brain-map/scripts/test_facts.py", R) == "test"
+    # Existing tests via **/tests/** still pass (test 3)
+    assert tcr.kind("skills/x/scripts/tests/test_x.py", R) == "test"
+    assert tcr.kind("tests/test_machine_resources.py", R) == "test"
+    # A new production module named like a test (test 4)
+    assert tcr.kind("lib/test_something.py", R) == "code"
 
 
 # ── the rule ────────────────────────────────────────────────────────────────
@@ -43,6 +53,14 @@ def test_code_with_a_test_change_passes_code_without_fails_with_a_reason_for_the
     assert ok
     ok, why = tcr.check([ch("lib/a.py")], R)
     assert not ok and "How we'll try to break it" in why and "lib/a.py" in why
+    # Test 5: lib/test_*.py files are now code, so changing them without a test fails
+    ok, why = tcr.check([ch("lib/test_slot.py")], R)
+    assert not ok and "lib/test_slot.py" in why
+    ok, why = tcr.check([ch("lib/a.py"), ch("lib/test_slot.py")], R)
+    assert not ok and "lib/test_slot.py" in why
+    # Test 6: but if a real test is present alongside, it passes
+    ok, why = tcr.check([ch("lib/test_slot.py"), ch("lib/tests/test_something.py")], R)
+    assert ok
 
 
 def test_docs_config_and_generated_only_changes_pass():
@@ -85,6 +103,29 @@ def test_a_huge_diff_is_handled():
     big = [ch(f"lib/m{i}.py", added=tuple(f"x{j} = {j}" for j in range(200))) for i in range(300)]
     assert not tcr.check(big, R)[0]
     assert tcr.check(big + [ch("lib/tests/test_m.py")], R)[0]
+
+
+def test_leading_dot_slash_and_leading_slash_normalize_to_the_same_kind():
+    # Test 7: ./lib/test_slot.py and /lib/test_slot.py classify the same as lib/test_slot.py
+    assert tcr.kind("lib/test_slot.py", R) == "code"
+    assert tcr.kind("./lib/test_slot.py", R) == "code"
+    assert tcr.kind("/lib/test_slot.py", R) == "code"
+    assert tcr.kind("./lib/tests/test_a.py", R) == "test"
+    assert tcr.kind("/lib/tests/test_a.py", R) == "test"
+    # Dot-dirs and dotfiles should not be stripped: .github/workflows/x.py is not github/workflows/x.py
+    assert tcr.kind(".github/workflows/x.py", R) == "other"  # not in any rule
+    assert tcr.kind(".eslintrc.js", R) == "other"  # not in any rule
+    # Parent traversal should not be stripped: ../lib/test_slot.py is not code
+    assert tcr.kind("../lib/test_slot.py", R) == "other"  # not in any rule
+
+
+def test_every_top_level_lib_module_is_code():
+    # Test 8: guard test — every actual file in lib/*.py (including test_slot.py and test_change_rule.py)
+    # classifies as code
+    lib_path = Path(__file__).resolve().parents[2] / "lib"
+    for py_file in sorted(lib_path.glob("*.py")):
+        path = f"lib/{py_file.name}"
+        assert tcr.kind(path, R) == "code", f"{path} should be code, not {tcr.kind(path, R)}"
 
 
 # ── against a real worktree ─────────────────────────────────────────────────

@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
-"""Fetch daily research items from arXiv, GitHub, HN and store in ChromaDB research-feed."""
+"""Fetch daily research items from arXiv, GitHub, HN and the owner's research newsletters; store in ChromaDB research-feed."""
+from __future__ import annotations
 import hashlib
 import json
 import sys
@@ -13,6 +14,11 @@ from machine_profile import machine_label  # noqa: E402
 
 CHROMA_PATH = Path.home() / ".claude" / "chroma"
 CACHE_DIR = Path.home() / ".claude" / "research-feed"
+# Newsletters the owner subscribed to for the colony, one JSON file per message, written by the mail reader
+# (the Mail export today, MARVIN's own mailbox later). The folder is private and synced; nothing here is published.
+NEWSLETTER_DIR = Path.home() / ".claude" / "research-inbox"
+NEWSLETTER_DAYS = 7
+NEWSLETTER_MAX_CHARS = 3000
 
 
 def fetch_arxiv() -> list[dict]:
@@ -113,6 +119,36 @@ def fetch_hackernews() -> list[dict]:
         return []
 
 
+def fetch_newsletters(today: str | None = None) -> list[dict]:
+    """Newsletter items from NEWSLETTER_DIR received in the last NEWSLETTER_DAYS days. Broken files are skipped."""
+    if not NEWSLETTER_DIR.is_dir():
+        return []
+    end = date.fromisoformat(today) if today else date.today()
+    start = end - timedelta(days=NEWSLETTER_DAYS)
+    items = []
+    for f in sorted(NEWSLETTER_DIR.glob("*.json")):
+        try:
+            d = json.loads(f.read_text())
+            sent = date.fromisoformat(str(d.get("date", ""))[:10])
+        except (ValueError, OSError):
+            continue
+        title, url = (d.get("title") or "").strip(), (d.get("url") or "").strip()
+        if not title or not url or not (start <= sent <= end):
+            continue
+        links = " ".join(d.get("links") or [])
+        summary = (d.get("summary") or "").strip()
+        summary = (summary[: NEWSLETTER_MAX_CHARS - len(links) - 1] + " " + links).strip()
+        items.append({
+            "title": title,
+            "summary": summary[:NEWSLETTER_MAX_CHARS],
+            "url": url,
+            "source": d.get("source") or "newsletter",
+            "date": sent.isoformat(),
+            "tags": "newsletter,email",
+        })
+    return items
+
+
 def store_items(items: list[dict]) -> int:
     try:
         import chromadb
@@ -179,7 +215,7 @@ def save_raw_cache(items: list[dict]) -> None:
 
 
 def main() -> int:
-    all_items = fetch_arxiv() + fetch_github() + fetch_hackernews()
+    all_items = fetch_arxiv() + fetch_github() + fetch_hackernews() + fetch_newsletters()
     print(f"[colony] fetched {len(all_items)} items total", file=sys.stderr)
     if not all_items:
         print("[colony] ERROR: all sources returned 0 items", file=sys.stderr)

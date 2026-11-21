@@ -229,3 +229,18 @@ def test_render_markdown_handles_no_references_gracefully():
     ]
     md = render_markdown(argument_map)
     assert "no discovered references" in md.lower()
+
+
+# ── ollama_chat import ──────────────────────────────────────────────────────
+
+def test_ollama_chat_imported_from_shared_module():
+    """Verify that ollama_chat is imported from the shared ollama_chat module, not defined locally."""
+    import inspect
+    import ollama_chat as om_module
+
+    # Check that the module has ollama_chat defined
+    assert hasattr(om_module, "ollama_chat")
+    # Verify argument_mapper imports the same function
+    from argument_mapper import ollama_chat as imported_chat
+    # They should be the same function object
+    assert imported_chat is om_module.ollama_chat

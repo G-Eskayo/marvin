@@ -274,3 +274,17 @@ def test_an_untracked_test_is_picked_only_when_asked_so_the_gate_is_unchanged(re
     assert "lib/tests/test_new.py" not in at.select(repo, ["lib/alone.py"])
     assert "lib/tests/test_new.py" in at.select(repo, ["lib/alone.py"], untracked=True)
     assert "lib/tests/test_new.py" in at.select(repo, ["lib/tests/test_new.py"], untracked=True)
+
+
+def test_a_file_named_like_a_test_but_really_code_does_not_select_itself_its_real_test_does(repo):
+    # Test 9: acceptance criterion — a module named like a test (lib/test_widget.py) that is
+    # actually code per MARVIN_RULES does not get selected as a test, but its real test does.
+    _write(repo, {
+        "lib/test_widget.py": "def widget_core(): return 1\n",
+        "lib/tests/test_test_widget.py": "import test_widget\n",
+    })
+    _git(repo, "add", "-A")
+    _git(repo, "commit", "-q", "-m", "add test_widget")
+    got = set(at.select(repo, ["lib/test_widget.py"]))
+    assert "lib/test_widget.py" not in got, "code that looks like a test should not select itself"
+    assert "lib/tests/test_test_widget.py" in got, "the real test should be selected instead"

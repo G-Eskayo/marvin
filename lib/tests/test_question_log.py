@@ -100,3 +100,41 @@ def test_cli_refuses_empty(tmp_path):
     r = subprocess.run([sys.executable, str(LIB / "question_log.py"), "add", "  "],
                        env={**os.environ, "HOME": str(tmp_path)}, capture_output=True, text=True)
     assert r.returncode != 0
+
+
+def test_add_default_ts_uses_real_wall_clock(log):
+    from datetime import datetime, timezone, timedelta
+    before = datetime.now(timezone.utc)
+    row = ql.add("When is it done?", path=log)
+    after = datetime.now(timezone.utc)
+    ts_value = datetime.fromisoformat(row["ts"].replace("Z", "+00:00"))
+    assert before - timedelta(seconds=1) <= ts_value <= after + timedelta(seconds=1)
+
+
+def test_add_accepts_custom_ts(log):
+    custom_ts = "2026-11-16T10:30:00Z"
+    row = ql.add("Will this work?", path=log, ts=custom_ts)
+    assert row["ts"] == custom_ts
+
+
+def test_add_refuses_malformed_ts(log):
+    with pytest.raises(ValueError, match="ts must be a valid ISO 8601 datetime string"):
+        ql.add("Will this work?", path=log, ts="not-a-date")
+    with pytest.raises(ValueError, match="ts must be a valid ISO 8601 datetime string"):
+        ql.add("Will this work?", path=log, ts="2026-13-45T25:99:99Z")
+
+
+def test_add_refuses_non_string_ts(log):
+    with pytest.raises(ValueError, match="ts must be a string"):
+        ql.add("Will this work?", path=log, ts=12345)
+    with pytest.raises(ValueError, match="ts must be a string"):
+        ql.add("Will this work?", path=log, ts=3.14)
+
+
+def test_add_refuses_naive_and_date_only_ts(log):
+    with pytest.raises(ValueError, match="ts must include timezone information"):
+        ql.add("Will this work?", path=log, ts="2026-11-16T10:30:00")
+    with pytest.raises(ValueError, match="ts must include timezone information"):
+        ql.add("Will this work?", path=log, ts="2026-11-16")
+    row = ql.add("Will this work?", path=log, ts="2026-11-16T10:30:00+00:00")
+    assert row["ts"] == "2026-11-16T10:30:00+00:00"

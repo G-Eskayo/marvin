@@ -44,6 +44,8 @@ def test_is_known_distinguishes_known_and_unknown_dois(tmp_path):
     assert is_known("10.1234/known", collection) is True
 ```
 
+**Use `tmp_path` for any test touching the user's home directory.** Never let a test read or write to the real `~/.claude` or `~/.agents`. A test that touches HOME can silently erase logs, configs, or state from a session that left that directory open (2026-10-09 logs-wipe incident). Isolate it with `monkeypatch.setenv("HOME", str(tmp_path))` or mock the functions that reach for it.
+
 **Never let "the fast path" quietly trigger the real path.** If a function defaults to a real,
 heavy backend when no fake is injected, make sure tests always inject the fake explicitly —
 otherwise a "fast" unit test suite can silently start making real network/model calls the moment

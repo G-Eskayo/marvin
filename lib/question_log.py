@@ -40,16 +40,25 @@ def _key(q: str) -> str:
 
 
 def add(question, why: str | None = None, want: str | None = None, path: Path | None = None,
-        machine: str | None = None, kind: str | None = None, at: datetime | None = None) -> dict:
-    """Append one question. `at` is when it was asked (default now); it must carry a timezone."""
+        machine: str | None = None, kind: str | None = None, *, ts: str | None = None) -> dict:
     if not isinstance(question, str) or not question.strip():
         raise ValueError("an empty question can't be logged")
-    if at is not None and (not isinstance(at, datetime) or at.tzinfo is None):
-        raise ValueError("at must be a timezone-aware datetime")
     if kind is not None and kind not in KINDS:
         raise ValueError(f"kind must be one of {', '.join(KINDS)}")
     path = Path(path) if path else default_path()
-    row = {"ts": (at or datetime.now(timezone.utc)).astimezone(timezone.utc).isoformat(timespec="seconds"),
+    if ts is None:
+        ts_value = datetime.now(timezone.utc).isoformat(timespec="seconds")
+    else:
+        if not isinstance(ts, str):
+            raise ValueError(f"ts must be a string, got {type(ts).__name__}")
+        try:
+            parsed = datetime.fromisoformat(ts.replace("Z", "+00:00"))
+        except (ValueError, TypeError):
+            raise ValueError(f"ts must be a valid ISO 8601 datetime string, got {ts!r}")
+        if parsed.tzinfo is None:
+            raise ValueError(f"ts must include timezone information, got {ts!r}")
+        ts_value = ts
+    row = {"ts": ts_value,
            "machine": machine or socket.gethostname().split(".")[0],
            "question": " ".join(question.split())[:MAX_LEN],
            "why": (why or "").strip()[:MAX_LEN] or None,

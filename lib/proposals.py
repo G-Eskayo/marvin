@@ -33,6 +33,7 @@ from typing import Callable
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import inbox  # noqa: E402  (the shared file rules)
+import resume_check  # noqa: E402
 from inbox import ID_RE, MAX_FILE_BYTES, write_atomic as _write_atomic, locked as _locked  # noqa: E402,F401
 
 NORTH_STARS = {1: "Minimise resources", 2: "Phone OS", 3: "Raise the human experience", 4: "Best tool for making tools",
@@ -121,11 +122,42 @@ def add(root: Path, submitted: object, today: date | None = None) -> dict:
     raise ProposalError("too many proposals with this title")
 
 
-def _visible(rec: dict, today: date) -> dict | None:
+def _linked_ticket(rec: dict) -> int | None:
+    st = rec.get("status")
+    if not isinstance(st, dict) or st.get("state") != "dismissed_until":
+        return None
+    ticket = st.get("ticket")
+    if type(ticket) is int and ticket > 0:
+        return ticket
+    return None
+
+
+def _check_tickets(tickets: list[int], run) -> dict[int, bool]:
+    if not tickets:
+        return {}
+    keys = [f"{REPO}#{t}" for t in tickets]
+    try:
+        nodes = resume_check.fetch(keys, run=run, timeout=resume_check.BUDGET_S)
+    except Exception:
+        return {}
+    out = {}
+    for t in tickets:
+        key = f"{REPO}#{t}"
+        node = nodes.get(key)
+        if isinstance(node, dict) and node.get("state") == "CLOSED":
+            out[t] = True
+    return out
+
+
+def _visible(rec: dict, today: date, ticket_states: dict[int, bool] | None = None) -> dict | None:
     st = rec["status"]
     state = st["state"]
     if state == "open":
         return rec
+    if ticket_states is not None and state == "dismissed_until":
+        ticket = _linked_ticket(rec)
+        if ticket is not None and ticket_states.get(ticket):
+            return {**rec, "returned": f"ticket #{ticket} closed"}
     try:
         if state == "snoozed" and date.fromisoformat(st["until"]) <= today:
             return {**rec, "returned": f"Snooze ended {st['until']}"}
@@ -136,22 +168,34 @@ def _visible(rec: dict, today: date) -> dict | None:
     return None
 
 
-def load_all(root: Path, today: date | None = None) -> dict:
+def load_all(root: Path, today: date | None = None, run=subprocess.run) -> dict:
     today = today or date.today()
     proposals, problems = [], []
     if not root.is_dir():
         return {"proposals": [], "problems": []}
+
+    # (a) read+validate every file into a records list
+    records = []
     for path in sorted(root.glob("*.json")):
         try:
             rec = _read(path)
         except (ProposalError, ValueError, OSError) as exc:
             problems.append({"file": path.name, "error": str(exc)[:200]})
             continue
-        shown = _visible(rec, today)
+        records.append(rec)
+
+    # (b) collect tickets and check them
+    tickets = sorted({t for rec in records if (t := _linked_ticket(rec)) is not None})
+    ticket_states = _check_tickets(tickets, run) if tickets else {}
+
+    # (c) loop records computing _visible with ticket_states
+    for rec in records:
+        shown = _visible(rec, today, ticket_states)
         if shown is not None:
             shown = {k: v for k, v in shown.items() if k != "history"}
             shown["north_star_name"] = NORTH_STARS[shown["north_star"]]
             proposals.append(shown)
+
     proposals.sort(key=lambda r: (r.get("added", ""), r["id"]), reverse=True)
     return {"proposals": proposals, "problems": problems}
 
@@ -245,7 +289,7 @@ def _new_status(rec: dict, action: str, args: dict, gh: Callable, today: date) -
 
 
 def act(root: Path, pid: object, action: str, args: dict | None = None, gh: Callable = run_gh,
-        today: date | None = None) -> dict:
+        today: date | None = None, run=subprocess.run) -> dict:
     today = today or date.today()
     args = args if isinstance(args, dict) else {}
     path = _path(root, pid)
@@ -256,7 +300,9 @@ def act(root: Path, pid: object, action: str, args: dict | None = None, gh: Call
             rec = _read(path)
         except (ValueError, OSError) as exc:
             raise ProposalError(f"proposal {pid} couldn't be read: {exc}")
-        if _visible(rec, today) is None:
+        ticket = _linked_ticket(rec)
+        ticket_states = _check_tickets([ticket], run) if ticket is not None else {}
+        if _visible(rec, today, ticket_states) is None:
             raise ProposalError(f"proposal {pid} isn't open (it's {rec['status']['state']})")
         status = _new_status(rec, action, args, gh, today)  # may call gh; raises before anything is written
         history = rec.get("history") if isinstance(rec.get("history"), list) else []

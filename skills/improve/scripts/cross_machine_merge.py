@@ -6,15 +6,15 @@ finished.
 
 Two different operations, two different concurrency rules:
 
-1. Item sync (research-feed, qa-knowledge) — deterministic set-union by id.
-   Safe to run on EVERY machine symmetrically: each one pulls the others'
-   items and imports whatever it's missing into its own local ChromaDB. Order
-   doesn't matter, it converges either way. This is what makes the machines'
-   knowledge actually grow together instead of staying siloed. qa-knowledge
-   sync is incremental (a per-remote sync-state cursor in
-   ~/.claude/marvin-sync-state.json, filtered via dump_collection.py --since)
-   so a collection that's been running for months doesn't get fully
-   re-transferred every single day.
+1. Item sync (research-feed, qa-knowledge, paper-knowledge) — deterministic
+   set-union by id. Safe to run on EVERY machine symmetrically: each one pulls
+   the others' items and imports whatever it's missing into its own local
+   ChromaDB. Order doesn't matter, it converges either way. This is what makes
+   the machines' knowledge actually grow together instead of staying siloed.
+   qa-knowledge and paper-knowledge sync are incremental (a per-remote
+   sync-state cursor in ~/.claude/marvin-sync-state.json, filtered via
+   dump_collection.py --since) so a collection that's been running for months
+   doesn't get fully re-transferred every single day.
 
 2. LLM-generated merge digest (daily-digest, research-digest) — NOT
    deterministic. Running this independently on every machine would produce a
@@ -120,6 +120,19 @@ def scp_push(host: str, local_path: Path, remote_path: str) -> bool:
 
 # ── item sync (symmetric, every machine) ────────────────────────────────────
 
+def _existing_ids(col) -> set[str]:
+    """Fetch all ids in collection via pagination loop."""
+    existing_ids: set[str] = set()
+    offset = 0
+    while True:
+        page = col.get(limit=5000, offset=offset, include=[])["ids"]
+        if not page:
+            break
+        existing_ids.update(page)
+        offset += len(page)
+    return existing_ids
+
+
 def sync_research_feed(host: str) -> None:
     local_cache = CLAUDE_DIR / "research-feed" / f"{TODAY}.json"
     if not local_cache.exists():
@@ -153,14 +166,7 @@ def sync_research_feed(host: str) -> None:
 
     client = chromadb.PersistentClient(path=str(CHROMA_PATH))
     col = client.get_or_create_collection("research-feed")
-    existing_ids: set[str] = set()
-    offset = 0
-    while True:
-        page = col.get(limit=5000, offset=offset, include=[])["ids"]
-        if not page:
-            break
-        existing_ids.update(page)
-        offset += len(page)
+    existing_ids = _existing_ids(col)
 
     new_docs, new_metas, new_ids = [], [], []
     for item in missing:
@@ -186,40 +192,36 @@ def sync_research_feed(host: str) -> None:
     print(f"{LOG_PREFIX} research-feed: imported {len(new_ids)} item(s) from {host}", file=sys.stderr)
 
 
-def sync_qa_knowledge(remote_id: str, host: str, sync_state: dict) -> None:
-    cursor = sync_state.get(remote_id, {}).get("qa-knowledge", {}).get("last_synced_epoch", 0)
+def _sync_collection(collection: str, remote_id: str, host: str, sync_state: dict) -> None:
+    """Sync a collection from remote via deterministic set-union by id.
 
-    remote_dump = ssh_run(host, f"{VENV_PYTHON} {DUMP_SCRIPT} qa-knowledge --since {cursor}", timeout=60)
+    Uses incremental cursor via created_epoch in collection's metadata."""
+    cursor = sync_state.get(remote_id, {}).get(collection, {}).get("last_synced_epoch", 0)
+
+    remote_dump = ssh_run(host, f"{VENV_PYTHON} {DUMP_SCRIPT} {collection} --since {cursor}", timeout=60)
     if remote_dump is None:
-        print(f"{LOG_PREFIX} could not dump {remote_id}'s qa-knowledge — skipping", file=sys.stderr)
+        print(f"{LOG_PREFIX} could not dump {remote_id}'s {collection} — skipping", file=sys.stderr)
         return
 
     try:
         remote_data = json.loads(remote_dump)
     except json.JSONDecodeError:
-        print(f"{LOG_PREFIX} {remote_id}'s qa-knowledge dump malformed — skipping", file=sys.stderr)
+        print(f"{LOG_PREFIX} {remote_id}'s {collection} dump malformed — skipping", file=sys.stderr)
         return
 
     if not remote_data["ids"]:
-        print(f"{LOG_PREFIX} qa-knowledge already in sync with {remote_id} (cursor={cursor})", file=sys.stderr)
+        print(f"{LOG_PREFIX} {collection} already in sync with {remote_id} (cursor={cursor})", file=sys.stderr)
         return
 
     try:
         import chromadb
     except ImportError:
-        print(f"{LOG_PREFIX} chromadb not installed — skipping qa-knowledge sync", file=sys.stderr)
+        print(f"{LOG_PREFIX} chromadb not installed — skipping {collection} sync", file=sys.stderr)
         return
 
     client = chromadb.PersistentClient(path=str(CHROMA_PATH))
-    col = client.get_or_create_collection("qa-knowledge")
-    existing_ids: set[str] = set()
-    offset = 0
-    while True:
-        page = col.get(limit=5000, offset=offset, include=[])["ids"]
-        if not page:
-            break
-        existing_ids.update(page)
-        offset += len(page)
+    col = client.get_or_create_collection(collection)
+    existing_ids = _existing_ids(col)
 
     new_ids, new_docs, new_metas, max_epoch = [], [], [], cursor
     for i, rid in enumerate(remote_data["ids"]):
@@ -237,72 +239,23 @@ def sync_qa_knowledge(remote_id: str, host: str, sync_state: dict) -> None:
     if new_ids:
         col.add(documents=new_docs, metadatas=new_metas, ids=new_ids)
 
-    sync_state.setdefault(remote_id, {})["qa-knowledge"] = {
+    sync_state.setdefault(remote_id, {})[collection] = {
         "last_synced_epoch": max_epoch,
         "last_synced_at": datetime.now(timezone.utc).isoformat(),
     }
-    print(f"{LOG_PREFIX} qa-knowledge: imported {len(new_ids)} new entry(ies) from {remote_id} (cursor now {max_epoch})", file=sys.stderr)
+    print(f"{LOG_PREFIX} {collection}: imported {len(new_ids)} new entry(ies) from {remote_id} (cursor now {max_epoch})", file=sys.stderr)
+
+
+def sync_qa_knowledge(remote_id: str, host: str, sync_state: dict) -> None:
+    _sync_collection("qa-knowledge", remote_id, host, sync_state)
 
 
 def sync_paper_knowledge(remote_id: str, host: str, sync_state: dict) -> None:
-    """Identical shape to sync_qa_knowledge -- same deterministic-set-union-
-    by-id item sync, same incremental cursor via created_epoch. Added
-    2026-07-13 once paper_graph.py's record_paper() started stamping that
-    field (previously only qa-knowledge had it, so this collection was
-    silently uncovered by the .gitignore's claim that 'chroma/' is already
+    """Added 2026-07-13 once paper_graph.py's record_paper() started stamping
+    created_epoch field (previously only qa-knowledge had it, so this collection
+    was silently uncovered by the .gitignore's claim that 'chroma/' is already
     handled by this script -- it wasn't, for this specific collection)."""
-    cursor = sync_state.get(remote_id, {}).get("paper-knowledge", {}).get("last_synced_epoch", 0)
-
-    remote_dump = ssh_run(host, f"{VENV_PYTHON} {DUMP_SCRIPT} paper-knowledge --since {cursor}", timeout=60)
-    if remote_dump is None:
-        print(f"{LOG_PREFIX} could not dump {remote_id}'s paper-knowledge — skipping", file=sys.stderr)
-        return
-
-    try:
-        remote_data = json.loads(remote_dump)
-    except json.JSONDecodeError:
-        print(f"{LOG_PREFIX} {remote_id}'s paper-knowledge dump malformed — skipping", file=sys.stderr)
-        return
-
-    if not remote_data["ids"]:
-        print(f"{LOG_PREFIX} paper-knowledge already in sync with {remote_id} (cursor={cursor})", file=sys.stderr)
-        return
-
-    try:
-        import chromadb
-    except ImportError:
-        print(f"{LOG_PREFIX} chromadb not installed — skipping paper-knowledge sync", file=sys.stderr)
-        return
-
-    client = chromadb.PersistentClient(path=str(CHROMA_PATH))
-    col = client.get_or_create_collection("paper-knowledge")
-    existing_ids: set[str] = set()
-    offset = 0
-    while True:
-        page = col.get(limit=5000, offset=offset, include=[])["ids"]
-        if not page:
-            break
-        existing_ids.update(page)
-        offset += len(page)
-
-    new_ids, new_docs, new_metas, max_epoch = [], [], [], cursor
-    for i, rid in enumerate(remote_data["ids"]):
-        meta = remote_data["metadatas"][i]
-        max_epoch = max(max_epoch, meta.get("created_epoch", 0))
-        if rid in existing_ids:
-            continue
-        new_ids.append(rid)
-        new_docs.append(remote_data["documents"][i])
-        new_metas.append(meta)
-
-    if new_ids:
-        col.add(documents=new_docs, metadatas=new_metas, ids=new_ids)
-
-    sync_state.setdefault(remote_id, {})["paper-knowledge"] = {
-        "last_synced_epoch": max_epoch,
-        "last_synced_at": datetime.now(timezone.utc).isoformat(),
-    }
-    print(f"{LOG_PREFIX} paper-knowledge: imported {len(new_ids)} new entry(ies) from {remote_id} (cursor now {max_epoch})", file=sys.stderr)
+    _sync_collection("paper-knowledge", remote_id, host, sync_state)
 
 
 # ── LLM-generated merge (desktop-kind authority only) ───────────────────────

@@ -1,0 +1,4 @@
+1. In `skills/tdd/SKILL.md`, under `### 3. Incremental Loop` (after the existing "Rules" list, `skills/tdd/SKILL.md:84-89`), add one line naming the handoff condition and target, phrased in `diagnose`'s own reciprocal-handoff style (`skills/diagnose/SKILL.md:154`): stop and hand off to `diagnose` when a test fails for reasons beyond the current increment — unexplained behavior, a fix that doesn't change the failure, or two attempts without progress — and resume the TDD loop once the cause is known.
+2. Leave `calls: [diagnose]` in the frontmatter unchanged (`skills/tdd/SKILL.md:5`).
+3. Run `~/.agents/venv/bin/python ~/.agents/skills/self-improve/scripts/rebuild-manifest.py` and confirm (via the three grep/inspection checks above) the manifest's `tdd` entry still lists `diagnose` under `calls`.
+4. Run `grep -rn "diagnose" skills/tdd/SKILL.md` as the acceptance-criteria check that every frontmatter `calls:` entry is now named in the body.

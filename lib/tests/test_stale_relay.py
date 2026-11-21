@@ -95,13 +95,23 @@ def test_a_week_counts_caught_and_both_kinds_of_leaked(env):
             {"at": ts(2), "handoff": "h2.md", "changed_keys": ["G-Eskayo/x#17"]},
             {"at": ts(9), "handoff": "h0.md", "changed_keys": ["G-Eskayo/old#1"]}]     # outside the week
     env["resume_log"].write_text("\n".join(json.dumps(r) for r in rows) + "\nnot json\n")
-    # Stamped inside the pinned week, not with the real clock (#1345: after NOW the row fell out of the window).
-    ql.add("Why did you say #17 was urgent?", kind="stale", path=env["question_log"], at=NOW - timedelta(days=1))
-    ql.add("Where is the build running?", path=env["question_log"], at=NOW - timedelta(days=1))
+    # Both rows stamped inside the pinned week, not with the real clock (#1345: after NOW a row fell out of the window).
+    ql.add("Why did you say #17 was urgent?", kind="stale", path=env["question_log"], ts=ts(1))
+    ql.add("Where is the build running?", path=env["question_log"], ts=ts(1))
     transcript(env["transcripts"], "s1", [user("that's already fixed", 1), user("ok go on", 0.9)])
     w = week(env)
     assert w["caught"] == 3 and w["logged"] == 1 and w["said"] == 1 and w["leaked"] == 2
     assert w["sessions"] == 1 and w["known"] is True and w["machine"] == "macbook-pro-1"
+
+
+def test_logged_row_outside_week_is_excluded(env):
+    env["resume_log"].parent.mkdir(parents=True)
+    env["resume_log"].write_text("")
+    ql.add("Why did you say #17 was urgent?", kind="stale", path=env["question_log"], ts=ts(1))
+    ql.add("Why did you say #99 was urgent?", kind="stale", path=env["question_log"], ts=ts(9))
+    transcript(env["transcripts"], "s1", [user("hi", 1)])
+    w = week(env)
+    assert w["logged"] == 1, "only the row within the week window should be counted"
 
 
 def test_a_week_with_no_sessions_is_unknown_not_zero(env):
@@ -151,17 +161,6 @@ def test_a_garbled_cache_or_log_never_raises(env):
 
 
 # ── question log kind ────────────────────────────────────────────────────────
-
-def test_question_log_add_records_the_given_time_and_refuses_a_naive_one(tmp_path):
-    p = tmp_path / "q.jsonl"
-    row = ql.add("When?", path=p, at=datetime(2026, 1, 2, 3, 4, 5, tzinfo=timezone(timedelta(hours=-7))))
-    assert row["ts"] == "2026-01-02T10:04:05+00:00"
-    with pytest.raises(ValueError):
-        ql.add("When?", path=p, at=datetime(2026, 1, 2))
-    with pytest.raises(ValueError):
-        ql.add("When?", path=p, at="2026-01-02")
-    assert len(p.read_text().splitlines()) == 1
-
 
 def test_question_log_kind_stale_and_top_filter(tmp_path):
     p = tmp_path / "q.jsonl"

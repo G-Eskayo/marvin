@@ -68,5 +68,15 @@ on PR #N* (`ready-for-agent`, `owner-decisions`), flagged when the notes ask a q
 addressed or closes. It shows at the top of the dashboard's ranked attention list. Whoever acts replies on the PR with
 the marker. Code: `lib/owner_decisions.py`.
 
-Code: `dashboard/webhook-server/decisions.js` (the one parser, pure; `decisions_cli.js` runs it for `lib/decisions_check.py`, the `bin/gh` rule), `decisions_gate.js` (merge-server check),
+## Merge-time and merged-PR re-checks (marvin#1261)
+
+The merge server does a fresh re-check of owner decisions at approve time (`assertOwnerDecisionsBuilt`,
+`owner_decisions_gate.js`, `lib/owner_decisions.py::pr_built_status`): if the owner's answers to Decisions have been
+built (a reply, a completed follow-up, an as-built decision, or work committed after the answers), the merge proceeds.
+If not, it refuses (`OWNER_DECISIONS_UNBUILT`) and re-queues the same Approve so it retries once the answers are built.
+This re-check happens just before the gate runs, after UI images and decision structure have been verified.
+
+Code: `lib/owner_decisions.py` (`_fresh_status`, `pr_built_status`, `fetch_pr`), `dashboard/webhook-server/owner_decisions_gate.js`, `merge.js` (call site).
+
+Code: `dashboard/webhook-server/decisions.js` (the one parser, pure; `decisions_cli.js` runs it for `lib/decisions_check.py`, the `bin/gh` rule), `decisions_gate.js` (merge-server check for open decisions),
 `dashboard/electron/main/decisions_submit.js` (submit), `dashboard/src/components/Decisions.jsx` (the form).
