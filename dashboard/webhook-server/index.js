@@ -39,6 +39,7 @@ import { resolveServiceDefaults } from '../electron/main/device_identity.js'
 import { createRebuildCheckTrigger } from './rebuild_check.js'
 import { supportRepos, createSupportSync } from './support_sync.js'
 import { handleSafetyRequest, SAFETY_MAX_BODY } from './safety_labels.js'
+import { handleNoRunnerRerunRequest } from './no_runner_rerun.js'
 
 // Authenticate gh/git children from the pipeline's shared credential file (see gh_auth.js).
 const ghTokenSource = loadGhToken()
@@ -131,6 +132,41 @@ const server = createServer(async (req, res) => {
     const python = path.join(os.homedir(), '.agents', 'venv', 'bin', 'python')
     const run = async (args) => (await promisify(execFile)(python, [calibrateScript, ...args], { timeout: 30_000 })).stdout
     const { status, json } = await handleSafetyRequest({ method: req.method, url: req.url, body }, run)
+    res.writeHead(status, { 'Content-Type': 'application/json' }).end(JSON.stringify(json))
+    return
+  }
+
+  // Trigger a rerun of a no-runner check (dashboard/webhook-server/no_runner_rerun.js).
+  // A no-runner check (marked skipped, not applicable, or platform unsupported) doesn't hold a PR.
+  // If the check fails to run, MR Review can ask for a rerun via this endpoint.
+  if (req.method === 'POST' && req.url === '/no-runner-rerun') {
+    // Restrict to localhost or known merge hosts (security: prevent arbitrary rerun requests from the network)
+    const remoteAddr = req.socket.remoteAddress
+    // localhost: IPv4 (127.0.0.1), IPv6 (::1), IPv4-mapped IPv6 (::ffff:127.0.0.1)
+    const isLocalhost = remoteAddr === '127.0.0.1' || remoteAddr === '::1' || remoteAddr === '::ffff:127.0.0.1' || remoteAddr === 'localhost'
+    const knownHosts = peerHosts() || []
+    // Exact match only, not substring matching (10.0.0.1 should not match 10.0.0.12)
+    const isKnownHost = knownHosts.some(h => remoteAddr === h)
+    if (!isLocalhost && !isKnownHost) {
+      res.writeHead(403, { 'Content-Type': 'application/json' }).end(JSON.stringify({ ok: false, error: 'forbidden' }))
+      return
+    }
+
+    let body = ''
+    const NO_RUNNER_MAX_BODY = 1024
+    try {
+      body = await readBody(req, NO_RUNNER_MAX_BODY)
+    } catch (err) {
+      res.writeHead(413, { 'Content-Type': 'application/json' }).end(JSON.stringify({ ok: false, error: err.message }))
+      return
+    }
+
+    // Only allow reruns for repos we're configured to merge
+    const knownRepos = Array.from(mergeQueue.snapshot().keys())
+    const { status, json } = await handleNoRunnerRerunRequest(
+      { method: req.method, url: req.url, body },
+      { exec: promisify(execFile), knownRepos }
+    )
     res.writeHead(status, { 'Content-Type': 'application/json' }).end(JSON.stringify(json))
     return
   }

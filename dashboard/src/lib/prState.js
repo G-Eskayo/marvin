@@ -105,6 +105,16 @@ function describeState(pr, { status = 'idle', errorMessage = null, progress = fa
       `${since}It can't merge as it is. The hourly scan first tries to resolve it automatically (when both sides only added lines); a real conflict sends a pipeline PR's ticket back to be rebuilt on the current ${main}, and flags a hand-made PR for you.`, 'hidden', 'hidden')
   }
 
+  // Checks that the merge gate covers (marked as not-run/skipped) don't hold the PR.
+  // If ONLY gate-covered checks are failing, the PR is not sent back (it will merge).
+  // Detection: ci.state is passing (no non-covered failures) but fullState is failing (gate-covered failures exist).
+  if (ci.state === 'passing' && ci.fullState === 'failing' && ci.gateCoveredFailing?.length) {
+    // Only gate-covered checks are failing; the PR is not sent back (gate will cover them at merge time)
+    return base('checks-not-run', 'wait', 'Checks covered by merge gate',
+      `${ci.gateCoveredFailing.join(', ')} are covered by the merge gate: it will run them when it merges. Approve to queue it.`,
+      'enabled', 'enabled', { checkProgress: hasRuns })
+  }
+
   if (ci.state === 'failing') {
     return base('checks-failed', 'blocked', 'GitHub checks failed',
       `${ci.failing.join(', ')}. It is sent back for rework automatically, so there is nothing to approve.`, 'hidden', 'hidden',
@@ -205,7 +215,8 @@ function describeState(pr, { status = 'idle', errorMessage = null, progress = fa
 // says the same thing ("checks failing: …" beside "GitHub checks failed"). Keyed by the card's kind; a queued card
 // always keeps its line, since only the line says its place.
 const SAID_BY_HEADLINE = {
-  'checks-failed': /^checks failing\b/,
+  'checks-failed': /^checks failing\b|^GitHub checks failed\b/,
+  'checks-not-run': /^checks not run\b|^Checks covered by merge gate\b/,
   'decisions-pending': /\bDecisions? (?:is|are) waiting for you$/,
   'needs-options': /^asks you to choose without options$/,
   conflict: /^conflicts with\b/,

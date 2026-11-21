@@ -254,8 +254,9 @@ export function markSentBack(prs, keys) {
 // Why a PR can't be approved as it stands, whatever else merges first, or null: the blockers that hide or hold its own
 // Approve. Merge order skips a PR with one (pr_order.js), so it never holds up newer PRs that touch the same files.
 // Waiting for checks is not one: that PR is approvable soon. Unknown files never count, so a light list fails closed.
-export function ownBlocker(pr, uiPathsFor = () => []) {
-  if (ciState(pr.statusCheckRollup).state === 'failing') return 'GitHub checks failed'
+export function ownBlocker(pr, uiPathsFor = () => [], gateCovers = null) {
+  const ciCheck = ciState(pr.statusCheckRollup, { ignore: gateCovers })
+  if (ciCheck.state === 'failing') return 'GitHub checks failed'
   if (needsImages(pr, uiPathsFor)) return 'needs images'
   if (vagueness(pr.body || '')) return 'asks you to choose without options'
   const dec = summarizeDecisions(pr.body || '')
@@ -263,19 +264,23 @@ export function ownBlocker(pr, uiPathsFor = () => []) {
   return null
 }
 
-export function markBlocked(prs, uiPathsFor = () => []) {
-  return prs.map((p) => ({ ...p, blocked: ownBlocker(p, uiPathsFor) }))
+export function markBlocked(prs, uiPathsFor = () => [], gateCoversFor = () => null) {
+  return prs.map((p) => {
+    const repo = p.repo || MARVIN_REPO
+    const gateCovers = gateCoversFor(repo)
+    return { ...p, blocked: ownBlocker(p, uiPathsFor, gateCovers) }
+  })
 }
 
 // The PR list to hand assertInOrder at Approve time. A failing lookup marks nothing sent back (fails closed on order).
-export async function prsForOrderCheck(prs, sentBackTickets, uiPathsFor = () => []) {
+export async function prsForOrderCheck(prs, sentBackTickets, uiPathsFor = () => [], gateCoversFor = () => null) {
   let keys = new Set()
   try {
     keys = await sentBackTickets([...new Set(prs.map((p) => p.repo || MARVIN_REPO))])
   } catch {
     keys = new Set()
   }
-  return markBlocked(markSentBack(prs, keys), uiPathsFor)
+  return markBlocked(markSentBack(prs, keys), uiPathsFor, gateCoversFor)
 }
 
 // A UI change whose description shows no image (marvin #374), or only unpinned ones (#733): {files, unpinned?} for the card, or null. Only judged when the list
@@ -320,7 +325,7 @@ export function queueLines(prs, { queue = null, issuesFor = () => [], sentBackKe
   return out
 }
 
-export async function listPipelinePrs(listOpenPrs, { canMerge = canMergeFromDashboard, sentBackTickets = null, reworkStatus = null, rebaseStatus = null, closedTickets = null, autoMergeShadow = null, uiPathsFor = () => [], mergeQueue = null, issuesFor = null } = {}) {
+export async function listPipelinePrs(listOpenPrs, { canMerge = canMergeFromDashboard, sentBackTickets = null, reworkStatus = null, rebaseStatus = null, closedTickets = null, autoMergeShadow = null, uiPathsFor = () => [], mergeQueue = null, issuesFor = null, gateCoversFor = () => null, noRunnerRerun = null } = {}) {
   const prs = await listOpenPrs()
   // The webhook's post-merge rebase results, by PR url (#225). Best effort: without them a card just doesn't say.
   let rebased = {}
@@ -369,39 +374,65 @@ export async function listPipelinePrs(listOpenPrs, { canMerge = canMergeFromDash
       rework = {}
     }
   }
-  // Each PR with the facts that decide whether it can be waited on (sent back for rework; conflicts), so merge order skips the
-  // ones that cannot merge as they stand.
-  const withState = markBlocked(markSentBack(prs, sentBackKeys), uiPathsFor)
   // The merge queue's line for each PR (marvin#231). Best effort, like the rebase results.
+  // Fetch before markBlocked so gateCoversFor has cached gate covers available.
   let lines = {}
   if (mergeQueue) {
     let queue = null
     try { queue = await mergeQueue() } catch { queue = null }
     try { lines = queueLines(prs, { queue, issuesFor: issuesFor || (() => []), sentBackKeys, rebased }) } catch { lines = {} }
   }
+  // Each PR with the facts that decide whether it can be waited on (sent back for rework; conflicts), so merge order skips the
+  // ones that cannot merge as they stand.
+  const withState = markBlocked(markSentBack(prs, sentBackKeys), uiPathsFor, gateCoversFor)
   return prs.map((pr) => {
     const ticketRef = parseTicketRef(pr.body || '', pr.repo || MARVIN_REPO)
     const hasSchema = hasEvidenceSchema(pr.body)
     const evidence = hasSchema ? parseEvidence(pr.body) : null
+    const repo = pr.repo || MARVIN_REPO
+    const gateCovers = gateCoversFor(repo) || []
+    const ciCheckFull = ciState(pr.statusCheckRollup, { ignore: [] })
+    const ciCheck = ciState(pr.statusCheckRollup, { ignore: gateCovers })
+    const gateCoveredFailing = gateCovers.length ? gateCovers.filter((name) => (ciCheckFull.failing || []).includes(name)) : []
+
+    // Trigger no-runner rerun as a side effect (don't block the list building); capture the status if available
+    let noRunnerStatus = null
+    if (noRunnerRerun && ciCheck.state === 'failing' && pr.headRefOid) {
+      const nonCovered = (ciCheck.failing || [])
+      if (nonCovered.length) {
+        // Call asynchronously without awaiting
+        noRunnerRerun(pr, { failing: nonCovered, number: pr.number, sha: pr.headRefOid, gateCoveredFailing }).catch(() => {})
+        // Try to get memoized status if already available (from a prior run or second render of same PR)
+        const memoKey = `${pr.url}@${pr.headRefOid}`
+        const memoized = noRunnerRerun.memoCache?.get?.(memoKey)
+        if (memoized?.rerunStatus) {
+          noRunnerStatus = memoized.rerunStatus
+        }
+      }
+    }
+
     return {
       number: pr.number,
       title: pr.title,
       url: pr.url,
-      repo: pr.repo || MARVIN_REPO,
-      key: prKey(pr.repo || MARVIN_REPO, pr.number),
+      repo,
+      key: prKey(repo, pr.number),
       // Grouping by project (marvin#848): a project:<id> label moves a PR to that project (ADR 0060); drafts sort last
       // and offer no Approve.
       labels: (pr.labels || []).map((l) => (typeof l === 'string' ? l : l?.name)).filter(Boolean),
       isDraft: !!pr.isDraft,
       // When it was opened: the Workshop's Now view orders the owner's moves by oldest wait (#862).
       createdAt: pr.createdAt || null,
-      canMerge: canMerge(pr.repo || MARVIN_REPO),
+      canMerge: canMerge(repo),
       conflicts: pr.mergeable === 'CONFLICTING',
       rebase: rebased[pr.url] || null,
       autoMerge: shadow[pr.url]?.current || null,
       // Each check's own state and times, and when GitHub was last asked (the check watch's probe, else the list read):
       // MR Review's progress bar, drill-down and "Last checked" (marvin#555).
-      checks: { ...ciState(pr.statusCheckRollup), runs: checkRuns(pr.statusCheckRollup), checkedAt: pr.checkedAt ?? pr.listedAt ?? null },
+      // Include ciCheckFull state to detect when only gate-covered checks are failing.
+      checks: { ...ciCheck, runs: checkRuns(pr.statusCheckRollup), checkedAt: pr.checkedAt ?? pr.listedAt ?? null, gateCoveredFailing, fullState: ciCheckFull.state },
+      // No-runner rerun status: 'started' (attempt in flight), 'already-tried' (tried but failed), or null
+      noRunner: noRunnerStatus,
       needsImages: needsImages(pr, uiPathsFor),
       // Choices the PR asks the owner to make (its Decisions section), and whether it asks in prose with nowhere to
       // answer (2026-10-09): either one holds Approve until it is answered or restated.
@@ -432,7 +463,9 @@ export async function listPipelinePrs(listOpenPrs, { canMerge = canMergeFromDash
       // Full body, untruncated -- MrDetail.jsx needs the whole thing since
       // it's exactly the "drill in and actually read it" view; PrCard.jsx
       // truncates its own display slice for the compact list card.
-      rawBody: hasSchema ? null : pr.body || ''
+      rawBody: hasSchema ? null : pr.body || '',
+      // No-runner check rerun status when a check that the merge gate doesn't cover is marked not-run/skipped
+      noRunner: null
     }
   })
 }

@@ -51,9 +51,24 @@ describe('describePrState: one headline, only the buttons that make sense', () =
 
   it('conflicts and failing checks are sent back automatically: no approve button, nothing to do', () => {
     expect(state({ conflicts: true })).toMatchObject({ kind: 'conflict', approve: 'hidden' })
-    const f = state({ checks: { state: 'failing', failing: ['CaptionCore unit tests'], pending: [] } })
+    const f = state({ checks: { state: 'failing', failing: ['CaptionCore unit tests'], pending: [], gateCoveredFailing: [] } })
     expect(f).toMatchObject({ kind: 'checks-failed', approve: 'hidden' })
     expect(f.detail).toMatch(/CaptionCore unit tests/)
+  })
+
+  it('when only gate-covered checks are failing, the PR is not sent back: approve is enabled', () => {
+    // gate-covered checks are removed from the failing list, so ci.state is 'passing'
+    // but fullState shows the original failures
+    const s = state({ checks: { state: 'passing', failing: [], pending: [], fullState: 'failing', gateCoveredFailing: ['Python tests', 'Dashboard unit tests'] } })
+    expect(s).toMatchObject({ kind: 'checks-not-run', approve: 'enabled', deny: 'enabled' })
+    expect(s.detail).toMatch(/covered by the merge gate/)
+  })
+
+  it('when mixed checks fail (some gate-covered, some not), only non-covered ones block', () => {
+    const s = state({ checks: { state: 'failing', failing: ['Python tests', 'Secret scan'], pending: [], gateCoveredFailing: ['Python tests'] } })
+    // Secret scan is not covered, so it's sent back
+    expect(s).toMatchObject({ kind: 'checks-failed', approve: 'hidden' })
+    expect(s.detail).toMatch(/Secret scan/)
   })
 
   it('waiting on checks is shown as waiting: approve is visible but disabled, and says what it is waiting for', () => {

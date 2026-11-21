@@ -13,6 +13,7 @@ import { createGithubState, repoOfSource, gateCooldownUntil } from './github_sta
 import { startCheckWatch, createCheckProbe, createTreeProbe, startChangeWatch, createGithubProbe } from '../../webhook-server/gh_watch.js'
 import { createStackRetarget } from './stack_retarget.js'
 import { prsForOrderCheck, listPipelinePrs, denyMr, fetchTicketContext, sentBackKeys, clearSentBackLabel } from './mr_review.js'
+import { classifyFailingChecks } from '../../webhook-server/no_runner.js'
 import { approveMrStream } from './approve_stream.js'
 import { readSeenNumbers, markSeen, computeReviewStatus } from './mr_seen.js'
 import { readDispatchStatus } from './dispatch_status.js'
@@ -1066,10 +1067,113 @@ function registerMrReviewHandlers() {
   }
 
   // marvin#231: the merge queue lives with the merge server (the Mini); each card's line is worked out from it here.
+  // Also caches the facts for gateCoversFor (synchronous access to gate check names per repo).
+  let cachedQueueFacts = null
+  let cacheExpiry = 0
   const getMergeQueue = async () => {
     const res = await fetch(MR_WEBHOOK_URL.replace(/\/approve$/, '/merge-queue'), { signal: AbortSignal.timeout(3000) })
-    return res.ok ? res.json() : null
+    if (res.ok) {
+      const data = await res.json()
+      cachedQueueFacts = data?.facts || {}
+      cacheExpiry = Date.now() + 5000 // cache for 5 seconds
+      return data
+    }
+    return null
   }
+
+  // Get the gate checks for a repo from the cached merge queue (synchronous, returns cached data)
+  const gateCoversFor = (repo) => {
+    // Return cached facts if still fresh (within 5 seconds)
+    if (cachedQueueFacts && Date.now() < cacheExpiry) {
+      return cachedQueueFacts.gateCovers?.[repo] || []
+    }
+    // For initial calls, return empty array; the cache will update on the next getMergeQueue call
+    return []
+  }
+
+  // Memoize noRunnerRerun classification and rerun status per PR to avoid re-classifying on every render
+  const noRunnerMemo = new Map()
+
+  // Trigger a rerun of no-runner checks for a PR (never throws; returns memoized status or null)
+  const noRunnerRerun = async (pr, { failing = [], gateCoveredFailing = [] } = {}) => {
+    if (!failing.length || !pr.url || !pr.headRefOid) return null
+
+    const memoKey = `${pr.url}@${pr.headRefOid}`
+    if (noRunnerMemo.has(memoKey)) return noRunnerMemo.get(memoKey) // already classified for this commit
+
+    try {
+      // Classify which failing checks are no-runner (not covered by the gate, marked as skipped, etc.)
+      const repo = pr.repo || MARVIN_REPO
+      const { noRunner, other } = await classifyFailingChecks({
+        repo,
+        sha: pr.headRefOid,
+        failingNames: failing,
+        exec: promisify(execFile)
+      })
+
+      let rerunStatus = null
+      // If there are no-runner checks (not covered by the gate), trigger a rerun
+      // Find the workflow run ID from the check's details URL
+      if (noRunner.length) {
+        const checkRuns = await (async () => {
+          try {
+            const { stdout } = await promisify(execFile)('gh', [
+              'api',
+              `repos/${repo}/commits/${pr.headRefOid}/check-runs`,
+              '--paginate',
+              '--jq',
+              '.check_runs[] | {name: .name, detailsUrl: .details_url}'
+            ])
+            return stdout.trim() ? stdout.split('\n').map(line => {
+              try { return JSON.parse(line) } catch { return null }
+            }).filter(Boolean) : []
+          } catch {
+            return []
+          }
+        })()
+
+        rerunStatus = 'started'
+        for (const checkName of noRunner) {
+          const checkRun = checkRuns.find(c => c.name === checkName)
+          if (!checkRun?.detailsUrl) continue
+
+          // Extract workflow run ID from GitHub Actions URL
+          const runIdMatch = /\/actions\/runs\/(\d+)/.exec(checkRun.detailsUrl)
+          if (!runIdMatch) continue
+
+          const runId = runIdMatch[1]
+
+          // POST to the webhook to trigger a rerun
+          fetch(`${MR_WEBHOOK_URL.replace(/\/approve$/, '/no-runner-rerun')}`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              pr_url: pr.url,
+              number: pr.number,
+              sha: pr.headRefOid,
+              runId,
+              checkName
+            }),
+            signal: AbortSignal.timeout(5000)
+          }).catch(() => {
+            rerunStatus = 'already-tried' // mark as tried if fetch fails
+          })
+        }
+      }
+
+      const memo = { noRunner, other, rerunStatus }
+      noRunnerMemo.set(memoKey, memo)
+      return memo
+    } catch {
+      // Classification failed, treat as not a no-runner check
+      const memo = { noRunner: [], other: failing, rerunStatus: null }
+      noRunnerMemo.set(memoKey, memo)
+      return memo
+    }
+  }
+
+  // Expose memo cache for synchronous lookups in mr_review.js
+  noRunnerRerun.memoCache = noRunnerMemo
   // A repo's open tickets from the boards already in memory (main-red, incident, sent back): no extra GitHub read.
   const boardIssuesFor = (repo) => (remembered('board').find((b) => b.repo === repo)?.value?.issues || []).filter((i) => i && i.state === 'OPEN')
   // Safety net for stacked PRs whose parent merged without the post-merge move (stack_retarget.js). Reads the PR list
@@ -1109,12 +1213,14 @@ function registerMrReviewHandlers() {
       autoMergeShadow: getAutoMergeShadow,
       uiPathsFor: (repo) => readUiPaths(repo),
       mergeQueue: getMergeQueue,
-      issuesFor: boardIssuesFor
+      issuesFor: boardIssuesFor,
+      gateCoversFor,
+      noRunnerRerun
     })
     return cards.find((p) => p.url === url) || null
   }
   const mrList = coalesce(
-    () => listPipelinePrs(fixturePrs || listOpenPrs, { canMerge: (repo) => canMergeHere(pullOnly, canMergeFromDashboard(repo, readMergeableRepos())), sentBackTickets, reworkStatus: reworkFromMemory, rebaseStatus: getRebaseStatus, closedTickets, autoMergeShadow: getAutoMergeShadow, uiPathsFor: (repo) => readUiPaths(repo), mergeQueue: getMergeQueue, issuesFor: boardIssuesFor })
+    () => listPipelinePrs(fixturePrs || listOpenPrs, { canMerge: (repo) => canMergeHere(pullOnly, canMergeFromDashboard(repo, readMergeableRepos())), sentBackTickets, reworkStatus: reworkFromMemory, rebaseStatus: getRebaseStatus, closedTickets, autoMergeShadow: getAutoMergeShadow, uiPathsFor: (repo) => readUiPaths(repo), mergeQueue: getMergeQueue, issuesFor: boardIssuesFor, gateCoversFor, noRunnerRerun })
       .then((prs) => withReadOnlyReason(prs, pullOnly)),
     () => `${githubState.localSeq()}:${githubState._genOf(null)}`
   )
