@@ -759,3 +759,27 @@ def test_render_markdown_handles_no_findings_gracefully():
     }]
     md = render_markdown(report)
     assert "no findings" in md.lower() or "none" in md.lower()
+
+
+# ── ollama_chat import ──────────────────────────────────────────────────────
+
+def test_ollama_chat_imported_from_shared_module():
+    """Verify that ollama_chat is imported from the shared ollama_chat module, not defined locally."""
+    import ollama_chat as om_module
+
+    # Check that the module has ollama_chat defined
+    assert hasattr(om_module, "ollama_chat")
+    # Verify logic_auditor imports the same function
+    from logic_auditor import ollama_chat as imported_chat
+    # They should be the same function object
+    assert imported_chat is om_module.ollama_chat
+
+
+def test_inference_model_uses_resolved_variable():
+    """Verify that INFERENCE_MODEL is set to the resolved _inference_model variable."""
+    from logic_auditor import INFERENCE_MODEL, _inference_model
+
+    # INFERENCE_MODEL should be the resolved _inference_model variable
+    assert INFERENCE_MODEL == _inference_model
+    # And it should be the expected model
+    assert INFERENCE_MODEL == "qwen2.5:14b"
