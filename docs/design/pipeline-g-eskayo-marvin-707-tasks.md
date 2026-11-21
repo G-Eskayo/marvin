@@ -1,0 +1,8 @@
+1. In `lib/incident_ladder.py`'s `step()`, inside the `if steps and st["aid"] != "worse":` block (around line 362–379), compute `changed_anything = any(r.get("changed") for r in aid_results)` right after the `for name in steps:` loop, and change the verdict line to `aid = "worse" if changed_anything and live_before is not None and after > live_before else "ran"`.
+2. In the same block's `log("first-aid", ...)` call, add `changed=changed_anything` to the logged event, so a future diagnosis doesn't have to re-derive it from `aid_results`.
+3. Write test 1 (the regression test) in `lib/tests/test_incident_ladder.py`; confirm it fails on the pre-fix code.
+4. Apply the fix from steps 1–2; confirm test 1 now passes.
+5. Write tests 2–4 (guard-against-overcorrection, malformed input, empty results); confirm all pass against the fixed code.
+6. Run the existing `test_incident_ladder.py` and `test_purpose_metrics.py` suites unmodified; confirm every prior assertion still holds (test item 5).
+7. Run the full Python test suite (test item 6) before opening the PR.
+8. Open the PR with a `## Regression test` heading naming `lib/tests/test_incident_ladder.py::test_first_aid_that_changes_nothing_is_not_blamed_for_a_worse_reading`, and reference issue #707 ("Part of #707" — the watch stays open under the `watch` label; this fix addresses the self-disabling bug the 2026-11-18 recurrence exposed, not the Mac Mini's underlying network reachability, which is infrastructure outside this ticket's code scope).
