@@ -38,8 +38,10 @@ const noop = () => {}
 const gh = (overrides = {}) => vi.fn(async (cmd, args) => {
   const key = args.join(' ')
   for (const [k, v] of Object.entries(overrides)) if (key.includes(k)) return typeof v === 'function' ? v() : v
-  if (key.includes('statusCheckRollup')) return { stdout: JSON.stringify({ statusCheckRollup: [] }), stderr: '' }
+  if (key.includes('statusCheckRollup')) return { stdout: JSON.stringify({ headRefOid: '0123456789abcdef0123456789abcdef01234567', statusCheckRollup: [] }), stderr: '' }
+  if (key.includes('--jq') && key.includes('headRefOid')) return { stdout: '0123456789abcdef0123456789abcdef01234567', stderr: '' }
   if (key.includes('mergeable')) return { stdout: JSON.stringify({ mergeable: 'MERGEABLE' }), stderr: '' }
+  if (key.includes('headRefOid')) return { stdout: JSON.stringify({ headRefOid: '0123456789abcdef0123456789abcdef01234567' }), stderr: '' }
   return { stdout: '{}', stderr: '' }
 })
 const gate = (yes = true) => vi.fn(async () => ({ gate: yes, behind: true, shared: yes ? ['x.js'] : [], headRefName: 'pipeline/x', body: BODY }))

@@ -204,6 +204,12 @@ describe('mergePr: a flaky pass merges, and the owner is told which test', () =>
     const exec = vi.fn(async (cmd, args) => {
       calls.push([cmd, ...args])
       if (commentFails && cmd === 'gh' && args[0] === 'pr' && args[1] === 'comment') throw new Error('GitHub down')
+      if (cmd === 'gh' && args[0] === 'pr' && args[1] === 'view' && args.includes('--json')) {
+        const key = args.join(' ')
+        if (key.includes('statusCheckRollup')) return { stdout: JSON.stringify({ headRefOid: '0123456789abcdef0123456789abcdef01234567', statusCheckRollup: [] }), stderr: '' }
+        if (key.includes('--jq') && key.includes('headRefOid')) return { stdout: '0123456789abcdef0123456789abcdef01234567', stderr: '' }
+        return { stdout: JSON.stringify({ baseRefName: 'main', headRefOid: '0123456789abcdef0123456789abcdef01234567' }), stderr: '' }
+      }
       return { stdout: JSON.stringify({ baseRefName: 'main', statusCheckRollup: [] }), stderr: '' }
     })
     const rebase = vi.fn().mockResolvedValue({ ok: true, flaky: ['test/fits_window.test.jsx'] })

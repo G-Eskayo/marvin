@@ -43,6 +43,7 @@ export const ALLOWLIST = {
   // Servers.
   'webhook-server/gh_watch.js': { interval: [2, 'THE change-detector (one ETag request per repo per ~20 s, 304 is free) and the check watch beside it (#557)'] },
   'webhook-server/index.js': { interval: [3, `starts the one gh_watch change-detector tick, (marvin#231) ${CHECK_WATCH} for queued PRs only: nothing queued, no requests, and (marvin#954, primary only) ${CHECK_WATCH} over the box feed's pending PRs`] },
+  'webhook-server/ci_status.js': { 'timeout-loop': [1, 'waitForRequiredChecks: polls GitHub for check results with a deadline; not a standing poll'] },
   'webhook-server/failure.js': { 'timeout-loop': [1, 'withRetry: bounded exponential backoff on a failed call, not a poll for change'] },
   'webhook-server/merge.js': { 'timeout-loop': [1, 'mergeableNow: GitHub computes mergeable lazily with no event; bounded 6 x 5 s'] },
   'mobile-backend/dashboard_gh_api.js': { interval: [1, `starts ${CHECK_WATCH}`] },

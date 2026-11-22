@@ -17,10 +17,13 @@ const PR = 'https://github.com/G-Eskayo/marvin/pull/851'
 function ghExec() {
   return vi.fn(async (cmd, args) => {
     if (cmd === 'gh' && args[0] === 'pr' && args[1] === 'view') {
+      const key = args.join(' ')
+      if (key.includes('statusCheckRollup')) return { stdout: JSON.stringify({ headRefOid: '0123456789abcdef0123456789abcdef01234567', statusCheckRollup: [] }), stderr: '' }
+      if (key.includes('--jq') && key.includes('headRefOid')) return { stdout: '0123456789abcdef0123456789abcdef01234567', stderr: '' }
       const fields = args[args.indexOf('--json') + 1] || ''
-      if (fields.includes('statusCheckRollup')) return { stdout: JSON.stringify({ statusCheckRollup: [] }), stderr: '' }
       if (fields.includes('isDraft')) return { stdout: JSON.stringify({ isDraft: false }), stderr: '' }
       if (fields.includes('baseRefName')) return { stdout: 'main\n', stderr: '' }
+      if (fields.includes('headRefOid')) return { stdout: JSON.stringify({ headRefOid: '0123456789abcdef0123456789abcdef01234567', labels: [], comments: [], mergeable: 'MERGEABLE', mergeStateStatus: 'CLEAN' }), stderr: '' }
       return { stdout: JSON.stringify({ labels: [], comments: [], mergeable: 'MERGEABLE', mergeStateStatus: 'CLEAN' }), stderr: '' }
     }
     if (cmd === 'gh' && args[0] === 'api') return { stdout: '[]', stderr: '' }

@@ -74,6 +74,13 @@ function execWithCodeReviewDefaults(innerMockFn) {
         return Promise.resolve({ stdout: JSON.stringify({ has_decisions: false }), stderr: '' })
       }
     }
+    // Handle gh pr view calls for headRefOid (needed by waitForRequiredChecks)
+    if (cmd === 'gh' && args[0] === 'pr' && args[1] === 'view' && args.includes('--json')) {
+      const key = args.join(' ')
+      if (key.includes('statusCheckRollup')) return Promise.resolve({ stdout: JSON.stringify({ headRefOid: '0123456789abcdef0123456789abcdef01234567', statusCheckRollup: [] }), stderr: '' })
+      if (key.includes('--jq') && key.includes('headRefOid')) return Promise.resolve({ stdout: '0123456789abcdef0123456789abcdef01234567', stderr: '' })
+      if (key.includes('headRefOid')) return Promise.resolve({ stdout: JSON.stringify({ headRefOid: '0123456789abcdef0123456789abcdef01234567' }), stderr: '' })
+    }
     // Forward to the inner mock
     return innerMockFn(cmd, args, ...rest)
   })
@@ -83,6 +90,12 @@ function execWithCodeReviewDefaults(innerMockFn) {
 const ghConflicting = () => vi.fn(async (cmd, args) => {
   if (args[0] === 'pr' && args[1] === 'merge') throw new Error('merge conflict')
   if (args.includes('mergeable')) return { stdout: JSON.stringify({ mergeable: 'CONFLICTING' }), stderr: '' }
+  if (args[0] === 'pr' && args[1] === 'view' && args.includes('--json')) {
+    const key = args.join(' ')
+    if (key.includes('statusCheckRollup')) return { stdout: JSON.stringify({ headRefOid: '0123456789abcdef0123456789abcdef01234567', statusCheckRollup: [] }), stderr: '' }
+    if (key.includes('--jq') && key.includes('headRefOid')) return { stdout: '0123456789abcdef0123456789abcdef01234567', stderr: '' }
+    if (key.includes('headRefOid')) return { stdout: JSON.stringify({ headRefOid: '0123456789abcdef0123456789abcdef01234567' }), stderr: '' }
+  }
   return { stdout: '', stderr: '' }
 })
 
@@ -1307,7 +1320,15 @@ describe('the gate tells a red main apart from a bad PR', () => {
 describe('a gate that never finishes is cut off and says so', () => {
   const PR = 'https://github.com/G-Eskayo/marvin/pull/173'
   const gate = () => vi.fn().mockResolvedValue({ gate: true, headRefName: 'pipeline/x', body: 'Closes G-Eskayo/marvin#147' })
-  const exec = () => vi.fn(async () => ({ stdout: JSON.stringify({ baseRefName: 'main', statusCheckRollup: [] }), stderr: '' }))
+  const exec = () => vi.fn(async (cmd, args) => {
+    if (cmd === 'gh' && args[0] === 'pr' && args[1] === 'view' && args.includes('--json')) {
+      const key = args.join(' ')
+      if (key.includes('statusCheckRollup')) return { stdout: JSON.stringify({ headRefOid: '0123456789abcdef0123456789abcdef01234567', statusCheckRollup: [] }), stderr: '' }
+      if (key.includes('--jq') && key.includes('headRefOid')) return { stdout: '0123456789abcdef0123456789abcdef01234567', stderr: '' }
+      return { stdout: JSON.stringify({ baseRefName: 'main', headRefOid: '0123456789abcdef0123456789abcdef01234567' }), stderr: '' }
+    }
+    return { stdout: JSON.stringify({ baseRefName: 'main', statusCheckRollup: [] }), stderr: '' }
+  })
   const hangs = () => new Promise(() => {})   // a rebase/test run that never returns (the iCloud read that blocked forever)
 
   it('refuses with GATE_INFRA after the limit, without sending the PR back', async () => {

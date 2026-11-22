@@ -5,15 +5,23 @@ import { MergeFailure, refusal } from './failure.js'
 
 const FAILED = new Set(['FAILURE', 'TIMED_OUT', 'CANCELLED', 'ACTION_REQUIRED', 'STARTUP_FAILURE'])
 
+export const REQUIRED_CHECKS_TIMEOUT_MS = 70 * 60_000  // 70 minutes; worst case in #1100 is ~65 min
+export const REQUIRED_CHECKS_POLL_MS = 15_000
+
 // What GitHub says about a PR's checks (`gh pr view --json statusCheckRollup`): none / passing / pending / failing.
 // Handles both kinds of entry: Actions check runs and the older commit statuses.
 // ignore (marvin#1099): names of checks the merge gate runs itself (gateChecks). GitHub's copy of those doesn't count:
 // the gate runs them again on the commit it merges, so a cancelled or failed GitHub run of one never holds a PR.
-export function ciState(rollup, { ignore = null } = {}) {
+// only: an allow-list of check names (a name not in `only` is treated as not present), additive and backward-compatible.
+export function ciState(rollup, { ignore = null, only = null } = {}) {
   const failing = []
   const pending = []
   const skip = new Set(Array.isArray(ignore) ? ignore : [])
-  const counted = (rollup || []).filter((c) => !skip.has(c?.__typename === 'StatusContext' ? c.context : c?.name))
+  const allowList = only ? new Set(Array.isArray(only) ? only : []) : null
+  const counted = (rollup || []).filter((c) => {
+    const name = c?.__typename === 'StatusContext' ? c.context : c?.name
+    return !skip.has(name) && (!allowList || allowList.has(name))
+  })
   for (const c of counted) {
     if (c.__typename === 'StatusContext') {
       const name = c.context || 'status'
@@ -103,19 +111,90 @@ export function gateCheckNames(dir = path.join(os.homedir(), '.agents')) {
   }
 }
 
+// Every check name in the repo's .github/required-checks.json, with no filtering (ci-only or otherwise).
+// Unreadable or broken: [].
+export function requiredCheckNames(dir = path.join(os.homedir(), '.agents')) {
+  try {
+    const checks = JSON.parse(readFileSync(path.join(dir, '.github', 'required-checks.json'), 'utf8')).checks
+    return Array.isArray(checks) ? checks.filter((c) => c && typeof c.name === 'string').map((c) => c.name) : []
+  } catch {
+    return []
+  }
+}
+
+// Fetch the current head commit SHA of a PR (40-char hex SHA-1). Best effort: empty string on failure.
+export async function currentHeadSha(prUrl, exec) {
+  try {
+    const sha = String((await exec('gh', ['pr', 'view', prUrl, '--json', 'headRefOid', '--jq', '.headRefOid']))?.stdout || '').trim()
+    return /^[0-9a-f]{40}$/.test(sha) ? sha : ''
+  } catch {
+    return ''
+  }
+}
+
 // After the gate's checks pass, say so on the commit it merges, so GitHub shows what was really checked. Best effort:
-// a refused or failed post never blocks the merge.
-export async function postGateStatus(prUrl, exec, names = []) {
+// a refused or failed post never blocks the merge. When sha is provided, skips its own fetch (backward compatible).
+export async function postGateStatus(prUrl, exec, names = [], sha = null) {
   try {
     const m = /^https:\/\/github\.com\/([^/]+\/[^/]+)\/pull\/\d+/.exec(String(prUrl))
     if (!m) return false
-    const sha = String((await exec('gh', ['pr', 'view', prUrl, '--json', 'headRefOid', '--jq', '.headRefOid']))?.stdout || '').trim()
-    if (!/^[0-9a-f]{40}$/.test(sha)) return false
+    const commitSha = sha || (await currentHeadSha(prUrl, exec))
+    if (!commitSha) return false
     const what = names.length ? names.join(', ') : 'the required checks'
-    await exec('gh', ['api', `repos/${m[1]}/statuses/${sha}`, '-f', 'state=success', '-f', 'context=MARVIN gate',
+    await exec('gh', ['api', `repos/${m[1]}/statuses/${commitSha}`, '-f', 'state=success', '-f', 'context=MARVIN gate',
       '-f', `description=${`Passed on the rebased commit: ${what}`.slice(0, 140)}`])
     return true
   } catch {
     return false
+  }
+}
+
+// Poll GitHub until all required checks finish or the deadline passes. Throws CI_FAILED if any fail before they all
+// pass or are absent; CI_TIMEOUT or HEAD_MOVED if the deadline expires or the head SHA moves. The head SHA at start
+// is the one being waited for; a move means the PR was pushed again (the caller should retry and wait again).
+//
+// opts (all optional):
+//   sha: the commit SHA to wait for (defaults to current head; a move from this SHA triggers HEAD_MOVED).
+//   names: required check names (defaults to []; ciState only checks these, so an empty list means pass immediately).
+//   timeoutMs: deadline in ms from now (defaults to REQUIRED_CHECKS_TIMEOUT_MS).
+//   pollMs: polling interval in ms (defaults to REQUIRED_CHECKS_POLL_MS).
+//   sleep: sleep function (defaults to setTimeout); tested with a mock.
+//   now: current time function (defaults to Date.now); for testing.
+export async function waitForRequiredChecks(prUrl, exec, { sha = null, names = [], timeoutMs = REQUIRED_CHECKS_TIMEOUT_MS, pollMs = REQUIRED_CHECKS_POLL_MS, sleep = (ms) => new Promise((r) => setTimeout(r, ms)), now = Date.now } = {}) {
+  const deadline = now() + timeoutMs
+  let currentSha = sha || (await currentHeadSha(prUrl, exec))
+  if (!currentSha) {
+    throw new MergeFailure(refusal('HEAD_MOVED', 'gate', 'Could not read the PR head SHA at the start of the check wait',
+      'Approve again once GitHub settles. The PR was not sent back.', 'retry'))
+  }
+  const checkNames = new Set(Array.isArray(names) ? names : [])
+  for (;;) {
+    const remaining = deadline - now()
+    if (remaining <= 0) {
+      throw new MergeFailure(refusal('CI_TIMEOUT', 'gate', `Required checks did not finish within ${Math.max(1, Math.round(timeoutMs / 60000))} min`,
+        'Approve again when they finish, or extend the deadline. The PR was not sent back.', 'retry'))
+    }
+    try {
+      const { stdout } = await exec('gh', ['pr', 'view', prUrl, '--json', 'headRefOid,statusCheckRollup'])
+      const data = JSON.parse(stdout)
+      if (data.headRefOid !== currentSha) {
+        throw new MergeFailure(refusal('HEAD_MOVED', 'gate', `The PR head moved from ${currentSha.slice(0, 8)} to ${data.headRefOid.slice(0, 8)} while waiting for checks`,
+          'Approve again once GitHub settles. The PR was not sent back.', 'retry'))
+      }
+      const { state, failing } = ciState(data.statusCheckRollup, { only: Array.from(checkNames) })
+      if (failing.length) {
+        throw new MergeFailure(refusal('CI_FAILED', 'gate', `GitHub's checks failed on this PR: ${failing.join(', ')}`,
+          'Fix what the failing checks report. The PR is sent back for rework.', 'reengage'))
+      }
+      if (state === 'passing' || state === 'none') return
+    } catch (e) {
+      if (e instanceof MergeFailure) throw e
+      const text = String(e?.message || e).toLowerCase()
+      if (text.includes('not found') || text.includes('could not resolve')) {
+        throw new MergeFailure(refusal('HEAD_MOVED', 'gate', 'GitHub has no such PR anymore or it lost the head ref',
+          'Approve again once GitHub settles. The PR was not sent back.', 'retry'))
+      }
+    }
+    await sleep(pollMs)
   }
 }
