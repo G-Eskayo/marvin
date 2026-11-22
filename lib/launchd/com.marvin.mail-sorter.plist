@@ -1,0 +1,40 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <!-- MARVIN's mail sorter, Gmail (#1405, part of #1357). Trigger-based: one long-lived IMAP IDLE connection, so there
+         is no StartInterval. KeepAlive restarts it only after a crash (SuccessfulExit false): a config or sign-in
+         problem exits 0 after telling the owner, so launchd doesn't loop on the same error. Install on ONE machine
+         (the Mini), because two sorters would both alert. Installed by lib/launchd/install_mail_sorter.sh. -->
+    <key>Label</key>
+    <string>com.marvin.mail-sorter</string>
+    <key>ProgramArguments</key>
+    <array>
+        <string>__HOME__/.agents/venv/bin/python</string>
+        <string>__HOME__/.agents/lib/mail_sorter.py</string>
+        <string>run</string>
+        <string>--account</string>
+        <string>gmail</string>
+    </array>
+    <key>RunAtLoad</key>
+    <true/>
+    <key>KeepAlive</key>
+    <dict>
+        <key>SuccessfulExit</key>
+        <false/>
+    </dict>
+    <key>ThrottleInterval</key>
+    <integer>30</integer>
+    <key>StandardOutPath</key>
+    <string>__HOME__/.claude/logs/mail-sorter.log</string>
+    <key>StandardErrorPath</key>
+    <string>__HOME__/.claude/logs/mail-sorter-error.log</string>
+    <key>EnvironmentVariables</key>
+    <dict>
+        <key>HOME</key>
+        <string>__HOME__</string>
+        <key>PATH</key>
+        <string>/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin:__HOME__/.agents/venv/bin:/opt/homebrew/bin</string>
+    </dict>
+</dict>
+</plist>
