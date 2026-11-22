@@ -166,7 +166,7 @@ function Column({ column, repo, onSelect, onOpenMr, activeTags, onTag, onAllComp
         <span className="text-xs text-neutral-500">{activeTags.size ? `${visible.length} / ${column.cards.length}` : column.cards.length}</span>
       </div>
       {column.id === 'review' && column.cards.length > 0 && (
-        <button onClick={() => onOpenMr?.()} className="-mt-1 mb-2 text-left text-[11px] text-amber-300 hover:text-amber-200" title="These are the same PRs MR Review lists">
+        <button onClick={() => onOpenMr?.(repo)} className="-mt-1 mb-2 text-left text-[11px] text-amber-300 hover:text-amber-200" title="These are the same PRs MR Review lists">
           {column.cards.length} waiting in MR Review →
         </button>
       )}
@@ -427,7 +427,7 @@ export function TicketReply({ repo, number, labels, state, sendBack, onSent }) {
   )
 }
 
-function WaitingOnYou({ boards, onPick, onOpenMr, refreshKey }) {
+function WaitingOnYou({ boards, onPick, onOpenMr, refreshKey, repo }) {
   const [overview, setOverview] = useState(null)
   useEffect(() => {
     const load = () => window.api.activity.overview().then(setOverview).catch(() => {})
@@ -450,7 +450,7 @@ function WaitingOnYou({ boards, onPick, onOpenMr, refreshKey }) {
           {o.needsYou > 0 && <span className="ml-2 text-sky-300">{o.needsYou} need you</span>}
         </button>
       ))}
-      <button onClick={() => onOpenMr?.()} className="text-neutral-500 hover:text-neutral-200">
+      <button onClick={() => onOpenMr?.(repo)} className="text-neutral-500 hover:text-neutral-200">
         MR Review →
       </button>
     </div>
@@ -614,7 +614,7 @@ export default function ProjectBoard({ onOpenMr, onOpenDocs, onOpenTicket, nav }
 
   return (
     <div className="p-6">
-      <WaitingOnYou boards={boards} onPick={(r) => { setRepo(r); setView('board'); setSelected(null) }} onOpenMr={onOpenMr} refreshKey={repo} />
+      <WaitingOnYou boards={boards} onPick={(r) => { setRepo(r); setView('board'); setSelected(null) }} onOpenMr={onOpenMr} refreshKey={repo} repo={repo} />
       {/* One way to switch projects: the cards on the Activity home ("← All projects"). This header only says which
           board this is (2026-10-09, Gil: the pills here duplicated the cards). */}
       <div className="mb-4 flex flex-wrap items-baseline gap-3">

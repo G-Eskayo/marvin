@@ -119,6 +119,10 @@ export function prStep(pr, ctx = {}) {
 
   if (kind === 'merging') return mine('Merging', 'ship')
   if (kind === 'in-queue') return mine('In the merge queue', 'ship')
+  if (kind === 'draft') {
+    if (live) return mine('Building your draft', 'build')
+    return step('owner', 'Wait for draft to be ready', 'waiting')
+  }
   // The merge queue's order for a PR's own blockers (merge_order.js ownReason, owner 2026-10-30): options, then
   // Decisions, then unbuilt answers, before failing checks or a conflict. They need doing whatever else is wrong.
   if (kind !== 'sent-back' && kind !== 'ticket-closed') {

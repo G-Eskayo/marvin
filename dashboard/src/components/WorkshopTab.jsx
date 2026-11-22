@@ -17,7 +17,7 @@ const storage = () => {
 export function useWorkshopNow() {
   const [state, setState] = useState(() => {
     const saved = loadSaved(storage())
-    return saved ? { value: saved.value, events: saved.events, at: saved.at, failed: [], loaded: false, saved: true } : { value: null, events: new Map(), at: null, failed: [], loaded: false, saved: false }
+    return saved ? { value: saved.value, events: saved.events, at: saved.at, failed: [], loaded: false, saved: true, notice: null } : { value: null, events: new Map(), at: null, failed: [], loaded: false, saved: false, notice: null }
   })
   const latest = useRef(state)
   latest.current = state
@@ -34,7 +34,7 @@ export function useWorkshopNow() {
         const now = Date.now()
         const at = failed.length ? latest.current.at : now
         if (!failed.length) save(storage(), value, events, now)
-        setState({ value, events: events.size || !failed.length ? events : latest.current.events, at, failed, loaded: true, saved: latest.current.saved })
+        setState({ value, events: events.size || !failed.length ? events : latest.current.events, at, failed, loaded: true, saved: latest.current.saved, notice: latest.current.notice })
       } catch {
         setState((s) => ({ ...s, failed: ['everything'], loaded: true }))
       } finally {
@@ -49,11 +49,15 @@ export function useWorkshopNow() {
     const api = globalThis.window?.api
     const offMr = api?.mr?.onRefresh?.(load) || (() => {})
     const offTrigger = api?.triggers?.on?.((t) => NOW_TOPICS.has(t?.topic) && load()) || (() => {})
-    return () => { offMr(); offTrigger() }
+    const offCorrected = api?.mr?.onCorrected?.((notice) => setState((s) => ({ ...s, notice }))) || (() => {})
+    return () => { offMr(); offTrigger(); offCorrected() }
   }, [load])
 
   const now = state.value ? buildNow({ ...state.value, events: state.events }) : null
-  return { ...state, now, reload: load }
+  const dismissNotice = useCallback(() => {
+    setState((s) => ({ ...s, notice: null }))
+  }, [])
+  return { ...state, now, reload: load, dismissNotice }
 }
 
 const VIEWS = [
@@ -299,7 +303,6 @@ export function WorkshopNow({ feed, onOpen, now = Date.now(), store = storageOf(
           </Box>
         </section>
       )}
-      <p className="mt-3 text-xs text-neutral-500">Machines, helpers’ health and the parallel toggle: Health.</p>
     </div>
   )
 }
@@ -332,8 +335,8 @@ export default function WorkshopTab({ feed, navigate, nav = null }) {
   }
   if (target) {
     return (
-      <WorkshopItem key={targetKey(target)} target={target} feed={feed} onBack={() => setTarget(null)} onOpenItem={setTarget}
-        onOpenDocs={(projectId, path) => navigate('docs', { projectId, path })} />
+      <WorkshopItem key={targetKey(target)} target={target} feed={feed} onBack={() => setTarget(null)} onOpenItem={setTarget} notice={feed.notice}
+        onDismissNotice={feed.dismissNotice} onOpenDocs={(projectId, path) => navigate('docs', { projectId, path })} />
     )
   }
   return (

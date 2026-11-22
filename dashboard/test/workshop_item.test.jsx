@@ -30,7 +30,7 @@ beforeEach(() => {
   globalThis.window = { api: { relations: { pr: never, ticket: never }, mr: { mergeState: never, image: never, historyDetail: never, onMergeEvent: () => () => {} }, boards: { ticket: never }, activity: { timeline: never }, decisions: {} } }
 })
 
-const page = (target, feed, initial = {}) => renderToStaticMarkup(<WorkshopItem target={target} feed={feed} now={NOW} initial={{ rel: { docs: [], tickets: [], prs: [] }, ...initial }} />)
+const page = (target, feed, initial = {}) => renderToStaticMarkup(<WorkshopItem target={target} feed={feed} notice={feed.notice} onDismissNotice={feed.dismissNotice} now={NOW} initial={{ rel: { docs: [], tickets: [], prs: [] }, ...initial }} />)
 const count = (html, re) => (html.match(re) || []).length
 const approveButtons = (html) => count(html, />Approve<\/button>/g)
 
@@ -223,6 +223,13 @@ describe('WorkshopItem: the old controls, moved, with their rules', () => {
     expect(h).toContain('data-refusal="1"')
     expect(h).toContain('CI_FAILED')
     expect(approveButtons(h)).toBe(1)
+  })
+  it('CorrectionNotice: show correction message for the matching PR (bug 3 fix)', () => {
+    const notice = { url: `https://github.com/${REPO}/pull/5`, message: 'API key was invalid' }
+    const h = page({ repo: REPO, pr: 5 }, feedOf({ prs: [pr(5)] }, { notice, dismissNotice: () => {} }))
+    expect(h).toContain('GitHub disagreed')
+    expect(h).toContain('API key was invalid')
+    expect(h).toContain('Dismiss')
   })
   it('a ticket with no PR: its reply box and history, no Approve, and its own Decisions are answered here', () => {
     const body = '## Decisions\n<!-- marvin:decisions -->\n### a: Pick one\n- [ ] One\n- [ ] Two\n'

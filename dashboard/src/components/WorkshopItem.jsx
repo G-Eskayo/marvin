@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState } from 'react'
 import { ApproveDenyActions } from './MrReview.jsx'
-import { SummarySection, PrEvidenceSections, NeedsImages, DECISIONS_ANCHOR, GALLERY, GALLERY_LIMIT } from './MrDetail.jsx'
+import { SummarySection, PrEvidenceSections, NeedsImages, DECISIONS_ANCHOR, GALLERY, GALLERY_LIMIT, LinkedIssue } from './MrDetail.jsx'
+import { CorrectionNotice } from './MrReview.jsx'
 import { HumanTaskPanel, TicketReply } from './ProjectBoard.jsx'
 import Decisions from './Decisions.jsx'
 import PrImages, { showImage } from './PrImages.jsx'
@@ -12,6 +13,7 @@ import { imageRefsFor } from '../lib/decision_refs.js'
 import { summarizeDecisions } from '../../webhook-server/decisions.js'
 import { parseHumanTask } from '../lib/human_task.js'
 import { resolveItem, lifeStages, historyRows, barText, barWho, pinnedSha } from '../lib/workshop_item.js'
+import { projectIdOf } from '../lib/projects.js'
 import { clock } from './WorkshopTab.jsx'
 
 // The Workshop's item page (#863, ADR 0080): one page per unit of work, a ticket and its PRs, whichever you came from.
@@ -137,7 +139,7 @@ function useRead(read, key, initial) {
 
 // target: { repo, pr?, ticket? } (workshop_item.itemTarget). feed: useWorkshopNow()'s value. `initial` seeds the reads
 // (the tests render one frame with no IPC).
-export default function WorkshopItem({ target, feed, onBack, onOpenItem, onOpenDocs, now = Date.now(), initial = {} }) {
+export default function WorkshopItem({ target, feed, onBack, onOpenItem, onOpenDocs, notice = null, onDismissNotice = null, now = Date.now(), initial = {} }) {
   const api = globalThis.window?.api
   const value = feed?.value ? { ...feed.value, events: feed.events } : null
   const item = useMemo(() => (value ? resolveItem(target, value, now) : null), [feed?.value, feed?.events, target.repo, target.pr, target.ticket])
@@ -148,6 +150,8 @@ export default function WorkshopItem({ target, feed, onBack, onOpenItem, onOpenD
   const ticketRead = useRead(ticketNumber != null && api?.boards?.ticket ? () => api.boards.ticket(repo, ticketNumber) : null, `${repo}#${ticketNumber}|${refresh}`, initial.ticket)
   const closedRead = useRead(item?.closedPr != null && api?.mr?.historyDetail ? () => api.mr.historyDetail(`https://github.com/${repo}/pull/${item.closedPr}`) : null, `${repo}#${item?.closedPr}`, initial.closedPr)
   const eventsRead = useRead(ticketNumber != null && api?.activity?.timeline ? () => api.activity.timeline(ticketNumber, repo) : null, `${repo}#${ticketNumber}|${refresh}`, initial.events)
+  const projectId = projectIdOf(repo)
+  const contextRead = useRead(ticketNumber != null && projectId && api?.mr?.ticketContext ? () => api.mr.ticketContext(ticketNumber, repo) : null, `${repo}#${ticketNumber}|${refresh}`, initial.context)
   const rel = useRelated(() => (initial.rel ? Promise.resolve(initial.rel) : target.pr != null ? api.relations.pr(repo, target.pr) : api.relations.ticket(repo, target.ticket)), [repo, target.pr, target.ticket])
   const [slot, setSlot] = useState(null)
   useScrollPlace('workshop-item', `${repo}|${target.pr ?? ''}|${target.ticket ?? ''}`)
@@ -215,6 +219,7 @@ export default function WorkshopItem({ target, feed, onBack, onOpenItem, onOpenD
             </span>
           ))}
           {ticketNumber == null && pr && <span>· no ticket</span>}
+          {projectId && <><span aria-hidden="true">·</span><button type="button" onClick={() => onOpenDocs?.(projectId)} className="text-sky-400 hover:text-sky-300">Docs →</button></>}
         </p>
       </div>
 
@@ -225,6 +230,10 @@ export default function WorkshopItem({ target, feed, onBack, onOpenItem, onOpenD
           Approve refused {new Date(pr.refusal.at).toLocaleString([], { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' })}: <strong>{pr.refusal.reason}</strong>
           {pr.refusal.message && <p className="mt-1 whitespace-pre-wrap font-mono text-xs text-red-300/80">{pr.refusal.message}</p>}
         </div>
+      )}
+
+      {pr && notice && notice.url === pr.url && (
+        <CorrectionNotice notice={notice} onDismiss={onDismissNotice} />
       )}
 
       {/* The current stage's content first: the pictures (I1), then the Decisions. */}
@@ -255,6 +264,12 @@ export default function WorkshopItem({ target, feed, onBack, onOpenItem, onOpenD
       {ticketNumber != null && (
         <TicketCard repo={repo} number={ticketNumber} detail={detail} error={ticketRead.error && !detail ? ticketRead.error : null}
           stripDecisions={!!ticketDecisions?.present} onLink={onLink} onSent={reload} />
+      )}
+
+      {projectId && contextRead.value && contextRead.value.parent && (
+        <Card title="Design & Architecture (parent PRD)" testid="item-parent-prd">
+          <LinkedIssue label="Parent" issue={contextRead.value.parent} repo={repo} onOpenTicket={(r, n) => onOpenItem?.({ repo: r, ticket: n })} onOpenDocs={onOpenDocs} />
+        </Card>
       )}
 
       {pr && <PrDetails pr={pr} onOpenTicket={(r, n) => onOpenItem?.({ repo: r, ticket: n })} onOpenDocs={onOpenDocs} />}

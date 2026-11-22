@@ -16,6 +16,7 @@ import WorkshopTab, { useWorkshopNow } from '@components/WorkshopTab.jsx'
 import { visibleTabs } from './lib/tabs.js'
 import { ScrollArea, useScrollArea } from '@components/ScrollPlaces.jsx'
 import { reviewDotStatus } from './lib/pr_fetch_status.js'
+import { createOpenPrKey } from './lib/review_link.js'
 
 
 const DOT_COLOR = {
@@ -55,10 +56,7 @@ export default function App() {
   }
   // The Workshop's item page (#863): every cross-tab link to a ticket or a PR opens its one page.
   const openItem = (repo, number, kind) => navigate('workshop', { item: { repo, [kind]: Number(number) } })
-  const openPrKey = (prKey) => {
-    const m = /^(.+)#(\d+)$/.exec(String(prKey || ''))
-    if (m) openItem(m[1], m[2], 'pr')
-  }
+  const openPrKey = createOpenPrKey(navigate)
   const [reviewStatus, setReviewStatus] = useState(null)
   const [healthOverall, setHealthOverall] = useState(null)
   const [support, setSupport] = useState({ role: null, badge: 0 })

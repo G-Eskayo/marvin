@@ -200,12 +200,40 @@ describe('the Now view (#862)', () => {
     expect(() => save(throwing, src)).not.toThrow()
   })
 
+
   it('860 px: rows stack below lg, so nothing needs horizontal scroll', () => {
     const h = render(feedOf(snapshot()))
     const row = h.match(/<button[^>]*data-testid="now-row"[^>]*class="([^"]*)"|<button[^>]*class="([^"]*)"[^>]*data-testid="now-row"/)
     const cls = (row[1] || row[2]).split(' ')
     expect(cls).toEqual(expect.arrayContaining(['flex-col', 'lg:flex-row', 'min-w-0', 'w-full']))
     expect(h).not.toMatch(/\bmin-w-\[\d|\bw-\[(?:9|1\d)\d\dpx\]/)
+  })
+})
+
+describe('draft PRs: bug 2 fix', () => {
+  it('a draft PR where MARVIN is building the ticket shows in marvin section with phase, not waiting', () => {
+    const p = pr(100, { isDraft: true, ticketRef: 50 })
+    const events = new Map([[`${REPO}#50`, [{ stage: 'executing', status: 'running', timestamp: ago(5) }]]])
+    const ctx = { live: new Map([[`${REPO}#50`, { machine: 'builder-1' }]]), events, now: NOW }
+    const step = prStep(p, ctx)
+    expect(step.owner).toBe('marvin')
+    expect(step.phase).toBe('build')
+    expect(step.section).toBe('marvin')
+  })
+  it('a stalled draft PR (no movement in 30 min) shows in stuck section', () => {
+    const p = pr(101, { isDraft: true, ticketRef: 51 })
+    const events = new Map([[`${REPO}#51`, [{ stage: 'executing', status: 'running', timestamp: ago(31) }]]])
+    const ctx = { live: new Map([[`${REPO}#51`, { machine: 'builder-1' }]]), events, now: NOW }
+    const step = prStep(p, ctx)
+    expect(step.section).toBe('stuck')
+    expect(step.owner).toBe('marvin')
+  })
+  it('a draft PR where the ticket is not live shows waiting', () => {
+    const p = pr(102, { isDraft: true, ticketRef: 52 })
+    const step = prStep(p, { live: null, events: new Map(), now: NOW })
+    expect(step.owner).toBe('owner')
+    expect(step.verb).toBe('Wait for draft to be ready')
+    expect(step.section).toBe('waiting')
   })
 })
 
@@ -243,6 +271,10 @@ describe('a PR\'s own blockers in the merge queue\'s order (seen on real data)',
   it('unbuilt answers beat failing checks', () => {
     const p = pr(71, { checks: { state: 'failing', failing: ['ci'], pending: [] }, mergeQueue: { reason: "your answers aren't built yet", unbuilt: true } })
     expect(prStep(p)).toMatchObject({ owner: 'marvin', verb: 'Building your answers' })
+  })
+  it('a draft PR that is not ready for review: the owner waits for it to be marked ready', () => {
+    const p = pr(80, { isDraft: true })
+    expect(prStep(p)).toMatchObject({ owner: 'owner', verb: 'Wait for draft to be ready', section: 'waiting' })
   })
   it('at 860 px the right label sits at the row\'s right edge (the middle column spans the row)', () => {
     const h = render(feedOf(snapshot()))
