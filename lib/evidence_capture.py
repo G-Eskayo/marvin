@@ -327,21 +327,59 @@ def _with_build_folder(prefix: str, capture):
         shutil.rmtree(derived, ignore_errors=True)
 
 
+def _kill_recording_process(proc: subprocess.Popen, timeout_s: float = 5) -> None:
+    """Send SIGINT to a recording process, wait a bit, then SIGKILL if it doesn't exit."""
+    try:
+        proc.send_signal(signal.SIGINT)
+    except (ProcessLookupError, OSError):
+        return
+    try:
+        proc.wait(timeout=timeout_s)
+    except subprocess.TimeoutExpired:
+        try:
+            proc.kill()
+            proc.wait()
+        except (ProcessLookupError, OSError):
+            pass
+
+
 def capture_ios_simulator(worktree_path: Path, cfg: dict, run=subprocess.run, sleep=None) -> list[dict]:
     """Builds an iOS app for the simulator (signing off), launches each configured scene (launch arguments, e.g. a
     debug-only demo mode) in light and dark, and screenshots it into the worktree, so the images ride along in the
-    pipeline's commit. Proven by hand on the Mac Mini on 2026-10-09. Returns [{path (relative), caption}]. Raises
-    ValueError for an incomplete config and RuntimeError (with the tool's own error line) when a step fails.
-    simctl cannot tap or rotate, so scenes are reached through launch arguments only."""
+    pipeline's commit. Proven by hand on the Mac Mini on 2026-10-09. Returns [{path (relative), caption}] or items with
+    {error} when a scene fails. Raises ValueError for an incomplete config and RuntimeError (with the tool's own error
+    line) when a step fails. simctl cannot tap or rotate, so scenes are reached through launch arguments only."""
     import time
+    import fcntl
     sleep = sleep or time.sleep
     required = ("project_dir", "project", "scheme", "simulator", "bundle_id")
     if not isinstance(cfg, dict) or any(not cfg.get(k) for k in required) or not cfg.get("scenes"):
         raise ValueError(f"evidence.dev.ios_simulator needs {', '.join(required)} and at least one scene")
+    if cfg.get("recordings"):
+        try:
+            run(["ffmpeg", "-version"], check=True, capture_output=True)
+        except (subprocess.CalledProcessError, FileNotFoundError):
+            raise ValueError("ffmpeg is required for recording capture and is not available")
     project_dir = Path(worktree_path) / cfg["project_dir"]
     for cmd in cfg.get("prepare", []):
         _run_checked(run, list(cmd), cwd=project_dir)
-    return _with_build_folder("ios-evidence-", lambda derived: _capture_ios(worktree_path, cfg, project_dir, derived, run, sleep))
+    (Path(worktree_path) / "docs" / "evidence").mkdir(parents=True, exist_ok=True)
+    if not (Path(worktree_path) / "docs" / "evidence").is_dir():
+        raise ValueError("evidence output directory not writable")
+    lock_path = Path("/tmp") / "simctl-booted.lock"
+    lock_file = open(lock_path, "w")
+    try:
+        try:
+            fcntl.flock(lock_file.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+        except (OSError, IOError) as e:
+            raise ValueError(f"simulator is busy recording/screenshotting; another task has the lock") from e
+        return _with_build_folder("ios-evidence-", lambda derived: _capture_ios(worktree_path, cfg, project_dir, derived, run, sleep))
+    finally:
+        try:
+            fcntl.flock(lock_file.fileno(), fcntl.LOCK_UN)
+        except (OSError, IOError):
+            pass
+        lock_file.close()
 
 
 def _capture_ios(worktree_path: Path, cfg: dict, project_dir: Path, derived: Path, run, sleep) -> list[dict]:
@@ -374,6 +412,65 @@ def _capture_ios(worktree_path: Path, cfg: dict, project_dir: Path, derived: Pat
             rel = out_dir / f"{scene['name']}-{appearance}.png"
             _run_checked(run, ["xcrun", "simctl", "io", "booted", "screenshot", str(Path(worktree_path) / rel)])
             shots.append({"path": str(rel), "caption": f"{scene['name']}, {appearance}"})
+    for recording_cfg in cfg.get("recordings", []):
+        if not isinstance(recording_cfg, dict) or not recording_cfg.get("scene") or recording_cfg.get("seconds") is None:
+            raise ValueError("evidence.dev.ios_simulator.recordings entries must have scene and seconds")
+        scene_name = recording_cfg["scene"]
+        if not _SCENE_NAME.match(str(scene_name)):
+            raise ValueError(f"recording scene name must be letters, digits, - or _: {scene_name!r}")
+        scene = next((s for s in cfg["scenes"] if s.get("name") == scene_name), None)
+        if not scene:
+            raise ValueError(f"recording scene '{scene_name}' not found in configured scenes")
+        seconds = recording_cfg["seconds"]
+        if not isinstance(seconds, (int, float)) or seconds <= 0:
+            raise ValueError(f"recording seconds must be a positive number, got {seconds!r}")
+        try:
+            _run_checked(run, ["xcrun", "simctl", "terminate", "booted", cfg["bundle_id"]], capture_output=True)
+        except Exception:  # noqa: BLE001
+            pass
+        rel_mov = out_dir / f"{scene_name}-recording.mov"
+        rel_mp4 = out_dir / f"{scene_name}-recording.mp4"
+        rel_gif = out_dir / f"{scene_name}-recording.gif"
+        mov_path = Path(worktree_path) / rel_mov
+        mp4_path = Path(worktree_path) / rel_mp4
+        gif_path = Path(worktree_path) / rel_gif
+        mov_path.unlink(missing_ok=True)
+        mp4_path.unlink(missing_ok=True)
+        gif_path.unlink(missing_ok=True)
+        _run_checked(run, ["xcrun", "simctl", "launch", "booted", cfg["bundle_id"], *scene.get("args", [])])
+        try:
+            proc = subprocess.Popen(["xcrun", "simctl", "io", "booted", "recordVideo", "--codec=h264", str(mov_path)],
+                                     stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+            sleep(seconds)
+            _kill_recording_process(proc)
+        except (OSError, RuntimeError) as e:
+            shots.append({"path": None, "error": f"recording for scene {scene_name} failed: {str(e)[:100]}"})
+            continue
+        sleep(1)
+        if not mov_path.exists():
+            shots.append({"path": None, "error": f"recording for scene {scene_name} did not produce a file"})
+            continue
+        try:
+            _run_checked(run, ["ffmpeg", "-y", "-i", str(mov_path), "-vf", "fps=25,scale=720:-2:flags=lanczos", "-pix_fmt", "yuv420p", str(mp4_path)], cwd=project_dir)
+            mp4_size = mp4_path.stat().st_size if mp4_path.exists() else 0
+            if mp4_size > 50 * 1024 * 1024:
+                shots.append({"path": None, "error": f"MP4 for {scene_name} is {mp4_size // 1024 // 1024} MB, over 50 MB cap"})
+                mp4_path.unlink(missing_ok=True)
+            else:
+                shots.append({"path": str(rel_mp4), "caption": f"{scene_name}, recording"})
+        except RuntimeError as e:
+            shots.append({"path": None, "error": f"MP4 conversion for {scene_name} failed: {str(e)[:100]}"})
+        try:
+            _run_checked(run, ["ffmpeg", "-y", "-i", str(mov_path), "-vf", "fps=20,split[a][b];[a]palettegen=max_colors=128:stats_mode=diff[p];[b][p]paletteuse=dither=bayer:bayer_scale=4:diff_mode=rectangle", str(gif_path)], cwd=project_dir)
+            gif_size = gif_path.stat().st_size if gif_path.exists() else 0
+            if gif_size > 8 * 1024 * 1024:
+                shots.append({"path": None, "error": f"GIF for {scene_name} is {gif_size // 1024 // 1024} MB, over 8 MB cap"})
+                gif_path.unlink(missing_ok=True)
+            else:
+                shots.append({"path": str(rel_gif), "caption": f"{scene_name}, recording (GIF)"})
+        except RuntimeError as e:
+            shots.append({"path": None, "error": f"GIF conversion for {scene_name} failed: {str(e)[:100]}"})
+        mov_path.unlink(missing_ok=True)
     return shots
 
 

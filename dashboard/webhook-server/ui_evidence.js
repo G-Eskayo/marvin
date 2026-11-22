@@ -54,18 +54,25 @@ export function uiFiles(files, extraPatterns = []) {
 
 export const touchesUi = (files, extraPatterns = []) => uiFiles(files, extraPatterns).length > 0
 
-// A markdown image with a target, or an HTML <img> with a src. A plain link to a .png is not an image on the page.
+const VIDEO_EXT = /\.(mp4|mov|m4v|webm|gif)(?:[?#][^\s]*)?(?:\s|$|[<\(\?#])/i
+
+// A markdown image with a target, an HTML <img> with src, a <video><source>, or a bare video-extension link.
+// A plain link to a .png is not an image on the page unless it's a video.
 export function hasImage(body) {
   if (typeof body !== 'string') return false
-  return /!\[[^\]]*\]\(\s*<?[^)\s>]+/.test(body) || /<img\b[^>]*\bsrc\s*=\s*["']?[^"'\s>]+/i.test(body)
+  return /!\[[^\]]*\]\(\s*<?[^)\s>]+/.test(body) || /<img\b[^>]*\bsrc\s*=\s*["']?[^"'\s>]+/i.test(body) ||
+         /<video\b[^>]*>.*?<source\b[^>]*\bsrc\s*=\s*["']?[^"'\s>]+/is.test(body) ||
+         /(?:^|\s|[>\)])(https?:\/\/[^\s<>\)]+\.(?:mp4|mov|m4v|webm|gif))(?:\s|$|[<\(\?#])/i.test(body)
 }
 
-// Image targets on the page: markdown images and HTML <img> sources, in order.
+// Image and video targets on the page: markdown images, HTML <img> sources, <video><source> tags, and bare
+// video extension links, in order.
 export function imageUrls(body) {
   if (typeof body !== 'string') return []
   const out = []
-  for (const m of body.matchAll(/!\[[^\]]*\]\(\s*<?([^)\s>]+)|<img\b[^>]*\bsrc\s*=\s*["']?([^"'\s>]+)/gi)) out.push(m[1] || m[2])
-  return out
+  for (const m of body.matchAll(/!\[[^\]]*\]\(\s*<?([^)\s>]+)|<img\b[^>]*\bsrc\s*=\s*["']?([^"'\s>]+)|<video\b[^>]*>.*?<source\b[^>]*\bsrc\s*=\s*["']?([^"'\s>]+)|<source\b[^>]*\bsrc\s*=\s*["']?([^"'\s>]+)/gis)) out.push(m[1] || m[2] || m[3] || m[4])
+  for (const m of body.matchAll(/(?:^|\s|[>\)])(https?:\/\/[^\s<>\)]+\.(?:mp4|mov|m4v|webm|gif))(?:\s|$|[<\(\?#])/gi)) out.push(m[1])
+  return [...new Set(out)]
 }
 
 // marvin #733 (2026-10-27): a link by branch name keeps showing the old image after a retake (GitHub and the dashboard

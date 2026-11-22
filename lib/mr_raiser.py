@@ -164,7 +164,13 @@ def _format_dev_evidence(dev_evidence: dict | None, repo: str | None = None, ref
     description = dev_evidence.get("description", "")
     shots = dev_evidence.get("screenshots")
     if shots:
-        images = "\n\n".join(f"![{s.get('caption', 'Screenshot')}]({_image_url(s['path'], repo, ref)})" for s in shots)
+        parts = []
+        for s in shots:
+            if s.get("error"):
+                parts.append(f"⚠ **{s.get('caption', 'Item')} missing:** {s['error']}")
+            elif s.get("path"):
+                parts.append(f"![{s.get('caption', 'Screenshot')}]({_image_url(s['path'], repo, ref)})")
+        images = "\n\n".join(parts)
         return f"{description}\n\n{images}".strip()
     screenshot = _image_url(dev_evidence.get("screenshot_path", ""), repo, ref)
     return f"![Screenshot]({screenshot})\n\n{description}".strip()

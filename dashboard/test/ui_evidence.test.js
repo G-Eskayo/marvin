@@ -78,6 +78,13 @@ describe('does the PR body show an image', () => {
     expect(hasImage("<IMG SRC='a.png'>")).toBe(true)
   })
 
+  it('counts video links: bare links and <video><source> tags', () => {
+    expect(hasImage('See https://example.com/recording.mp4 for details')).toBe(true)
+    expect(hasImage('Check https://example.com/screen.mov')).toBe(true)
+    expect(hasImage('Here: https://example.com/anim.gif')).toBe(true)
+    expect(hasImage('<video><source src="https://example.com/demo.webm"></video>')).toBe(true)
+  })
+
   it('does not count links, words or empty images', () => {
     expect(hasImage('see [the screenshot](x.png)')).toBe(false)
     expect(hasImage('https://example.com/shot.png')).toBe(false)

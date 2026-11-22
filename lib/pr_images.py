@@ -18,18 +18,31 @@ SHOTS_END = "<!-- /marvin:shots -->"
 
 _MD_IMAGE = re.compile(r"!\[[^\]]*\]\(\s*<?([^)\s>]+)")
 _HTML_IMAGE = re.compile(r"<img\b[^>]*\bsrc\s*=\s*[\"']?([^\"'\s>]+)", re.I)
+_HTML_VIDEO = re.compile(r"<video\b[^>]*>.*?<source\s+[^>]*\bsrc\s*=\s*[\"']?([^\"'\s>]+)", re.I | re.DOTALL)
+_VIDEO_SRC = re.compile(r"<source\s+[^>]*\bsrc\s*=\s*[\"']?([^\"'\s>]+)", re.I)
 _RAW = re.compile(r"^https://raw\.githubusercontent\.com/[^/]+/[^/]+/([^/]+)/")
 _FULL_SHA = re.compile(r"^[0-9a-f]{40}$")
-_IMAGE_FILE = re.compile(r"\.(png|jpe?g|gif|webp|mp4|mov)$", re.I)
+_IMAGE_FILE = re.compile(r"\.(png|jpe?g|webp)$", re.I)
+_VIDEO_FILE = re.compile(r"\.(mp4|mov|m4v|webm|gif)$", re.I)
 
 
 def image_urls(body) -> list[str]:
-    """Every image the PR description shows, in order: markdown images and HTML <img>. A plain link isn't one."""
+    """Every image and video the PR description shows, in order: markdown images, HTML <img>, <video><source>, and
+    bare links to video files. A plain link isn't one unless it's a video extension."""
     if not isinstance(body, str):
         return []
-    found = [(m.start(), m.group(1)) for m in _MD_IMAGE.finditer(body)]
-    found += [(m.start(), m.group(1)) for m in _HTML_IMAGE.finditer(body)]
-    return [url for _, url in sorted(found)]
+    found = {}
+    for m in _MD_IMAGE.finditer(body):
+        found[m.group(1)] = m.start()
+    for m in _HTML_IMAGE.finditer(body):
+        found[m.group(1)] = m.start()
+    for m in _HTML_VIDEO.finditer(body):
+        found[m.group(1)] = m.start()
+    for m in _VIDEO_SRC.finditer(body):
+        found[m.group(1)] = m.start()
+    for m in re.finditer(r"(?:^|\s|[>\)])(https?://[^\s<>\)]+\.(?:mp4|mov|m4v|webm|gif))(?:\s|$|[<\(\?#])", body, re.I):
+        found[m.group(1)] = m.start(1)
+    return [url for url, _ in sorted(found.items(), key=lambda x: x[1])]
 
 
 def link_problem(url: str) -> str | None:
@@ -80,7 +93,7 @@ def verdict(files, body, extra_patterns=(), changed_since=None) -> list[tuple[st
             since = changed_since(sha)
             if since is None:
                 return []
-            newer_ui = [f for f in ui_files(since, extra_patterns) if not _IMAGE_FILE.search(f)]
+            newer_ui = [f for f in ui_files(since, extra_patterns) if not (_IMAGE_FILE.search(f) or _VIDEO_FILE.search(f))]
             if not newer_ui:
                 return []  # the newest pinned commit already shows the current look
             later.append(newer_ui)

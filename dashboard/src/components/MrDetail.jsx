@@ -95,6 +95,18 @@ export function NeedsImages({ needsImages }) {
   )
 }
 
+export function MotionNeedsVideo({ motionNeedsVideo }) {
+  return (
+    <div className="rounded-lg border border-blue-700 bg-blue-950/40 p-4 text-sm text-blue-200">
+      <p className="font-semibold">Consider adding a video</p>
+      <p className="mt-1 text-blue-300/80">This PR changes animations or motion. Screenshots alone may not show how it works — consider adding a recording.</p>
+      {motionNeedsVideo.files?.length > 0 && (
+        <p className="mt-2 font-mono text-xs text-blue-400/70">{motionNeedsVideo.files.slice(0, 8).join(', ')}{motionNeedsVideo.files.length > 8 ? ` +${motionNeedsVideo.files.length - 8} more` : ''}</p>
+      )}
+    </div>
+  )
+}
+
 function DeviceSection({ device }) {
   if (!device) {
     return <p className="text-sm text-neutral-500">Not available.</p>
@@ -294,6 +306,7 @@ export default function MrDetail({ pr, onBack, onApproved, onDenied, onOpenDocs,
         </Section>
       )}
       {!pr.images?.length && pr.needsImages && <NeedsImages needsImages={pr.needsImages} />}
+      {pr.motionNeedsVideo && <MotionNeedsVideo motionNeedsVideo={pr.motionNeedsVideo} />}
 
       {/* What the PR asks the owner to choose: answered here, and Approve waits until the required ones are. */}
       {pr.decisions?.present && !pr.readOnly && (

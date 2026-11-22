@@ -36,6 +36,31 @@ scene (debug-only launch arguments) in light and dark, and commits the screensho
 marvin #374). The executor itself can't run or tap the app: it makes new screens reachable by a launch argument and
 says which behaviour is untested. A UI change with no image can't be approved (`NO_UI_EVIDENCE`).
 
+The profile can also include recordings of scenes that show motion or transitions:
+
+```json
+{
+  "evidence": {
+    "dev": {
+      "ios_simulator": {
+        "project_dir": "Apps/Spike",
+        "project": "CaptionSpike.xcodeproj",
+        "scheme": "CaptionSpike",
+        "simulator": "iPhone 17 Pro",
+        "bundle_id": "com.gileskayo.captions",
+        "scenes": [{"name": "main", "args": ["-ClarityDemoStatic"]}],
+        "recordings": [{"scene": "main", "seconds": 3}]
+      }
+    }
+  }
+}
+```
+
+Each entry in `recordings` has a `scene` name (must match a scene in the `scenes` list) and `seconds` (the duration to
+record, a positive number). The pipeline captures video from simulator launch, waits the specified duration, and
+converts to MP4 (libx264, 25 fps) and GIF (two-pass palette, 20 fps). **ffmpeg is required** and must be available on
+the build machine. If a recording fails, the item appears with an error in the PR instead of blocking the ticket.
+
 ## Ship checklist (what worked for Seal builds 3 to 6)
 
 1. Bump `CURRENT_PROJECT_VERSION` in `project.yml` **and** rerun the generate script, or the build number goes stale.

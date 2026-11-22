@@ -1,12 +1,14 @@
 import { MARVIN_REPO, prKey, canMergeFromDashboard, repoFromPrUrl } from './mr_repos.js'
 import { waitingOn, baseProblem } from './pr_order.js'
 import { ciState, checkRuns } from '../../webhook-server/ci_status.js'
-import { uiFiles, hasImage, unpinnedImages } from '../../webhook-server/ui_evidence.js'
+import { uiFiles, hasImage, unpinnedImages, imageUrls } from '../../webhook-server/ui_evidence.js'
 import { parsePrImages } from './pr_images.js'
 import { detectMockups } from './mockups.js'
 import { prSummary } from './pr_summary.js'
 import { summarizeDecisions, vagueness } from '../../webhook-server/decisions.js'
 import { mergeOrder, enrichForOrder, mainStateFrom } from '../../webhook-server/merge_order.js'
+
+const VIDEO_EXT = /\.(mp4|mov|m4v|webm|gif)(?:[?#][^\s]*)?$/i
 
 // Reads open PRs and identifies which follow the MR pipeline's evidence
 // schema (G-Eskayo/marvin#72, ADR 0024) -- one fixed, structured PR body
@@ -292,6 +294,19 @@ function needsImages(pr, uiPathsFor) {
   return unpinned.length ? { files, unpinned } : null
 }
 
+function motionNeedsVideo(pr) {
+  if (!Array.isArray(pr.files)) return null
+  const motionPatterns = ['animation', 'transition', 'transform', 'keyframes', 'motion']
+  const isMotionFile = (path) => {
+    const name = (path || '').toLowerCase()
+    return motionPatterns.some(pat => name.includes(pat)) || (name.endsWith('.css') && pr.body && /motion|animation|transition/.test(pr.body))
+  }
+  const motionFiles = pr.files.filter((f) => isMotionFile(f?.path)).map((f) => f?.path)
+  if (!motionFiles.length) return null
+  if (!imageUrls(pr.body || '').some((u) => VIDEO_EXT.test(u))) return { files: motionFiles }
+  return null
+}
+
 // marvin#231: each PR's line from the merge queue (queued and where, or what it waits for), worked out here by the same
 // mergeOrder() the merge server runs, from this list plus what only the merge server knows (GET /merge-queue: the queue
 // itself, answered-but-unbuilt Decisions, failed conflict repairs, main's health) and the boards' open tickets (main-red).
@@ -403,6 +418,7 @@ export async function listPipelinePrs(listOpenPrs, { canMerge = canMergeFromDash
       // MR Review's progress bar, drill-down and "Last checked" (marvin#555).
       checks: { ...ciState(pr.statusCheckRollup), runs: checkRuns(pr.statusCheckRollup), checkedAt: pr.checkedAt ?? pr.listedAt ?? null },
       needsImages: needsImages(pr, uiPathsFor),
+      motionNeedsVideo: motionNeedsVideo(pr),
       // Choices the PR asks the owner to make (its Decisions section), and whether it asks in prose with nowhere to
       // answer (2026-10-09): either one holds Approve until it is answered or restated.
       decisions: summarizeDecisions(pr.body || ''),

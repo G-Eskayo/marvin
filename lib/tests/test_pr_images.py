@@ -21,6 +21,14 @@ def test_finds_markdown_and_html_images_but_not_plain_links_to_pictures():
     assert pi.image_urls("") == [] and pi.image_urls(None) == []
 
 
+def test_finds_video_links_and_sources():
+    body = "Check https://example.com/recording.mp4 and https://example.com/screen.mov for demos.\n<video><source src=\"https://example.com/anim.webm\"></video>"
+    urls = pi.image_urls(body)
+    assert "https://example.com/recording.mp4" in urls
+    assert "https://example.com/screen.mov" in urls
+    assert "https://example.com/anim.webm" in urls
+
+
 def test_a_markdown_image_with_a_title_or_angle_brackets_still_counts():
     assert pi.image_urls(f'![x](<{RAW}> "title")') == [RAW]
 

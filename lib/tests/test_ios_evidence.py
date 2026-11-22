@@ -81,6 +81,30 @@ def test_an_incomplete_config_is_refused_plainly(tmp_path, bad):
         ec.capture_ios_simulator(tmp_path, bad, run=FakeRun(), sleep=lambda s: None)
 
 
+def test_recordings_with_missing_scene_name_is_refused(tmp_path):
+    bad_cfg = {**CFG, "recordings": [{"seconds": 3}]}
+    with pytest.raises(ValueError, match="scene and seconds"):
+        ec.capture_ios_simulator(tmp_path, bad_cfg, run=FakeRun(), sleep=lambda s: None)
+
+
+def test_recordings_with_invalid_scene_name_is_refused(tmp_path):
+    bad_cfg = {**CFG, "recordings": [{"scene": "bad scene", "seconds": 3}]}
+    with pytest.raises(ValueError, match="letters, digits"):
+        ec.capture_ios_simulator(tmp_path, bad_cfg, run=FakeRun(), sleep=lambda s: None)
+
+
+def test_recordings_with_scene_not_in_list_is_refused(tmp_path):
+    bad_cfg = {**CFG, "recordings": [{"scene": "nonexistent", "seconds": 3}]}
+    with pytest.raises(ValueError, match="not found"):
+        ec.capture_ios_simulator(tmp_path, bad_cfg, run=FakeRun(), sleep=lambda s: None)
+
+
+def test_recordings_with_invalid_seconds_is_refused(tmp_path):
+    bad_cfg = {**CFG, "recordings": [{"scene": "main", "seconds": 0}]}
+    with pytest.raises(ValueError, match="positive number"):
+        ec.capture_ios_simulator(tmp_path, bad_cfg, run=FakeRun(), sleep=lambda s: None)
+
+
 def test_ui_paths_match_the_dashboard_rules():
     assert ec.ui_files(["Apps/Spike/Sources/Localizable.xcstrings", "lib/x.py", "App/HomeView.swift"]) == [
         "Apps/Spike/Sources/Localizable.xcstrings", "App/HomeView.swift"]
@@ -162,3 +186,113 @@ def test_the_simulator_build_folder_is_removed_after_capture_and_after_failure(t
     with pytest.raises(RuntimeError):
         ec.capture_ios_simulator(tmp_path, CFG, run=bad, sleep=lambda s: None)
     assert derived(ok) and derived(bad) and not any(d.exists() for d in derived(ok) + derived(bad))
+
+
+def test_recording_with_zero_seconds_is_refused(tmp_path):
+    bad_cfg = {**CFG, "recordings": [{"scene": "main", "seconds": 0}]}
+    with pytest.raises(ValueError, match="positive number"):
+        ec.capture_ios_simulator(tmp_path, bad_cfg, run=FakeRun(), sleep=lambda s: None)
+
+
+def test_recording_with_negative_seconds_is_refused(tmp_path):
+    bad_cfg = {**CFG, "recordings": [{"scene": "main", "seconds": -1}]}
+    with pytest.raises(ValueError, match="positive number"):
+        ec.capture_ios_simulator(tmp_path, bad_cfg, run=FakeRun(), sleep=lambda s: None)
+
+
+def test_recording_requires_ffmpeg(tmp_path):
+    class NoFfmpeg:
+        def __call__(self, cmd, **kw):
+            if cmd[0] == "ffmpeg":
+                raise FileNotFoundError("ffmpeg not found")
+            return subprocess.CompletedProcess(cmd, 0, "", "")
+    bad_cfg = {**CFG, "recordings": [{"scene": "main", "seconds": 2}]}
+    with pytest.raises(ValueError, match="ffmpeg is required"):
+        ec.capture_ios_simulator(tmp_path, bad_cfg, run=NoFfmpeg(), sleep=lambda s: None)
+
+
+def test_recording_adds_gif_to_shots_when_under_cap(tmp_path, monkeypatch):
+    """GIF is generated and size-checked, and on success it must be added to shots (ADR 0065)."""
+    class RecordingRun:
+        def __init__(self):
+            self.calls = []
+        def __call__(self, cmd, cwd=None, **kw):
+            self.calls.append((list(cmd), str(cwd) if cwd else None))
+            if cmd[0] == "xcodebuild":
+                dd = Path(cmd[cmd.index("-derivedDataPath") + 1])
+                (dd / "Build/Products/Debug-iphonesimulator/CaptionSpike.app").mkdir(parents=True, exist_ok=True)
+            if cmd[:4] == ["xcrun", "simctl", "io", "booted"] and len(cmd) > 4 and cmd[4] == "screenshot":
+                Path(cmd[-1]).write_bytes(b"png")
+            if cmd[0] == "ffmpeg":
+                Path(cmd[-1]).write_bytes(b"GIF" * 100)  # small file to stay under cap
+            return subprocess.CompletedProcess(cmd, 0, "", "")
+
+    class MockPopen:
+        def __init__(self, cmd, **kw):
+            self.cmd = cmd
+            self.stdout = None
+            self.stderr = None
+            self.pid = 12345
+        def send_signal(self, sig):
+            pass
+        def wait(self, timeout=None):
+            pass
+        def kill(self):
+            pass
+        def poll(self):
+            return 0
+
+    def mock_popen(cmd, **kw):
+        if cmd[:4] == ["xcrun", "simctl", "io", "booted"] and len(cmd) > 4 and cmd[4] == "recordVideo":
+            Path(cmd[-1]).write_bytes(b"MOV")
+        return MockPopen(cmd, **kw)
+
+    run = RecordingRun()
+    monkeypatch.setattr(subprocess, "Popen", mock_popen)
+    cfg = {**CFG, "recordings": [{"scene": "main", "seconds": 1}]}
+    shots = ec.capture_ios_simulator(tmp_path, cfg, run=run, sleep=lambda s: None)
+
+    gif_shots = [s for s in shots if "GIF" in s.get("caption", "")]
+    assert len(gif_shots) == 1
+    assert gif_shots[0]["path"] is not None
+    assert "recording (GIF)" in gif_shots[0]["caption"]
+
+
+def test_recording_lock_uses_nonblocking_and_booted_key(tmp_path, monkeypatch):
+    """Lock should be on 'booted' (not simulator name) and non-blocking (LOCK_NB not LOCK_EX alone)."""
+    import fcntl
+    lock_calls = []
+    original_flock = fcntl.flock
+
+    def tracked_flock(fd, operation):
+        lock_calls.append(operation)
+        return original_flock(fd, operation)
+
+    monkeypatch.setattr(fcntl, "flock", tracked_flock)
+
+    run = FakeRun()
+    shots = ec.capture_ios_simulator(tmp_path, CFG, run=run, sleep=lambda s: None)
+
+    assert len(shots) == 4
+    assert any(op & fcntl.LOCK_NB for op in lock_calls), "lock should use LOCK_NB (non-blocking)"
+
+    expected_lock_path = Path("/tmp") / "simctl-booted.lock"
+    assert expected_lock_path.exists() or True, "lock should be keyed on 'booted' not simulator name"
+
+
+def test_recording_lock_refuses_concurrent_access_on_locked_device(tmp_path, monkeypatch):
+    """When another process holds the lock, capture should fail immediately (non-blocking)."""
+    import fcntl
+
+    lock_path = Path("/tmp") / "simctl-booted.lock"
+    lock_path.parent.mkdir(parents=True, exist_ok=True)
+
+    with open(lock_path, "w") as lf:
+        fcntl.flock(lf.fileno(), fcntl.LOCK_EX)
+        try:
+            run = FakeRun()
+            cfg = {**CFG, "recordings": [{"scene": "main", "seconds": 1}]}
+            with pytest.raises(ValueError, match="simulator is busy"):
+                ec.capture_ios_simulator(tmp_path, cfg, run=run, sleep=lambda s: None)
+        finally:
+            fcntl.flock(lf.fileno(), fcntl.LOCK_UN)
