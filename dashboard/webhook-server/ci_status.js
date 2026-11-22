@@ -119,3 +119,65 @@ export async function postGateStatus(prUrl, exec, names = []) {
     return false
   }
 }
+
+// Default poll and timeout durations for waitForRequiredChecks. Injected via opts for testing.
+export const CHECKS_POLL_MS = 10_000
+export const CHECKS_WAIT_TIMEOUT_MS = 20 * 60 * 1000
+
+// Wait for required checks (not gate checks) to pass on a PR. Used when the gate needs them.
+// Polls GitHub's status repeatedly and returns once all pass or time runs out.
+// opts.names: check names to wait for (required checks the PR has). If the PR has a check not in this list, it passes when the required ones pass.
+// opts.timeoutMs: how long to wait before giving up. Default CHECKS_WAIT_TIMEOUT_MS.
+// opts.pollMs: how long between checks. Default CHECKS_POLL_MS.
+// Throws MergeFailure with CI_TIMEOUT if time expires, or CI_SUPERSEDED if the PR is superseded mid-wait.
+export async function waitForRequiredChecks(prUrl, exec, names = [], { timeoutMs = CHECKS_WAIT_TIMEOUT_MS, pollMs = CHECKS_POLL_MS } = {}) {
+  if (!names.length) return
+  const start = Date.now()
+  let priorHeadRefOid = null
+  for (;;) {
+    let rollup, headRefOid
+    try {
+      const { stdout } = await exec('gh', ['pr', 'view', prUrl, '--json', 'statusCheckRollup,headRefOid,state'])
+      const json = JSON.parse(stdout)
+      if (json.state && json.state !== 'OPEN') {
+        throw new MergeFailure(refusal('CI_SUPERSEDED', 'gate', 'The PR is no longer open (closed, merged, or draft). It was superseded.',
+          'The PR no longer exists; nothing to merge.', 'escalate'))
+      }
+      headRefOid = json.headRefOid
+      if (priorHeadRefOid !== null && headRefOid !== priorHeadRefOid) {
+        throw new MergeFailure(refusal('CI_SUPERSEDED', 'gate', 'The PR was pushed while the check watched it. It was superseded.',
+          'The commit changed; run the merge gate again to test the new code.', 'escalate'))
+      }
+      priorHeadRefOid = headRefOid
+      rollup = json.statusCheckRollup
+    } catch (e) {
+      if (e instanceof MergeFailure) throw e
+      const elapsed = Date.now() - start
+      if (elapsed > timeoutMs) {
+        throw new MergeFailure(refusal('CI_TIMEOUT', 'gate', `GitHub's checks were still running after ${Math.round(elapsed / 60000)} min`,
+          'The PR was not sent back. Approve again after checking the status on GitHub.', 'escalate'))
+      }
+      await new Promise((resolve) => setTimeout(resolve, pollMs))
+      continue
+    }
+    // Track which required names have appeared; names that never appear are treated as pending.
+    const seenNames = new Set((rollup || []).map((c) => c.name || c.context))
+    const missingNames = names.filter((n) => !seenNames.has(n))
+    const pending = [...(missingNames.length ? missingNames : [])]
+    // For checks that have appeared, determine their state.
+    const namedState = ciState(rollup, { ignore: (rollup || []).map((c) => c.name || c.context).filter((n) => !names.includes(n)) })
+    if (namedState.state === 'failing') {
+      throw new MergeFailure(refusal('CI_FAILED', 'gate', `GitHub's checks failed on this PR: ${namedState.failing.join(', ')}`,
+        'Fix what the failing checks report. The PR is sent back for rework.', 'reengage'))
+    }
+    // All required checks have appeared and are passing.
+    if (namedState.state === 'passing' && !missingNames.length) return
+    const elapsed = Date.now() - start
+    if (elapsed > timeoutMs) {
+      const stillPending = [...new Set([...pending, ...namedState.pending])].sort()
+      throw new MergeFailure(refusal('CI_TIMEOUT', 'gate', `GitHub's checks were still running after ${Math.round(elapsed / 60000)} min: ${stillPending.join(', ')}`,
+        'The PR was not sent back. Approve again after checking the status on GitHub.', 'escalate'))
+    }
+    await new Promise((resolve) => setTimeout(resolve, pollMs))
+  }
+}

@@ -14,7 +14,7 @@ import { sendFeedback } from './deny.js'
 import { parseTicketRef } from '../electron/main/mr_review.js'
 import { repoFromPrUrl, MARVIN_REPO } from '../electron/main/mr_repos.js'
 import { recordStage } from './ticket_stages.js'
-import { assertChecksGreen, gateCheckNames, postGateStatus } from './ci_status.js'
+import { assertChecksGreen, gateCheckNames, postGateStatus, waitForRequiredChecks } from './ci_status.js'
 import { checkOpenPrs } from './post_merge_rebase.js'
 import { applyVersionBump } from './changelog.js'
 import { createCountParser, gateExtension, machineLoad } from './merge_progress.js'
@@ -712,6 +712,17 @@ export function mergesAhead(prUrl) {
   return queueDepth.get(repoFromPrUrl(prUrl) || '(unknown)') || 0
 }
 
+// Shared handler for CI_FAILED: the PR's own CI failed before the gate runs. Send it back with the check names.
+// Best effort: failures never block the merge itself, only early CI from pre-gate.
+async function reengageCiFailed(e, { ticketNumber, prUrl, stage: stageFn, recordFailureFn, reengage, repo, exec }) {
+  if (!(e instanceof MergeFailure && e.payload.code === 'CI_FAILED' && ticketNumber !== null)) return false
+  stageFn('gate', 'failed', `CI_FAILED: ${e.payload.message}`)
+  recordFailureFn({ ticket: ticketNumber, code: 'CI_FAILED', message: e.payload.message, project: repo, prUrl, stage: 'gate' })
+  const comment = `**CI: failing checks**\n\n${e.payload.message}\n\nFix what these report, then the ticket will be rebuilt.`
+  await reengage({ prUrl, ticketNumber, reasons: ['Regression/quality'], comment }, exec)
+  return { merged: false, reengaged: true, code: 'CI_FAILED', stage: 'gate', action: 'reengage', reason: comment }
+}
+
 export function mergePr(prUrl, ...rest) {
   return inRepoQueue(repoFromPrUrl(prUrl) || '(unknown)', () => mergePrUnqueued(prUrl, ...rest))
 }
@@ -857,7 +868,7 @@ async function mergePrUnqueued(
   deps = {}
 ) {
   const { sleep, recordFailureFn = recordFailure, gateContext = defaultGateContext, baselineFails = null, gateTimeoutMs = GATE_TIMEOUT_MS, rebaseOpen = checkOpenPrs, uiEvidence = assertUiEvidence, decisions = assertDecisions, ownerDecisionsBuilt = assertOwnerDecisionsBuilt,
-    progress: report = noProgress, loadNow = () => machineLoad(), now = Date.now, diskFirstAid = null, memoryCheck = null } = deps
+    progress: report = noProgress, loadNow = () => machineLoad(), now = Date.now, diskFirstAid = null, memoryCheck = null, waitForChecks = waitForRequiredChecks } = deps
   if (typeof prUrl !== 'string' || !prUrl.startsWith('https://github.com/')) {
     throw new MergeFailure(classifyFailure({ stage: 'request', error: new Error(`Not a GitHub PR URL: ${prUrl}`) }))
   }
@@ -908,13 +919,8 @@ async function mergePrUnqueued(
     // marvin#1099: GitHub's copy of a check the gate runs itself doesn't hold the merge; the gate runs it below.
     await assertChecksGreen(prUrl, exec, { ignore: gateCheckNames(ctx ? ctx.clone : REPO_PATH) })
   } catch (e) {
-    if (e instanceof MergeFailure && e.payload.code === 'CI_FAILED' && ticketNumber !== null) {
-      stage('gate', 'failed', `CI_FAILED: ${e.payload.message}`)
-      recordFailureFn({ ticket: ticketNumber, code: 'CI_FAILED', message: e.payload.message, project: repo, prUrl, stage: 'gate' })
-      const comment = `**CI: failing checks**\n\n${e.payload.message}\n\nFix what these report, then the ticket will be rebuilt.`
-      await reengage({ prUrl, ticketNumber, reasons: ['Regression/quality'], comment }, exec)
-      return { merged: false, reengaged: true, code: 'CI_FAILED', stage: 'gate', action: 'reengage', reason: comment }
-    }
+    const result = await reengageCiFailed(e, { ticketNumber, prUrl, stage, recordFailureFn, reengage, repo, exec })
+    if (result) return result
     throw e
   }
 
@@ -1011,6 +1017,13 @@ async function mergePrUnqueued(
       stage('gate', 'passed', 'rebased and retested clean')
     }
     await postGateStatus(prUrl, exec, gateCheckNames(ctx ? ctx.clone : REPO_PATH))   // marvin#1099: the gate is the check
+    try {
+      await waitForChecks(prUrl, exec, gateCheckNames(ctx ? ctx.clone : REPO_PATH))
+    } catch (e) {
+      const result = await reengageCiFailed(e, { ticketNumber, prUrl, stage, recordFailureFn, reengage, repo, exec })
+      if (result) return result
+      throw e
+    }
   }
 
   // No code review here: it runs in the build loop before the PR opens (sandbox_orchestration.execute_ticket).

@@ -1144,6 +1144,32 @@ describe('merging waits for the repo\'s own CI', () => {
   })
 })
 
+describe('the gate waits for required checks after passing (marvin #447)', () => {
+  const PR = 'https://github.com/G-Eskayo/marvin/pull/1093'
+  const withGate = (exec, checks = vi.fn()) =>
+    mergePr(PR, exec, noopRebuild, noopRedispatch, vi.fn().mockResolvedValue({ gate: true, behind: true, shared: [], headRefName: 'main', body: 'Closes G-Eskayo/marvin#447' }),
+      vi.fn().mockResolvedValue({ ok: true }), vi.fn(), vi.fn().mockResolvedValue(undefined), { waitForChecks: checks })
+
+  it('5. calls waitForChecks after the gate passes, before merging', async () => {
+    const checks = vi.fn().mockResolvedValue(undefined)
+    const exec = execWithCodeReviewDefaults(() => ({ stdout: JSON.stringify({ headRefOid: 'a'.repeat(40), state: 'OPEN', statusCheckRollup: [] }), stderr: '' }))
+    const result = await withGate(exec, checks)
+    expect(result.merged).toBe(true)
+    expect(checks).toHaveBeenCalledWith(PR, exec, expect.any(Array))
+  })
+
+  it('8. CI_FAILED during the wait sends the PR back (like pre-gate CI_FAILED)', async () => {
+    const checks = vi.fn().mockRejectedValue(new MergeFailure(refusal('CI_FAILED', 'gate', 'check failed', 'fix it', 'reengage')))
+    const reengage = vi.fn().mockResolvedValue(undefined)
+    const exec = execWithCodeReviewDefaults(() => ({ stdout: JSON.stringify({ headRefOid: 'a'.repeat(40), state: 'OPEN', statusCheckRollup: [] }), stderr: '' }))
+    const result = await mergePr(PR, exec, noopRebuild, noopRedispatch,
+      vi.fn().mockResolvedValue({ gate: true, behind: true, shared: [], headRefName: 'main', body: 'Closes G-Eskayo/marvin#447' }),
+      vi.fn().mockResolvedValue({ ok: true }), reengage, vi.fn().mockResolvedValue(undefined), { waitForChecks: checks })
+    expect(result).toMatchObject({ merged: false, reengaged: true, code: 'CI_FAILED' })
+    expect(reengage).toHaveBeenCalledWith(expect.objectContaining({ prUrl: PR, comment: expect.stringContaining('CI: failing checks') }), exec)
+  })
+})
+
 describe('a PR whose ticket was sent back for rework cannot be merged (marvin #129)', () => {
   const PR = 'https://github.com/G-Eskayo/clarity-captions/pull/49'
   // gh is asked twice: the PR's body (for its ticket), then that ticket's labels.

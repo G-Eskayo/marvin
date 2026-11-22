@@ -1,5 +1,5 @@
 import { describe, it, expect, vi } from 'vitest'
-import { ciState, assertChecksGreen } from '../webhook-server/ci_status.js'
+import { ciState, assertChecksGreen, waitForRequiredChecks } from '../webhook-server/ci_status.js'
 import { MergeFailure } from '../webhook-server/failure.js'
 
 const run = (name, status, conclusion) => ({ __typename: 'CheckRun', name, status, conclusion })
@@ -130,5 +130,78 @@ describe('gateCheckNames and postGateStatus (marvin#1099)', async () => {
     expect(await postGateStatus('https://github.com/o/r/pull/1', async () => { throw new Error('403') })).toBe(false)
     expect(await postGateStatus('https://github.com/o/r/pull/1', async () => ({ stdout: 'not-a-sha' }))).toBe(false)
     expect(await postGateStatus('not a url', async () => ({ stdout: '' }))).toBe(false)
+  })
+})
+
+describe('waitForRequiredChecks', () => {
+  const PR = 'https://github.com/G-Eskayo/clarity-captions/pull/57'
+  const sleep = (ms) => new Promise((r) => setTimeout(r, ms))
+
+  it('1. returns immediately if no names given', async () => {
+    const exec = vi.fn()
+    await waitForRequiredChecks(PR, exec, [], { timeoutMs: 1000, pollMs: 50 })
+    expect(exec).not.toHaveBeenCalled()
+  })
+
+  it('2. returns when all named checks pass', async () => {
+    const exec = vi.fn()
+      .mockResolvedValueOnce({ stdout: JSON.stringify({ statusCheckRollup: [run('build', 'IN_PROGRESS', null)], headRefOid: 'a'.repeat(40), state: 'OPEN' }) })
+      .mockResolvedValueOnce({ stdout: JSON.stringify({ statusCheckRollup: [run('build', 'COMPLETED', 'SUCCESS')], headRefOid: 'a'.repeat(40), state: 'OPEN' }) })
+    await waitForRequiredChecks(PR, exec, ['build'], { timeoutMs: 1000, pollMs: 10 })
+    expect(exec).toHaveBeenCalledTimes(2)
+  })
+
+  it('3. throws CI_TIMEOUT when a required name never appears (race: check not yet registered)', async () => {
+    const exec = vi.fn().mockResolvedValue({ stdout: JSON.stringify({ statusCheckRollup: [run('other', 'IN_PROGRESS', null)], headRefOid: 'a'.repeat(40), state: 'OPEN' }) })
+    await expect(waitForRequiredChecks(PR, exec, ['missing-check'], { timeoutMs: 50, pollMs: 20 }))
+      .rejects.toMatchObject({ payload: { code: 'CI_TIMEOUT', action: 'escalate', message: expect.stringContaining('missing-check') } })
+  })
+
+  it('3b. throws CI_FAILED when a named check fails', async () => {
+    const exec = vi.fn().mockResolvedValue({ stdout: JSON.stringify({ statusCheckRollup: [run('build', 'COMPLETED', 'FAILURE')], headRefOid: 'a'.repeat(40), state: 'OPEN' }) })
+    await expect(waitForRequiredChecks(PR, exec, ['build'], { timeoutMs: 1000, pollMs: 10 }))
+      .rejects.toMatchObject({ payload: { code: 'CI_FAILED', action: 'reengage', message: expect.stringContaining('build') } })
+  })
+
+  it('4. throws CI_TIMEOUT when time expires while checks are pending', async () => {
+    const exec = vi.fn().mockResolvedValue({ stdout: JSON.stringify({ statusCheckRollup: [run('slow', 'IN_PROGRESS', null)], headRefOid: 'a'.repeat(40), state: 'OPEN' }) })
+    await expect(waitForRequiredChecks(PR, exec, ['slow'], { timeoutMs: 50, pollMs: 20 }))
+      .rejects.toMatchObject({ payload: { code: 'CI_TIMEOUT', action: 'escalate' } })
+  })
+
+  it('5. throws CI_SUPERSEDED when the PR is pushed mid-wait', async () => {
+    const exec = vi.fn()
+      .mockResolvedValueOnce({ stdout: JSON.stringify({ statusCheckRollup: [run('build', 'IN_PROGRESS', null)], headRefOid: 'a'.repeat(40), state: 'OPEN' }) })
+      .mockResolvedValueOnce({ stdout: JSON.stringify({ statusCheckRollup: [run('build', 'IN_PROGRESS', null)], headRefOid: 'b'.repeat(40), state: 'OPEN' }) })
+    await expect(waitForRequiredChecks(PR, exec, ['build'], { timeoutMs: 1000, pollMs: 10 }))
+      .rejects.toMatchObject({ payload: { code: 'CI_SUPERSEDED', action: 'escalate', message: expect.stringContaining('pushed') } })
+  })
+
+  it('5b. throws CI_SUPERSEDED when the PR is closed or merged mid-wait', async () => {
+    const exec = vi.fn()
+      .mockResolvedValueOnce({ stdout: JSON.stringify({ statusCheckRollup: [run('build', 'IN_PROGRESS', null)], headRefOid: 'a'.repeat(40), state: 'OPEN' }) })
+      .mockResolvedValueOnce({ stdout: JSON.stringify({ statusCheckRollup: [run('build', 'IN_PROGRESS', null)], headRefOid: 'a'.repeat(40), state: 'MERGED' }) })
+    await expect(waitForRequiredChecks(PR, exec, ['build'], { timeoutMs: 1000, pollMs: 10 }))
+      .rejects.toMatchObject({ payload: { code: 'CI_SUPERSEDED', action: 'escalate', message: expect.stringContaining('no longer open') } })
+  })
+
+  it('6. does not block on a metadata hiccup from gh', async () => {
+    const exec = vi.fn()
+      .mockRejectedValueOnce(new Error('network error'))
+      .mockResolvedValueOnce({ stdout: JSON.stringify({ statusCheckRollup: [run('build', 'COMPLETED', 'SUCCESS')], headRefOid: 'a'.repeat(40), state: 'OPEN' }) })
+    await waitForRequiredChecks(PR, exec, ['build'], { timeoutMs: 1000, pollMs: 10 })
+    expect(exec).toHaveBeenCalledTimes(2)
+  })
+
+  it('7. ignores non-required checks when deciding if the PR is ready', async () => {
+    const exec = vi.fn().mockResolvedValue({
+      stdout: JSON.stringify({
+        statusCheckRollup: [run('required', 'COMPLETED', 'SUCCESS'), run('optional', 'IN_PROGRESS', null)],
+        headRefOid: 'a'.repeat(40),
+        state: 'OPEN'
+      })
+    })
+    await waitForRequiredChecks(PR, exec, ['required'], { timeoutMs: 1000, pollMs: 10 })
+    expect(exec).toHaveBeenCalledOnce()
   })
 })

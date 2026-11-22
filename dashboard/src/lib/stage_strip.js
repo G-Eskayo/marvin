@@ -72,6 +72,8 @@ export const REMEDIATION_BY_CODE = {
   WRONG_BASE: 'The PR is not based on main. Rebase onto main before approving.',
   SENT_BACK: 'The PR was sent back to its ticket for rework.',
   CI_PENDING: 'CI checks are still running. Approve again once they pass.',
+  CI_TIMEOUT: 'CI checks were still running after the merge gate finished. Approve again after checking the status on GitHub.',
+  CI_SUPERSEDED: 'The PR was superseded while waiting for CI. The PR is no longer mergeable.',
   NO_MERGE_PROFILE: 'This project has no merge profile configured. Add one in the project settings.',
   MERGE_REFUSED: 'The merge was refused. See the ticket for details.',
   CI_FAILED: 'CI failed. Fix the failing tests and approve again.',

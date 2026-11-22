@@ -45,6 +45,7 @@ export const ALLOWLIST = {
   'webhook-server/index.js': { interval: [3, `starts the one gh_watch change-detector tick, (marvin#231) ${CHECK_WATCH} for queued PRs only: nothing queued, no requests, and (marvin#954, primary only) ${CHECK_WATCH} over the box feed's pending PRs`] },
   'webhook-server/failure.js': { 'timeout-loop': [1, 'withRetry: bounded exponential backoff on a failed call, not a poll for change'] },
   'webhook-server/merge.js': { 'timeout-loop': [1, 'mergeableNow: GitHub computes mergeable lazily with no event; bounded 6 x 5 s'] },
+  'webhook-server/ci_status.js': { 'timeout-loop': [2, 'waitForRequiredChecks: waits for GitHub checks after gate passes (bounded by CHECKS_WAIT_TIMEOUT_MS)'] },
   'mobile-backend/dashboard_gh_api.js': { interval: [1, `starts ${CHECK_WATCH}`] },
   'mobile-backend/pending_actions.js': { 'timeout-loop': [1, 'waits on its own local store for an approval, bounded by the hook timeout; no network'] }
 }
