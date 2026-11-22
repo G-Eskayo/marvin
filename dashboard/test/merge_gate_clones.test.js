@@ -72,7 +72,7 @@ describe('the gate removes its clone whatever happens to the merge', () => {
     let seen = null
     const r = await rebaseAndRetest('feature', realExec, repo, async (dir) => { seen = dir; expect(clonesLeft()).toHaveLength(1) },
       'main', null, null, undefined, roomy)
-    expect(r).toEqual({ ok: true })
+    expect(r).toEqual(expect.objectContaining({ ok: true }))
     expect(seen.startsWith(scratch)).toBe(true)
     expect(clonesLeft()).toEqual([])
     expect(gateClones.live.size).toBe(0)
@@ -175,7 +175,7 @@ describe('startup sweep of clones a dead process left behind', () => {
       during = await sweepGateClones({ maxAgeMs: 0, isAlive: dead, repoPath: repo })   // everything "old"
       expect(existsSync(dir)).toBe(true)
     }, 'main', null, null, undefined, roomy)
-    expect(r).toEqual({ ok: true })
+    expect(r).toEqual(expect.objectContaining({ ok: true }))
     expect(during.removed).toEqual([])
     expect(clonesLeft()).toEqual([])
   })

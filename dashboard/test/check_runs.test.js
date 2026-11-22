@@ -27,11 +27,12 @@ describe('checkRuns: one row per check, in GitHub order', () => {
     ])
   })
 
-  it('every finished conclusion counts as done, failed or not', () => {
+  it('every finished conclusion counts as done; infrastructure issues show as neutral (not code failures)', () => {
     const states = ['SUCCESS', 'FAILURE', 'TIMED_OUT', 'CANCELLED', 'ACTION_REQUIRED', 'STARTUP_FAILURE', 'SKIPPED', 'NEUTRAL', 'STALE', null]
       .map((c) => checkRuns([run('x', 'COMPLETED', c)])[0])
     expect(states.every((r) => r.done)).toBe(true)
-    expect(states.map((r) => r.status)).toEqual(['passed', 'failed', 'failed', 'failed', 'failed', 'failed', 'skipped', 'neutral', 'neutral', 'neutral'])
+    // TIMED_OUT and CANCELLED are infrastructure issues, not code failures, so they show as neutral not failed
+    expect(states.map((r) => r.status)).toEqual(['passed', 'failed', 'neutral', 'neutral', 'failed', 'failed', 'skipped', 'neutral', 'neutral', 'neutral'])
   })
 
   it('waiting, pending, requested and unknown statuses are queued, not running', () => {

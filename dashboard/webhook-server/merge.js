@@ -595,7 +595,14 @@ export async function rebaseAndRetest(headRef, exec = execFileAsync, repoPath = 
       classify: (e) => classifyFailure({ stage: 'gate', error: e }),
       ...(sleep ? { sleep } : {})
     })
-    return { ok: true, ...(flaky ? { flaky } : {}), ...(merged ? { merged: true } : {}) }
+    // Capture the pushed OID for waitForRequiredChecks to use as the target, so it doesn't rely on
+    // potentially stale gh pr view responses. Best effort: a failed read leaves it null.
+    let headOid = null
+    try {
+      const { stdout } = await exec('git', ['rev-parse', 'HEAD'], { cwd: scratchDir })
+      headOid = String(stdout).trim() || null
+    } catch {}
+    return { ok: true, ...(flaky ? { flaky } : {}), ...(merged ? { merged: true } : {}), ...(headOid ? { headOid } : {}) }
   } finally {
     await dropGateClone(scratchDir, exec, repoPath)
   }
@@ -857,7 +864,7 @@ async function mergePrUnqueued(
   deps = {}
 ) {
   const { sleep, recordFailureFn = recordFailure, gateContext = defaultGateContext, baselineFails = null, gateTimeoutMs = GATE_TIMEOUT_MS, rebaseOpen = checkOpenPrs, uiEvidence = assertUiEvidence, decisions = assertDecisions, ownerDecisionsBuilt = assertOwnerDecisionsBuilt,
-    progress: report = noProgress, loadNow = () => machineLoad(), now = Date.now, diskFirstAid = null, memoryCheck = null } = deps
+    progress: report = noProgress, loadNow = () => machineLoad(), now = Date.now, diskFirstAid = null, memoryCheck = null, waitForChecks = null } = deps
   if (typeof prUrl !== 'string' || !prUrl.startsWith('https://github.com/')) {
     throw new MergeFailure(classifyFailure({ stage: 'request', error: new Error(`Not a GitHub PR URL: ${prUrl}`) }))
   }
@@ -1010,7 +1017,33 @@ async function mergePrUnqueued(
     } else {
       stage('gate', 'passed', 'rebased and retested clean')
     }
-    await postGateStatus(prUrl, exec, gateCheckNames(ctx ? ctx.clone : REPO_PATH))   // marvin#1099: the gate is the check
+    const checkNames = gateCheckNames(ctx ? ctx.clone : REPO_PATH)
+    await postGateStatus(prUrl, exec, checkNames)   // marvin#1099: the gate is the check
+    // marvin#868: branch protection requires the named checks to report success on the rebased commit, not just locally.
+    if (waitForChecks) {
+      const wait = await waitForChecks(prUrl, checkNames, result.headOid)
+      if (!wait.ok) {
+        if (wait.code === 'CI_FAILED') {
+          stage('gate', 'failed', `CI_FAILED: ${wait.reason}`)
+          recordFailureFn({ ticket: ticketNumber, code: 'CI_FAILED', message: wait.reason, project: repo, prUrl, stage: 'gate' })
+          const comment = `**CI: GitHub checks failed after rebase**\n\n${wait.reason}\n\nFix what these report, then approve again. The PR was not sent back because the gate itself passed.`
+          await reengage({ prUrl, ticketNumber, reasons: ['Regression/quality'], comment }, exec)
+          return { merged: false, reengaged: true, code: 'CI_FAILED', stage: 'gate', action: 'reengage', reason: comment }
+        }
+        if (wait.code === 'CI_HEAD_MOVED') {
+          stage('gate', 'failed', `CI_HEAD_MOVED: ${wait.reason}`)
+          throw new MergeFailure(refusal('CI_HEAD_MOVED', 'gate', wait.reason,
+            `The branch was pushed to while waiting for checks. Approve again to merge the new commit.`))
+        }
+        if (wait.code === 'CI_TIMEOUT') {
+          stage('gate', 'failed', `CI_TIMEOUT: ${wait.reason}`)
+          throw new MergeFailure(refusal('CI_TIMEOUT', 'gate', wait.reason,
+            `GitHub's checks did not finish within the time limit. Approve again to wait longer, or check the branch's status on GitHub.`))
+        }
+      }
+    }
+    // marvin#868 scope B: no-rebase merges (gate:false) should also wait for checks when branch protection is on.
+    // Follow-up ticket filed for the same treatment in the gate:false path, after this merges and proves the pattern.
   }
 
   // No code review here: it runs in the build loop before the PR opens (sandbox_orchestration.execute_ticket).

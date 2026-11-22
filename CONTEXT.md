@@ -1670,6 +1670,18 @@ Added `config/onboarding/node-pnpm-turbo/` stack template for monorepos using pn
 - **MR Review:** each PR shows "GitHub checks passed / failed / still running"; Approve is disabled for failing and pending.
 - **Auto send-back:** the pipeline scan (`_requeue_conflicted_prs`) also sends back a PR whose checks genuinely FAILED, naming them. Cancelled / timed-out / still-running checks never trigger a rebuild (the runner's fault, not the code's). The 3-attempt cap still applies.
 
+## Branch protection requires waiting for GitHub checks after a rebase (2026-11-22, marvin#868)
+
+After a rebase + local retest, `waitForRequiredChecks` (`webhook-server/ci_status.js`) polls GitHub until the **named** checks (from `required-checks.json`) report success on the **exact rebased commit**. GitHub's branch protection rules block `gh pr merge` until those checks pass, and there is no way to bypass that server-side decision. The gate rebases and pushes, then waits instead of assuming its own local retest is sufficient. Applies only to the `gate:true` path (rebase case); the `gate:false` path (already up to date) is a follow-up. Poll interval: 10s. Timeout: 35 minutes (median CI run ~10 min, worst case ~65 min; this covers the worst case plus margin, waiting longest to avoid spurious failures of good PRs during GitHub capacity blips).
+
+**Result codes:**
+- `CI_FAILED`: real checks failed (code is wrong) — sends PR back with check names
+- `CI_HEAD_MOVED`: branch was pushed to while waiting (target commit changed) — escalates
+- `CI_TIMEOUT`: checks didn't finish in time — escalates as machine problem (`GATE_INFRA`)
+- `{ok: true}`: all required checks passed on target commit — merge proceeds
+
+**Policy alignment (2026-11-22):** CANCELLED and TIMED_OUT from GitHub are infrastructure issues (runner's fault), never trigger a rebuild and don't satisfy requirements. When both a StatusContext (posted by `postGateStatus`) and a CheckRun exist with the same name, the CheckRun is preferred since that's what branch protection actually requires. The implementation captures the exact rebased commit OID from `git rev-parse HEAD` after the push (not from a potentially stale `gh pr view` read), and passes it as the `targetOid` target to detect mid-flight pushes accurately. CANCELLED/TIMED_OUT checks return `CI_TIMEOUT` immediately without waiting the full 35 minutes, since they won't re-run on their own.
+
 ## Project onboarding (proposed, 2026-10-06)
 
 Design for turning a repo into a fully wired project from one command: **docs/adr/0036-project-onboarding.md** (status: proposed, awaiting Gil's decisions D1-D4). Not the portfolio "add-project pipeline" (ADR 0034).

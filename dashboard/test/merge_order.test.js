@@ -233,6 +233,8 @@ describe('mergeOrder: positions', () => {
 describe('checks the gate runs itself', () => {
   const cancelledPython = [{ __typename: 'CheckRun', name: 'Python tests', status: 'COMPLETED', conclusion: 'CANCELLED' },
     { __typename: 'CheckRun', name: 'Secret and transcript scan', status: 'COMPLETED', conclusion: 'SUCCESS' }]
+  const failedPython = [{ __typename: 'CheckRun', name: 'Python tests', status: 'COMPLETED', conclusion: 'FAILURE' },
+    { __typename: 'CheckRun', name: 'Secret and transcript scan', status: 'COMPLETED', conclusion: 'SUCCESS' }]
   const failedScan = [{ __typename: 'CheckRun', name: 'Secret and transcript scan', status: 'COMPLETED', conclusion: 'FAILURE' }]
   const lineOf = (out, n) => out.entries[url(n)]
   it('a PR whose GitHub Python run was cancelled is next to merge when the gate covers Python', () => {
@@ -240,8 +242,8 @@ describe('checks the gate runs itself', () => {
     const out = mergeOrder(prs, green_main, q(1093))
     expect(out.next).toBe(url(1093))
   })
-  it('without gateCovers the same PR is held as before', () => {
-    const out = mergeOrder(enrichForOrder([pr(1093, { statusCheckRollup: cancelledPython })], { repo: REPO }), green_main, q(1093))
+  it('a PR whose GitHub Python run failed is held even when the gate covers Python (needs rework)', () => {
+    const out = mergeOrder(enrichForOrder([pr(1093, { statusCheckRollup: failedPython })], { repo: REPO }), green_main, q(1093))
     expect(out.next).toBeNull()
     expect(lineOf(out, 1093).reason).toMatch(/checks failing: Python tests/)
   })
@@ -249,10 +251,10 @@ describe('checks the gate runs itself', () => {
     const prs = enrichForOrder([pr(1093, { statusCheckRollup: failedScan })], { repo: REPO, gateCovers: ['Python tests'] })
     expect(lineOf(mergeOrder(prs, green_main, q(1093)), 1093).reason).toMatch(/checks failing: Secret and transcript scan/)
   })
-  it('a junk gateCovers value covers nothing', () => {
-    for (const junk of [null, 'Python tests', 42, {}]) {
-      const prs = enrichForOrder([pr(1093, { statusCheckRollup: cancelledPython })], { repo: REPO, gateCovers: junk })
-      expect(mergeOrder(prs, green_main, q(1093)).next).toBeNull()
+  it('infrastructure issues (CANCELLED) do not hold the PR when the gate covers them', () => {
+    for (const repo of [null, { gateCovers: ['Python tests'] }]) {
+      const prs = enrichForOrder([pr(1093, { statusCheckRollup: cancelledPython })], { repo: REPO, ...repo })
+      expect(mergeOrder(prs, green_main, q(1093)).next).toBe(url(1093))
     }
   })
 })

@@ -3,7 +3,9 @@ import os from 'os'
 import path from 'path'
 import { MergeFailure, refusal } from './failure.js'
 
-const FAILED = new Set(['FAILURE', 'TIMED_OUT', 'CANCELLED', 'ACTION_REQUIRED', 'STARTUP_FAILURE'])
+const FAILED = new Set(['FAILURE', 'ACTION_REQUIRED', 'STARTUP_FAILURE'])
+export const REQUIRED_CHECKS_WAIT_MS = 35 * 60 * 1000
+const REQUIRED_CHECKS_POLL_MS = 10 * 1000
 
 // What GitHub says about a PR's checks (`gh pr view --json statusCheckRollup`): none / passing / pending / failing.
 // Handles both kinds of entry: Actions check runs and the older commit statuses.
@@ -117,5 +119,89 @@ export async function postGateStatus(prUrl, exec, names = []) {
     return true
   } catch {
     return false
+  }
+}
+
+// Branch protection requires the named checks to report success on the exact commit being merged. Poll GitHub until
+// they finish. Poll interval is 10s; overall timeout comes from the caller (35–70 minutes).
+// targetOid is the commit that was just pushed (passed by the caller); a mid-flight push (someone rebases the branch
+// while waiting) is detected when headRefOid changes and fails early rather than silently evaluating the wrong commit.
+// opts: { sleep, now, timeoutMs, targetOid } (all optional; defaults: 10s poll, Date.now clock, caller-provided timeoutMs, no target).
+export async function waitForRequiredChecks(prUrl, names, exec, opts = {}) {
+  if (!Array.isArray(names) || !names.length) return { ok: true }
+  const { sleep = null, now = Date.now, timeoutMs = REQUIRED_CHECKS_WAIT_MS, targetOid: expectedOid = null } = opts
+  const sleepFn = sleep || (async (ms) => new Promise(r => setTimeout(r, ms)))
+  let seenOid = null
+  const startMs = now()
+  while (true) {
+    if (now() - startMs > timeoutMs) {
+      return { ok: false, code: 'CI_TIMEOUT', names, reason: `Required checks did not finish within ${Math.ceil(timeoutMs / 60000)} min` }
+    }
+    let rollup, headOid
+    try {
+      const res = await exec('gh', ['pr', 'view', prUrl, '--json', 'headRefOid,statusCheckRollup'])
+      const data = JSON.parse(res.stdout)
+      rollup = data.statusCheckRollup
+      headOid = data.headRefOid
+    } catch {
+      await sleepFn(REQUIRED_CHECKS_POLL_MS)
+      continue
+    }
+    // If a target commit was specified, verify we're still checking the right commit.
+    // If the head moved after we started waiting, the checks we see may be for the wrong commit.
+    if (expectedOid !== null && seenOid === null) seenOid = headOid
+    if (expectedOid !== null && headOid !== expectedOid) {
+      return { ok: false, code: 'CI_HEAD_MOVED', names: [], reason: 'The branch was pushed to while waiting for checks (the target commit changed)' }
+    }
+    // Prefer CheckRuns over StatusContexts when the same name appears in both.
+    // This matters because postGateStatus posts a StatusContext with the same name as the checks it runs.
+    // Only CheckRuns count as satisfied (a StatusContext, even a SUCCESS one, is not a real check result).
+    const checks = new Map()
+    if (Array.isArray(rollup)) {
+      for (const c of rollup) {
+        if (!c || typeof c !== 'object') continue
+        const row = checkRow(c)
+        const existing = checks.get(row.name)
+        const isCheckRun = c.__typename === 'CheckRun'
+        if (!existing) {
+          if (isCheckRun) checks.set(row.name, row)
+        } else {
+          const existingIsCheckRun = existing.key?.startsWith('run|')
+          if (isCheckRun && !existingIsCheckRun) {
+            checks.set(row.name, row)
+          }
+        }
+      }
+    }
+    const failing = []
+    const pending = []
+    const infra = []
+    for (const name of names) {
+      const check = checks.get(name)
+      if (!check) {
+        pending.push(name)
+      } else if (check.status === 'failed') {
+        failing.push(name)
+      } else if (!check.done) {
+        pending.push(name)
+      } else {
+        // Check the original rollup to detect CANCELLED/TIMED_OUT infrastructure issues
+        const checkEntry = (rollup || []).find(c => c && c.__typename === 'CheckRun' && checkRow(c)?.name === check.name)
+        const concl = String(checkEntry?.conclusion || '').toUpperCase()
+        if (['CANCELLED', 'TIMED_OUT'].includes(concl)) {
+          infra.push(name)
+        }
+      }
+    }
+    if (infra.length) {
+      return { ok: false, code: 'CI_TIMEOUT', names: infra, reason: `Required check${infra.length === 1 ? ' was' : 's were'} cancelled or timed out and need to be re-run: ${infra.join(', ')}` }
+    }
+    if (failing.length) {
+      return { ok: false, code: 'CI_FAILED', names: failing, reason: `Required checks failed: ${failing.join(', ')}` }
+    }
+    if (!pending.length) {
+      return { ok: true }
+    }
+    await sleepFn(REQUIRED_CHECKS_POLL_MS)
   }
 }

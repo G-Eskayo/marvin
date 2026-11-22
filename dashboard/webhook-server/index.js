@@ -24,7 +24,7 @@ import { appendError } from '../electron/main/error_log.js'
 import { readRebaseStatus } from './rebase_status.js'
 import { readLiveSessions } from './sessions.js'
 import { listLocalChats } from '../electron/main/chat_tabs.js'
-import { gateCheckNames } from './ci_status.js'
+import { gateCheckNames, waitForRequiredChecks } from './ci_status.js'
 import { engineRepo } from '../electron/main/instance.js'
 import { listHelpers } from './chat_helpers.js'
 import { startChangeWatch, createGithubProbe, startCheckWatch, createCheckProbe } from './gh_watch.js'
@@ -395,7 +395,12 @@ async function runMerge(prUrl, { by = 'you', reply = null } = {}) {
         // A nearly full disk gets the cleanup sweep's rebuildable trims once before the gate refuses (2026-10-28).
         diskFirstAid: () => runDiskFirstAid(),
         // marvin#845: no rebase + retest while memory pressure is at warn or critical; this Approve is queued instead.
-        memoryCheck: (url) => memoryGuardCheck(url, PORT)
+        memoryCheck: (url) => memoryGuardCheck(url, PORT),
+        // marvin#868: after a rebase + retest, wait for GitHub's branch protection checks to pass.
+        waitForChecks: async (url, names, pushedOid) => {
+          const exec = snapshotExec(url, execWithGroupTimeout)
+          return waitForRequiredChecks(url, names, exec, { targetOid: pushedOid })
+        }
       }))
       tracker?.finish(result)
       if (result?.merged) appendMerge(prUrl, by === 'auto' ? 'auto' : 'you')

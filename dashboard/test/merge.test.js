@@ -486,7 +486,7 @@ describe('rebaseAndRetest with generated-file conflict resolution', () => {
       })
       const runTests = vi.fn().mockResolvedValue(undefined)
       const result = await rebaseAndRetest('feature', realExec, repoDir, runTests, 'main', resolve, null, undefined, plentyOfDisk)
-      expect(result).toEqual({ ok: true })
+      expect(result).toEqual(expect.objectContaining({ ok: true }))
       expect(resolve).toHaveBeenCalledTimes(1)
       expect(runTests).toHaveBeenCalledTimes(1)
       expect(currentRemoteSha(repoDir, 'feature')).not.toBe(before)
@@ -545,7 +545,7 @@ describe('rebaseAndRetest when GitHub fails the push', () => {
       const before = currentRemoteSha(repoDir, 'feature')
       const runTests = vi.fn().mockResolvedValue(undefined)
       const result = await rebaseAndRetest('feature', flakyPush(2), repoDir, runTests, 'main', undefined, async () => {}, undefined, plentyOfDisk)
-      expect(result).toEqual({ ok: true })
+      expect(result).toEqual(expect.objectContaining({ ok: true }))
       expect(runTests).toHaveBeenCalledTimes(1)
       expect(currentRemoteSha(repoDir, 'feature')).not.toBe(before)
     } finally { rmSync(root, { recursive: true, force: true }) }
@@ -582,7 +582,7 @@ describe('rebaseAndRetest', () => {
 
       const result = await rebaseAndRetest('feature', realExec, repoDir, runTests, 'main', null, null, undefined, plentyOfDisk)
 
-      expect(result).toEqual({ ok: true })
+      expect(result).toEqual(expect.objectContaining({ ok: true }))
       expect(runTests).toHaveBeenCalledTimes(1)
       const afterSha = currentRemoteSha(repoDir, 'feature')
       expect(afterSha).not.toBe(beforeSha)
@@ -967,7 +967,7 @@ describe('base branches other than main', () => {
       sh('git', ['push', 'origin', 'trunk'], repoDir)
       const runTests = vi.fn().mockResolvedValue(undefined)
       const result = await rebaseAndRetest('feature', realExec, repoDir, runTests, 'trunk', null, null, undefined, plentyOfDisk)
-      expect(result).toEqual({ ok: true })
+      expect(result).toEqual(expect.objectContaining({ ok: true }))
       expect(runTests).toHaveBeenCalledTimes(1)
       sh('git', ['fetch', 'origin', 'feature'], repoDir)
       expect(sh('git', ['merge-base', '--is-ancestor', 'origin/trunk', 'origin/feature'], repoDir)).toBe('')
@@ -1450,11 +1450,136 @@ describe('rebaseAndRetest on a branch whose base PR was squash-merged (#1183)', 
       sh('git', ['merge', '-q', '--no-ff', '-m', 'Merge base', 'base'], repoDir)
       sh('git', ['push', 'origin', 'main'], repoDir)
       const result = await rebaseAndRetest('top', realExec, repoDir, vi.fn().mockResolvedValue(undefined), 'main', null, null, undefined, plentyOfDisk)
-      expect(result).toEqual({ ok: true })
+      expect(result).toEqual(expect.objectContaining({ ok: true }))
       const after = currentRemoteSha(repoDir, 'top')
       expect(sh('git', ['rev-list', '--merges', `origin/main..${after}`], repoDir).trim()).toBe('')
     } finally {
       rmSync(root, { recursive: true, force: true })
     }
+  })
+})
+
+describe('after a rebase, the gate waits for GitHub\'s required checks (marvin#868)', () => {
+  const run = (name, status, conclusion) => ({ __typename: 'CheckRun', name, status, conclusion })
+  const PR = 'https://github.com/G-Eskayo/marvin/pull/1'
+  const viewData = (rollup, oid = 'a'.repeat(40)) => ({ headRefOid: oid, statusCheckRollup: rollup })
+
+  it('A: waitForChecks dep resolves {ok:true} → merges as before', async () => {
+    const exec = execWithCodeReviewDefaults(vi.fn().mockResolvedValue({ stdout: '', stderr: '' }))
+    const shouldGateMerge = vi.fn().mockResolvedValue({ gate: true, headRefName: 'pipeline/x', body: 'Closes G-Eskayo/marvin#5' })
+    const rebaseAndRetestFn = vi.fn().mockResolvedValue({ ok: true, headOid: 'abc123' })
+    const waitForChecks = vi.fn().mockResolvedValue({ ok: true })
+
+    const result = await mergePr(
+      PR, exec, noopRebuild, noopRedispatch, shouldGateMerge, rebaseAndRetestFn, vi.fn(), vi.fn(),
+      { waitForChecks }
+    )
+
+    expect(waitForChecks).toHaveBeenCalledWith(PR, expect.any(Array), 'abc123')
+    expect(exec).toHaveBeenCalledWith('gh', ['pr', 'merge', PR, '--merge'])
+    expect(result.merged).toBe(true)
+  })
+
+  it('B: deps.waitForChecks omitted (default) → still merges, feature is opt-in', async () => {
+    const exec = execWithCodeReviewDefaults(vi.fn().mockResolvedValue({ stdout: '', stderr: '' }))
+    const shouldGateMerge = vi.fn().mockResolvedValue({ gate: true, headRefName: 'pipeline/x', body: 'Closes G-Eskayo/marvin#5' })
+    const rebaseAndRetestFn = vi.fn().mockResolvedValue({ ok: true })
+
+    const result = await mergePr(
+      PR, exec, noopRebuild, noopRedispatch, shouldGateMerge, rebaseAndRetestFn, vi.fn(), vi.fn()
+    )
+
+    expect(exec).toHaveBeenCalledWith('gh', ['pr', 'merge', PR, '--merge'])
+    expect(result.merged).toBe(true)
+  })
+
+  it('C: waitForChecks resolves CI_FAILED → reengage, no merge', async () => {
+    const exec = execWithCodeReviewDefaults(vi.fn().mockResolvedValue({ stdout: '', stderr: '' }))
+    const shouldGateMerge = vi.fn().mockResolvedValue({ gate: true, headRefName: 'pipeline/x', body: 'Closes G-Eskayo/marvin#5' })
+    const rebaseAndRetestFn = vi.fn().mockResolvedValue({ ok: true })
+    const reengage = vi.fn()
+    const waitForChecks = vi.fn().mockResolvedValue({ ok: false, code: 'CI_FAILED', names: ['Python tests'], reason: 'check failed' })
+
+    const result = await mergePr(
+      PR, exec, noopRebuild, noopRedispatch, shouldGateMerge, rebaseAndRetestFn, reengage, vi.fn(),
+      { waitForChecks }
+    )
+
+    expect(reengage).toHaveBeenCalledWith(expect.objectContaining({ prUrl: PR, ticketNumber: '5' }), exec)
+    expect(exec).not.toHaveBeenCalledWith('gh', ['pr', 'merge', PR, '--merge'])
+    expect(result).toEqual({ merged: false, reengaged: true, code: 'CI_FAILED', stage: 'gate', action: 'reengage', reason: expect.any(String) })
+  })
+
+  it('D: waitForChecks resolves CI_TIMEOUT → rejects with MergeFailure, no reengage', async () => {
+    const exec = execWithCodeReviewDefaults(vi.fn().mockResolvedValue({ stdout: '', stderr: '' }))
+    const shouldGateMerge = vi.fn().mockResolvedValue({ gate: true, headRefName: 'pipeline/x', body: 'Closes G-Eskayo/marvin#5' })
+    const rebaseAndRetestFn = vi.fn().mockResolvedValue({ ok: true })
+    const reengage = vi.fn()
+    const waitForChecks = vi.fn().mockResolvedValue({ ok: false, code: 'CI_TIMEOUT', names: ['a', 'b'], reason: 'timed out' })
+
+    await expect(mergePr(
+      PR, exec, noopRebuild, noopRedispatch, shouldGateMerge, rebaseAndRetestFn, reengage, vi.fn(),
+      { waitForChecks }
+    )).rejects.toMatchObject({ payload: { code: 'CI_TIMEOUT', action: 'escalate' } })
+
+    expect(reengage).not.toHaveBeenCalled()
+    expect(exec).not.toHaveBeenCalledWith('gh', ['pr', 'merge', PR, '--merge'])
+  })
+
+  it('E: gate:false (no rebase) → waitForChecks spy is not called', async () => {
+    const exec = execWithCodeReviewDefaults(vi.fn().mockResolvedValue({ stdout: '', stderr: '' }))
+    const shouldGateMerge = vi.fn().mockResolvedValue({ gate: false, headRefName: 'some-branch', body: '' })
+    const waitForChecks = vi.fn()
+
+    const result = await mergePr(
+      PR, exec, noopRebuild, noopRedispatch, shouldGateMerge, vi.fn(), vi.fn(), vi.fn(),
+      { waitForChecks }
+    )
+
+    expect(waitForChecks).not.toHaveBeenCalled()
+    expect(result.merged).toBe(true)
+  })
+
+  it('F: Stage recording: gate:started, gate:failed on CI_FAILED, nothing after', async () => {
+    const exec = execWithCodeReviewDefaults(vi.fn().mockResolvedValue({ stdout: '', stderr: '' }))
+    const shouldGateMerge = vi.fn().mockResolvedValue({ gate: true, headRefName: 'pipeline/x', body: 'Closes G-Eskayo/marvin#5' })
+    const rebaseAndRetestFn = vi.fn().mockResolvedValue({ ok: true })
+    const recordStageFn = vi.fn()
+    const waitForChecks = vi.fn().mockResolvedValue({ ok: false, code: 'CI_FAILED', names: ['Python tests'], reason: 'failed' })
+
+    await mergePr(
+      PR, exec, noopRebuild, noopRedispatch, shouldGateMerge, rebaseAndRetestFn, vi.fn().mockResolvedValue(undefined), recordStageFn,
+      { waitForChecks }
+    )
+
+    const stages = recordStageFn.mock.calls.map(([, stage, status]) => `${stage}:${status}`)
+    expect(stages).toContainEqual('gate:started')
+    expect(stages).toContainEqual('gate:failed')
+    expect(stages.slice(-1)[0]).toBe('gate:failed')
+  })
+
+  it('G: A project-profile PR also waits, using that project\'s required-checks.json', async () => {
+    const baseExec = vi.fn().mockResolvedValue({ stdout: '', stderr: '' })
+    const exec = execWithCodeReviewDefaults(async (cmd, args, ...rest) => {
+      if (Array.isArray(args) && args.some(a => a && a.includes('project_profile'))) {
+        return { stdout: JSON.stringify({ profile: true, merge_from_dashboard: true, clone: '/tmp/clarity-clone', base: 'main', missing_here: [] }), stderr: '' }
+      }
+      return baseExec(cmd, args, ...rest)
+    })
+    const shouldGateMerge = vi.fn().mockResolvedValue({
+      gate: true, headRefName: 'pipeline/x', body: 'Closes clarity-captions#99',
+      clone: '/tmp/clarity-clone', base: 'main', runTests: vi.fn().mockResolvedValue(undefined), resolveConflicts: null
+    })
+    const rebaseAndRetestFn = vi.fn().mockResolvedValue({ ok: true, headOid: 'def456' })
+    const waitForChecks = vi.fn().mockResolvedValue({ ok: true })
+
+    const result = await mergePr(
+      'https://github.com/G-Eskayo/clarity-captions/pull/100', exec, noopRebuild, noopRedispatch,
+      shouldGateMerge, rebaseAndRetestFn, vi.fn(), vi.fn(),
+      { waitForChecks }
+    )
+
+    expect(waitForChecks).toHaveBeenCalledWith('https://github.com/G-Eskayo/clarity-captions/pull/100', expect.any(Array), 'def456')
+    expect(result.merged).toBe(true)
   })
 })
