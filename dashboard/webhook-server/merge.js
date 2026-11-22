@@ -14,7 +14,7 @@ import { sendFeedback } from './deny.js'
 import { parseTicketRef } from '../electron/main/mr_review.js'
 import { repoFromPrUrl, MARVIN_REPO } from '../electron/main/mr_repos.js'
 import { recordStage } from './ticket_stages.js'
-import { assertChecksGreen, gateCheckNames, postGateStatus } from './ci_status.js'
+import { assertChecksGreen, gateCheckNames, postGateStatus, requiredCheckNames, awaitRequiredChecks } from './ci_status.js'
 import { checkOpenPrs } from './post_merge_rebase.js'
 import { applyVersionBump } from './changelog.js'
 import { createCountParser, gateExtension, machineLoad } from './merge_progress.js'
@@ -857,7 +857,7 @@ async function mergePrUnqueued(
   deps = {}
 ) {
   const { sleep, recordFailureFn = recordFailure, gateContext = defaultGateContext, baselineFails = null, gateTimeoutMs = GATE_TIMEOUT_MS, rebaseOpen = checkOpenPrs, uiEvidence = assertUiEvidence, decisions = assertDecisions, ownerDecisionsBuilt = assertOwnerDecisionsBuilt,
-    progress: report = noProgress, loadNow = () => machineLoad(), now = Date.now, diskFirstAid = null, memoryCheck = null } = deps
+    progress: report = noProgress, loadNow = () => machineLoad(), now = Date.now, diskFirstAid = null, memoryCheck = null, awaitRequiredChecksFn = awaitRequiredChecks } = deps
   if (typeof prUrl !== 'string' || !prUrl.startsWith('https://github.com/')) {
     throw new MergeFailure(classifyFailure({ stage: 'request', error: new Error(`Not a GitHub PR URL: ${prUrl}`) }))
   }
@@ -1010,6 +1010,24 @@ async function mergePrUnqueued(
     } else {
       stage('gate', 'passed', 'rebased and retested clean')
     }
+
+    // Wait for required checks (GitHub CI) to pass on the rebased commit, before final merge (marvin#1099)
+    const checkNames = requiredCheckNames(ctx ? ctx.clone : REPO_PATH)
+    if (checkNames.length) {
+      try {
+        await awaitRequiredChecksFn(prUrl, exec, checkNames)
+      } catch (e) {
+        if (e instanceof MergeFailure && e.payload.code === 'CI_FAILED' && ticketNumber !== null) {
+          stage('gate', 'failed', `CI_FAILED: ${e.payload.message}`)
+          recordFailureFn({ ticket: ticketNumber, code: 'CI_FAILED', message: e.payload.message, project: repo, prUrl, stage: 'gate' })
+          const comment = `**CI: failing checks**\n\n${e.payload.message}\n\nFix what these report, then the ticket will be rebuilt.`
+          await reengage({ prUrl, ticketNumber, reasons: ['Regression/quality'], comment }, exec)
+          return { merged: false, reengaged: true, code: 'CI_FAILED', stage: 'gate', action: 'reengage', reason: comment }
+        }
+        throw e
+      }
+    }
+
     await postGateStatus(prUrl, exec, gateCheckNames(ctx ? ctx.clone : REPO_PATH))   // marvin#1099: the gate is the check
   }
 

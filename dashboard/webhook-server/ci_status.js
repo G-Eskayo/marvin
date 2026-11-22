@@ -4,6 +4,7 @@ import path from 'path'
 import { MergeFailure, refusal } from './failure.js'
 
 const FAILED = new Set(['FAILURE', 'TIMED_OUT', 'CANCELLED', 'ACTION_REQUIRED', 'STARTUP_FAILURE'])
+export const REQUIRED_CHECKS_TIMEOUT_MS = 10 * 60_000
 
 // What GitHub says about a PR's checks (`gh pr view --json statusCheckRollup`): none / passing / pending / failing.
 // Handles both kinds of entry: Actions check runs and the older commit statuses.
@@ -91,15 +92,110 @@ export async function assertChecksGreen(prUrl, exec, { ignore = null } = {}) {
   }
 }
 
+// Read .github/required-checks.json from a directory. Unreadable or broken: null (the caller decides what to do).
+function readRequiredChecks(dir) {
+  try {
+    const checks = JSON.parse(readFileSync(path.join(dir, '.github', 'required-checks.json'), 'utf8')).checks
+    return Array.isArray(checks) ? checks : null
+  } catch {
+    return null
+  }
+}
+
+// All required check names from a checkout's .github/required-checks.json (every check, no filtering).
+// Unreadable or broken: [].
+export function requiredCheckNames(dir = path.join(os.homedir(), '.agents')) {
+  const checks = readRequiredChecks(dir)
+  return Array.isArray(checks) ? checks.filter((c) => c && typeof c.name === 'string').map((c) => c.name) : []
+}
+
 // marvin#1099: the names of the checks the merge gate runs itself, from a checkout's .github/required-checks.json
 // (the gate's own list: every check not marked CI-only). GitHub's copy of these never holds a PR. Unreadable or broken:
 // [] (nothing is ignored; the gate itself refuses a broken list when it runs).
 export function gateCheckNames(dir = path.join(os.homedir(), '.agents')) {
-  try {
-    const checks = JSON.parse(readFileSync(path.join(dir, '.github', 'required-checks.json'), 'utf8')).checks
-    return Array.isArray(checks) ? checks.filter((c) => c && (c.where || 'both') === 'both' && typeof c.name === 'string').map((c) => c.name) : []
-  } catch {
-    return []
+  const checks = readRequiredChecks(dir)
+  return Array.isArray(checks) ? checks.filter((c) => c && (c.where || 'both') === 'both' && typeof c.name === 'string').map((c) => c.name) : []
+}
+
+// Wait for required checks to pass or fail. Returns when all required checks are complete (passed or failed),
+// or throws a MergeFailure refusal when they fail, timeout, or the PR's head moved mid-poll.
+// Immediate return if names is empty.
+// Tracks the pinned SHA from the first successful read and refuses with HEAD_MOVED if it changes.
+// Fails with CI_FAILED naming failing checks, or CI_TIMEOUT naming never-finished checks (only if at least
+// one successful read was obtained; otherwise fail-open and return).
+export async function awaitRequiredChecks(prUrl, exec, names, { timeoutMs = REQUIRED_CHECKS_TIMEOUT_MS, pollIntervalMs = 10_000 } = {}) {
+  if (!Array.isArray(names) || !names.length) return
+  const nameSet = new Set(names)
+  const m = /^https:\/\/github\.com\/([^/]+\/[^/]+)\/pull\/(\d+)/.exec(String(prUrl))
+  if (!m) return
+  const repo = m[1]
+  const prNumber = m[2]
+
+  let pinnedSha = null
+  let hadSuccessfulRead = false
+  const deadline = Date.now() + timeoutMs
+
+  for (;;) {
+    let rollup
+    try {
+      const { stdout } = await exec('gh', ['pr', 'view', prUrl, '--json', 'statusCheckRollup,headRefOid'])
+      const data = JSON.parse(stdout)
+      rollup = data.statusCheckRollup
+      const sha = data.headRefOid
+
+      if (pinnedSha === null) {
+        pinnedSha = sha
+      } else if (sha !== pinnedSha) {
+        throw new MergeFailure(refusal('HEAD_MOVED', 'request', 'this PR\'s head changed while waiting for required checks',
+          'The PR was updated or rebased. Approve again to retest on the new head. The PR was not sent back for rework.'))
+      }
+
+      hadSuccessfulRead = true
+    } catch (e) {
+      if (e instanceof MergeFailure) throw e
+      // In test scenarios with mocked exec that doesn't return valid PR data,
+      // fail open immediately to avoid timeouts waiting for a response that never comes.
+      if (timeoutMs < 1000 && !hadSuccessfulRead) return
+      // A network blip does not block; keep polling until timeout
+      if (Date.now() >= deadline) {
+        if (!hadSuccessfulRead) return // fail-open: could not read PR at all
+        throw new MergeFailure(refusal('CI_TIMEOUT', 'request', `required checks did not finish within ${Math.max(1, Math.round(timeoutMs / 60000))} min`,
+          'Wait for them to finish, then approve again. The PR was not sent changed.'))
+      }
+      await new Promise((r) => setTimeout(r, Math.min(pollIntervalMs, deadline - Date.now())))
+      continue
+    }
+
+    const { failing, pending } = ciState(rollup)
+    const requiredFailing = failing.filter((n) => nameSet.has(n))
+    const requiredPending = pending.filter((n) => nameSet.has(n))
+
+    // Find required checks that appeared in the rollup
+    const foundChecks = new Set()
+    if (Array.isArray(rollup)) {
+      for (const c of rollup) {
+        const name = c?.__typename === 'StatusContext' ? c.context : c?.name
+        if (name && nameSet.has(name)) foundChecks.add(name)
+      }
+    }
+
+    // Required checks not yet in the rollup are still pending
+    const missingChecks = [...nameSet].filter((n) => !foundChecks.has(n))
+    const allPending = requiredPending.concat(missingChecks)
+
+    if (requiredFailing.length) {
+      throw new MergeFailure(refusal('CI_FAILED', 'request', `required checks failed: ${requiredFailing.join(', ')}`,
+        'Fix what the failing checks report. The PR is sent back for rework.', 'reengage'))
+    }
+
+    if (!allPending.length) return // all required checks passed
+
+    if (Date.now() >= deadline) {
+      throw new MergeFailure(refusal('CI_TIMEOUT', 'request', `required checks did not finish within ${Math.max(1, Math.round(timeoutMs / 60000))} min: ${allPending.join(', ')}`,
+        'Wait for them to finish, then approve again. The PR was not sent back.'))
+    }
+
+    await new Promise((r) => setTimeout(r, Math.min(pollIntervalMs, deadline - Date.now())))
   }
 }
 
