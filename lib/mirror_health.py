@@ -245,11 +245,13 @@ def _row(cid: str, label: str, severity: str, detail: str) -> dict:
     return {"id": cid, "label": label, "severity": severity, "detail": detail, "value": None}
 
 
-def check_mirror_sync_everywhere(reach: dict[str, str], devices: dict | None = None, runner=run_probe,
+def check_mirror_sync_everywhere(reach: dict[str, str] | None = None, devices: dict | None = None, runner=run_probe,
                                  lag: Callable[[str, str], dict] | None = None,
                                  now: datetime | None = None) -> list[dict]:
     """One `mirror:sync@<device>` row per pull-only node. `reach` maps machine:<id> -> severity from the sweep's
     reachability check, which already rates a down box; this row is red only for a measured sync failure."""
+    if reach is None:
+        reach = {}
     if devices is None:
         import machine_profile
         devices = machine_profile.remote_devices()

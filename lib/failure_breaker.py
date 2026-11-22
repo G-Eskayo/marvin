@@ -171,7 +171,7 @@ def code_freshness(repo_rel: str = CODE_REPO_REL, now: datetime | None = None,
         stuck = code_sync._stuck_from_previous_run(repo)
         if stuck:
             return {**out, "state": "stuck", "detail": stuck}
-        state = health_checks.parse_repo_state(health_checks._run_repo_state(None, repo_rel, fetch=False))
+        state = health_checks.parse_repo_state(health_checks._run_repo_state_local(repo_rel, fetch=False))
     except Exception as exc:  # noqa: BLE001 -- the guard must never take the scan down
         out["detail"] = f"could not read ~/{repo_rel}: {type(exc).__name__}: {exc}"
         return out

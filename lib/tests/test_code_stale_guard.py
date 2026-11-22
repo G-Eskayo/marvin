@@ -251,7 +251,7 @@ def test_a_broken_git_runner_fails_open_and_never_raises(repos, monkeypatch):
     import health_checks
     def boom(*a, **k):
         raise OSError("git is gone")
-    monkeypatch.setattr(health_checks, "_run_repo_state", boom)
+    monkeypatch.setattr(health_checks, "_run_repo_state_local", boom)
     f = freshness()
     assert f["state"] == "unknown" and "git is gone" in f["detail"]
 

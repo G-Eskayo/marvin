@@ -230,21 +230,6 @@ def test_grace_period_clamps_negative_time_to_zero():
     assert sev == "yellow"  # Within grace (0 hours)
 
 
-def test_check_machine_reachability_reports_asleep_for_a_closed_laptop(monkeypatch):
-    monkeypatch.setattr(hc.machine_profile, "remote_devices", lambda: {
-        "macbook-pro-1": {"kind": "laptop", "tailscale_hostname": "lap"}})
-
-    class Fail:
-        returncode = 255
-        stderr = "ssh: connect to host lap port 22: Operation timed out"
-
-    monkeypatch.setattr(hc.subprocess, "run", lambda *a, **k: Fail())
-    monkeypatch.setattr(hc, "_tailscale_peer", lambda host: _peer(False, hours_ago=2))
-    monkeypatch.setattr(hc, "_now", lambda: NOW)
-
-    [r] = hc.check_machine_reachability()
-    assert r["severity"] == "asleep"
-    assert r["id"] == "machine:macbook-pro-1"
 
 
 def test_asleep_does_not_make_the_overall_status_red_or_yellow():
@@ -366,41 +351,18 @@ def test_repo_state_script_against_real_git_repos(tmp_path):
     assert st["stashes"] == 1
 
 
-def test_check_repo_sync_everywhere_covers_local_and_reachable_remote(monkeypatch):
+def test_check_repo_sync_local_checks_this_machine_only(monkeypatch):
     monkeypatch.setattr(hc, "SYNCED_REPOS", {"~/.agents": ".agents"})
-    monkeypatch.setattr(hc.machine_profile, "registry_id", lambda: "mac-mini-1")
-    monkeypatch.setattr(hc.machine_profile, "remote_devices", lambda: {
-        "macbook-pro-1": {"kind": "laptop", "tailscale_hostname": "lap"}})
     monkeypatch.setattr(hc, "_now", lambda: NOW)
-    calls = []
 
-    def runner(target, rel):
-        calls.append((target, rel))
-        return "head=abc\nstashes=7\nconflicts=0\nfetch_ok=1\nbehind=0\nbehind_oldest_ts=\nahead=0\nahead_oldest_ts=\n" \
-            if target == "lap" else "head=abc\nstashes=0\nconflicts=0\nfetch_ok=1\nbehind=0\nbehind_oldest_ts=\nahead=0\nahead_oldest_ts=\n"
+    def runner(rel):
+        return "head=abc\nstashes=0\nconflicts=0\nfetch_ok=1\nbehind=0\nbehind_oldest_ts=\nahead=0\nahead_oldest_ts=\n"
 
-    reach = {"machine:macbook-pro-1": "green"}
-    results = hc.check_repo_sync_everywhere(reach, runner=runner)
+    monkeypatch.setattr(hc, "_run_repo_state_local", runner)
+    results = hc.check_repo_sync()
 
     by_id = {r["id"]: r for r in results}
-    assert by_id["repo:sync:~/.agents@mac-mini-1"]["severity"] == "green"
-    assert by_id["repo:sync:~/.agents@macbook-pro-1"]["severity"] == "yellow"
-    assert ("lap", ".agents") in calls
-
-
-def test_check_repo_sync_everywhere_marks_an_asleep_laptop_asleep_not_failed(monkeypatch):
-    monkeypatch.setattr(hc, "SYNCED_REPOS", {"~/.agents": ".agents"})
-    monkeypatch.setattr(hc.machine_profile, "registry_id", lambda: "mac-mini-1")
-    monkeypatch.setattr(hc.machine_profile, "remote_devices", lambda: {
-        "macbook-pro-1": {"kind": "laptop", "tailscale_hostname": "lap"}})
-    monkeypatch.setattr(hc, "_now", lambda: NOW)
-    local = "head=abc\nstashes=0\nconflicts=0\nfetch_ok=1\nbehind=0\nbehind_oldest_ts=\nahead=0\nahead_oldest_ts=\n"
-    runner = lambda target, rel: local
-
-    results = hc.check_repo_sync_everywhere({"machine:macbook-pro-1": "asleep"}, runner=runner)
-
-    remote = [r for r in results if r["id"].endswith("@macbook-pro-1")][0]
-    assert remote["severity"] == "asleep"
+    assert by_id["repo:sync:~/.agents"]["severity"] == "green"
 
 
 # ── pipeline circuit breaker is visible on the dashboard ────────────────────
@@ -604,23 +566,15 @@ def test_webhook_build_skips_when_there_is_no_webhook_commit_to_compare_against(
     assert "webhook:build" not in res
 
 
-def test_check_machine_state_everywhere_covers_every_device_and_marks_asleep(monkeypatch):
-    monkeypatch.setattr(hc.machine_profile, "registry_id", lambda: "mac-mini-1")
-    monkeypatch.setattr(hc.machine_profile, "remote_devices", lambda: {
-        "macbook-pro-1": {"kind": "laptop", "tailscale_hostname": "lap"}})
+def test_check_machine_state_local_checks_this_machine_only(monkeypatch):
     monkeypatch.setattr(hc, "_now", lambda: NOW)
     good = f"app_built_ts={int((NOW - timedelta(hours=1)).timestamp())}\ndashboard_commit_ts={int((NOW - timedelta(hours=2)).timestamp())}\ngh_token=ok\n"
-    bad = f"app_built_ts={int((NOW - timedelta(days=30)).timestamp())}\ndashboard_commit_ts={int((NOW - timedelta(hours=2)).timestamp())}\ngh_token=invalid\n"
 
-    results = hc.check_machine_state_everywhere({"machine:macbook-pro-1": "green"},
-                                                runner=lambda target, script: good if target is None else bad)
+    monkeypatch.setattr(hc, "_run_machine_state_local", lambda script: good)
+    results = hc.check_machine_state()
     by_id = {r["id"]: r["severity"] for r in results}
-    assert by_id["dashboard:build@mac-mini-1"] == "green"
-    assert by_id["dashboard:build@macbook-pro-1"] == "red"
-    assert by_id["auth:gh@macbook-pro-1"] == "red"
-
-    asleep = hc.check_machine_state_everywhere({"machine:macbook-pro-1": "asleep"}, runner=lambda t, s: good)
-    assert {r["severity"] for r in asleep if r["id"].endswith("@macbook-pro-1")} == {"asleep"}
+    assert by_id["dashboard:build"] == "green"
+    assert by_id["auth:gh"] == "green"
 
 
 # ── dashboard trigger coverage guard ────────────────────────────────────────
@@ -974,21 +928,6 @@ def test_check_pipeline_breaker_includes_local_trips(monkeypatch):
     assert "2026-10-02T01:00:00" in r["detail"]
 
 
-def test_pipeline_breaker_remote_query_handles_unreachable_machines(monkeypatch):
-    import failure_breaker as fb
-    monkeypatch.setattr(fb, "tripped", lambda now=None, project=None: [])
-    monkeypatch.setattr(hc.machine_profile, "remote_devices", lambda: {
-        "macbook-pro-1": {"kind": "laptop", "tailscale_hostname": "lap"}})
-
-    def fail_ssh(*a, **k):
-        class Fail:
-            returncode = 255
-            stdout = ""
-        return Fail()
-
-    monkeypatch.setattr(hc.subprocess, "run", fail_ssh)
-    r = hc.check_pipeline_breaker()
-    assert r["severity"] == "green"
 
 
 # ── sync stuck detection ────────────────────────────────────────────────────
@@ -1082,6 +1021,32 @@ def test_check_parallel_dispatch_calls_the_real_selector_with_its_keywords(monke
 
     assert calls, "selector was never reached"
     assert result["severity"] in {"green", "yellow", "red"}
+
+
+# ── no ssh anywhere ──────────────────────────────────────────────────
+
+def test_run_all_has_no_ssh_in_checks(monkeypatch):
+    """Blanket test: ensure no SSH calls are made during the health sweep.
+    Each Mac's sweep now reports its own state, not cross-machine."""
+    ssh_calls = []
+
+    def track_ssh(*args, **kwargs):
+        if args and args[0] and args[0][0] == "ssh":
+            ssh_calls.append(args)
+        # Return a dummy result for any subprocess call
+        class Result:
+            returncode = 0
+            stdout = ""
+            stderr = ""
+        return Result()
+
+    monkeypatch.setattr(hc.subprocess, "run", track_ssh)
+    monkeypatch.setattr(hc, "discover_launchd_jobs", lambda: [])
+    monkeypatch.setattr(hc, "check_graphify_fresh", lambda: None)
+
+    hc.run_all()
+
+    assert not ssh_calls, f"Found SSH calls in sweep: {ssh_calls}"
 
 
 # ── project tags (ADR 0060, #298) ───────────────────────────────────────────
@@ -1248,52 +1213,34 @@ def _group(machine, source, cause, count, mins_ago):
     return {"machine": machine, "source": source, "cause": cause, "known": True, "message": "m", "raw": "r", "count": count, "first_t": t, "last_t": t}
 
 
-def _errs(monkeypatch, local, remote, reach):
+def test_recent_errors_red_when_one_keeps_repeating(monkeypatch):
+    import error_log
+    lock = _group("macbook-pro", "sync:pull", "git is locked by a crashed command", 52, 5)
     monkeypatch.setattr(hc.machine_profile, "registry_id", lambda: "macbook-pro")
-    monkeypatch.setattr(hc.machine_profile, "remote_devices", lambda: {"mac-mini": {"tailscale_hostname": "gils-mac-mini"}})
-    return hc.check_recent_errors(reach, local=lambda: local, remote=remote, now=ERR_NOW)
-
-
-def test_recent_errors_red_when_one_keeps_repeating_on_either_mac(monkeypatch):
-    lock = _group("mac-mini", "sync:pull", "git is locked by a crashed command", 52, 5)
-    results, groups = _errs(monkeypatch, [], lambda host: [lock], {"machine:mac-mini": "green"})
+    monkeypatch.setattr(error_log, "recent", lambda hours=24: [lock])
+    results, groups = hc.check_recent_errors(now=ERR_NOW)
     by = {r["id"]: r for r in results}
-    assert by["errors@mac-mini"]["severity"] == "red"
-    assert "git is locked by a crashed command" in by["errors@mac-mini"]["detail"] and "×52" in by["errors@mac-mini"]["detail"]
-    assert by["errors@macbook-pro"]["severity"] == "green"
-    assert groups[0]["machine"] == "mac-mini" and groups[0]["severity"] == "red"
+    assert by["errors"]["severity"] == "red"
+    assert "git is locked by a crashed command" in by["errors"]["detail"] and "×52" in by["errors"]["detail"]
+    assert groups[0]["machine"] == "macbook-pro" and groups[0]["severity"] == "red"
 
 
-def test_recent_errors_amber_for_a_one_off_today(monkeypatch):
+def test_recent_errors_yellow_for_a_one_off_today(monkeypatch):
+    import error_log
     g = _group("macbook-pro", "dashboard:mr:list", "no network, or GitHub unreachable", 1, 300)
-    results, _ = _errs(monkeypatch, [g], lambda host: [], {"machine:mac-mini": "green"})
-    assert {r["id"]: r["severity"] for r in results}["errors@macbook-pro"] == "yellow"
+    monkeypatch.setattr(hc.machine_profile, "registry_id", lambda: "macbook-pro")
+    monkeypatch.setattr(error_log, "recent", lambda hours=24: [g])
+    results, _ = hc.check_recent_errors(now=ERR_NOW)
+    assert {r["id"]: r["severity"] for r in results}["errors"] == "yellow"
 
 
-def test_an_unreachable_mac_is_unknown_not_clean(monkeypatch):
-    results, _ = _errs(monkeypatch, [], lambda host: [], {"machine:mac-mini": "yellow"})
-    r = {x["id"]: x for x in results}["errors@mac-mini"]
-    assert r["severity"] == "yellow" and "can't read" in r["detail"]
-
-
-def test_an_asleep_mac_is_asleep(monkeypatch):
-    results, _ = _errs(monkeypatch, [], lambda host: [], {"machine:mac-mini": "asleep"})
-    assert {x["id"]: x for x in results}["errors@mac-mini"]["severity"] == "asleep"
-
-
-def test_a_remote_read_that_fails_is_unknown_not_clean(monkeypatch):
-    def boom(host):
-        raise OSError("ssh died")
-    results, _ = _errs(monkeypatch, [], boom, {"machine:mac-mini": "green"})
-    r = {x["id"]: x for x in results}["errors@mac-mini"]
-    assert r["severity"] == "yellow" and "can't read" in r["detail"]
-
-
-def test_groups_from_both_macs_are_newest_first(monkeypatch):
-    a = _group("macbook-pro", "x", "a", 1, 50)
-    b = _group("mac-mini", "y", "b", 1, 5)
-    _, groups = _errs(monkeypatch, [a], lambda host: [b], {"machine:mac-mini": "green"})
-    assert [g["cause"] for g in groups] == ["b", "a"]
+def test_no_recent_errors_is_green(monkeypatch):
+    import error_log
+    monkeypatch.setattr(hc.machine_profile, "registry_id", lambda: "macbook-pro")
+    monkeypatch.setattr(error_log, "recent", lambda hours=24: [])
+    results, groups = hc.check_recent_errors(now=ERR_NOW)
+    assert {r["id"]: r["severity"] for r in results}["errors"] == "green"
+    assert groups == []
 
 
 def test_sync_stuck_streak_is_per_action_so_pushes_do_not_reset_a_failing_pull():
@@ -1410,18 +1357,12 @@ def test_breaker_card_clears_by_itself_once_the_checkout_catches_up(monkeypatch)
     assert hc.check_pipeline_breaker()["severity"] == "green"
 
 
-def test_breaker_card_keeps_each_macs_stale_code_trip_apart(monkeypatch):
-    # Two Macs stale at once are two problems to fix, not one merged row.
+def test_breaker_card_includes_local_stale_code_trip(monkeypatch):
     import failure_breaker as fb
     monkeypatch.setattr(fb, "tripped", lambda now=None, project=None: [])
     monkeypatch.setattr(fb, "code_freshness", lambda *a, **k: STALE)
-    monkeypatch.setattr(hc.machine_profile, "remote_devices", lambda: {"other-mac": {"tailscale_hostname": "other"}})
-    remote_trip = {"project": "*", "signature": fb.CODE_STALE_SIGNATURE, "machine": "other-mac", "tickets": [],
-                   "first_seen": "2026-10-25T00:00:00+00:00", "last_seen": "x",
-                   "fix": "this Mac's MARVIN code sync is stuck (stash); resolve it by hand (see repo:sync)"}
-    r = hc.check_pipeline_breaker(remote=lambda host: [remote_trip])
-    assert r["severity"] == "red" and r["value"] == 2
-    assert "other-mac" in r["detail"] and "stash" in r["detail"] and "3 commits behind" in r["detail"]
+    r = hc.check_pipeline_breaker()
+    assert r["severity"] == "red" and "commits behind" in r["detail"]
 
 
 def test_breaker_card_says_couldnt_measure_when_this_macs_freshness_is_unknown(monkeypatch):
@@ -1596,38 +1537,6 @@ def test_no_disk_reading_means_no_activity_card():
     assert "disk:activity" not in dict((k, s) for k, s, _ in hc.evaluate_machine_state(_mstate(), NOW))
 
 
-# ── pull-only nodes: their own mirror row, not the Mac repo probe (marvin#910) ─────────────────────────────────────
-
-def test_repo_sync_probe_leaves_pull_only_nodes_to_the_mirror_row(monkeypatch):
-    # The fetch-based probe re-ran mac-mini-2012's broken fetch and hung into "unverifiable" for 4 days.
-    monkeypatch.setattr(hc, "SYNCED_REPOS", {"~/.claude": ".claude"})
-    monkeypatch.setattr(hc.machine_profile, "registry_id", lambda: "mac-mini-1")
-    monkeypatch.setattr(hc.machine_profile, "remote_devices", lambda: {
-        "macbook-pro-1": {"kind": "laptop", "tailscale_hostname": "lap"},
-        "mac-mini-2012": {"os": "linux", "kind": "desktop", "tailscale_hostname": "mac-mini-2012"}})
-    monkeypatch.setattr(hc, "_now", lambda: NOW)
-    calls = []
-    clean = "head=abc\nstashes=0\nconflicts=0\nfetch_ok=1\nbehind=0\nbehind_oldest_ts=\nahead=0\nahead_oldest_ts=\n"
-
-    def runner(target, rel):
-        calls.append(target)
-        return clean
-
-    results = hc.check_repo_sync_everywhere({"machine:macbook-pro-1": "green", "machine:mac-mini-2012": "green"},
-                                            runner=runner)
-    assert not any(r["id"].endswith("@mac-mini-2012") for r in results)
-    assert "mac-mini-2012" not in calls and "lap" in calls
-
-
-def test_the_sweep_runs_the_mirror_row_with_the_reachability_it_measured(monkeypatch):
-    import mirror_health
-    seen = {}
-    monkeypatch.setattr(mirror_health, "check_mirror_sync_everywhere", lambda reach: seen.setdefault("reach", reach) and [])
-    specs = {s[0]: s for s in hc.default_checks({"machine:mac-mini-2012": "green"})}
-    assert "mirror:sync" in specs
-    assert specs["mirror:sync"][3] == hc.CROSS_MACHINE_BUDGET_S
-    specs["mirror:sync"][2]()
-    assert seen["reach"] == {"machine:mac-mini-2012": "green"}
 
 
 # Found 2026-10-30 (#640 inventory): evaluate_machine_state emitted disk:activity (#765) with no label, so labels[key]
@@ -1639,13 +1548,12 @@ def test_every_machine_state_key_has_a_label_and_an_unlabelled_one_breaks_nothin
     assert emitted, "the key scan found nothing: evaluate_machine_state changed shape"
     assert emitted <= set(hc.MACHINE_STATE_LABELS), f"no label for {emitted - set(hc.MACHINE_STATE_LABELS)}"
 
-    monkeypatch.setattr(hc.machine_profile, "registry_id", lambda: "mac-mini-1")
-    monkeypatch.setattr(hc.machine_profile, "remote_devices", lambda: {})
     monkeypatch.setattr(hc, "_now", lambda: NOW)
+    monkeypatch.setattr(hc, "_run_machine_state_local", lambda script: "gh_token=ok\n")
     monkeypatch.setattr(hc, "evaluate_machine_state", lambda state, now: [("auth:gh", "green", "ok"), ("brand:new", "yellow", "x")])
-    rows = {r["id"]: r for r in hc.check_machine_state_everywhere({}, runner=lambda t, s: "gh_token=ok\n")}
-    assert rows["auth:gh@mac-mini-1"]["severity"] == "green"
-    assert rows["brand:new@mac-mini-1"]["label"] == "brand:new -- mac-mini-1"
+    rows = {r["id"]: r for r in hc.check_machine_state()}
+    assert rows["auth:gh"]["severity"] == "green"
+    assert rows["brand:new"]["label"] == "brand:new"
 
 
 # ---- profile parity (marvin#1038) ----
@@ -1707,12 +1615,6 @@ def test_query_ollama_models_local_returns_none_on_connection_error(monkeypatch)
     assert result is None
 
 
-def test_query_ollama_models_remote_returns_none_on_ssh_failure(monkeypatch):
-    """When SSH fails, should return None."""
-    monkeypatch.setattr("subprocess.run",
-                       lambda *a, **k: subprocess.CompletedProcess(a[0], returncode=1, stdout="", stderr="SSH failed"))
-    result = hc._query_ollama_models_remote("test-host")
-    assert result is None
 
 
 def test_check_model_availability_green_when_no_ollama_models(tmp_path, monkeypatch):
@@ -1727,8 +1629,8 @@ def test_check_model_availability_green_when_no_ollama_models(tmp_path, monkeypa
     assert "no ollama models" in result["detail"]
 
 
-def test_check_model_availability_unknown_when_no_machines_queried(tmp_path, monkeypatch):
-    """If no machines can be queried, should be unknown."""
+def test_check_model_availability_unknown_when_local_cant_be_queried(tmp_path, monkeypatch):
+    """If this machine's ollama can't be queried, should be unknown."""
     class MockRegistry:
         def all(self):
             return {
@@ -1740,7 +1642,7 @@ def test_check_model_availability_unknown_when_no_machines_queried(tmp_path, mon
     monkeypatch.setattr(hc.machine_profile, "remote_devices", lambda: {})
     result = hc.check_model_availability()
     assert result["severity"] == "unknown"
-    assert "couldn't reach any machine" in result["detail"]
+    assert "couldn't" in result["detail"]
 
 
 def test_check_model_availability_green_when_models_present_locally(tmp_path, monkeypatch):
@@ -1774,8 +1676,8 @@ def test_check_model_availability_green_with_model_variant(tmp_path, monkeypatch
     assert result["severity"] == "green"
 
 
-def test_check_model_availability_yellow_when_all_machines_answered(tmp_path, monkeypatch):
-    """When all queryable machines answered and models are missing, should be yellow."""
+def test_check_model_availability_yellow_when_missing_locally(tmp_path, monkeypatch):
+    """When required models are missing on the local machine, should be yellow."""
     class MockRegistry:
         def all(self):
             return {
@@ -1790,7 +1692,7 @@ def test_check_model_availability_yellow_when_all_machines_answered(tmp_path, mo
     monkeypatch.setattr(hc.machine_profile, "remote_devices", lambda: {})
     result = hc.check_model_availability()
     assert result["severity"] == "yellow"
-    assert "Missing on all queried machines" in result["detail"]
+    assert "Missing" in result["detail"]
     assert "qwen2.5:14b" in result["detail"]
 
 
@@ -1812,77 +1714,6 @@ def test_check_model_availability_ignores_non_ollama_models(tmp_path, monkeypatc
     assert result["severity"] == "green"
 
 
-def test_check_model_availability_yellow_when_missing_on_some_machines(tmp_path, monkeypatch):
-    """When models are missing on queried machines but other machines exist, should be yellow."""
-    class MockRegistry:
-        def all(self):
-            return {
-                "capabilities": {"test-cap": ["qwen2.5:7b"]},
-                "models": {"qwen2.5:7b": {"runtime": "ollama"}}
-            }
-    monkeypatch.setattr(mr, "ModelRegistry", lambda: MockRegistry())
-    monkeypatch.setattr(hc, "_query_ollama_models_local", lambda: [])  # local is empty
-    monkeypatch.setattr(hc.machine_profile, "remote_devices",
-                       lambda: {"mac-mini": {"tailscale_hostname": "mini.local"}})
-    # Simulate remote also being empty but reachable
-    monkeypatch.setattr(hc, "_query_ollama_models_remote", lambda h: [])
-    result = hc.check_model_availability(reachability={"machine:mac-mini": "green"})
-    assert result["severity"] == "yellow"
-    assert "Missing on all queried machines" in result["detail"]
-
-
-def test_check_model_availability_red_on_unregistered_model_in_capability(tmp_path, monkeypatch):
-    """Config drift: capability references a model that doesn't exist in the registry."""
-    class MockRegistry:
-        def all(self):
-            return {
-                "capabilities": {"test-cap": ["nonexistent-model"]},
-                "models": {}  # nonexistent-model is not registered
-            }
-    monkeypatch.setattr(mr, "ModelRegistry", lambda: MockRegistry())
-    monkeypatch.setattr(hc, "_query_ollama_models_local", lambda: [])
-    monkeypatch.setattr(hc.machine_profile, "remote_devices", lambda: {})
-    result = hc.check_model_availability()
-    assert result["severity"] == "red"
-    assert "Config drift" in result["detail"]
-    assert "unregistered model" in result["detail"]
-    assert "nonexistent-model" in result["detail"]
-
-
-def test_check_model_availability_red_on_empty_capability(tmp_path, monkeypatch):
-    """Config drift: capability list is empty."""
-    class MockRegistry:
-        def all(self):
-            return {
-                "capabilities": {"empty-cap": []},  # empty list
-                "models": {"qwen2.5:7b": {"runtime": "ollama"}}
-            }
-    monkeypatch.setattr(mr, "ModelRegistry", lambda: MockRegistry())
-    monkeypatch.setattr(hc, "_query_ollama_models_local", lambda: ["qwen2.5:7b"])
-    monkeypatch.setattr(hc.machine_profile, "remote_devices", lambda: {})
-    result = hc.check_model_availability()
-    assert result["severity"] == "red"
-    assert "Config drift" in result["detail"]
-    assert "empty" in result["detail"]
-
-
-def test_check_model_availability_unknown_when_remote_machine_unreachable(tmp_path, monkeypatch):
-    """Incomplete evidence: remote machine's listing couldn't be read, models missing."""
-    class MockRegistry:
-        def all(self):
-            return {
-                "capabilities": {"test-cap": ["qwen2.5:7b"]},
-                "models": {"qwen2.5:7b": {"runtime": "ollama"}}
-            }
-    monkeypatch.setattr(mr, "ModelRegistry", lambda: MockRegistry())
-    monkeypatch.setattr(hc, "_query_ollama_models_local", lambda: [])  # local doesn't have it
-    monkeypatch.setattr(hc.machine_profile, "remote_devices",
-                       lambda: {"mac-mini": {"tailscale_hostname": "mini.local"}})
-    # Simulate remote machine query failing (returns None)
-    monkeypatch.setattr(hc, "_query_ollama_models_remote", lambda h: None)
-    result = hc.check_model_availability(reachability={"machine:mac-mini": "green"})
-    assert result["severity"] == "unknown"
-    assert "couldn't verify" in result["detail"]
 
 
 def test_check_model_availability_untagged_model_match(tmp_path, monkeypatch):

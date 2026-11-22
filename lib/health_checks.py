@@ -36,7 +36,6 @@ HOME = Path.home()
 STATUS_PATH = HOME / ".claude" / "logs" / "health-status.json"
 STATUS_TOLERANCE_S = 20 * 60
 LAUNCHAGENTS_DIR = HOME / "Library" / "LaunchAgents"
-SSH_OPTS = ["-o", "ConnectTimeout=5", "-o", "BatchMode=yes", "-o", "StrictHostKeyChecking=accept-new"]
 
 RESULT_TEMPLATE = {"id": "", "label": "", "severity": "green", "detail": "", "checked_at": "", "value": None}
 
@@ -123,26 +122,9 @@ def _query_ollama_models_local() -> list[str] | None:
         return None
 
 
-def _query_ollama_models_remote(host: str) -> list[str] | None:
-    """Query ollama models on a remote machine over SSH. Returns None on error."""
-    script = "python3 -c \"import json,urllib.request; resp=urllib.request.urlopen('http://localhost:11434/api/tags', timeout=5); print(json.dumps([m['name'] for m in json.loads(resp.read()).get('models', [])]))\""
-    cmd = ["ssh", *SSH_OPTS, host, script]
-    try:
-        proc = subprocess.run(cmd, capture_output=True, text=True, timeout=10)
-        if proc.returncode == 0:
-            return json.loads(proc.stdout)
-    except Exception:
-        pass
-    return None
-
-
-def check_model_availability(reachability: dict[str, str] | None = None) -> dict:
-    """Check that all ollama models in the registry are available on at least one machine.
-
-    For each (capability, model) pair where the model's runtime is "ollama", query the
-    local machine and each reachable remote Mac to see if the model is installed.
-    Green if present on ≥1 machine, yellow if absent everywhere but every machine answered,
-    unknown if any machine's listing couldn't be read.
+def check_model_availability() -> dict:
+    """Check that all ollama models in the registry are available on this machine.
+    Local-only check; each Mac's sweep reports its own model availability.
     """
     import model_registry as mr
     cid, label = "model:availability", "Model registry matches what's installed"
@@ -152,7 +134,6 @@ def check_model_availability(reachability: dict[str, str] | None = None) -> dict
     capabilities = data.get("capabilities", {})
     models = data.get("models", {})
 
-    # Check for config drift: empty capabilities or unregistered models
     config_errors = []
     ollama_pairs = []
     for cap_name, model_list in capabilities.items():
@@ -174,56 +155,20 @@ def check_model_availability(reachability: dict[str, str] | None = None) -> dict
     if not ollama_pairs:
         return _result(cid, label, "green", "no ollama models in registry", value=0)
 
-    # Gather available models from all reachable machines, tracking failures
-    machines_queried = []
-    machines_failed = []
-    all_available = set()
-
-    # Query local machine
     local_models = _query_ollama_models_local()
-    if local_models is not None:
-        machines_queried.append("local")
-        all_available.update(local_models)
-    else:
-        machines_failed.append("local")
+    if local_models is None:
+        return _unknown(cid, label, "couldn't query ollama models on this machine")
 
-    # Query remote machines
-    for device_id, info in machine_profile.remote_devices().items():
-        host = info.get("tailscale_hostname")
-        if not host or not _reachable(reachability, device_id):
-            continue
-        try:
-            remote_models = _query_ollama_models_remote(host)
-            if remote_models is not None:
-                machines_queried.append(device_id)
-                all_available.update(remote_models)
-            else:
-                machines_failed.append(device_id)
-        except Exception:
-            machines_failed.append(device_id)
-
-    if not machines_queried:
-        return _unknown(cid, label, "couldn't reach any machine to check ollama models")
-
-    # Check each required model
     missing = []
     for cap_name, model_name in ollama_pairs:
-        if not mr.model_present(list(all_available), model_name):
+        if not mr.model_present(local_models, model_name):
             missing.append(f"{model_name} (for {cap_name})")
 
     if not missing:
-        machines_str = ", ".join(machines_queried)
-        return _result(cid, label, "green", f"all {len(ollama_pairs)} ollama models present on {machines_str}", value=len(ollama_pairs))
+        return _result(cid, label, "green", f"all {len(ollama_pairs)} ollama models present", value=len(ollama_pairs))
 
-    # Models are missing. If any machine couldn't be queried, we have incomplete evidence.
-    if machines_failed:
-        return _unknown(cid, label,
-                       f"missing on {', '.join(machines_queried)} but couldn't verify {', '.join(machines_failed)}: "
-                       f"{'; '.join(missing[:3])}")
-
-    # All machines answered and the models are still missing
     return _result(cid, label, "yellow",
-                   f"Missing on all queried machines ({', '.join(machines_queried)}): {'; '.join(missing[:3])}",
+                   f"Missing models: {'; '.join(missing[:3])}",
                    value=len(missing))
 
 
@@ -327,14 +272,6 @@ SYNC_LOG_STUCK_YELLOW_AFTER_HOURS = 0.5  # 30 minutes
 SYNC_LOG_STUCK_RED_AFTER_HOURS = 4  # 4 hours
 
 
-def _run_sync_log_remote(host: str) -> str:
-    """Read sync-log.md directly from disk on a remote machine over SSH."""
-    script = "cat \"$HOME/.claude/sync-log.md\" 2>/dev/null || echo"
-    cmd = ["ssh", *SSH_OPTS, host, "bash -s"]
-    proc = subprocess.run(cmd, input=script, capture_output=True, text=True, timeout=10)
-    return proc.stdout if proc.returncode == 0 else ""
-
-
 def _parse_sync_log_entries(text: str) -> list[tuple[str, str, str, datetime]]:
     """Parse sync-log.md entries. Returns [(machine, repo, status, datetime), ...].
     Format: ## YYYY-MM-DDTHH:MM:SS — action (machine) [repo]
@@ -430,31 +367,13 @@ def _reachable(reachability: dict[str, str] | None, dev: str) -> bool:
     return reachability is None or reachability.get(f"machine:{dev}") == "green"
 
 
-def check_sync_stuck(reachability: dict[str, str] | None = None, remote=None) -> list[dict]:
-    """Cross-machine: this machine's sync-log plus each reachable remote device's, read over SSH. A Mac that can't be
-    read is one "couldn't measure" row for that Mac, never a crash: one ssh timeout to the laptop used to kill the
-    whole sweep (3 of 20 runs on 2026-10-21)."""
-    remote = remote or _run_sync_log_remote
-    results = []
-    me = machine_profile.registry_id()
-    devices = [(me, None)] + [(dev, info.get("tailscale_hostname")) for dev, info in machine_profile.remote_devices().items()]
-    for dev, host in devices:
-        if host is None:
-            p = HOME / ".claude" / "sync-log.md"
-            text = p.read_text() if p.exists() else ""
-        else:
-            if not _reachable(reachability, dev):
-                continue
-            try:
-                text = remote(host)
-            except (subprocess.SubprocessError, OSError) as exc:
-                results.append(_unknown(f"sync:stuck@{dev}", f"Code sync — {dev}", f"{dev}'s sync log: {type(exc).__name__}"))
-                continue
-        # sync-log.md is itself synced, so each copy holds the other Mac's entries too, as of its last sync. Trust each
-        # Mac's entries only from that Mac's own copy: a stale copy turned a working sync red (2026-10-14).
-        own = {dev, _remote_machine_label(dev)} | ({machine_label()} if host is None else set())
-        results += check_sync_stuck_from_text(text, dev=dev, only_machine=own)
-    return results
+def check_sync_stuck() -> list[dict]:
+    """This machine's sync-log. Local-only check; each Mac's sweep reports its own sync state."""
+    p = HOME / ".claude" / "sync-log.md"
+    text = p.read_text() if p.exists() else ""
+    dev = machine_profile.registry_id()
+    own = {dev, machine_label()}
+    return check_sync_stuck_from_text(text, dev=dev, only_machine=own)
 
 
 def _remote_machine_label(dev: str) -> str:
@@ -464,28 +383,13 @@ def _remote_machine_label(dev: str) -> str:
 
 # ── pipeline circuit breaker ─────────────────────────────────────────────
 
-def _run_failure_breaker_remote(host: str) -> list[dict]:
-    """Query failure_breaker.py --json on a remote machine over SSH."""
-    script = "python3 ~/.agents/lib/failure_breaker.py --json"
-    cmd = ["ssh", *SSH_OPTS, host, script]
-    proc = subprocess.run(cmd, capture_output=True, text=True, timeout=10)
-    if proc.returncode != 0:
-        return []
-    try:
-        return json.loads(proc.stdout)
-    except (json.JSONDecodeError, ValueError):
-        return []
-
-
-def check_pipeline_breaker(reachability: dict[str, str] | None = None, remote=None) -> dict:
+def check_pipeline_breaker() -> dict:
     """Red while the cross-ticket breaker (failure_breaker.py) has paused dispatch:
-    the same failure hit several different tickets, i.e. the environment is
-    broken, not the tickets. Cross-machine: queries local machine + each
-    reachable remote device (SSH), merging trips from all machines."""
+    the same failure hit several different tickets, i.e. the environment is broken,
+    not the tickets. Local machine only; each Mac's sweep reports its own breaker state."""
     import failure_breaker
     cid, label = "pipeline:breaker", "Ticket pipeline circuit breaker"
 
-    # Local machine trips, plus this Mac's own stale code (marvin#458): a live reading, so it clears by itself.
     all_trips = failure_breaker.tripped()
     fresh = failure_breaker.code_freshness()
     stale = failure_breaker.code_trip(freshness=fresh)
@@ -493,27 +397,11 @@ def check_pipeline_breaker(reachability: dict[str, str] | None = None, remote=No
         all_trips.append(stale)
     unknown_here = fresh["detail"] if fresh["state"] == "unknown" else None
 
-    # Remote machine trips (only Macs answering: an asleep laptop is skipped, not waited on).
-    remote = remote or _run_failure_breaker_remote
-    unread = []
-    for device_id, info in machine_profile.remote_devices().items():
-        host = info.get("tailscale_hostname")
-        if not host or not _reachable(reachability, device_id):
-            continue
-        try:
-            all_trips.extend(remote(host))
-        except (subprocess.SubprocessError, OSError, ValueError) as exc:
-            unread.append(f"{device_id} ({type(exc).__name__})")
-
     if not all_trips:
         if unknown_here:
-            return _unknown(cid, label, f"whether this Mac's code is current ({unknown_here}); dispatch carries on"
-                            + (", and breaker state on " + ", ".join(unread) if unread else "") + "; not tripped otherwise")
-        if unread:
-            return _unknown(cid, label, "breaker state on " + ", ".join(unread) + "; not tripped on the rest")
+            return _unknown(cid, label, f"whether this Mac's code is current ({unknown_here}); dispatch carries on")
         return _result(cid, label, "green", "not tripped")
 
-    # Merge trips by (project, signature), keeping earliest first_seen for display. A stale-code trip is per Mac.
     trips_by_key = {}
     for t in all_trips:
         key = (t.get("project", "G-Eskayo/marvin"), t["signature"], t.get("machine") if t.get("fix") else None)
@@ -709,14 +597,11 @@ def check_site_published(gh=None, git=None) -> dict | None:
     return _result(cid, label, r["severity"], r["detail"])
 
 
-def check_stale_relay(reachability: dict[str, str] | None = None) -> dict:
-    """Stale claims caught by the resume check vs leaked to the owner this week, per Mac (marvin#1224). An asleep Mac is
-    unknown for the week, not 0."""
+def check_stale_relay() -> dict:
+    """Stale claims caught by the resume check vs leaked to the owner this week.
+    Local-only check; each Mac's sweep reports its own stale relay count."""
     import stale_relay
-    import purpose_metrics
-    macs = [(d, h) for d, h in purpose_metrics._macs() if _reachable(reachability, d)]
-    asleep = [d for d, _h in purpose_metrics._macs() if not _reachable(reachability, d)]
-    per = stale_relay.everywhere(macs=macs) + [{"machine": d, "known": False, "error": "asleep"} for d in asleep]
+    per = stale_relay.everywhere(macs=[])
     return stale_relay.row(per)
 
 
@@ -1139,47 +1024,27 @@ def evaluate_repo_sync(state: dict, now: datetime) -> tuple[str, str, int | None
     return worst, "; ".join(d for _, d in findings), state["stashes"] or None
 
 
-def _run_repo_state(target: str | None, rel_path: str, fetch: bool = True) -> str:
-    """target None = this machine, else an ssh host."""
+def _run_repo_state_local(rel_path: str, fetch: bool = True) -> str:
+    """Run repo state script locally."""
     script = repo_state_script(rel_path, fetch)
-    cmd = ["bash", "-s"] if target is None else ["ssh", *SSH_OPTS, target, "bash -s"]
-    proc = subprocess.run(cmd, input=script, capture_output=True, text=True, timeout=60)
+    proc = subprocess.run(["bash", "-s"], input=script, capture_output=True, text=True, timeout=60)
     return proc.stdout
 
 
-def check_repo_sync_everywhere(reachability: dict[str, str], runner=_run_repo_state) -> list[dict]:
-    """Sync health of every synced repo on this machine AND every remote Mac.
-    `reachability` maps machine:<id> -> severity from the reachability check:
-    an asleep device is reported asleep (neutral), any other unreachable device
-    is yellow ('cannot verify'), never skipped. Pull-only nodes (mac-mini-2012)
-    get lib/mirror_health.py's row instead: this probe re-runs the remote's own
-    fetch, which on the box is the very path that broke (marvin#910)."""
+def check_repo_sync() -> list[dict]:
+    """Sync health of every synced repo on this machine. Local-only check;
+    each Mac's sweep reports its own repo sync state."""
     results = []
-    me = machine_profile.registry_id()
-    devices = [(me, None, "local")] + [
-        (dev, info.get("tailscale_hostname"), reachability.get(f"machine:{dev}", "yellow"))
-        for dev, info in machine_profile.remote_macs().items()
-    ]
     for display_name, rel in SYNCED_REPOS.items():
-        for dev, host, reach in devices:
-            cid = f"repo:sync:{display_name}@{dev}"
-            label = f"{display_name} sync -- {dev}"
-            if reach == "asleep":
-                results.append(_result(cid, label, "asleep", "cannot check while the machine is asleep"))
-                continue
-            if reach not in ("local", "green"):
-                results.append(_result(cid, label, "yellow", f"machine unreachable ({reach}) -- sync state unverifiable"))
-                continue
-            try:
-                state = parse_repo_state(runner(host, rel))
-            except Exception as exc:  # ssh/git failure: surface it, don't skip silently
-                results.append(_result(cid, label, "yellow", f"could not read sync state: {str(exc)[:120]}"))
-                continue
-            sev, detail, value = evaluate_repo_sync(state, _now())
-            # Downgrade stash severity for remote machines: they don't block local sync
-            if sev == "red" and reach != "local" and state["stashes"] and not state["conflicts"]:
-                sev = "yellow"
-            results.append(_result(cid, label, sev, detail, value=value))
+        cid = f"repo:sync:{display_name}"
+        label = f"{display_name} sync"
+        try:
+            state = parse_repo_state(_run_repo_state_local(rel))
+        except Exception as exc:
+            results.append(_result(cid, label, "yellow", f"could not read sync state: {str(exc)[:120]}"))
+            continue
+        sev, detail, value = evaluate_repo_sync(state, _now())
+        results.append(_result(cid, label, sev, detail, value=value))
     return results
 
 
@@ -1529,60 +1394,27 @@ def disk_activity(state: dict, now: datetime) -> tuple[str, str] | None:
     return "green", detail
 
 
-def _run_machine_state(target: str | None, script: str = _MACHINE_STATE_SCRIPT) -> str:
-    cmd = ["bash", "-s"] if target is None else ["ssh", *SSH_OPTS, target, "bash -s"]
-    return subprocess.run(cmd, input=script, capture_output=True, text=True, timeout=60).stdout
+def _run_machine_state_local(script: str = _MACHINE_STATE_SCRIPT) -> str:
+    return subprocess.run(["bash", "-s"], input=script, capture_output=True, text=True, timeout=60).stdout
 
 
-def _run_errors_remote(host: str) -> list[dict]:
-    """The other Mac's recent errors (lib/error_log.py recent --json), over SSH. Raises on any failure so the caller
-    can say "can't read", never "no errors"."""
-    cmd = ["ssh", *SSH_OPTS, host, "$HOME/.agents/venv/bin/python $HOME/.agents/lib/error_log.py recent --json --hours 24"]
-    proc = subprocess.run(cmd, capture_output=True, text=True, timeout=20)
-    if proc.returncode != 0:
-        raise OSError((proc.stderr or proc.stdout).strip()[:200] or f"ssh exit {proc.returncode}")
-    data = json.loads(proc.stdout or "[]")
-    if not isinstance(data, list):
-        raise ValueError("not an error list")
-    return data
-
-
-def _local_errors() -> list[dict]:
-    import error_log
-    return error_log.recent(hours=24)
-
-
-def check_recent_errors(reachability: dict[str, str], local=_local_errors, remote=_run_errors_remote,
-                        now: datetime | None = None) -> tuple[list[dict], list[dict]]:
-    """marvin#422: one "Recent errors" check per Mac (red while an error keeps repeating within the hour, yellow for
-    anything in the last day), plus every folded error from both Macs, newest first, for the Health list."""
+def check_recent_errors(now: datetime | None = None) -> tuple[list[dict], list[dict]]:
+    """marvin#422: Recent errors on this machine (red while an error keeps repeating within the hour,
+    yellow for anything in the last day). Local-only check; each Mac's sweep reports its own errors."""
     import error_log
     now = now or _now()
-    me = machine_profile.registry_id()
-    devices = [(me, None, "local")] + [(dev, info.get("tailscale_hostname"), reachability.get(f"machine:{dev}", "yellow"))
-                                       for dev, info in machine_profile.remote_devices().items()]
-    results, groups = [], []
-    for dev, host, reach in devices:
-        cid, label = f"errors@{dev}", f"Recent errors -- {dev}"
-        if reach == "asleep":
-            results.append(_result(cid, label, "asleep", "cannot check while the machine is asleep"))
-            continue
-        if reach not in ("local", "green"):
-            results.append(_result(cid, label, "yellow", f"can't read this Mac's errors (unreachable: {reach})"))
-            continue
-        try:
-            mine = local() if host is None else remote(host)
-        except Exception as exc:  # noqa: BLE001
-            results.append(_result(cid, label, "yellow", f"can't read this Mac's errors: {exc}"))
-            continue
-        mine = [{**g, "machine": g.get("machine") or dev, "severity": error_log.severity(g, now)} for g in mine if isinstance(g, dict)]
-        groups += mine
-        if not mine:
-            results.append(_result(cid, label, "green", "no errors in the last 24 hours", value=0))
-            continue
-        sev = "red" if any(g["severity"] == "red" for g in mine) else "yellow"
-        top = "; ".join(f"{g['cause']} ({g['source']}, ×{g['count']})" for g in mine[:3])
-        results.append(_result(cid, label, sev, f"{len(mine)} kind(s) of error in the last 24 hours: {top}", value=len(mine)))
+    dev = machine_profile.registry_id()
+    cid, label = f"errors", f"Recent errors"
+    try:
+        mine = error_log.recent(hours=24)
+    except Exception as exc:  # noqa: BLE001
+        return [_result(cid, label, "yellow", f"can't read this Mac's errors: {exc}")], []
+    groups = [{**g, "machine": g.get("machine") or dev, "severity": error_log.severity(g, now)} for g in mine if isinstance(g, dict)]
+    if not groups:
+        return [_result(cid, label, "green", "no errors in the last 24 hours", value=0)], []
+    sev = "red" if any(g["severity"] == "red" for g in groups) else "yellow"
+    top = "; ".join(f"{g['cause']} ({g['source']}, ×{g['count']})" for g in groups[:3])
+    results = [_result(cid, label, sev, f"{len(groups)} kind(s) of error in the last 24 hours: {top}", value=len(groups))]
     groups.sort(key=lambda g: g.get("last_t", ""), reverse=True)
     return results, groups
 
@@ -1594,33 +1426,19 @@ MACHINE_STATE_LABELS = {
     "memory:pressure": "Memory pressure", "disk:activity": "Disk writes by work"}
 
 
-def check_machine_state_everywhere(reachability: dict[str, str], runner=_run_machine_state) -> list[dict]:
+def check_machine_state() -> list[dict]:
+    """Machine state on this machine (dashboard, webhook, auth, disk, jobs).
+    Local-only check; each Mac's sweep reports its own machine state."""
     results = []
-    me = machine_profile.registry_id()
-    devices = [(me, None, "local")] + [
-        (dev, info.get("tailscale_hostname"), reachability.get(f"machine:{dev}", "yellow"))
-        for dev, info in machine_profile.remote_macs().items()   # Mac-only state (dashboard, launchd); ADR 0069
-    ]
     labels = MACHINE_STATE_LABELS
-    for dev, host, reach in devices:
-        if reach == "asleep":
-            for key, label in labels.items():
-                results.append(_result(f"{key}@{dev}", f"{label} -- {dev}", "asleep", "cannot check while the machine is asleep"))
-            continue
-        if reach not in ("local", "green"):
-            for key, label in labels.items():
-                results.append(_result(f"{key}@{dev}", f"{label} -- {dev}", "yellow", f"machine unreachable ({reach}) -- unverifiable"))
-            continue
-        try:
-            state = parse_machine_state(runner(host, _MACHINE_STATE_SCRIPT))
-        except Exception as exc:
-            for key, label in labels.items():
-                results.append(_result(f"{key}@{dev}", f"{label} -- {dev}", "yellow", f"could not read machine state: {str(exc)[:100]}"))
-            continue
-        state["_device"] = dev
-        for key, sev, detail in evaluate_machine_state(state, _now()):
-            # A key with no label yet shows under its own id instead of failing every card of this machine.
-            results.append(_result(f"{key}@{dev}", f"{labels.get(key, key)} -- {dev}", sev, detail))
+    try:
+        state = parse_machine_state(_run_machine_state_local(_MACHINE_STATE_SCRIPT))
+    except Exception as exc:
+        for key, label in labels.items():
+            results.append(_result(f"{key}", label, "yellow", f"could not read machine state: {str(exc)[:100]}"))
+        return results
+    for key, sev, detail in evaluate_machine_state(state, _now()):
+        results.append(_result(key, labels.get(key, key), sev, detail))
     return results
 
 
@@ -1697,27 +1515,6 @@ def overall_severity(severities: list[str]) -> str:
     return "red" if "red" in severities else "yellow" if ("yellow" in severities or UNKNOWN in severities) else "green"
 
 
-def check_machine_reachability() -> list[dict]:
-    results = []
-    for device_id, info in machine_profile.remote_devices().items():
-        cid = f"machine:{device_id}"
-        label = f"Machine: {device_id}"
-        host = info.get("tailscale_hostname")
-        if not host:
-            results.append(_result(cid, label, "yellow", "no tailscale_hostname registered"))
-            continue
-        try:
-            proc = subprocess.run(["ssh", *SSH_OPTS, host, "echo ok"],
-                                  capture_output=True, text=True, timeout=8)
-            if proc.returncode == 0:
-                results.append(_result(cid, label, "green", f"reachable ({host})"))
-                continue
-            why = proc.stderr.strip()[:200]
-        except subprocess.TimeoutExpired:
-            why = "timed out"
-        severity, detail = classify_unreachable(info.get("kind", "desktop"), _tailscale_peer(host), _now())
-        results.append(_result(cid, label, severity, f"{detail} ({host}: {why})"))
-    return results
 
 
 # ── coverage ─────────────────────────────────────────────────────────────
@@ -1741,11 +1538,9 @@ def coverage(results: list[dict]) -> dict:
 
 # ── orchestration ────────────────────────────────────────────────────────
 
-# Per-check wall-clock budgets (seconds). The default covers a local check plus a few gh calls; the cross-machine ones get
-# room for three Macs, each behind its own 60 s ssh timeout. A check over budget is cut off and reported, and the sweep
-# moves on (its thread is a daemon, so a hung ssh can't hold the process open either).
+# Per-check wall-clock budget (seconds). A check over budget is cut off and reported, and the sweep
+# moves on (its thread is a daemon, so a hung subprocess can't hold the process open either).
 CHECK_BUDGET_S = 60
-CROSS_MACHINE_BUDGET_S = 200
 
 
 def guarded(check_id: str, label: str, fn, budget_s: float = CHECK_BUDGET_S) -> list[dict]:
@@ -1910,21 +1705,19 @@ def _mirror_health():
     return mirror_health
 
 
-def default_checks(reach: dict[str, str] | None = None, reach_results: list[dict] | None = None) -> list[tuple]:
-    """Every check the sweep runs, in the order the Health tab shows them. `reach` maps machine:<id> -> severity from
-    the reachability check, which runs first; `reach_results` are its rows, listed where they always appeared."""
-    reach = reach or {}
+def default_checks() -> list[tuple]:
+    """Every check the sweep runs, in the order the Health tab shows them."""
     return [
         ("token", "Auth tokens", check_token_files, CHECK_BUDGET_S),
         ("route:intent-routing-collection", "route.py embedding classifier (ChromaDB)", check_intent_routing_collection, CHECK_BUDGET_S),
-        ("model:availability", "Model registry matches what's installed", lambda: check_model_availability(reach), CROSS_MACHINE_BUDGET_S),
+        ("model:availability", "Model registry matches what's installed", check_model_availability, CHECK_BUDGET_S),
         ("dispatch:lock-age", "Local dispatch lock", check_dispatch_lock, CHECK_BUDGET_S),
-        ("pipeline:breaker", "Ticket pipeline circuit breaker", lambda: check_pipeline_breaker(reach), CROSS_MACHINE_BUDGET_S),
-        ("sync:stuck", "Code sync", lambda: check_sync_stuck(reach), CROSS_MACHINE_BUDGET_S),
+        ("pipeline:breaker", "Ticket pipeline circuit breaker", check_pipeline_breaker, CHECK_BUDGET_S),
+        ("sync:stuck", "Code sync", check_sync_stuck, CHECK_BUDGET_S),
         ("sync:union-review", "Code sync: merged lines to check", check_union_merge_review, CHECK_BUDGET_S),
         ("dispatch:parallel", "Parallel dispatch keeping up", check_parallel_dispatch, CHECK_BUDGET_S),
         ("purpose:missed", "Purpose metrics", check_missed_purposes, CHECK_BUDGET_S),
-        ("freshness:stale-relay", "Stale claims: caught vs leaked", lambda: check_stale_relay(reach), CROSS_MACHINE_BUDGET_S),
+        ("freshness:stale-relay", "Stale claims: caught vs leaked", check_stale_relay, CHECK_BUDGET_S),
         ("parked:overdue", "Parked choices come back when due", check_parked, CHECK_BUDGET_S),
         ("contract", "Output contracts", check_output_contracts, CHECK_BUDGET_S),
         ("profile:missing", "Projects without an execution profile", check_missing_profiles, CHECK_BUDGET_S),
@@ -1943,31 +1736,27 @@ def default_checks(reach: dict[str, str] | None = None, reach_results: list[dict
         ("site:published", "The site is published", check_site_published, CHECK_BUDGET_S),
         ("seal:beta-ingest", "Seal Speak beta reports are picked up", check_seal_beta_ingest, CHECK_BUDGET_S),
         ("brief:builder", "Morning brief builder", check_brief_builder, CHECK_BUDGET_S),
-        ("merge:service", "Merge service reachable", check_merge_service, CROSS_MACHINE_BUDGET_S),
+        ("merge:service", "Merge service reachable", check_merge_service, CHECK_BUDGET_S),
         ("cron", "Cron job logs", _cron_job_logs, CHECK_BUDGET_S),
-        ("machine", "Machine reachability", lambda: list(reach_results or []), CHECK_BUDGET_S),
-        ("repo:sync", "Repo sync", lambda: check_repo_sync_everywhere(reach), CROSS_MACHINE_BUDGET_S),
-        ("mirror:sync", "Mirror sync on pull-only nodes", lambda: _mirror_health().check_mirror_sync_everywhere(reach),
-         CROSS_MACHINE_BUDGET_S),
-        ("machine-state", "Machine state", lambda: check_machine_state_everywhere(reach), CROSS_MACHINE_BUDGET_S),
+        ("repo:sync", "Repo sync", check_repo_sync, CHECK_BUDGET_S),
+        ("mirror:sync", "Mirror sync on pull-only nodes", lambda: _mirror_health().check_mirror_sync_everywhere(),
+         CHECK_BUDGET_S),
+        ("machine-state", "Machine state", check_machine_state, CHECK_BUDGET_S),
     ]
 
 
 def run_all(checks=None, recent_errors=None) -> dict:
-    """One sweep. `checks` / `recent_errors` replace the defaults (tests); the defaults run the reachability check
-    first, so the cross-machine checks skip a Mac that is asleep instead of waiting on it."""
+    """One sweep. `checks` / `recent_errors` replace the defaults (tests)."""
     results: list[dict] = []
     if checks is None:
-        reach_results = guarded("machine", "Machine reachability", check_machine_reachability, CROSS_MACHINE_BUDGET_S)
-        reach = {r["id"]: r["severity"] for r in reach_results}
-        results += run_checks(default_checks(reach, reach_results))
+        results += run_checks(default_checks())
         box: dict = {}
 
         def errors():
-            rows, box["groups"] = check_recent_errors(reach)
+            rows, box["groups"] = check_recent_errors()
             return rows
 
-        results += guarded("errors", "Recent errors", errors, CROSS_MACHINE_BUDGET_S)
+        results += guarded("errors", "Recent errors", errors, CHECK_BUDGET_S)
         recent_errors = box.get("groups", [])
     else:
         results += run_checks(checks)
@@ -1984,15 +1773,10 @@ def run_all(checks=None, recent_errors=None) -> dict:
 
 
 def _own_status_path() -> Path:
-    """Where this machine's own sweep goes. On a pull-only node (mac-mini-2012, ADR 0069) health-status.json is the
-    Mini's whole-network view, which marvin-observer-feed copies there every 2 minutes for the box's dashboard; the
-    box's own sweep (marvin#911) is written beside it as health-status.local.json so the two never overwrite each
-    other. If the registry can't be read, a non-Mac takes the local file."""
-    try:
-        pull_only = machine_profile.pull_only()
-    except Exception:  # noqa: BLE001
-        pull_only = sys.platform != "darwin"
-    return STATUS_PATH.with_name("health-status.local.json") if pull_only else STATUS_PATH
+    """Where this machine's own sweep goes. Each Mac writes to a stamped file named after its device id,
+    so peers can read each other's status without network calls."""
+    dev_id = machine_profile.registry_id()
+    return STATUS_PATH.with_name(f"health-status.{dev_id}.json")
 
 
 def write_status(status: dict | None = None) -> dict:
@@ -2014,7 +1798,7 @@ _MEASURED_DISK = re.compile(r"^\d+ GiB free of \d+ \(\d+%\)")
 
 
 def react_to_low_disk(checks: list[dict], run=None, stamp_path: Path | None = None, now: datetime | None = None) -> list[dict]:
-    """Run the disk first aid on each Mac whose disk:space result is a measured yellow or red. Never raises."""
+    """Run the disk first aid on each machine whose disk:space result is a measured yellow or red. Never raises."""
     stamp_path = stamp_path or DISK_FIRST_AID_STAMP
     now = now or _now()
     if run is None:
@@ -2028,11 +1812,11 @@ def react_to_low_disk(checks: list[dict], run=None, stamp_path: Path | None = No
     out = []
     for r in checks:
         rid = str(r.get("id", ""))
-        if not rid.startswith("disk:space@") or r.get("severity") not in ("yellow", "red"):
+        if not rid.startswith("disk:space") or r.get("severity") not in ("yellow", "red"):
             continue
         if not _MEASURED_DISK.match(str(r.get("detail") or "")):
             continue
-        dev = rid.split("@", 1)[1]
+        dev = rid.split("@", 1)[1] if "@" in rid else machine_profile.registry_id()
         try:
             last = datetime.fromisoformat(stamps[dev])
             if now - last < DISK_FIRST_AID_EVERY:
