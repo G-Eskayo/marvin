@@ -6,9 +6,9 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 import ticket_evidence as te  # noqa: E402
 
 FACTS = {
-    "prs": [{"number": 28, "body": "Closes #21", "headRefName": "pipeline/clarity-captions-21"}],
-    "branches": ["origin/pipeline/clarity-captions-21", "origin/pipeline/clarity-captions-13"],
-    "rescue": ["refs/rescue/pipeline/clarity-captions-23/20261005T1200"],
+    "prs": [{"number": 28, "body": "Closes #21", "headRefName": "pipeline/21"}],
+    "branches": ["origin/pipeline/21", "origin/pipeline/13"],
+    "rescue": ["refs/rescue/pipeline/23/20261005T1200"],
     "commits": [("abc1234", "Add live mistake highlighting (issue #4)"), ("def5678", "Fix #40 crash"),
                 ("0aa1111", "Revert \"Add thing (#9)\"")],
 }
@@ -89,10 +89,11 @@ def test_merged_pr_work_verbs_count_as_done_evidence():
 # 2026-10-09: #213 and #259 were skipped as "looks-done" because docs commits only LISTED them.
 def test_a_commit_counts_only_when_it_says_it_did_the_ticket():
     yes = ["Hooks at user level, launch-kind aware (#291)", "Project tagger and archive lifecycle (#298, #299; ADR 0060)",
-           "Implement G-Eskayo/marvin#296", "Fixes #12: board loads", "closes #12", "board refresh (refs #12)"]
+           "Implement #296 comprehensively", "Fixes #12: board loads", "closes #12", "board refresh (refs #12)"]
     no = ["Plan: steps 1-2 done, tickets #259-#263 for the rest", "docs: ticket triage applied; revisit #213 later",
           "Follow-on filed: #68", "see #12 and #13 for context",
-          "docs: ticket triage 2026-10-07 applied; revisit schedule for holds (#213)"]
+          "docs: ticket triage 2026-10-07 applied; revisit schedule for holds (#213)",
+          "Implement G-Eskayo/marvin#296"]  # repo slug #n should not count (#1270)
     import ticket_evidence as te
     for s in yes:
         n = int(__import__("re").findall(r"#(\d+)", s)[0])
@@ -100,3 +101,71 @@ def test_a_commit_counts_only_when_it_says_it_did_the_ticket():
     for s in no:
         n = int(__import__("re").findall(r"#(\d+)", s)[0])
         assert not te._commit_claims(s, n), s
+
+
+def test_ticket_number_glued_to_repo_slug_does_not_count_as_evidence():
+    # "clarity-captions#10" (single-word slug) should not count, but "#10" alone should
+    facts = {"prs": [], "branches": [], "rescue": [], "commits": [("abc", "Implement clarity-captions#10")]}
+    assert te.evidence_for(10, facts) == []  # single-word slug#n is not same-repo evidence
+
+    # But the same commit with "#10" alone should count
+    facts2 = {"prs": [], "branches": [], "rescue": [], "commits": [("abc", "Implement #10")]}
+    assert len(te.evidence_for(10, facts2)) > 0  # bare #n should count
+
+
+def test_branch_pattern_must_be_pipeline_slash_number_or_pipeline_slash_owner_slash_repo_hash_number():
+    facts = {"prs": [], "branches": ["origin/pipeline-21", "origin/pipeline/team-21", "origin/bugfix/21"], "rescue": [], "commits": []}
+    assert te.evidence_for(21, facts) == []
+
+
+def test_branch_pattern_accepts_owner_slash_repo_hash_prefix():
+    facts = {"prs": [], "branches": ["origin/pipeline/owner/repo#21"], "rescue": [], "commits": []}
+    ev = te.evidence_for(21, facts)
+    assert ev[0]["kind"] == "branch" and ev[0]["ref"] == "origin/pipeline/owner/repo#21"
+
+
+def test_mentions_with_repo_slug_prefix_does_not_match():
+    facts = {"prs": [], "branches": [], "rescue": [], "commits": [("abc", "See clarity-captions#21 for details")]}
+    assert te.evidence_for(21, facts) == []
+
+
+def test_branch_matching_is_strict_to_the_number():
+    facts = {"prs": [], "branches": ["origin/pipeline/210", "origin/pipeline/2"], "rescue": [], "commits": []}
+    assert te.evidence_for(21, facts) == []
+    assert te.evidence_for(210, facts)[0]["kind"] == "branch"
+
+
+def test_rescue_ref_extraction_preserves_the_full_ref_path():
+    facts = {**FACTS, "rescue": ["refs/rescue/pipeline/owner/repo#42/20261005T1200"]}
+    ev = te.evidence_for(42, facts)
+    assert ev[0]["kind"] == "rescue-ref" and ev[0]["ref"] == "refs/rescue/pipeline/owner/repo#42/20261005T1200"
+
+
+def test_cross_repo_mentions_do_not_count():
+    """A PR saying 'Part of G-Eskayo/clarity-captions#10' should not count as evidence for marvin#10."""
+    facts = {"prs": [{"number": 5, "body": "Part of G-Eskayo/clarity-captions#10", "headRefName": "feature"}],
+             "branches": [], "rescue": [], "commits": [], "merged": []}
+    assert te.evidence_for(10, facts) == []
+
+
+def test_cross_repo_claims_do_not_count():
+    """A commit saying 'Closes other-owner/other-repo#10' should not mark the local #10 as done."""
+    facts = {"prs": [], "branches": [], "rescue": [], "commits": [("abc", "Closes other-owner/other-repo#10")], "merged": []}
+    assert te.evidence_for(10, facts) == []
+
+
+def test_implement_with_text_before_ticket_counts():
+    """'Implement X for #10' should count as a claim on #10."""
+    facts = {"prs": [], "branches": [], "rescue": [], "commits": [("abc", "Implement something for #10")], "merged": []}
+    ev = te.evidence_for(10, facts)
+    assert len(ev) > 0 and ev[0]["kind"] == "commit"
+
+
+def test_mentions_bare_ticket_in_text_counts():
+    """A mention of a bare #N should count as evidence."""
+    facts = {"prs": [{"number": 5, "body": "Part of #10", "headRefName": "feature"}],
+             "branches": [], "rescue": [], "commits": [], "merged": []}
+    ev = te.evidence_for(10, facts)
+    assert len(ev) > 0 and ev[0]["kind"] == "open-pr"
+
+

@@ -21,7 +21,7 @@ TIMEOUT = 60
 
 
 def _mentions(text: str, n: int) -> bool:
-    return bool(re.search(rf"#{n}(?!\d)", text or ""))
+    return bool(re.search(rf"(?<![\w/-])#{n}(?!\d)", text or ""))
 
 
 # A merged PR is done-evidence only when it says it did the work. A bare mention ("Implemented by
@@ -31,7 +31,7 @@ _WORK = r"(?:close[sd]?|fix(?:e[sd])?|resolve[sd]?|refs?|references|implements|a
 
 
 def _claims(text: str, n: int) -> bool:
-    return bool(re.search(rf"\b{_WORK}\b\s*:?\s*#{n}(?!\d)", text or "", re.I))
+    return bool(re.search(rf"\b{_WORK}\b\s*:?\s*(?<![\w/-])#{n}(?!\d)", text or "", re.I))
 
 
 def _commit_claims(subject: str, n: int) -> bool:
@@ -41,14 +41,18 @@ def _commit_claims(subject: str, n: int) -> bool:
     s = subject or ""
     if re.match(r"^(docs|plan|chore)\b", s, re.I) and not _claims(s, n):
         return False  # a docs/plan commit naming an open ticket wrote about it; it didn't build it (#213)
-    if _claims(s, n) or re.match(rf"^Implement\b.*#{n}(?!\d)", s):
+    if _claims(s, n) or re.match(rf"^Implement\b\s+.*(?<![\w/-])#{n}(?!\d)", s):
         return True
     tail = re.search(r"\(([^()]*)\)\s*$", s)
     return bool(tail and re.search(rf"(?:^|[\s,;])#{n}(?![\d-])", tail.group(1)))
 
 
+_BRANCH = re.compile(r"(?:^|/)pipeline/(?:[\w.-]+/[\w.-]+#)?(\d{1,7})(?:/|$)")
+
+
 def _named(ref: str, n: int) -> bool:
-    return bool(re.search(rf"[/-]{n}(?![\d])", ref))
+    m = _BRANCH.search(ref or "")
+    return bool(m and int(m.group(1)) == n)
 
 
 def evidence_for(n: int, facts: dict) -> list[dict]:

@@ -1487,9 +1487,11 @@ Status, corrected 2026-10-26 (marvin#699):
   prevents re-fetching/re-embedding a paper already known queries this collection, not a
   per-traversal temporary set.
 
-## Pre-dispatch "work already exists" guard (2026-10-05)
+## Pre-dispatch "work already exists" guard (2026-10-05; evidence pattern strictness 2026-11-19 #1270)
 
 `lib/ticket_evidence.py` checks git/PR facts before `ticket_pipeline` dispatches: an open PR, a `pipeline/*` branch or a `refs/rescue/*` ref means **in-flight**; commits on the base branch mentioning `#N` means **looks-done**. Either one removes the ticket from dispatch (logged `skip repo#N`). Unreadable facts fall back to dispatching, so a gh hiccup never stalls the pipeline. The same evidence is shown on Activity cards (`ticket_evidence.py report <repo>` -> `getEvidence` in boards.js, cached 5 min): a chip, and a ready/backlog card's reason says work already exists. A commit that merely *mentions* #N can be a false positive (e.g. a baseline-metrics commit), so it is worded "commit mentions this", never "done".
+
+**Branch/PR matching strictness** (#1270): The pipeline branch name is canonical — `pipeline/<n>` or `pipeline/<owner>/<repo>#<n>` only, never a bare version/build number or a slug like `pipeline-<n>`. Ticket number matching uses a left-boundary guard (`(?<![\w/-])#{n}`) so a ticket glued to a repo slug like `clarity-captions#10` never counts as evidence for `#10` in the same repo. When a ticket's evidence verdict is "looks-done" (commits or merged PRs claiming it), the pipeline posts one `gh issue comment` naming the work found (PR number, commit SHA, branch, or rescue ref) and the detail, gated by `_flagged_before`/`_mark_flagged` so it posts once per ref, never repeatedly (closes #1270).
 
 
 ## Device columns on Activity (2026-10-05)

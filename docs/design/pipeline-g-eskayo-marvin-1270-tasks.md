@@ -1,0 +1,8 @@
+1. `lib/ticket_evidence.py`: replace `_named()`'s loose `[/-]{n}(?!\d)` with the canonical, prefix-tolerant pipeline-branch pattern (`(?:^|/)pipeline/(?:[\w.-]+/[\w.-]+#)?{n}$`), reused from `auto_merge_regression._BRANCH`/`incident_ladder._pipeline_branch`.
+2. `lib/ticket_evidence.py`: add a `(?<![\w/-])` left-boundary guard before `#{n}` in both `_mentions()` and `_claims()` so a ticket number glued to a repo slug (`clarity-captions#10`) never counts as same-repo evidence.
+3. `lib/tests/test_ticket_evidence.py`: fix the stale branch fixtures and add tests 2–7 above.
+4. `lib/ticket_pipeline.py`: add `_flag_looks_done(repo, n, evidence)` next to `_flagged_before`/`_mark_flagged`, posting one `gh issue comment` naming the PR/commit, gated by `_flagged_before`/`_mark_flagged` keyed on `f"looks-done:{repo}#{n}"` → the evidence ref; mark flagged only on a successful `gh` call.
+5. `lib/ticket_pipeline.py`: in `_unclaimed_ready_tickets()`'s existing skip branch, call `_flag_looks_done` when (and only when) `ticket_evidence.verdict(ev) == "looks-done"`.
+6. `lib/tests/test_ticket_pipeline.py`: add the autouse no-op fixture (test 8) and new tests 9–12.
+7. `CONTEXT.md`: amend the "Pre-dispatch 'work already exists' guard (2026-10-05)" entry to state that branch/PR matching requires the ticket's real `pipeline/<N>` (or `pipeline/<owner>/<repo>#<N>`) naming or a work-verb link — never a bare version/build number — and that a `looks-done` skip now leaves one comment on the ticket naming the match (closes #1270).
+8. Run `lib/tests/test_ticket_evidence.py` and `lib/tests/test_ticket_pipeline.py` in full, plus the module's existing full suite, before calling this done.

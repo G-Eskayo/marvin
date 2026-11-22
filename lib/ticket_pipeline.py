@@ -166,11 +166,16 @@ def _unclaimed_ready_tickets(repo: str = REPO, issues: list[dict] | None = None)
                 # The incident ladder's rung 3 (incident_ladder.py): the original fix's merged PRs and commits are
                 # what regressed, not a sign the work is done. Work in flight still holds it back.
                 ev = [e for e in ev if e["kind"] not in ("commit", "merged-pr")]
-            if ticket_evidence.verdict(ev) == "clear":
+            verdict = ticket_evidence.verdict(ev)
+            if verdict == "clear":
                 kept.append(i)
+            elif verdict == "looks-done":
+                _flag_looks_done(repo, i["number"], ev)
+                print(f"{LOG_PREFIX} skip {repo}#{i['number']}: work already exists "
+                      f"({verdict}: {ev[0]['ref']} {ev[0]['detail'][:60]})", file=sys.stderr)
             else:
                 print(f"{LOG_PREFIX} skip {repo}#{i['number']}: work already exists "
-                      f"({ticket_evidence.verdict(ev)}: {ev[0]['ref']} {ev[0]['detail'][:60]})", file=sys.stderr)
+                      f"({verdict}: {ev[0]['ref']} {ev[0]['detail'][:60]})", file=sys.stderr)
         ready = kept
     ready.sort(key=_order_key)
     # Research tickets (label `research`, Gil 2026-10-09): only when no build work is waiting, and one at a time.
@@ -295,6 +300,25 @@ def _mark_flagged(url: str, sha: str) -> None:
         data[url] = sha
         FLAGGED_PATH.write_text(json.dumps(data, indent=1))
     except (OSError, ValueError):
+        pass
+
+
+def _flag_looks_done(repo: str, n: int, evidence: list[dict]) -> None:
+    """Post a comment naming the work that already exists, and mark as flagged so we don't re-comment."""
+    if not evidence:
+        return
+    key = f"looks-done:{repo}#{n}"
+    if _flagged_before(key, evidence[0].get("ref", "")):
+        return
+    ref = evidence[0].get("ref", "")
+    detail = evidence[0].get("detail", "")
+    try:
+        result = subprocess.run(["gh", "issue", "comment", str(n), "--repo", repo, "--body",
+                               f"Work already exists: {ref} ({detail[:50]})"],
+                              capture_output=True, text=True, timeout=15)
+        if result.returncode == 0:
+            _mark_flagged(key, ref)
+    except Exception:  # noqa: BLE001 -- best effort: a failed comment doesn't block dispatch
         pass
 
 
