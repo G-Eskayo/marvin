@@ -58,6 +58,7 @@ from urllib.parse import quote
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 IDLE_REFRESH_S = 25 * 60          # RFC 2177: servers may drop an IDLE after 30 min
+READ_TIMEOUT_S = 120              # a silently dead connection fails instead of hanging (#1409)
 BACKOFF_START_S, BACKOFF_MAX_S = 5, 300
 STATE_DIR = Path.home() / ".claude" / "mail-sorting"
 
@@ -220,6 +221,28 @@ def parse_message_id(raw: bytes) -> str:
     return (_header_msg(raw).get("Message-ID", "") or "").strip().strip("<>")
 
 
+def imap_utf7(name: str) -> str:
+    """Mailbox and Gmail label names are modified UTF-7 (RFC 3501 5.1.3): printable ASCII stays except `&`, which is
+    `&-`, and any other run is `&` + base64 of UTF-16BE with `,` for `/` + `-`. A raw `&` made Gmail answer
+    `BAD Could not parse command` (#1409)."""
+    import base64
+    out, run = [], []
+
+    def flush():
+        if run:
+            b = base64.b64encode("".join(run).encode("utf-16-be")).decode().rstrip("=").replace("/", ",")
+            out.append("&" + b + "-")
+            run.clear()
+    for ch in name:
+        if 0x20 <= ord(ch) <= 0x7E:
+            flush()
+            out.append("&-" if ch == "&" else ch)
+        else:
+            run.append(ch)
+    flush()
+    return "".join(out)
+
+
 def imap_quote(s: str) -> str:
     if "\r" in s or "\n" in s:
         raise ValueError("IMAP string can't contain a line break")
@@ -246,7 +269,7 @@ def apply(imap, uid: int, d: Decision) -> None:
         _ok(*imap.uid("STORE", u, "+FLAGS", "(\\Flagged)"), what="star")
         _ok(*imap.uid("STORE", u, "+X-GM-LABELS", "(\\Important)"), what="important")
     elif d.kind == "sort":
-        _ok(*imap.uid("STORE", u, "+X-GM-LABELS", f"({imap_quote(d.folder)})"), what="label")
+        _ok(*imap.uid("STORE", u, "+X-GM-LABELS", f"({imap_quote(imap_utf7(d.folder))})"), what="label")
         _ok(*imap.uid("STORE", u, "-X-GM-LABELS", "(\\Inbox)"), what="unInbox")
 
 
@@ -300,9 +323,18 @@ def catch_up(imap, config: Config, state: State, alert: Callable[[Decision, Mess
     data = _ok(*imap.uid("SEARCH", "UID", f"{last + 1}:*"), what="search")
     uids = sorted(int(x) for x in b" ".join(data or [b""]).split() if int(x) > last)  # `N:*` returns the max even if < N
     for uid in uids:
-        m = fetch_message(imap, uid)
-        d = decide(m, config)
-        apply(imap, uid, d)
+        m = Message(uid, "", "")
+        try:
+            m = fetch_message(imap, uid)
+            d = decide(m, config)
+            apply(imap, uid, d)
+        except imaplib.IMAP4.abort:
+            raise                       # the connection broke: reconnect and retry this message
+        except (ImapError, imaplib.IMAP4.error) as exc:
+            # The server refused this one message (NO/BAD). Leave it in the Inbox and move on: retrying it forever
+            # is what hammered Gmail on 2026-11-23 (#1409).
+            d = Decision("error", None, f"server refused: {exc}"[:200])
+            _record(f"uid {uid}: server refused an action, left in the Inbox", exc)
         _log(log_path, m, d)
         if d.kind == "watch":
             try:
@@ -331,6 +363,23 @@ def keychain_password(service: str, account: str) -> str:
     return out.stdout.strip()
 
 
+def _harden_socket(sock) -> None:
+    """A read timeout, so a dead connection raises instead of blocking forever, and TCP keepalive, so the kernel
+    notices a dropped connection during a long IDLE wait. Each option is best-effort: not every platform has them."""
+    import socket
+    sock.settimeout(READ_TIMEOUT_S)
+    for level, opt, val in [(socket.SOL_SOCKET, socket.SO_KEEPALIVE, 1),
+                            (socket.IPPROTO_TCP, getattr(socket, "TCP_KEEPALIVE", None), 60),   # macOS
+                            (socket.IPPROTO_TCP, getattr(socket, "TCP_KEEPIDLE", None), 60),    # Linux
+                            (socket.IPPROTO_TCP, getattr(socket, "TCP_KEEPINTVL", None), 15),
+                            (socket.IPPROTO_TCP, getattr(socket, "TCP_KEEPCNT", None), 4)]:
+        if opt is not None:
+            try:
+                sock.setsockopt(level, opt, val)
+            except OSError:
+                pass
+
+
 class GmailConnection:
     """imaplib with the two things it lacks on Python 3.12: IDLE, and UIDVALIDITY/UIDNEXT read after SELECT."""
 
@@ -341,7 +390,7 @@ class GmailConnection:
 
     def _select(self):
         _ok(*self.M.select("INBOX"), what="select")
-        self.M.sock.settimeout(None)  # blocking reads; IDLE waits with select() instead
+        _harden_socket(self.M.sock)   # IDLE waits with select(); every read still has a timeout
 
     def uid(self, command, *args):
         return self.M.uid(command, *args)
@@ -409,7 +458,8 @@ def _is_auth_failure(exc: BaseException) -> bool:
                                                               r"Application-specific password", str(exc), re.I)
 
 
-def run(config_dir: Path, account: str = "gmail", *, once: bool = False) -> int:
+def run(config_dir: Path, account: str = "gmail", *, once: bool = False, connect=None, sleep=time.sleep) -> int:
+    connect = connect or GmailConnection
     acct_path = Path(config_dir) / f"{account}.json"
     try:
         acct = json.loads(acct_path.read_text())
@@ -426,8 +476,7 @@ def run(config_dir: Path, account: str = "gmail", *, once: bool = False) -> int:
     while True:
         conn = None
         try:
-            conn = GmailConnection(host, address, keychain_password(service, address))
-            backoff = BACKOFF_START_S
+            conn = connect(host, address, keychain_password(service, address))
             while True:
                 n = catch_up(conn, load_config(config_dir), state, _alert, log_path)
                 if n:
@@ -436,6 +485,7 @@ def run(config_dir: Path, account: str = "gmail", *, once: bool = False) -> int:
                     return 0
                 if conn.idle(IDLE_REFRESH_S) == "bye":
                     break
+                backoff = BACKOFF_START_S   # healthy through a full IDLE cycle; a login alone doesn't count (#1409)
         except ConfigError as exc:
             _record(f"{account}: stopped, config problem", exc)
             _tell_once(f"Mail sorter stopped: {exc}")
@@ -448,7 +498,7 @@ def run(config_dir: Path, account: str = "gmail", *, once: bool = False) -> int:
             _record(f"{account}: connection lost, reconnecting in {backoff}s", f"{type(exc).__name__}: {exc}")
             if once:
                 return 1
-            time.sleep(backoff)
+            sleep(backoff)
             backoff = min(backoff * 2, BACKOFF_MAX_S)
         finally:
             if conn:
