@@ -14,7 +14,9 @@ import { forwardRefreshPing } from './refresh_relay.js'
 import { announceMergeHost, relayMergeHostUp } from './merge_host_announce.js'
 import { createStageRelay, createLiveMerges, allowedPeerAddress, cleanStageMessage, stageFanOut } from './merge_stage_relay.js'
 import { copyRoute } from './copy_route.js'
-import { loadGhToken } from './gh_auth.js'
+import { loadGhToken, loadWebhookSecret } from './gh_auth.js'
+import { handleGithubWebhook, createDeliveryDedup } from './gh_webhook.js'
+import { ensureWebhooks } from './gh_webhook_provision.js'
 import { useGhGate } from '../electron/main/path.js'
 import { failureResponse } from './failure.js'
 import { timeRequest } from '../electron/main/timing.js'
@@ -255,6 +257,47 @@ const server = createServer(async (req, res) => {
     return
   }
 
+  // GitHub webhook: pushed from Tailscale Funnel
+  if (req.method === 'POST' && req.url === '/github-webhook') {
+    let rawBody = ''
+    try {
+      rawBody = await readBody(req, 1024 * 1024)
+    } catch (err) {
+      res.writeHead(413, { 'Content-Type': 'application/json' }).end(JSON.stringify({ ok: false, error: err.message }))
+      return
+    }
+    const { status, json, repo, event, forward } = handleGithubWebhook(
+      { headers: req.headers, rawBody, repos: readRegistry().map((b) => b.repo), secret: webhookSecret },
+      { dedup: webhookDedup }
+    )
+    res.writeHead(status, { 'Content-Type': 'application/json' }).end(JSON.stringify(json))
+    if (forward && repo && event) {
+      console.log(`[github-webhook] ${event} on ${repo}`)
+      onGithubChange(repo, 'webhook')
+      // Relay to peers so their dashboards refresh too
+      relayGithubEvent({ repo })
+    }
+    return
+  }
+
+  // GitHub webhook relay: local-only, from peers via Tailscale
+  if (req.method === 'POST' && req.url === '/github-event') {
+    if (!allowedPeerAddress(req.socket?.remoteAddress)) {
+      res.writeHead(403, { 'Content-Type': 'application/json' }).end('{"ok":false}')
+      return
+    }
+    let body = null
+    try { body = await readJsonBody(req) } catch { /* answered below */ }
+    const repo = typeof body?.repo === 'string' ? body.repo : null
+    if (repo) {
+      res.writeHead(200, { 'Content-Type': 'application/json' }).end('{"ok":true}')
+      onGithubChange(repo, 'peer-webhook')
+      return
+    }
+    res.writeHead(400, { 'Content-Type': 'application/json' }).end('{"ok":false}')
+    return
+  }
+
   if (req.method !== 'POST' || (req.url !== '/approve' && req.url !== '/deny')) {
     res.writeHead(404).end()
     return
@@ -336,6 +379,10 @@ function announceThisMac(why) {
 
 const rebuildCheck = createRebuildCheckTrigger()
 
+// Load webhook secret and create dedup for GitHub webhook deliveries
+const { source: webhookSecretSource, secret: webhookSecret } = loadWebhookSecret()
+const webhookDedup = createDeliveryDedup(500)
+
 // marvin#568: which Mac runs the merges (shown on the card), and the in-flight record a restart reads.
 const machineId = resolveDeviceId()
 const inflight = createInflightStore()
@@ -344,6 +391,12 @@ const mergeLatch = createMergeLatch()
 const liveMerges = createLiveMerges()
 const relayStage = createStageRelay({
   peers: () => peerHosts(),
+  post: (url, body, { timeoutMs }) => fetch(url, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body), signal: AbortSignal.timeout(timeoutMs) }),
+  log: (m) => console.warn(m)
+})
+const relayGithubEvent = createStageRelay({
+  peers: () => peerHosts(),
+  path: '/github-event',
   post: (url, body, { timeoutMs }) => fetch(url, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body), signal: AbortSignal.timeout(timeoutMs) }),
   log: (m) => console.warn(m)
 })
@@ -475,9 +528,25 @@ function queuedPendingHeads() {
   return heads
 }
 
+// Shared handler for GitHub changes from ETag watch or webhook: triggers merge queue, feeds, and dashboards
+function onGithubChange(repo, source) {
+  if (supportRepos().includes(repo)) {
+    console.log(`[gh-watch] support change on ${repo} at ${new Date().toISOString()}`)
+    supportSync(repo)
+    return
+  }
+  console.log(`[gh-watch] change detected on ${repo} at ${new Date().toISOString()}`)
+  githubFeed?.refresh(repo)
+  if (rebuildCheck(repo)) console.log(`[rebuild-check] started for ${repo}`)
+  refreshFacts().finally(() => mergeQueue.kick(repo).catch(() => {}))
+  forwardRefreshPing(DASHBOARD_REFRESH_URL, (url) => postJson(url, { topics: ['activity', 'mr'], source: `github:${repo}` }))
+  forwardRefreshPing(MOBILE_REFRESH_URL, postJson)
+}
+
 server.listen(PORT, () => {
   console.log(`MR-approval webhook listening on http://localhost:${PORT}/approve`)
   console.log(`GitHub credential source: ${ghTokenSource}`)
+  console.log(`GitHub webhook secret source: ${webhookSecretSource}`)
 
   // A merge that was running when the last process died is over: say so now (log + one event to an open dashboard
   // here), instead of its card reading "Merging…" until the 45-minute limit. It is automatically resumed in the queue
@@ -536,20 +605,22 @@ server.listen(PORT, () => {
     onTick: (answered) => githubFeed?.alive(answered),
     getRepos: () => [...new Set([...readRegistry().map((b) => b.repo), ...supportRepos()])],
     probe: createGithubProbe(),
-    ping: (repo) => {
-      if (supportRepos().includes(repo)) {
-        console.log(`[gh-watch] support change on ${repo} at ${new Date().toISOString()}`)
-        supportSync(repo)
-        return
-      }
-      console.log(`[gh-watch] change detected on ${repo} at ${new Date().toISOString()}`)
-      githubFeed?.refresh(repo)
-      if (rebuildCheck(repo)) console.log(`[rebuild-check] started for ${repo}`) // #443: any merge path updates the app
-      // marvin#231: a PR updated, a ticket labelled, main's CI opening or closing its main-red ticket: the queue looks
-      // again (answers first, so a just-built PR is seen built).
-      refreshFacts().finally(() => mergeQueue.kick(repo).catch(() => {}))
-      forwardRefreshPing(DASHBOARD_REFRESH_URL, (url) => postJson(url, { topics: ['activity', 'mr'], source: `github:${repo}` }))
-      forwardRefreshPing(MOBILE_REFRESH_URL, postJson)
-    }
+    ping: (repo) => onGithubChange(repo, 'etag-watch')
   })
+
+  // Provision GitHub webhooks on the primary host only, if Funnel URL and secret are available
+  if (isPrimaryHost() && webhookSecret) {
+    const repos = readRegistry().map((b) => b.repo)
+    if (repos.length) {
+      const funnelUrl = process.env.MARVIN_GITHUB_FUNNEL_URL || null
+      if (funnelUrl) {
+        ensureWebhooks({
+          repos,
+          url: funnelUrl,
+          secret: webhookSecret,
+          exec: async (args) => (await promisify(execFile)('gh', args, { maxBuffer: 10 * 1024 * 1024 })).stdout
+        }).catch((err) => console.error(`[webhook-provision] startup failed: ${String(err?.message || err).slice(0, 100)}`))
+      }
+    }
+  }
 })

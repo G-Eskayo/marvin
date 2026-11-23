@@ -204,6 +204,76 @@ describe('the card on another Mac', () => {
     await Promise.all(recordMerge().map((m) => relay(m)))
     expect(ops.get(PR).state).toBe('merged')
   })
+
+  it('case 12: non-Tailscale remote address is refused 403 on /github-event (wrong-machine misuse)', async () => {
+    // Verify that allowedPeerAddress rejects non-Tailscale IPs for the new /github-event path
+    // This is enforced at the HTTP level in index.js: if (!allowedPeerAddress(req.socket?.remoteAddress)) return 403
+    const badIps = ['192.168.1.1', '10.0.0.1', '8.8.8.8', '100.63.0.1', '100.128.0.1']
+    for (const ip of badIps) {
+      expect(allowedPeerAddress(ip)).toBe(false)
+    }
+    // Good IPs (loopback and Tailscale)
+    const goodIps = ['127.0.0.1', '::1', '100.64.0.1', '100.127.255.254', 'fd7a:115c:a1e0::1']
+    for (const ip of goodIps) {
+      expect(allowedPeerAddress(ip)).toBe(true)
+    }
+  })
+
+  it('case 13: webhook relay peer unreachable → relay() returns at once, peer goes quiet for cooldown, never blocks webhook response', async () => {
+    // The webhook relay uses the same per-peer serial queue and quiet-period backoff as /merge-stage
+    let t = 0
+    const calls = []
+    const post = (url) => {
+      calls.push(url)
+      return new Promise((_, reject) => setTimeout(() => reject(new Error('peer asleep')), 20))
+    }
+    // Create a relay for /github-webhook path (the new path for webhook relay)
+    const relay = createStageRelay({
+      peers: () => [{ host: 'laptop-asleep' }],
+      post,
+      path: '/github-webhook', // Case 13 test: custom path parameter
+      now: () => t,
+      quietMs: 60_000
+    })
+
+    // Send a webhook-style message (repo and event from GitHub)
+    const webhookMsg = { url: PR, event: { action: 'opened' }, progress: null }
+
+    // First relay call should immediately return (doesn't wait for the failed post)
+    const t0 = Date.now()
+    const pending = relay(webhookMsg)
+    expect(Date.now() - t0).toBeLessThan(10) // Returns immediately
+    await pending
+
+    expect(calls).toHaveLength(1) // Only tried once
+    expect(calls[0]).toContain('/github-webhook') // Used the custom path
+
+    // Second call within the quiet window should be dropped
+    t = 30_000 // Within the 60s quiet period
+    await relay(webhookMsg)
+    expect(calls).toHaveLength(1) // Still only 1, second was dropped
+
+    // After quiet period expires, next attempt tries again
+    t = 61_000
+    await relay(webhookMsg)
+    expect(calls).toHaveLength(2) // Now it tries again
+    expect(calls[1]).toContain('/github-webhook')
+  })
+
+  it('createStageRelay path parameter default is /merge-stage, keeping existing callers unchanged', async () => {
+    // Verify backward compatibility: existing code without path param still uses /merge-stage
+    const calls = []
+    const post = (url, body, { timeoutMs }) => {
+      calls.push(url)
+      return Promise.resolve({ ok: true })
+    }
+
+    // Call without path parameter (old code)
+    const relay = createStageRelay({ peers: () => [{ host: 'peer' }], post, port: 7878 })
+    await relay({ url: PR, event: { seq: 1 }, progress: null })
+
+    expect(calls[0]).toContain(':7878/merge-stage')
+  })
 })
 
 describe('one card, both states', () => {

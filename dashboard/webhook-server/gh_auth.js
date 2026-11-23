@@ -24,3 +24,15 @@ export function loadGhToken(env = process.env, home = process.env.HOME, read = (
   }
   return 'none'
 }
+
+export function loadWebhookSecret(home = process.env.HOME, read = (p) => readFileSync(p, 'utf8')) {
+  try {
+    const secret = String(read(path.join(home, '.claude', '.github-webhook-secret'))).trim()
+    if (secret) {
+      return { source: 'file', secret }
+    }
+  } catch {
+    // missing/unreadable
+  }
+  return { source: 'none', secret: null }
+}

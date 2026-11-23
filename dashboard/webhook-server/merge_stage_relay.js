@@ -19,7 +19,7 @@ export const PEER_QUIET_MS = 60_000
 
 const URL_OK = (u) => typeof u === 'string' && u.startsWith('https://github.com/') && u.length < 300
 
-export function createStageRelay({ peers = () => [], post, port = 7878, timeoutMs = RELAY_TIMEOUT_MS, quietMs = PEER_QUIET_MS, now = Date.now, log = () => {} }) {
+export function createStageRelay({ peers = () => [], post, port = 7878, path = '/merge-stage', timeoutMs = RELAY_TIMEOUT_MS, quietMs = PEER_QUIET_MS, now = Date.now, log = () => {} }) {
   const lines = new Map() // host -> { tail: Promise, quietUntil: ms }
   function send(host, body) {
     const line = lines.get(host) || { tail: Promise.resolve(), quietUntil: 0 }
@@ -28,7 +28,7 @@ export function createStageRelay({ peers = () => [], post, port = 7878, timeoutM
     line.tail = line.tail.then(async () => {
       if (line.quietUntil > now()) return // went quiet while this one waited: drop it, the next event catches up
       try {
-        const res = await post(`http://${host}:${port}/merge-stage`, body, { timeoutMs })
+        const res = await post(`http://${host}:${port}${path}`, body, { timeoutMs })
         if (res && res.ok === false) throw new Error(`answered ${res.status}`)
       } catch (e) {
         line.quietUntil = now() + quietMs

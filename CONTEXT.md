@@ -883,13 +883,16 @@ unbounded: any chat, either machine, raw `gh`, the GitHub UI). Polling stays onl
 - **Local state** (`ticket-stages/`, `dispatch-state.json`, `boards/registry.json`): the Electron main
   process watches the files and emits a debounced `activity` trigger to the renderer. Catches Python
   and Node writers alike.
-- **GitHub state** (issues, labels, PRs, comments): the webhook-server's change-detector
-  (`webhook-server/gh_watch.js`) sends one conditional request per registered board repo every ~20s
-  against its most-recently-updated issue (304 = free against the rate limit) and, on change, pings the
-  app's `/refresh` port with topics. "Change" is the newest issue's number + `updated_at` from a 200's body,
-  never the ETag alone (marvin#603: GitHub sent a new ETag on every 200 for four hours on 2026-10-22 and every
-  repo "changed" every tick, ~150 gh calls a minute). Real GitHub webhooks were rejected: they need a public URL and the
-  one static ngrok domain belongs to Marlin. The events feed was rejected: it lags by minutes.
+- **GitHub state** (issues, labels, PRs, comments): **Funnel push path** (ticket #566, 2026-11-23): GitHub
+  webhooks are now delivered via Tailscale Funnel to `POST /github-webhook` with HMAC-SHA256 verification
+  (timing-safe), bounded dedup (500 deliveries), and repo allowlist. Signed events are relayed to peers over `POST /github-event`
+  (Tailscale-only, `allowedPeerAddress()` gated); both invoke the shared `onGithubChange()` handler to trigger the queue and
+  dashboard refresh. The ETag change-detector (`webhook-server/gh_watch.js`) remains the documented backstop, running
+  every ~20s against the most-recently-updated issue (304 = free); "change" is the newest issue's number + `updated_at` from
+  a 200's body, never the ETag alone (marvin#603: GitHub sent a new ETag on every 200 for four hours on 2026-10-22 and every
+  repo "changed" every tick, ~150 gh calls a minute). Webhooks are provisioned idempotently at startup by the primary host
+  when Funnel is configured and a secret exists; old nonce—the static ngrok domain belongs to Marlin—is no longer used. The
+  events feed was rejected: it lags by minutes.
 - **GitHub checks** (marvin#555, 2026-10-21; replaces #554's 90 s re-read of the whole PR list): checks
   starting or finishing are not issue updates, so the change-detector never sees them. The **check watch**
   (`createCheckWatcher` in `gh_watch.js`) runs in the dashboard's main process and the mobile backend, which
