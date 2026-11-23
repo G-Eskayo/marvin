@@ -327,24 +327,43 @@ def _with_build_folder(prefix: str, capture):
         shutil.rmtree(derived, ignore_errors=True)
 
 
-def capture_ios_simulator(worktree_path: Path, cfg: dict, run=subprocess.run, sleep=None) -> list[dict]:
+def capture_ios_simulator(worktree_path: Path, cfg: dict, recordings: list[dict] | None = None, run=subprocess.run, sleep=None, popen=subprocess.Popen) -> list[dict]:
     """Builds an iOS app for the simulator (signing off), launches each configured scene (launch arguments, e.g. a
     debug-only demo mode) in light and dark, and screenshots it into the worktree, so the images ride along in the
-    pipeline's commit. Proven by hand on the Mac Mini on 2026-10-09. Returns [{path (relative), caption}]. Raises
-    ValueError for an incomplete config and RuntimeError (with the tool's own error line) when a step fails.
+    pipeline's commit. Proven by hand on the Mac Mini on 2026-10-09. When recordings are configured, records video
+    for matching scenes and converts to GIF/MP4. Returns [{path (relative), caption}] with video paths appended when
+    present. Raises ValueError for an incomplete config and RuntimeError (with the tool's own error line) when a step fails.
     simctl cannot tap or rotate, so scenes are reached through launch arguments only."""
     import time
     sleep = sleep or time.sleep
     required = ("project_dir", "project", "scheme", "simulator", "bundle_id")
     if not isinstance(cfg, dict) or any(not cfg.get(k) for k in required) or not cfg.get("scenes"):
         raise ValueError(f"evidence.dev.ios_simulator needs {', '.join(required)} and at least one scene")
+
+    # Validate recordings upfront if provided
+    if recordings is not None:
+        if not isinstance(recordings, list):
+            raise ValueError("recordings must be a list of dicts")
+        scene_names = {s.get("name") for s in cfg.get("scenes", [])}
+        for rec in recordings:
+            if not isinstance(rec, dict):
+                raise ValueError("each recording must be a dict with 'scene' and 'seconds'")
+            scene = rec.get("scene")
+            if scene not in scene_names:
+                raise ValueError(f"recording references unknown scene '{scene}'")
+            seconds = rec.get("seconds")
+            if not isinstance(seconds, (int, float)) or seconds < 1 or seconds > 30:
+                raise ValueError(f"recording seconds must be a number in [1, 30], got {seconds}")
+
     project_dir = Path(worktree_path) / cfg["project_dir"]
     for cmd in cfg.get("prepare", []):
         _run_checked(run, list(cmd), cwd=project_dir)
-    return _with_build_folder("ios-evidence-", lambda derived: _capture_ios(worktree_path, cfg, project_dir, derived, run, sleep))
+    return _with_build_folder("ios-evidence-", lambda derived: _capture_ios(worktree_path, cfg, project_dir, derived, recordings, run, sleep, popen))
 
 
-def _capture_ios(worktree_path: Path, cfg: dict, project_dir: Path, derived: Path, run, sleep) -> list[dict]:
+def _capture_ios(worktree_path: Path, cfg: dict, project_dir: Path, derived: Path, recordings: list[dict] | None, run, sleep, popen) -> list[dict]:
+    import signal
+    import shutil
     configuration = cfg.get("configuration", "Debug")
     _run_checked(run, ["xcodebuild", "-project", cfg["project"], "-scheme", cfg["scheme"],
                        "-destination", f"platform=iOS Simulator,name={cfg['simulator']}", "-configuration", configuration,
@@ -362,6 +381,13 @@ def _capture_ios(worktree_path: Path, cfg: dict, project_dir: Path, derived: Pat
     out_dir = Path("docs") / "evidence" / Path(worktree_path).name
     (Path(worktree_path) / out_dir).mkdir(parents=True, exist_ok=True)
     shots = []
+
+    # Build a dict of scene names to recording configs for fast lookup
+    rec_by_scene = {}
+    if recordings:
+        for rec in recordings:
+            rec_by_scene[rec["scene"]] = rec
+
     for appearance in cfg.get("appearances", ["light", "dark"]):
         _run_checked(run, ["xcrun", "simctl", "ui", "booted", "appearance", appearance])
         for scene in cfg["scenes"]:
@@ -371,9 +397,52 @@ def _capture_ios(worktree_path: Path, cfg: dict, project_dir: Path, derived: Pat
                 pass
             _run_checked(run, ["xcrun", "simctl", "launch", "booted", cfg["bundle_id"], *scene.get("args", [])])
             sleep(cfg.get("wait_s", 4))
+
+            # Still take the screenshot
             rel = out_dir / f"{scene['name']}-{appearance}.png"
             _run_checked(run, ["xcrun", "simctl", "io", "booted", "screenshot", str(Path(worktree_path) / rel)])
             shots.append({"path": str(rel), "caption": f"{scene['name']}, {appearance}"})
+
+            # Record video if this scene is in the recordings list (light appearance only)
+            if scene["name"] in rec_by_scene and appearance == "light":
+                rec = rec_by_scene[scene["name"]]
+                rec_seconds = rec.get("seconds", 5)
+                rec_name = f"{scene['name']}-recording"
+                rec_path = Path(worktree_path) / out_dir / f"{rec_name}.mov"
+
+                try:
+                    # Start recording
+                    proc = popen(
+                        ["xcrun", "simctl", "io", cfg["simulator"], "recordVideo", str(rec_path)],
+                        stdout=subprocess.PIPE, stderr=subprocess.PIPE
+                    )
+                    # Let it record for the specified duration
+                    sleep(rec_seconds)
+                    # Stop recording
+                    try:
+                        proc.send_signal(signal.SIGINT)
+                        proc.wait(timeout=5)
+                    except (ProcessLookupError, subprocess.TimeoutExpired):
+                        try:
+                            proc.kill()
+                            proc.wait(timeout=2)
+                        except Exception:  # noqa: BLE001
+                            pass
+
+                    # Convert to GIF and MP4
+                    if rec_path.exists():
+                        import ui_recording
+                        result = ui_recording.convert_to_gif_and_mp4(rec_path, Path(worktree_path) / out_dir, rec_name, run=run)
+                        if result.get("gif"):
+                            shots.append({"path": str(out_dir / result["gif"]), "caption": f"{scene['name']}, recording"})
+                        if result.get("mp4"):
+                            shots.append({"path": str(out_dir / result["mp4"]), "caption": f"{scene['name']}, recording"})
+                        if result.get("error"):
+                            shots.append({"path": None, "caption": f"{scene['name']}, recording", "error": result["error"]})
+                        # Clean up the MOV file
+                        rec_path.unlink(missing_ok=True)
+                except Exception as e:  # noqa: BLE001 -- never fails the capture
+                    shots.append({"path": None, "caption": f"{scene['name']}, recording", "error": f"recording failed: {str(e)[:200]}"})
     return shots
 
 
@@ -442,6 +511,46 @@ def _capture_macos(worktree_path: Path, cfg: dict, project_dir: Path, run, deriv
                 raise RuntimeError(f"the file the app wrote for scene {scene['name']} is not a PNG")
             shots.append({"path": str(rel), "caption": f"{scene['name']}, {appearance}"})
     return shots
+
+
+ANIMATION_MARKERS = (
+    r"\.withAnimation", r"\.transition\(", r"\.animation\(",
+    r"@State.*isAnimating", r"transition:", r"duration:", r"spring\(",
+)
+
+
+def animation_touch_warning(worktree_path: Path, dev_evidence: dict | None, base_branch: str = "main") -> str | None:
+    """Advisory: when animation code is added but no video evidence is provided. Returns a one-line
+    warning string when markers are found and no shot path ends in .gif/.mp4/.mov/.m4v/.webm, else None."""
+    if not dev_evidence or dev_evidence.get("na"):
+        return None
+
+    # Check if any shot already has video
+    shots = dev_evidence.get("screenshots") or []
+    video_exts = (".gif", ".mp4", ".mov", ".m4v", ".webm")
+    has_video = any(s.get("path", "").lower().endswith(video_exts) for s in shots)
+    if has_video:
+        return None
+
+    # Check if animation markers are in the diff
+    files = changed_files(worktree_path, base_branch)
+    ui_changed = ui_files(files, [])
+    if not ui_changed:
+        return None
+
+    # Grep for animation markers in changed UI files
+    for file in ui_changed:
+        file_path = Path(worktree_path) / file
+        if not file_path.exists():
+            continue
+        try:
+            content = file_path.read_text(errors="ignore")
+            for marker in ANIMATION_MARKERS:
+                if re.search(marker, content):
+                    return "⚠ Animation markers detected in the UI change, but no video recorded. Consider adding a recording to the profile's `evidence.recordings` for this scene if the motion is important to verify."
+        except Exception:  # noqa: BLE001
+            pass
+    return None
 
 
 def capture_dev_evidence(

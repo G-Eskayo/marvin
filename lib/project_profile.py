@@ -547,13 +547,22 @@ class Measurer:
             changed = ec.ui_files(ec.changed_files(Path(worktree), self.profile.get("base_branch", "main")), evidence.get("ui_paths", []))
             if not changed:
                 return test_results, {"na": True, "reason": "no UI change"}
-            capture = ec.capture_ios_simulator if kind == "ios_simulator" else ec.capture_macos_app  # macOS: marvin #727
-            try:
-                shots = capture(Path(worktree), dev_cfg[kind])
-            except (ValueError, RuntimeError, OSError, subprocess.SubprocessError) as e:
-                # Never fails the ticket (a broken driver stalled the pipeline on 2026-10-07); the PR says why, and the
-                # dashboard refuses Approve on a UI change with no image (NO_UI_EVIDENCE), so it can't slip through.
-                return test_results, {"na": False, "error": f"capture failed: {e}"[:400]}
+            if kind == "ios_simulator":
+                recordings = evidence.get("recordings")
+                try:
+                    shots = ec.capture_ios_simulator(Path(worktree), dev_cfg[kind], recordings=recordings)
+                except (ValueError, RuntimeError, OSError, subprocess.SubprocessError) as e:
+                    # Never fails the ticket (a broken driver stalled the pipeline on 2026-10-07); the PR says why, and the
+                    # dashboard refuses Approve on a UI change with no image (NO_UI_EVIDENCE), so it can't slip through.
+                    return test_results, {"na": False, "error": f"capture failed: {e}"[:400]}
+            elif kind == "macos_app":
+                recordings = evidence.get("recordings")
+                if recordings:
+                    return test_results, {"na": False, "error": "macos_app does not support video recording yet"}
+                try:
+                    shots = ec.capture_macos_app(Path(worktree), dev_cfg[kind])
+                except (ValueError, RuntimeError, OSError, subprocess.SubprocessError) as e:
+                    return test_results, {"na": False, "error": f"capture failed: {e}"[:400]}
             where = "iOS Simulator" if kind == "ios_simulator" else "macOS (drawn by the app itself)"
             return test_results, {"na": False, "screenshots": shots,
                                   "description": f"{where} screenshots of the changed app ({', '.join(changed[:3])}{'…' if len(changed) > 3 else ''})."}

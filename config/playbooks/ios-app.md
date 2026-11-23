@@ -33,7 +33,8 @@ project's own notes, so the profile's free text can't drift from this file.
 **How the pipeline does stage 5:** when a profile has `evidence.dev.ios_simulator` (clarity-captions,
 marvin-mobile), the pipeline builds the app for the simulator after the executor finishes, launches each configured
 scene (debug-only launch arguments) in light and dark, and commits the screenshots (`evidence_capture.capture_ios_simulator`,
-marvin #374). The executor itself can't run or tap the app: it makes new screens reachable by a launch argument and
+marvin #374). For scenes with motion, add `evidence.recordings: [{scene, seconds}]` to the profile to auto-record GIF and MP4
+videos. The executor itself can't run or tap the app: it makes new screens reachable by a launch argument and
 says which behaviour is untested. A UI change with no image can't be approved (`NO_UI_EVIDENCE`).
 
 ## Ship checklist (what worked for Seal builds 3 to 6)

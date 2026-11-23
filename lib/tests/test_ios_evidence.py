@@ -147,6 +147,51 @@ def test_the_pr_body_shows_each_screenshot_pinned_to_the_pushed_commit():
     assert "Simulator screenshots." in text
 
 
+def test_pr_body_shows_video_alongside_screenshots():
+    """GIF and MP4 recordings are pinned just like screenshots."""
+    dev = {
+        "na": False,
+        "screenshots": [
+            {"path": "docs/evidence/w/main-light.png", "caption": "main, light"},
+            {"path": "docs/evidence/w/main-recording.gif", "caption": "main, recording"},
+            {"path": "docs/evidence/w/main-recording.mp4", "caption": "main, recording"},
+        ],
+        "description": "Simulator screenshots and recordings.",
+    }
+    text = mr_raiser._format_dev_evidence(dev, repo="G-Eskayo/clarity-captions", ref="a" * 40)
+    assert "![main, light]" in text and ".png" in text
+    assert "![main, recording]" in text and ".gif" in text
+    assert "![main, recording]" in text and ".mp4" in text
+
+
+def test_pr_body_shows_recording_errors():
+    """Recording failures are shown as warnings, not hiding the successful ones."""
+    dev = {
+        "na": False,
+        "screenshots": [
+            {"path": "docs/evidence/w/main-light.png", "caption": "main, light"},
+            {"path": None, "caption": "detail, recording", "error": "ffmpeg not found"},
+        ],
+        "description": "Simulator screenshots.",
+    }
+    text = mr_raiser._format_dev_evidence(dev, repo="G-Eskayo/clarity-captions", ref="a" * 40)
+    assert "![main, light]" in text
+    assert "⚠ detail, recording: ffmpeg not found" in text
+
+
+def test_pr_body_shows_animation_warning():
+    """Animation warning appears as a footnote when animation markers are detected."""
+    dev = {
+        "na": False,
+        "screenshots": [{"path": "docs/evidence/w/main.png", "caption": "main"}],
+        "description": "Simulator screenshots.",
+        "animation_warning": "⚠ Animation markers detected in the UI change, but no video recorded.",
+    }
+    text = mr_raiser._format_dev_evidence(dev, repo="G-Eskayo/clarity-captions", ref="a" * 40)
+    assert "![main]" in text
+    assert "⚠ Animation markers detected" in text
+
+
 def test_gate_info_carries_the_projects_ui_paths(tmp_path):
     info = pp.gate_info(_profile(), catalog={}, have=lambda *a: True)
     assert info["ui_paths"] == ["Apps/**/*.swift"]
@@ -162,3 +207,68 @@ def test_the_simulator_build_folder_is_removed_after_capture_and_after_failure(t
     with pytest.raises(RuntimeError):
         ec.capture_ios_simulator(tmp_path, CFG, run=bad, sleep=lambda s: None)
     assert derived(ok) and derived(bad) and not any(d.exists() for d in derived(ok) + derived(bad))
+
+
+def test_recordings_validation_upfront():
+    """Recording config is validated before any simulator work."""
+    # Non-list recordings
+    with pytest.raises(ValueError, match="recordings must be a list"):
+        ec.capture_ios_simulator(Path("."), CFG, recordings="invalid", run=FakeRun(), sleep=lambda s: None)
+
+    # Non-dict recording
+    with pytest.raises(ValueError, match="each recording must be a dict"):
+        ec.capture_ios_simulator(Path("."), CFG, recordings=["invalid"], run=FakeRun(), sleep=lambda s: None)
+
+    # Unknown scene
+    with pytest.raises(ValueError, match="unknown scene"):
+        ec.capture_ios_simulator(Path("."), CFG, recordings=[{"scene": "unknown", "seconds": 5}], run=FakeRun(), sleep=lambda s: None)
+
+    # Invalid seconds (outside range)
+    with pytest.raises(ValueError, match="seconds must be a number in"):
+        ec.capture_ios_simulator(Path("."), CFG, recordings=[{"scene": "main", "seconds": 60}], run=FakeRun(), sleep=lambda s: None)
+    with pytest.raises(ValueError, match="seconds must be a number in"):
+        ec.capture_ios_simulator(Path("."), CFG, recordings=[{"scene": "main", "seconds": 0}], run=FakeRun(), sleep=lambda s: None)
+
+
+def test_animation_warning_detects_markers_without_video(tmp_path):
+    """Animation markers in UI changes trigger a warning when no video is recorded."""
+    _repo_with_change(tmp_path, "Apps/Spike/Sources/HomeView.swift")
+
+    # Write animation marker to the changed file
+    (tmp_path / "Apps/Spike/Sources/HomeView.swift").write_text(".withAnimation { ... }")
+
+    dev = {"na": False, "screenshots": [{"path": "docs/evidence/w/main.png"}]}
+    warning = ec.animation_touch_warning(tmp_path, dev)
+    assert warning and "Animation markers" in warning and "video recorded" in warning
+
+
+def test_animation_warning_ignores_non_ui_changes(tmp_path):
+    """Animation markers in non-UI files don't trigger the warning."""
+    _repo_with_change(tmp_path, "lib/helper.swift")
+    (tmp_path / "lib/helper.swift").write_text(".withAnimation { ... }")
+
+    dev = {"na": False, "screenshots": []}
+    warning = ec.animation_touch_warning(tmp_path, dev)
+    assert warning is None
+
+
+def test_animation_warning_ignores_ui_with_video(tmp_path):
+    """No warning when video is already in the evidence."""
+    _repo_with_change(tmp_path, "Apps/Spike/Sources/HomeView.swift")
+    (tmp_path / "Apps/Spike/Sources/HomeView.swift").write_text(".withAnimation { ... }")
+
+    dev = {"na": False, "screenshots": [{"path": "docs/evidence/w/scene.gif"}]}
+    warning = ec.animation_touch_warning(tmp_path, dev)
+    assert warning is None
+
+
+def test_animation_warning_handles_missing_changed_files(tmp_path):
+    """Animation warning safely handles deleted files."""
+    _repo_with_change(tmp_path, "Apps/Spike/Sources/HomeView.swift")
+    # File is committed but then deleted (simulating a worktree state)
+    (tmp_path / "Apps/Spike/Sources/HomeView.swift").unlink()
+
+    dev = {"na": False, "screenshots": []}
+    # Should not crash, just return None
+    warning = ec.animation_touch_warning(tmp_path, dev)
+    assert warning is None

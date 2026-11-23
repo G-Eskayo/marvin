@@ -42,7 +42,7 @@
       "proof": ["Simulator screenshots (DeviceHub.app, xcrun simctl io <udid> screenshot)", "A GIF for anything that moves", "Shown in the dashboard's PR detail", "\"You want X, tap Y, you see Z\" for each new capability"],
       "machine": "mac-mini-1",
       "executor": true,
-      "executor_with_capture": "The pipeline builds the app for the iOS Simulator and screenshots the profile's scenes itself after you finish, when your change touches the profile's UI paths. You cannot run or tap the app yourself: reach a new screen through a debug-only launch argument and add it as a scene, and say plainly which behaviour is untested.",
+      "executor_with_capture": "The pipeline builds the app for the iOS Simulator and screenshots the profile's scenes itself after you finish, when your change touches the profile's UI paths. You cannot run or tap the app yourself: reach a new screen through a debug-only launch argument and add it as a scene, and say plainly which behaviour is untested. For scenes with motion, add `evidence.recordings: [{scene, seconds}]` to the profile to auto-record GIF and MP4.",
       "executor_without_capture": "No simulator capture is configured for this project, so this run takes no screenshots: say so plainly in the PR, never imply a screen was seen, and say which behaviour is untested."
     },
     {

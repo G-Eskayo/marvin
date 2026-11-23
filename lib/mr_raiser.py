@@ -163,11 +163,22 @@ def _format_dev_evidence(dev_evidence: dict | None, repo: str | None = None, ref
         return f"⚠ **Screenshot missing: the UI change is not verified in a running app.** {dev_evidence['error']}"
     description = dev_evidence.get("description", "")
     shots = dev_evidence.get("screenshots")
+    lines = []
+    if description:
+        lines.append(description)
     if shots:
-        images = "\n\n".join(f"![{s.get('caption', 'Screenshot')}]({_image_url(s['path'], repo, ref)})" for s in shots)
-        return f"{description}\n\n{images}".strip()
-    screenshot = _image_url(dev_evidence.get("screenshot_path", ""), repo, ref)
-    return f"![Screenshot]({screenshot})\n\n{description}".strip()
+        for s in shots:
+            if s.get("path") is None:
+                lines.append(f"⚠ {s.get('caption', 'Recording')}: {s.get('error', 'failed to record')}")
+            else:
+                lines.append(f"![{s.get('caption', 'Screenshot')}]({_image_url(s['path'], repo, ref)})")
+    elif dev_evidence.get("screenshot_path"):
+        # Backward compatibility: old format with single screenshot_path
+        screenshot = _image_url(dev_evidence.get("screenshot_path", ""), repo, ref)
+        lines.append(f"![Screenshot]({screenshot})")
+    if dev_evidence.get("animation_warning"):
+        lines.append(f"⚠ {dev_evidence['animation_warning']}")
+    return "\n\n".join(lines).strip()
 
 
 def _format_code_review(review: dict | None) -> str:
@@ -303,6 +314,15 @@ def raise_mr(
 
     worktree_path = execution_result["worktree_path"]
     branch = _commit_and_push(worktree_path, ticket_ref)
+
+    # Check for animation markers without video evidence
+    try:
+        import evidence_capture as ec
+        animation_warning = ec.animation_touch_warning(Path(worktree_path), dev_evidence)
+        if animation_warning and dev_evidence:
+            dev_evidence = {**dev_evidence, "animation_warning": animation_warning}
+    except Exception:  # noqa: BLE001 -- never fails the PR
+        pass
 
     pr_url = open_pr(ticket_ref, branch, execution_result["final_comparison"], test_results, dev_evidence)
     comment_on_ticket(ticket_ref, pr_url)
