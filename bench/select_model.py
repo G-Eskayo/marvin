@@ -41,8 +41,7 @@ from bench import (  # noqa: E402
 # more per the account's own promo notice, and picking them should be an
 # explicit --candidates choice, not a silent default.
 DEFAULT_LADDER = [
-    ("ollama", "qwen2.5:7b"),
-    ("ollama", "qwen2.5:14b"),
+    ("ollama", "qwen2.5:3b"),
     ("claude", "claude-haiku-4-5-20251001"),
     ("claude", "default"),
 ]

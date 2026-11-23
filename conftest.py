@@ -179,3 +179,33 @@ def _no_real_claude(tmp_path_factory, monkeypatch):
     (no_claude / "claude").write_text("#!/bin/sh\necho 'claude is disabled in tests' >&2\nexit 1\n")
     (no_claude / "claude").chmod(0o755)
     monkeypatch.setenv("PATH", f"{no_claude}{os.pathsep}{os.environ.get('PATH', '')}")
+
+
+@pytest.fixture(autouse=True)
+def _mock_ollama_for_tests(request, monkeypatch):
+    """Mock list_installed() to report all registered models as available, so model_registry.ensure_installed()
+    doesn't fail when tests use mocked chat functions. Tests that explicitly test model unavailability can override
+    this fixture.
+
+    Scoped to skip tests in lib/tests/test_model_registry.py and lib/tests/test_health_checks.py
+    so they can test the real functions."""
+    # Skip mocking for model_registry and health_checks tests
+    if ("test_model_registry" in str(request.node.fspath) or
+        "test_health_checks" in str(request.node.fspath)):
+        return
+
+    try:
+        monkeypatch.syspath_prepend(str(Path(__file__).resolve().parent / "lib"))
+        import model_registry as mr
+
+        def mock_list_installed():
+            # Return all registered models as installed
+            reg = mr.ModelRegistry()
+            data = reg._read()
+            models = data.get("models", {})
+            return list(models.keys())
+
+        monkeypatch.setattr(mr, "list_installed", mock_list_installed)
+    except ImportError:
+        # If model_registry can't be imported, just skip the mock
+        pass

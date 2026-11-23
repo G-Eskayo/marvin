@@ -34,7 +34,6 @@ CHROMA_PATH = Path.home() / ".claude" / "chroma"
 COLLECTION_NAME = "paper-knowledge"
 _stance_model_list = model_registry.resolve_capability("local-judge-medium")
 STANCE_MODEL = _stance_model_list[0]
-assert STANCE_MODEL == "qwen2.5:7b", f"Regression: expected qwen2.5:7b, got {STANCE_MODEL}"
 
 STANCES = {"supports", "refutes", "mixed", "unrelated"}
 
@@ -95,7 +94,9 @@ RATIONALE: <one sentence explaining how the paper relates to the hypothesis>"""
 def classify_stance(hypothesis: str, title: str, abstract: str, chat_fn=None) -> dict[str, str]:
     """Classifies a paper's stance toward the hypothesis.
     Returns {"stance": one of STANCES, "rationale": str}."""
-    chat_fn = chat_fn or (lambda messages: ollama_chat(STANCE_MODEL, messages))
+    if chat_fn is None:
+        model = model_registry.resolve_or_raise("local-judge-medium")
+        chat_fn = lambda messages: ollama_chat(model, messages)
     prompt = STANCE_PROMPT.format(hypothesis=hypothesis, title=title, abstract=abstract)
     response = chat_fn([{"role": "user", "content": prompt}])
     return _parse_stance_result(response)

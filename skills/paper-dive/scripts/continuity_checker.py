@@ -23,12 +23,16 @@ import json
 import sys
 from pathlib import Path
 
-from ollama_chat import ollama_chat
-from argument_mapper import extract_core_claim
+sys.path.insert(0, str(Path(__file__).resolve().parents[3] / "lib"))
+import model_registry  # noqa: E402
+
+from ollama_chat import ollama_chat  # noqa: E402
+from argument_mapper import extract_core_claim  # noqa: E402
 
 CHROMA_PATH = Path.home() / ".claude" / "chroma"
 COLLECTION_NAME = "paper-knowledge"
-CONTINUITY_MODEL = "qwen2.5:14b"
+_continuity_model_list = model_registry.resolve_capability("local-inference-large")
+CONTINUITY_MODEL = _continuity_model_list[0]
 
 CONTINUITY_VERDICTS = {"CONSISTENT", "GAP", "CONTRADICTS"}
 
@@ -53,7 +57,9 @@ RATIONALE: <one sentence explaining the verdict>"""
 def classify_continuity(earlier_claim: str, later_claim: str, chat_fn=None) -> dict[str, str]:
     """Classifies the continuity relationship between two claims.
     Returns {"verdict": one of CONTINUITY_VERDICTS, "rationale": str}."""
-    chat_fn = chat_fn or (lambda messages: ollama_chat(CONTINUITY_MODEL, messages))
+    if chat_fn is None:
+        model = model_registry.resolve_or_raise("local-inference-large")
+        chat_fn = lambda messages: ollama_chat(model, messages)
     prompt = CONTINUITY_PROMPT.format(earlier_claim=earlier_claim, later_claim=later_claim)
     response = chat_fn([{"role": "user", "content": prompt}])
     return _parse_continuity_result(response)
@@ -112,7 +118,11 @@ def build_continuity_report(
 
     claims: dict[str, str] = {}
     # Resolve chat_fn once: use injected function if provided, else route through the 14b inference model
-    resolved_chat_fn = chat_fn or (lambda messages: ollama_chat(CONTINUITY_MODEL, messages))
+    if chat_fn is None:
+        model_registry.ensure_installed(CONTINUITY_MODEL)
+        resolved_chat_fn = lambda messages: ollama_chat(CONTINUITY_MODEL, messages)
+    else:
+        resolved_chat_fn = chat_fn
 
     def claim(doi: str) -> tuple[str, str]:
         doc, meta = by_id[doi]

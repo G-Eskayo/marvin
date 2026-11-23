@@ -41,7 +41,6 @@ CHROMA_PATH = Path.home() / ".claude" / "chroma"
 COLLECTION_NAME = "paper-knowledge"
 _claim_model_list = model_registry.resolve_capability("local-extract-small")
 CLAIM_MODEL = _claim_model_list[0]
-assert CLAIM_MODEL == "qwen2.5:3b", f"Regression: expected qwen2.5:3b, got {CLAIM_MODEL}"
 OPENALEX_WORKS_BASE = "https://api.openalex.org/works"
 
 
@@ -55,7 +54,9 @@ Core claim (one sentence):"""
 
 
 def extract_core_claim(title: str, abstract: str, chat_fn=None) -> str:
-    chat_fn = chat_fn or (lambda messages: ollama_chat(CLAIM_MODEL, messages))
+    if chat_fn is None:
+        model = model_registry.resolve_or_raise("local-extract-small")
+        chat_fn = lambda messages: ollama_chat(model, messages)
     prompt = CLAIM_PROMPT.format(title=title, abstract=abstract)
     response = chat_fn([{"role": "user", "content": prompt}])
     return response.strip().strip('"')

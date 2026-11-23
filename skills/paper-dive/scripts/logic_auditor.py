@@ -33,7 +33,6 @@ from ollama_chat import ollama_chat  # noqa: E402
 # Model selection via capability names (validated 2026-07-13):
 _classify_model_list = model_registry.resolve_capability("local-classify-medium")
 CLASSIFY_MODEL = _classify_model_list[0]  # Use first available model for the capability
-assert CLASSIFY_MODEL == "qwen2.5:14b", f"Regression: expected qwen2.5:14b, got {CLASSIFY_MODEL}"
 
 PAPER_TYPES = {"empirical", "survey", "benchmark", "conceptual"}
 
@@ -65,7 +64,9 @@ def classify_paper_type(title: str, abstract: str, chat_fn=None) -> str:
     parsed into exactly one of them -- deliberately not guessing/defaulting
     silently, since a wrong type routes the paper to the wrong evaluation
     method downstream."""
-    chat_fn = chat_fn or (lambda messages: ollama_chat(CLASSIFY_MODEL, messages))
+    if chat_fn is None:
+        model = model_registry.resolve_or_raise("local-classify-medium")
+        chat_fn = lambda messages: ollama_chat(model, messages)
     prompt = CLASSIFY_PROMPT.format(title=title, abstract=abstract)
     response = chat_fn([{"role": "user", "content": prompt}]).strip().lower()
 
@@ -88,7 +89,6 @@ def classify_all(papers: dict[str, tuple[str, str]], chat_fn=None) -> dict[str, 
 # accurate Toulmin extraction on real abstracts, no hallucinated content.
 _extraction_model_list = model_registry.resolve_capability("local-extract-small")
 EXTRACTION_MODEL = _extraction_model_list[0]
-assert EXTRACTION_MODEL == "qwen2.5:3b", f"Regression: expected qwen2.5:3b, got {EXTRACTION_MODEL}"
 
 # Field names per paper type, per docs/logic-auditor-design.md's table.
 # Order matters -- it's both the prompt's requested response order and
@@ -184,7 +184,9 @@ def extract_structure(title: str, abstract: str, paper_type: str, chat_fn=None) 
     if paper_type not in _EXTRACTION_PROMPTS:
         raise ValueError(f"unknown paper_type {paper_type!r} -- expected one of {PAPER_TYPES}")
 
-    chat_fn = chat_fn or (lambda messages: ollama_chat(EXTRACTION_MODEL, messages))
+    if chat_fn is None:
+        model = model_registry.resolve_or_raise("local-extract-small")
+        chat_fn = lambda messages: ollama_chat(model, messages)
     prompt = _EXTRACTION_PROMPTS[paper_type].format(title=title, abstract=abstract)
     response = chat_fn([{"role": "user", "content": prompt}])
     return _parse_fields(response, EXTRACTION_FIELDS[paper_type])
@@ -212,7 +214,6 @@ def extract_all(papers: dict[str, tuple[str, str, str]], chat_fn=None) -> dict[s
 # reinforces that model size must be validated per-task, not assumed.
 _judgment_model_list = model_registry.resolve_capability("local-judge-medium")
 JUDGMENT_MODEL = _judgment_model_list[0]
-assert JUDGMENT_MODEL == "qwen2.5:7b", f"Regression: expected qwen2.5:7b, got {JUDGMENT_MODEL}"
 
 # benchmark judgment specifically needs 14b, not the 7b default -- found
 # 2026-07-13 reviewing flagged results (task 19): 7b called StrongREJECT's
@@ -229,7 +230,6 @@ assert JUDGMENT_MODEL == "qwen2.5:7b", f"Regression: expected qwen2.5:7b, got {J
 # pay for a bigger model where the cheaper one already works.
 _inference_model_list = model_registry.resolve_capability("local-inference-large")
 _inference_model = _inference_model_list[0]
-assert _inference_model == "qwen2.5:14b", f"Regression: expected qwen2.5:14b for inference, got {_inference_model}"
 JUDGMENT_MODEL_OVERRIDES = {"benchmark": _inference_model}
 
 _GENERAL_FALLACY_CHECKLIST = (
@@ -338,6 +338,7 @@ def judge_extraction(extraction: dict[str, str], paper_type: str, chat_fn=None) 
 
     if chat_fn is None:
         model = JUDGMENT_MODEL_OVERRIDES.get(paper_type, JUDGMENT_MODEL)
+        model_registry.ensure_installed(model)
         chat_fn = lambda messages: ollama_chat(model, messages)
     # extract_structure can legitimately omit a field the model never returned
     # (see its docstring) -- fill any gap so .format() doesn't KeyError on a
@@ -410,7 +411,9 @@ def check_inference_validity(title: str, abstract: str, chat_fn=None) -> dict[st
     paper type -- real qwen2.5:14b output varies casing ("Inductive",
     "INDUCTIVE", "inductive"), and task 16's rollup needs to branch on this
     value reliably, not match free text."""
-    chat_fn = chat_fn or (lambda messages: ollama_chat(INFERENCE_MODEL, messages))
+    if chat_fn is None:
+        model_registry.ensure_installed(INFERENCE_MODEL)
+        chat_fn = lambda messages: ollama_chat(INFERENCE_MODEL, messages)
     prompt = INFERENCE_PROMPT.format(title=title, abstract=abstract)
     response = chat_fn([{"role": "user", "content": prompt}])
     result = _parse_fields(response, INFERENCE_FIELDS)

@@ -29,6 +29,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 import code_sync  # noqa: E402
 import cron_health as ch  # noqa: E402
 import machine_profile  # noqa: E402
+import model_registry  # noqa: E402
 from machine_profile import machine_label  # noqa: E402
 from task_dispatch import TAILSCALE_BIN, TAILSCALE_ENV  # noqa: E402  (absolute path -- launchd's PATH omits the shell's additions)
 
@@ -180,7 +181,7 @@ def check_model_availability(reachability: dict[str, str] | None = None) -> dict
     all_available = set()
 
     # Query local machine
-    local_models = _query_ollama_models_local()
+    local_models = model_registry.list_installed()
     if local_models is not None:
         machines_queried.append("local")
         all_available.update(local_models)

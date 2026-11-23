@@ -394,6 +394,153 @@ class TestCapabilityPointsToAvailableModel:
                     f"Capability '{cap_name}' references unknown model '{model_name}'"
 
 
+# ── list_installed function tests ─────────────────────────────────────────
+
+class TestListInstalled:
+    """Test list_installed() tolerates malformed Ollama responses."""
+
+    def test_list_installed_calls_api(self, monkeypatch):
+        """list_installed() should attempt to query localhost:11434/api/tags."""
+        called = []
+
+        class MockResponse:
+            def read(self):
+                return b'{"models": [{"name": "test-model"}]}'
+            def __enter__(self):
+                return self
+            def __exit__(self, *args):
+                pass
+
+        def mock_urlopen(url, *args, **kwargs):
+            called.append(url)
+            return MockResponse()
+
+        monkeypatch.setattr("urllib.request.urlopen", mock_urlopen)
+        result = model_registry.list_installed()
+        assert called, "Should have called urlopen"
+        assert "localhost:11434/api/tags" in called[0]
+
+    def test_list_installed_tolerates_non_dict_body(self, monkeypatch):
+        """list_installed() should return None if response body is not a dict."""
+        class MockResponse:
+            def read(self):
+                return b'["not", "a", "dict"]'
+            def __enter__(self):
+                return self
+            def __exit__(self, *args):
+                pass
+
+        def mock_urlopen(url, *args, **kwargs):
+            return MockResponse()
+
+        monkeypatch.setattr("urllib.request.urlopen", mock_urlopen)
+        result = model_registry.list_installed()
+        assert result is None, "Should return None for non-dict response"
+
+    def test_list_installed_tolerates_missing_name_field(self, monkeypatch):
+        """list_installed() should skip entries missing the 'name' field."""
+        class MockResponse:
+            def read(self):
+                return b'{"models": [{"name": "valid-model"}, {"size_gb": 1.0}, {"name": "another-model"}]}'
+            def __enter__(self):
+                return self
+            def __exit__(self, *args):
+                pass
+
+        def mock_urlopen(url, *args, **kwargs):
+            return MockResponse()
+
+        monkeypatch.setattr("urllib.request.urlopen", mock_urlopen)
+        result = model_registry.list_installed()
+        assert result == ["valid-model", "another-model"], \
+            "Should include only entries with 'name' field"
+
+    def test_list_installed_returns_none_on_connection_error(self, monkeypatch):
+        """list_installed() should return None if Ollama is unreachable."""
+        def mock_urlopen(url, *args, **kwargs):
+            raise ConnectionError("Ollama not running")
+
+        monkeypatch.setattr("urllib.request.urlopen", mock_urlopen)
+        result = model_registry.list_installed()
+        assert result is None, "Should return None on connection error"
+
+
+# ── ensure_installed function tests ────────────────────────────────────────
+
+class TestEnsureInstalled:
+    """Test ensure_installed() error handling."""
+
+    def test_ensure_installed_raises_ollama_unavailable_when_list_returns_none(self, monkeypatch):
+        """ensure_installed() should raise OllamaUnavailableError when Ollama is unreachable."""
+        def mock_list():
+            return None
+
+        monkeypatch.setattr(model_registry, "list_installed", mock_list)
+
+        with __import__("pytest").raises(model_registry.OllamaUnavailableError) as exc_info:
+            model_registry.ensure_installed("qwen2.5:7b")
+
+        assert exc_info.value.model == "qwen2.5:7b"
+
+    def test_ensure_installed_raises_model_unavailable_when_not_found(self, monkeypatch):
+        """ensure_installed() should raise ModelUnavailableError when model is not in list."""
+        def mock_list():
+            return ["some-other-model"]
+
+        monkeypatch.setattr(model_registry, "list_installed", mock_list)
+
+        with __import__("pytest").raises(model_registry.ModelUnavailableError) as exc_info:
+            model_registry.ensure_installed("qwen2.5:7b")
+
+        assert exc_info.value.model == "qwen2.5:7b"
+
+
+# ── resolve_or_raise function tests ────────────────────────────────────────
+
+class TestResolveOrRaise:
+    """Test resolve_or_raise() for lazy model resolution."""
+
+    def test_resolve_or_raise_returns_model_when_installed(self, monkeypatch):
+        """resolve_or_raise() should return the model name if it's installed."""
+        def mock_list():
+            return ["qwen2.5:14b"]
+
+        monkeypatch.setattr(model_registry, "list_installed", mock_list)
+        with TemporaryRegistry() as reg:
+            result = model_registry.resolve_or_raise("local-inference-large", reg=reg)
+            assert result == "qwen2.5:14b"
+
+    def test_resolve_or_raise_raises_on_unknown_capability(self, monkeypatch):
+        """resolve_or_raise() should raise KeyError for unknown capability."""
+        def mock_list():
+            return ["qwen2.5:14b"]
+
+        monkeypatch.setattr(model_registry, "list_installed", mock_list)
+        with TemporaryRegistry() as reg:
+            with __import__("pytest").raises(KeyError):
+                model_registry.resolve_or_raise("unknown-capability", reg=reg)
+
+    def test_resolve_or_raise_raises_ollama_unavailable(self, monkeypatch):
+        """resolve_or_raise() should raise OllamaUnavailableError when Ollama is unreachable."""
+        def mock_list():
+            return None
+
+        monkeypatch.setattr(model_registry, "list_installed", mock_list)
+        with TemporaryRegistry() as reg:
+            with __import__("pytest").raises(model_registry.OllamaUnavailableError):
+                model_registry.resolve_or_raise("local-inference-large", reg=reg)
+
+    def test_resolve_or_raise_raises_model_unavailable(self, monkeypatch):
+        """resolve_or_raise() should raise ModelUnavailableError when model is not installed."""
+        def mock_list():
+            return ["qwen2.5:3b"]
+
+        monkeypatch.setattr(model_registry, "list_installed", mock_list)
+        with TemporaryRegistry() as reg:
+            with __import__("pytest").raises(model_registry.ModelUnavailableError):
+                model_registry.resolve_or_raise("local-inference-large", reg=reg)
+
+
 if __name__ == "__main__":
     import pytest
     pytest.main([__file__, "-v"])

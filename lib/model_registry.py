@@ -11,11 +11,37 @@ from __future__ import annotations
 import fcntl
 import json
 import os
+import urllib.request
 from datetime import datetime, timezone
 from pathlib import Path
 
 HOME = Path.home()
 REGISTRY_PATH = Path(__file__).resolve().parents[1] / "config" / "models.json"
+
+
+class ModelResolutionError(Exception):
+    """Raised when a model cannot be resolved or found."""
+    pass
+
+
+class ModelUnavailableError(ModelResolutionError):
+    """Raised when a model is registered but not installed locally."""
+    def __init__(self, model: str, size_gb: float | None = None):
+        self.model = model
+        self.size_gb = size_gb
+        if size_gb is None:
+            size_str = "unknown size"
+        else:
+            size_str = f"size: {size_gb} GB"
+        msg = f"Model {model} not available locally ({size_str}). Install with: ollama pull {model}"
+        super().__init__(msg)
+
+
+class OllamaUnavailableError(ModelResolutionError):
+    """Raised when Ollama is not available to check installed models."""
+    def __init__(self, model: str):
+        self.model = model
+        super().__init__(f"Ollama unavailable; cannot verify {model} is installed")
 
 
 class ModelRegistry:
@@ -276,6 +302,74 @@ def check_consistency(reg: ModelRegistry | None = None) -> dict[str, list[str]]:
             soft_warnings.append(f"Model {model_name!r} has empty reason field")
 
     return {"hard_errors": hard_errors, "soft_warnings": soft_warnings}
+
+
+def list_installed() -> list[str] | None:
+    """Query localhost:11434/api/tags and return list of installed model names.
+    Returns None on error (Ollama unavailable or unreachable).
+
+    Tolerant of non-dict responses and entries missing the "name" field."""
+    try:
+        with urllib.request.urlopen("http://localhost:11434/api/tags", timeout=5) as resp:
+            data = json.loads(resp.read())
+            if not isinstance(data, dict):
+                return None
+            models = data.get("models", [])
+            if not isinstance(models, list):
+                return None
+            return [m.get("name") for m in models if isinstance(m, dict) and "name" in m]
+    except Exception:
+        return None
+
+
+def ensure_installed(model: str, reg: ModelRegistry | None = None) -> None:
+    """Verify that a model is installed locally. Raises OllamaUnavailableError if Ollama
+    is unreachable, or ModelUnavailableError if the model is not installed.
+
+    Does not check the registry—only verifies actual installation via /api/tags."""
+    installed = list_installed()
+    if installed is None:
+        raise OllamaUnavailableError(model)
+
+    if not model_present(installed, model):
+        if reg is None:
+            reg = ModelRegistry()
+        meta = reg.get(model)
+        size = meta.get("size_gb") if meta else None
+        raise ModelUnavailableError(model, size)
+
+
+def resolve_or_raise(capability: str, reg: ModelRegistry | None = None) -> str:
+    """Resolve a capability to a model name and verify it's installed.
+
+    Returns the FIRST (preferred) model for the capability if it's installed.
+    Does NOT silently accept later models as fallbacks; the preferred model is
+    required. Raises KeyError if the capability is unknown, OllamaUnavailableError
+    if Ollama is unreachable, or ModelUnavailableError if the first model for this
+    capability is not installed."""
+    if reg is None:
+        reg = ModelRegistry()
+
+    models = resolve_capability(capability, reg=reg)  # Raises KeyError if unknown
+
+    if not models:
+        raise ModelResolutionError(f"Capability {capability!r} has empty model list")
+
+    preferred_model = models[0]
+
+    installed = list_installed()
+    if installed is None:
+        raise OllamaUnavailableError(preferred_model)
+
+    if model_present(installed, preferred_model):
+        return preferred_model
+
+    # Preferred model is not installed
+    if reg is None:
+        reg = ModelRegistry()
+    meta = reg.get(preferred_model)
+    size = meta.get("size_gb") if meta else None
+    raise ModelUnavailableError(preferred_model, size)
 
 
 if __name__ == "__main__":
