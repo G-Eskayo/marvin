@@ -1,4 +1,5 @@
 """Capturing elements from the live dev site into the element library (lib/portfolio_elements.py)."""
+import json
 import sys
 from pathlib import Path
 
@@ -104,3 +105,66 @@ def test_the_master_geometry_takes_the_widest_box_not_the_most_common_one():
     g = lambda w, pw: {"photoHeight": 240, "photoWidth": pw, "boxWidth": w, "boxHeight": 244, "overlap": 56}
     assert pe.master_geometry([g(264, 292), g(264, 292), g(300, 351), g(300, 497)]) == {"boxHeight": 244, "boxWidth": 300, "overlap": 56, "photoHeight": 240}
     assert pe.master_geometry([]) is None
+
+
+# ── accept_drop protection ──
+
+def test_finish_refuses_to_write_when_placements_drop_to_zero_without_accept_drop(tmp_path):
+    old = {"usage": {"pages": {"/a/": 2}, "placements": 2}, "id": "project-card"}
+    (tmp_path / "templates" / "elements").mkdir(parents=True)
+    (tmp_path / "templates" / "elements" / "project-card.json").write_text(json.dumps(old))
+
+    a = {"usage": {}, "geoms": [], "instances": [], "first": None}  # no placements captured
+    result = pe._finish("project-card", a, {}, tmp_path, accept_drop=False)
+
+    assert result.get("write_refused") is True
+    assert (tmp_path / "templates" / "elements" / "project-card.json").read_text() == json.dumps(old)
+
+
+def test_finish_refuses_to_write_when_placements_drop_more_than_50_percent(tmp_path):
+    old = {"usage": {"pages": {"/a/": 10}, "placements": 10}, "id": "project-card"}
+    (tmp_path / "templates" / "elements").mkdir(parents=True)
+    (tmp_path / "templates" / "elements" / "project-card.json").write_text(json.dumps(old))
+
+    a = {"usage": {"/a/": 4}, "geoms": [], "instances": [("/a/", {"html": LIVE, "look": {}, "geometry": None, "markup": None})], "first": "/a/"}  # 4 placements: 60% drop
+    result = pe._finish("project-card", a, {}, tmp_path, accept_drop=False)
+
+    assert result.get("write_refused") is True
+    assert result["usage"].get("old_placements") == 10
+    assert (tmp_path / "templates" / "elements" / "project-card.json").read_text() == json.dumps(old)
+
+
+def test_finish_writes_normally_when_placements_do_not_drop_significantly(tmp_path):
+    (tmp_path / "templates" / "elements").mkdir(parents=True)
+
+    a = {"usage": {"/a/": 5}, "geoms": [], "instances": [("/a/", {"html": LIVE, "look": {}, "geometry": None, "markup": None})], "first": "/a/"}
+    result = pe._finish("project-card", a, {}, tmp_path, accept_drop=False)
+
+    assert result.get("write_refused") is not True
+    assert result["usage"]["placements"] == 5
+    assert (tmp_path / "templates" / "elements" / "project-card.json").exists()
+
+
+def test_finish_writes_even_on_drop_when_accept_drop_true(tmp_path):
+    old = {"usage": {"pages": {"/a/": 10}, "placements": 10}, "id": "project-card"}
+    (tmp_path / "templates" / "elements").mkdir(parents=True)
+    (tmp_path / "templates" / "elements" / "project-card.json").write_text(json.dumps(old))
+
+    a = {"usage": {"/a/": 4}, "geoms": [], "instances": [("/a/", {"html": LIVE, "look": {}, "geometry": None, "markup": None})], "first": "/a/"}
+    result = pe._finish("project-card", a, {}, tmp_path, accept_drop=True)
+
+    assert result.get("write_refused") is not True
+    assert result["usage"]["placements"] == 4
+    new_content = json.loads((tmp_path / "templates" / "elements" / "project-card.json").read_text())
+    assert new_content["usage"]["placements"] == 4
+
+
+def test_finish_writes_on_first_capture_even_without_accept_drop(tmp_path):
+    # When there's no prior file, any count is acceptable
+    (tmp_path / "templates" / "elements").mkdir(parents=True)
+
+    a = {"usage": {"/a/": 1}, "geoms": [], "instances": [("/a/", {"html": LIVE, "look": {}, "geometry": None, "markup": None})], "first": "/a/"}
+    result = pe._finish("project-card", a, {}, tmp_path, accept_drop=False)
+
+    assert result.get("write_refused") is not True
+    assert (tmp_path / "templates" / "elements" / "project-card.json").exists()

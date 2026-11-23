@@ -152,8 +152,39 @@ def _run(cmd: list[str], **kw) -> subprocess.CompletedProcess:
     return subprocess.run(cmd, capture_output=True, text=True, timeout=180, **kw)
 
 
+def _wpcli_running(runner=_run) -> bool | None:
+    """Check if the wpcli container is running. Returns True if running, False if exists but stopped, None if not found."""
+    r = runner([DOCKER, "inspect", WPCLI])
+    if r.returncode != 0:
+        return None  # container not found
+    try:
+        import json as j
+        state = j.loads(r.stdout)
+        if state and isinstance(state, list) and len(state) > 0:
+            return state[0].get("State", {}).get("Running", False)
+    except Exception:
+        return None
+    return None
+
+
+def ensure_wpcli_running(runner=_run) -> None:
+    """Ensure the wpcli container is running. Restarts it if stopped, raises if not found or cannot restart."""
+    running = _wpcli_running(runner)
+    if running is True:
+        return
+    if running is False:
+        # Container exists but is stopped; try to restart it
+        r = runner([DOCKER, "start", WPCLI])
+        if r.returncode != 0:
+            raise RuntimeError(f"wpcli container is stopped and could not be restarted: {(r.stderr or r.stdout)[-200:]}")
+        return
+    # running is None: container not found
+    raise RuntimeError(f"wpcli container '{WPCLI}' not found (is the dev site running?)")
+
+
 def regenerate_pages(project: Path = PROJECT, runner=_run) -> list[str]:
     """Regenerate the hub + All Projects pages (and re-wrap their sidebars) on the DEV site. Returns log lines."""
+    ensure_wpcli_running(runner)
     wp = wp_base()
     pages = {}
     listing = runner([*wp, "post", "list", "--post_type=page", "--post_status=publish", "--fields=ID,post_name", "--format=json"])

@@ -46,6 +46,8 @@ def runner(created=None, pages=None, fail_create=False):
     def run(cmd, input=None):
         calls.append((cmd, input))
         joined = " ".join(map(str, cmd))
+        if "inspect" in joined:
+            return SimpleNamespace(returncode=0, stdout=json.dumps([{"State": {"Running": True}}]), stderr="")
         if "post list" in joined:
             return SimpleNamespace(returncode=0, stdout=json.dumps(pages), stderr="")
         if "post create" in joined:

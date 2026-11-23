@@ -357,11 +357,11 @@ def _most_common(items: list):
     return Counter(json.dumps(i, sort_keys=True) for i in items).most_common(1)[0][0] if items else None
 
 
-def capture(element_id: str = "project-card", base: str = BASE, project: Path = PROJECT, inventory: Path = INVENTORY) -> dict:
-    return capture_many([element_id], base, project, inventory)[element_id]
+def capture(element_id: str = "project-card", base: str = BASE, project: Path = PROJECT, inventory: Path = INVENTORY, accept_drop: bool = False) -> dict:
+    return capture_many([element_id], base, project, inventory, accept_drop)[element_id]
 
 
-def capture_many(element_ids: list[str], base: str = BASE, project: Path = PROJECT, inventory: Path = INVENTORY) -> dict[str, dict]:
+def capture_many(element_ids: list[str], base: str = BASE, project: Path = PROJECT, inventory: Path = INVENTORY, accept_drop: bool = False) -> dict[str, dict]:
     """Capture several elements in ONE pass over the site (each page is loaded once, not once per element)."""
     from playwright.sync_api import sync_playwright
     pages = [p["url"] for p in json.loads(Path(inventory).read_text())["pages"]]
@@ -386,10 +386,10 @@ def capture_many(element_ids: list[str], base: str = BASE, project: Path = PROJE
                 page.goto(base + ELEMENTS[eid]["sample_pages"][0], wait_until="networkidle")
                 provenance[eid] = _provenance(page, ELEMENTS[eid])
         browser.close()
-    return {eid: _finish(eid, acc[eid], provenance.get(eid, {}), project) for eid in element_ids}
+    return {eid: _finish(eid, acc[eid], provenance.get(eid, {}), project, accept_drop) for eid in element_ids}
 
 
-def _finish(element_id: str, a: dict, provenance: dict, project: Path) -> dict:
+def _finish(element_id: str, a: dict, provenance: dict, project: Path, accept_drop: bool = False) -> dict:
     definition = ELEMENTS[element_id]
     generic = definition.get("rules") is not None            # generalized in the page; the card keeps its own regex path
     instances = a["instances"]
@@ -404,24 +404,51 @@ def _finish(element_id: str, a: dict, provenance: dict, project: Path) -> dict:
     look = json.loads(_most_common([i["look"] for i in conforming] or [i["look"] for _, i in instances])) if instances else None
     geometry = master_geometry(a["geoms"])
     deviations = find_deviations(instances, master, look, geometry, normalize)
+    new_placements = sum(a["usage"].values())
     result = {
         "id": element_id, "name": definition["name"], "description": definition["description"],
         "fields": definition["fields"], "markup": master, "look": look,
         "distinct_looks": len(looks), "geometry": geometry,
         "distinct_geometries": 1 + len(_cluster([g for g in a["geoms"] if not geometry_matches(geometry, g)])) if geometry else 0, "deviations": deviations, "provenance": provenance,
-        "usage": {"pages": a["usage"], "placements": sum(a["usage"].values())},
+        "usage": {"pages": a["usage"], "placements": new_placements},
         "captured_from": a["first"], "captured_at": datetime.now(timezone.utc).isoformat(),
     }
     out = Path(project) / "templates" / "elements"
     out.mkdir(parents=True, exist_ok=True)
-    (out / f"{element_id}.json").write_text(json.dumps(result, indent=2, ensure_ascii=False) + "\n")
+    element_file = out / f"{element_id}.json"
+
+    # Check if placements have dropped significantly without explicit acceptance
+    if element_file.exists() and not accept_drop:
+        try:
+            old_data = json.loads(element_file.read_text())
+            old_placements = old_data.get("usage", {}).get("placements", 0)
+            if old_placements > 0:
+                # Refuse write if dropped to 0 or by more than 50%
+                if new_placements == 0 or new_placements < old_placements * 0.5:
+                    result["write_refused"] = True
+                    # Track old placements for reporting
+                    result["usage"]["old_placements"] = old_placements
+                    return result
+        except (OSError, json.JSONDecodeError):
+            pass
+
+    element_file.write_text(json.dumps(result, indent=2, ensure_ascii=False) + "\n")
     return result
 
 
 def main() -> None:
-    ids = sys.argv[1:] or list(ELEMENTS)
-    for i, r in capture_many(ids).items():
-        print(f"{i}: {r['usage']['placements']} placements on {len(r['usage']['pages'])} pages, {r['distinct_looks']} distinct look(s)")
+    import argparse
+    ap = argparse.ArgumentParser(description="Capture elements from the live dev site")
+    ap.add_argument("element_ids", nargs="*", help="Element IDs to capture (default: all)")
+    ap.add_argument("--accept-drop", action="store_true", help="Accept significant drops in placement count")
+    args = ap.parse_args()
+
+    ids = args.element_ids or list(ELEMENTS)
+    for i, r in capture_many(ids, accept_drop=args.accept_drop).items():
+        if r.get("write_refused"):
+            print(f"{i}: REFUSED to write (placements dropped from {r['usage'].get('old_placements', '?')} to {r['usage']['placements']})")
+        else:
+            print(f"{i}: {r['usage']['placements']} placements on {len(r['usage']['pages'])} pages, {r['distinct_looks']} distinct look(s)")
 
 
 if __name__ == "__main__":

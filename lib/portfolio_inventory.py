@@ -72,9 +72,30 @@ def group_buttons(records: list[dict]) -> list[dict]:
     return sorted(variants, key=lambda v: (-v["count"], v["id"]))
 
 
+def page_path(wp_page: dict) -> str:
+    """Extract the path from a WordPress page URL. Pure: no side effects."""
+    url = wp_page.get("url", "")
+    p = urlparse(url).path or "/"
+    return p if p.endswith("/") else p + "/"
+
+
 def _norm(path: str) -> str:
     p = urlparse(path).path or "/"
     return p if p.endswith("/") else p + "/"
+
+
+def missing_pages(wp_pages: list[dict], captured_ids: set[int]) -> list[dict]:
+    """Find WordPress pages that exist but were not crawled. Returns list of page dicts with their paths."""
+    return [{"id": p["ID"], "name": p.get("post_name", "?"), "path": page_path(p)}
+            for p in wp_pages if p["ID"] not in captured_ids]
+
+
+def rotate_inventory(out_dir: Path) -> None:
+    """Rotate the existing inventory.json to inventory.old.json (pure: idempotent backup)."""
+    inv_file = out_dir / "inventory.json"
+    old_file = out_dir / "inventory.old.json"
+    if inv_file.exists():
+        old_file.write_text(inv_file.read_text())
 
 
 def classify_page(url: str, manifest_urls: list[str], hub_urls: list[str]) -> str:
@@ -167,10 +188,11 @@ def _wpcli(args: list[str]) -> str | None:
     sys.path.insert(0, str(Path(__file__).resolve().parent))
     import portfolio_apply as pa
     try:
+        pa.ensure_wpcli_running()
         r = subprocess.run([*pa.wp_base(), *args],
                            capture_output=True, text=True, timeout=60)
         return r.stdout if r.returncode == 0 else None
-    except (OSError, subprocess.TimeoutExpired):
+    except (OSError, subprocess.TimeoutExpired, RuntimeError):
         return None
 
 
@@ -178,12 +200,12 @@ def collect(base: str = "http://localhost:8080", out_dir: Path = OUT_DIR, manife
     # Ask WordPress for its pages FIRST. When wp-cli cannot answer (dev site down, container restarting) the crawl used to
     # carry on with only the "/" fallback and overwrite a good inventory with a 1-page one, which then emptied the
     # reference index (marvin#585). No pages listed = a failed crawl: stop before writing anything.
-    listing = _wpcli(["post", "list", "--post_type=page", "--post_status=publish", "--fields=ID,post_name,post_title,post_parent", "--format=json"])
+    listing = _wpcli(["post", "list", "--post_type=page", "--post_status=publish", "--fields=ID,post_name,post_title,post_parent,url", "--format=json"])
     try:
         wp_pages = json.loads(listing) if listing else []
     except json.JSONDecodeError:
         wp_pages = []
-    if not wp_pages:
+    if not isinstance(wp_pages, list) or not wp_pages:
         raise RuntimeError("could not list the dev site's WordPress pages (is the dev site running?); the existing inventory is kept")
     from playwright.sync_api import sync_playwright
     from PIL import Image
@@ -191,7 +213,7 @@ def collect(base: str = "http://localhost:8080", out_dir: Path = OUT_DIR, manife
     (out_dir / "pages").mkdir(parents=True, exist_ok=True)
     (out_dir / "buttons").mkdir(parents=True, exist_ok=True)
     (out_dir / "raw").mkdir(parents=True, exist_ok=True)
-    pages, records, seen_variants, seen_urls = [], [], set(), set()
+    pages, records, seen_variants, seen_urls, captured_ids = [], [], set(), set(), set()
 
     with sync_playwright() as pw:
         browser = pw.chromium.launch()
@@ -200,8 +222,14 @@ def collect(base: str = "http://localhost:8080", out_dir: Path = OUT_DIR, manife
         targets = [(None, p["post_title"], p) for p in wp_pages] + [("/", "Home", None)]
         for url, title, wp in targets:
             if wp is not None:
-                page.goto(f"{base}/?page_id={wp['ID']}", wait_until="networkidle")
-                url = urlparse(page.url).path       # WordPress redirects to the pretty permalink
+                url = page_path(wp)
+                page.goto(base + url, wait_until="networkidle")
+                # Verify the page landed at the expected path; if it collapsed to "/" (broken redirect), skip it
+                landed_path = _norm(page.url)
+                if landed_path == _norm(url):
+                    captured_ids.add(wp["ID"])
+                else:
+                    continue
             else:
                 page.goto(base + url, wait_until="networkidle")
             slug = (url.strip("/").replace("/", "--") or "home")
@@ -241,8 +269,17 @@ def collect(base: str = "http://localhost:8080", out_dir: Path = OUT_DIR, manife
     buttons = group_buttons(records)
     for b in buttons:
         b["screenshot"] = f"buttons/{b['id']}.png" if (out_dir / "buttons" / f"{b['id']}.png").exists() else None
+
+    # Check for missing pages (WordPress pages that exist but were not crawled)
+    missing = missing_pages(wp_pages, captured_ids)
+    if missing:
+        raise RuntimeError(f"crawl incomplete: {len(missing)} page(s) exist in WordPress but were not visited: " +
+                         ", ".join(f"{p['path']}" for p in missing[:5]) +
+                         (f" (and {len(missing) - 5} more)" if len(missing) > 5 else ""))
+
     result = {"generated_at": datetime.now(timezone.utc).isoformat(), "base": base, "pages": pages, "buttons": buttons,
               "summary": summarize(pages, buttons)}
+    rotate_inventory(out_dir)
     (out_dir / "inventory.json").write_text(json.dumps(result, indent=2))
     return result
 

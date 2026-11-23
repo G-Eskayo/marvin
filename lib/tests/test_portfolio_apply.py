@@ -81,7 +81,9 @@ def _runner(fail_on=None, mock_pages=None, mock_post_content=None):
     def run(cmd, input=None, **_):
         calls.append(cmd)
         joined = " ".join(map(str, cmd))
-        if "post list" in joined:
+        if "inspect" in joined:
+            out = json.dumps([{"State": {"Running": True}}])
+        elif "post list" in joined:
             pages_to_use = mock_pages if mock_pages is not None else default_pages
             out = json.dumps(pages_to_use)
         elif "post get" in joined and "--field=post_content" in joined:
