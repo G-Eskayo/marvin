@@ -112,17 +112,6 @@ def check_intent_routing_collection() -> dict:
 
 # ── model availability (ollama runtime) ──────────────────────────────────
 
-def _query_ollama_models_local() -> list[str] | None:
-    """Query localhost:11434/api/tags and return list of model names. Returns None on error."""
-    try:
-        import urllib.request
-        with urllib.request.urlopen("http://localhost:11434/api/tags", timeout=5) as resp:
-            data = json.loads(resp.read())
-            return [m["name"] for m in data.get("models", [])]
-    except Exception:
-        return None
-
-
 def _query_ollama_models_remote(host: str) -> list[str] | None:
     """Query ollama models on a remote machine over SSH. Returns None on error."""
     script = "python3 -c \"import json,urllib.request; resp=urllib.request.urlopen('http://localhost:11434/api/tags', timeout=5); print(json.dumps([m['name'] for m in json.loads(resp.read()).get('models', [])]))\""
@@ -180,7 +169,7 @@ def check_model_availability(reachability: dict[str, str] | None = None) -> dict
     all_available = set()
 
     # Query local machine
-    local_models = _query_ollama_models_local()
+    local_models = mr.pulled_models()
     if local_models is not None:
         machines_queried.append("local")
         all_available.update(local_models)
