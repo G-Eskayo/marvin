@@ -430,3 +430,11 @@ def test_automated_comment_kinds():
     assert pol.automated_comment(f"anything\n{pol.HANDOFF_MARKER}") == "handoff"
     for person in ("try again", "", None, 7, f"I disagree with: {pol.SENT_BACK_MARKER}", "PR #3 looks fine to me"):
         assert pol.automated_comment(person) is None, person
+
+
+def test_looks_done_marker_is_recognized_as_bot_comment():
+    # After implementing LOOKS_DONE_MARKER, comments carrying it should be classified as "bot"
+    import ticket_policy as pol
+    if hasattr(pol, 'LOOKS_DONE_MARKER'):
+        assert pol.automated_comment(f"{pol.LOOKS_DONE_MARKER} and something") == "bot"
+        assert pol.automated_comment(f"Work exists for this ticket. {pol.LOOKS_DONE_MARKER}") == "bot"

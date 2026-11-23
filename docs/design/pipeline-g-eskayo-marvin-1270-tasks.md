@@ -1,0 +1,10 @@
+1. `lib/ticket_evidence.py`: widen the `#`-aware, prefix-anchored `_named()` (requires a `pipeline/` segment; accepts `#`, `-`, or `/` as the separator before the ticket number) — fixes the reported false positive and the latent real-convention gap in one change.
+2. `lib/ticket_evidence.py`: add a shared "not glued to a repo slug" lookbehind to `_mentions()` and `_claims()`'s `#{n}` matching, so a cross-repo mention like `clarity-captions#10` can't satisfy a bare `#10` check.
+3. `lib/ticket_evidence.py`: add `part of` to the `_WORK` verb alternation.
+4. `lib/ticket_evidence.py`: in `gather()`, add `closingIssuesReferences` to both `gh pr list --json` field lists (open and merged), and stash `facts["repo"] = repo`.
+5. `lib/ticket_evidence.py`: add a `_links_repo(ref_list, repo, n)` helper and use it (alongside the existing checks) in `evidence_for()`'s open-pr and merged-pr branches.
+6. `lib/ticket_policy.py`: add `LOOKS_DONE_MARKER` and extend `automated_comment()` to classify comments carrying it as `"bot"`.
+7. `lib/ticket_pipeline.py`: add a `_flag_looks_done(repo, number, ev)` helper (mirrors `_pr_retry_wait`'s single-issue comment fetch) that checks the ticket's existing comments for the marker + the current match's ref, and posts one `gh issue comment` naming it when not already present; wrapped so any `gh` failure or unexpected response shape is swallowed, never raised.
+8. `lib/ticket_pipeline.py`: in `_unclaimed_ready_tickets()`, call `_flag_looks_done` exactly when `ticket_evidence.verdict(ev) == "looks-done"` (not `in-flight`), right where the existing skip is logged.
+9. Write all 19 tests above first (red), then make the above changes green; run the full `lib/tests/test_ticket_evidence.py`, `test_ticket_pipeline.py`, and `test_ticket_policy.py` files to confirm no pre-existing test regresses.
+10. Update `CONTEXT.md`'s "Pre-dispatch 'work already exists' guard" entry (line ~1497-1499) to mention the branch-naming/cross-repo/linked-issue tightening and the new flag-comment, per the repo's domain-doc convention.

@@ -21,7 +21,7 @@ TIMEOUT = 60
 
 
 def _mentions(text: str, n: int) -> bool:
-    return bool(re.search(rf"#{n}(?!\d)", text or ""))
+    return bool(re.search(rf"(?<![a-z0-9.\-#])#{n}(?!\d)", text or "", re.I))
 
 
 # A merged PR is done-evidence only when it says it did the work. A bare mention ("Implemented by
@@ -31,7 +31,7 @@ _WORK = r"(?:close[sd]?|fix(?:e[sd])?|resolve[sd]?|refs?|references|implements|a
 
 
 def _claims(text: str, n: int) -> bool:
-    return bool(re.search(rf"\b{_WORK}\b\s*:?\s*#{n}(?!\d)", text or "", re.I))
+    return bool(re.search(rf"\b{_WORK}\b\s*:?\s*(?<![a-z0-9.\-#])#{n}(?!\d)", text or "", re.I))
 
 
 def _commit_claims(subject: str, n: int) -> bool:
@@ -48,13 +48,35 @@ def _commit_claims(subject: str, n: int) -> bool:
 
 
 def _named(ref: str, n: int) -> bool:
-    return bool(re.search(rf"[/-]{n}(?![\d])", ref))
+    return bool(re.search(rf"pipeline/(?:.*[/#\-])?{n}(?!\d)", ref))
+
+
+def _links_repo(ref_list: list | None, repo: str, n: int) -> bool:
+    """Does a closingIssuesReferences list contain this repo's ticket #n?
+    repo is 'Owner/Name' (e.g. 'G-Eskayo/marvin'); ref entries have {'number': N, 'repository': {'name': '...', 'owner': {'login': '...'}}}"""
+    if not ref_list or not isinstance(ref_list, list):
+        return False
+    if not repo or not isinstance(repo, str):
+        return False
+    owner, name = repo.lower().split("/", 1) if "/" in repo else ("", repo.lower())
+    for r in ref_list:
+        if not isinstance(r, dict) or r.get("number") != n:
+            continue
+        repo_info = r.get("repository", {})
+        if not isinstance(repo_info, dict):
+            continue
+        repo_name = (repo_info.get("name") or "").lower()
+        repo_owner = (repo_info.get("owner", {}).get("login") or "").lower()
+        if repo_name == name and repo_owner == owner:
+            return True
+    return False
 
 
 def evidence_for(n: int, facts: dict) -> list[dict]:
     ev: list[dict] = []
+    repo = facts.get("repo")
     for pr in facts.get("prs", []):
-        if _mentions(pr.get("body"), n) or _named(pr.get("headRefName", ""), n):
+        if _mentions(pr.get("body"), n) or _named(pr.get("headRefName", ""), n) or _links_repo(pr.get("closingIssuesReferences"), repo, n):
             ev.append({"kind": "open-pr", "ref": f"PR #{pr['number']}", "detail": "open pull request"})
     for b in facts.get("branches", []):
         if _named(b, n):
@@ -63,7 +85,7 @@ def evidence_for(n: int, facts: dict) -> list[dict]:
         if _named(r.rsplit("/", 1)[0], n):
             ev.append({"kind": "rescue-ref", "ref": r, "detail": "a prior run's work was preserved"})
     for pr in facts.get("merged", []):
-        if _claims(pr.get("body"), n) or _named(pr.get("headRefName", ""), n):
+        if _claims(pr.get("body"), n) or _named(pr.get("headRefName", ""), n) or _links_repo(pr.get("closingIssuesReferences"), repo, n):
             ev.append({"kind": "merged-pr", "ref": f"PR #{pr['number']}", "detail": "merged pull request"})
     for sha, subject in facts.get("commits", []):
         if _commit_claims(subject, n) and not re.search(r"\brevert", subject, re.I):
@@ -87,13 +109,14 @@ def gather(repo: str, clone: str | None, base: str = "origin/main") -> dict | No
     """Facts for one repo, or None when they can't be read (callers then fall back to dispatching
     as before rather than stalling the whole pipeline on a gh/git hiccup)."""
     prs_raw = _sh(["gh", "pr", "list", "-R", repo, "--state", "open", "--limit", "200",
-                   "--json", "number,body,headRefName"])
+                   "--json", "number,body,headRefName,closingIssuesReferences"])
     if not prs_raw:
         return None
     merged_raw = _sh(["gh", "pr", "list", "-R", repo, "--state", "merged", "--limit", "200",
-                      "--json", "number,body,headRefName"])
-    facts: dict = {"prs": json.loads(prs_raw), "merged": json.loads(merged_raw or "[]"),
-                   "branches": [], "rescue": [], "commits": []}
+                      "--json", "number,body,headRefName,closingIssuesReferences"])
+    prs = json.loads(prs_raw)
+    merged = json.loads(merged_raw or "[]")
+    facts: dict = {"prs": prs, "merged": merged, "branches": [], "rescue": [], "commits": [], "repo": repo}
     if clone:
         subprocess.run(["git", "fetch", "-q", "origin"], cwd=clone, capture_output=True, timeout=TIMEOUT)
         facts["branches"] = [b.strip() for b in _sh(["git", "branch", "-r", "--list", "origin/pipeline/*"], clone).splitlines()]

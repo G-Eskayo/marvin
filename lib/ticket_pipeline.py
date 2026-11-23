@@ -166,11 +166,14 @@ def _unclaimed_ready_tickets(repo: str = REPO, issues: list[dict] | None = None)
                 # The incident ladder's rung 3 (incident_ladder.py): the original fix's merged PRs and commits are
                 # what regressed, not a sign the work is done. Work in flight still holds it back.
                 ev = [e for e in ev if e["kind"] not in ("commit", "merged-pr")]
-            if ticket_evidence.verdict(ev) == "clear":
+            verdict = ticket_evidence.verdict(ev)
+            if verdict == "clear":
                 kept.append(i)
             else:
                 print(f"{LOG_PREFIX} skip {repo}#{i['number']}: work already exists "
-                      f"({ticket_evidence.verdict(ev)}: {ev[0]['ref']} {ev[0]['detail'][:60]})", file=sys.stderr)
+                      f"({verdict}: {ev[0]['ref']} {ev[0]['detail'][:60]})", file=sys.stderr)
+                if verdict == "looks-done" and ev:
+                    _flag_looks_done(repo, i["number"], ev)
         ready = kept
     ready.sort(key=_order_key)
     # Research tickets (label `research`, Gil 2026-10-09): only when no build work is waiting, and one at a time.
@@ -432,6 +435,37 @@ def _evidence_facts(repo: str):
     except Exception as e:  # noqa: BLE001
         print(f"{LOG_PREFIX} evidence check failed for {repo}: {e}", file=sys.stderr)
         return None
+
+
+def _flag_looks_done(repo: str, number: int, evidence: list[dict]) -> None:
+    """Post a marker comment when a ticket's work already exists (looks-done verdict).
+    Checks existing comments first to avoid duplicates. Never raises; swallows gh failures."""
+    try:
+        # Fetch existing comments to check if we've already flagged this
+        result = subprocess.run(["gh", "issue", "view", str(number), "--repo", repo, "--json", "comments"],
+                               capture_output=True, text=True, timeout=30)
+        if result.returncode != 0:
+            return
+        try:
+            issue_data = json.loads(result.stdout)
+            comments = issue_data.get("comments", [])
+        except (ValueError, TypeError):
+            return
+
+        # Check if we've already posted the marker for this evidence
+        ref = evidence[0]["ref"] if evidence else ""
+        for comment in comments:
+            if isinstance(comment, dict):
+                body = comment.get("body", "")
+                if ticket_policy.LOOKS_DONE_MARKER in body and ref in body:
+                    return  # Already flagged with this ref
+
+        # Post the marker comment if not already there
+        body = f"Work already exists: {ref} ({evidence[0].get('detail', 'closed/merged work')}). {ticket_policy.LOOKS_DONE_MARKER}"
+        subprocess.run(["gh", "issue", "comment", str(number), "--repo", repo, "--body", body],
+                      capture_output=True, timeout=30)
+    except Exception:  # noqa: BLE001
+        pass  # Never fail the scan on a comment post
 
 
 CATALOG_REFRESH_TIMEOUT_S = 240

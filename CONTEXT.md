@@ -1494,9 +1494,16 @@ Status, corrected 2026-10-26 (marvin#699):
   prevents re-fetching/re-embedding a paper already known queries this collection, not a
   per-traversal temporary set.
 
-## Pre-dispatch "work already exists" guard (2026-10-05)
+## Pre-dispatch "work already exists" guard (2026-10-05, tightened 2026-11-20)
 
 `lib/ticket_evidence.py` checks git/PR facts before `ticket_pipeline` dispatches: an open PR, a `pipeline/*` branch or a `refs/rescue/*` ref means **in-flight**; commits on the base branch mentioning `#N` means **looks-done**. Either one removes the ticket from dispatch (logged `skip repo#N`). Unreadable facts fall back to dispatching, so a gh hiccup never stalls the pipeline. The same evidence is shown on Activity cards (`ticket_evidence.py report <repo>` -> `getEvidence` in boards.js, cached 5 min): a chip, and a ready/backlog card's reason says work already exists. A commit that merely *mentions* #N can be a false positive (e.g. a baseline-metrics commit), so it is worded "commit mentions this", never "done".
+
+**Tightening (2026-11-20):** 
+- Branch naming: `_named()` now requires the `pipeline/` segment; branches like `feature/ticket-21` no longer match, fixing false positives where non-pipeline work was blocking dispatch.
+- Cross-repo mentions: `_mentions()` and `_claims()` add a lookbehind to block matches when `#N` is glued to a repo slug (e.g., `clarity-captions#10` will not match a bare `#10` check), preventing cross-repo PRs from blocking local tickets.
+- Work verb guard: "part of #N" is intentionally NOT a work claim (it would block parent tickets permanently); multi-PR work should use `closingIssuesReferences` instead.
+- Explicit cross-repo linking: `gather()` collects `closingIssuesReferences` from both open and merged PRs, and `evidence_for()` uses a new `_links_repo()` helper to check them, allowing a PR to link a ticket even without an explicit text mention.
+- "Looks-done" notification: When `verdict()` returns "looks-done" and the ticket has no open blocker, `_unclaimed_ready_tickets()` calls `_flag_looks_done()` to post a marker comment (`<!-- marvin:looks-done -->`) on the ticket, alerting a human that work exists and the dispatch gate found it. The comment is never duplicated (checked before posting) and the helper never fails the scan (swallows `gh` errors). `ticket_policy.automated_comment()` now classifies comments carrying the marker as `"bot"` so they don't reset failure streaks.
 
 
 ## Device columns on Activity (2026-10-05)
