@@ -51,6 +51,39 @@ A task.json `"check": {"files": "check"}` names hidden pytest files that are cop
 workdir after the run, so a coding task is graded by whether the code works, not by a substring.
 Run bench.py with `~/.agents/venv/bin/python` so the hidden checks have pytest.
 
+## Local agent spike
+
+Measure energy and correctness of a live agent (e.g., local Ollama model) on selected tickets.
+Replays real MARVIN tickets in isolated worktrees and scores the gate for each.
+
+```bash
+# Check opencode is installed
+npm install -g @sst/opencode
+
+# Run spike: measure time and correctness on default public tickets
+python3 bench/local_agent_spike.py qwen2.5:7b
+
+# Same, but measure energy (requires sudo)
+python3 bench/local_agent_spike.py qwen2.5:7b --energy
+
+# Use instance-private tickets (created at ~/.agents/bench-local-tickets.json)
+python3 bench/local_agent_spike.py qwen2.5:7b --tickets-file ~/.agents/bench-local-tickets.json
+
+# Custom workdir
+python3 bench/local_agent_spike.py qwen2.5:7b --workdir /tmp/bench-runs
+```
+
+Results append to `bench/RESULTS.md` with a markdown table per run, including:
+- Ticket number and model
+- Gate pass/fail/error
+- Wall-clock time
+- Token count (if available from opencode output)
+- Energy (joules) if `--energy` was used
+
+The spike creates isolated git worktrees at each ticket's pre-merge base, runs the agent
+against the PR body as the prompt, and scores whether the output suggests a correct solution
+(simple heuristic: output present and no error markers).
+
 Working folders (PR #1125): by default each (task, cell) gets one stable folder under the temp area
 (`$TMPDIR/marvin-bench-work/<task>--<profile>--<model>[--<prefix hash>]`), emptied before and after every
 run, with that folder's Claude Code auto memory cleared, as a person working in one repo has. Under Claude
