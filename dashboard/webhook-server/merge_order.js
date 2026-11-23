@@ -88,6 +88,7 @@ export function enrichForOrder(prs, { repo = null, issues = [], unbuilt = new Se
       decisionsUnbuilt: unbuilt.has(p.url) && !answersAsBuilt(p.body || ''),
       conflict,
       conflictAfter: rbConflict && Number.isFinite(rb.after) ? rb.after : null,
+      conflictFiles: conflict && Array.isArray(rb?.files) ? rb.files : [],
       repairFailed: !!p.headRefOid && repairFailed?.[`${r}#${p.number}`] === p.headRefOid,
       gateCovers: covers
     }
@@ -155,7 +156,8 @@ function ownReason(pr, base) {
   if (ci.state === 'failing') return { reason: `checks failing: ${ci.failing.join(', ')}` }
   if (pr.conflict) {
     const after = pr.conflictAfter ? ` after #${pr.conflictAfter}` : ''
-    return { reason: `conflicts with ${base}${after} · ${pr.repairFailed ? 'needs a rebuild' : 'MARVIN is fixing it'}`, conflict: true }
+    const files = pr.conflictFiles && pr.conflictFiles.length ? ` in ${pr.conflictFiles.slice(0, 3).join(', ')}${pr.conflictFiles.length > 3 ? ` and ${pr.conflictFiles.length - 3} more` : ''}` : ''
+    return { reason: `Held: conflicts with ${base}${after}${files} · ${pr.repairFailed ? 'needs a rebuild' : 'MARVIN is fixing it'}`, conflict: true }
   }
   if (pr.sentBack) return { reason: 'sent back for rework' }
   return null
@@ -239,7 +241,7 @@ export function mergeOrder(openPrs, mainState, queue) {
       why = { reason: redWaitsFor ? `main is red · waits for #${redWaitsFor}` : 'main is red · waits for a fix' }
     }
     entries[p.url] = { url: p.url, number: p.number, queued, state: why ? 'waiting' : queued ? 'queued' : 'ready', tone: why ? 'amber' : queued ? 'sky' : null,
-      reason: why?.reason || null, position: null, waitsFor, ...(why?.unbuilt ? { unbuilt: true } : {}), ...(why?.conflict ? { conflict: true } : {}) }
+      reason: why?.reason || null, position: null, waitsFor, conflictFiles: p.conflictFiles || [], ...(why?.unbuilt ? { unbuilt: true } : {}), ...(why?.conflict ? { conflict: true } : {}) }
   }
 
   // Every queued PR in merge order: base before what is built on it (topological), then fixes for a red main first,

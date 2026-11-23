@@ -175,7 +175,7 @@ describe('merge queue runner', () => {
     await queue.approve(REPO, url(973))
     expect(w.merged).toEqual([973])
     expect(store.forRepo(REPO).items.map((i) => i.number)).toEqual([972])
-    expect(queue.view(REPO).entries[url(972)].reason).toBe('conflicts with main after #973 · MARVIN is fixing it')
+    expect(queue.view(REPO).entries[url(972)].reason).toBe('Held: conflicts with main after #973 · MARVIN is fixing it')
     expect(resolver).toContain('sha972')
     w.prs.get(972).headRefOid = 'resolved'                  // the resolver's push
     await queue.kick(REPO)

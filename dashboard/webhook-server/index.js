@@ -3,7 +3,7 @@ import os from 'os'
 import path from 'path'
 import { createServer } from 'http'
 import { mergePr, baselineFailsOnMain, mergesAhead, execWithGroupTimeout, runDiskFirstAid, memoryGuardCheck, withMergeMark, forgetQueuedMerge, readMergeReady, sweepGateClones, repoJobsDone, triggerTicketPipeline } from './merge.js'
-import { createMergeQueue, createQueueStore } from './merge_queue.js'
+import { createMergeQueue, createQueueStore, stuckMessage } from './merge_queue.js'
 import { createUnbuiltCache, createFixTicketsCache, createQueueLoader, createBaseLookup, createFollowUpRequester, readMainHealth, readRepairFailures } from './merge_facts.js'
 import { pendingCheckHeads } from '../electron/main/mr_repos.js'
 import { snapshotExec } from './pr_snapshot.js'
@@ -454,12 +454,12 @@ const mergeQueue = createMergeQueue({
   // marvin#1183: held on one conflicting commit for a day, so the resolver couldn't fix it: tell the owner, once.
   onStuck: (repo, pr, { since }) => {
     const days = Math.max(1, Math.round((Date.now() - since) / 86_400_000))
+    const message = stuckMessage(repo, pr, days)
     const notify = path.resolve(path.dirname(new URL(import.meta.url).pathname), '..', '..', 'lib', 'notify.py')
     const venv = path.resolve(path.dirname(notify), '..', 'venv', 'bin', 'python')
     const code = 'import sys; sys.path.insert(0, sys.argv[1]); import notify; notify.notify(sys.argv[2], sys.argv[3], sys.argv[4])'
-    execFile(venv, ['-c', code, path.dirname(notify), `#${pr.number} is stuck on a conflict`,
-      `${repo} #${pr.number} has waited ${days} day${days === 1 ? '' : 's'} in the merge queue on a conflict the resolver couldn't fix. It needs main merged in by hand.`,
-      pr.url], { timeout: 30_000 }, () => {})
+    execFile(venv, ['-c', code, path.dirname(notify), `#${pr.number} is stuck on a conflict`, message, pr.url], { timeout: 30_000 }, () => {})
+    execAsync('gh', ['pr', 'comment', pr.url, '--body', message]).catch(() => {})
   },
   log: (m) => console.log(m)
 })
