@@ -122,7 +122,7 @@ import { createRelationsService } from './relations_service.js'
 import { machineNames } from './machine_names.js'
 import { summarizeBoard, buildCompleted } from './board.js'
 import { createTriggerHub, createReconciler, refetchesGithub } from './triggers.js'
-import { createMrHistory, mergedPrArgs, readSavedMerged } from './mr_history.js'
+import { createMrHistory, mergedPrArgs, closedPrArgs, readSavedMerged, readSavedClosed } from './mr_history.js'
 import { createProjectProgress } from './project_progress.js'
 import { appendError } from './error_log.js'
 import { listOpenPrsAcrossRepos, prListArgs, normalizeSeen, canMergeFromDashboard, repoFromPrUrl, MARVIN_REPO, pendingCheckHeads } from './mr_repos.js'
@@ -222,6 +222,7 @@ const MR_DENY_WEBHOOK_URL = process.env.MARVIN_MR_DENY_WEBHOOK_URL || `http://${
 const DASHBOARD_REFRESH_PORT = parseRefreshPort(process.env.MARVIN_DASHBOARD_REFRESH_PORT)
 
 const ghListOpenPrs = (light) => async (repo) => JSON.parse(await ghOut(prListArgs(repo, { light })))
+const ghListClosed = async (repo, since) => JSON.parse(await ghOut(closedPrArgs(repo, since)) || '[]')
 
 // The dashboard's memory of GitHub (github_state.js, #318): every GitHub read below is answered from the last-known
 // state of its repo until the change watch says that repo changed, the person's own action needs fresh data, or a
@@ -1016,25 +1017,27 @@ function registerMrReviewHandlers() {
   const mrHistory = createMrHistory({
     repos: () => readRegistry().map((b) => b.repo),
     ghList: async (repo, since) => JSON.parse((await ghOut(mergedPrArgs(repo, since))) || '[]'),
+    ghListClosed: async (repo, since) => JSON.parse((await ghOut(closedPrArgs(repo, since))) || '[]'),
     webhookHistory: async () => {
       const res = await fetch(MR_WEBHOOK_URL.replace(/\/approve$/, '/merge-history'), { signal: AbortSignal.timeout(5000) })
       if (!res.ok) throw new Error(`merge server answered ${res.status}`)
       return res.json()
     },
-    openPrs: () => listOpenPrs({ light: true }),
+    openPrs: () => listOpenPrs(),
     cachePath: join(homedir(), '.claude', 'logs', 'mr-history.json')
   })
   ipcMain.handle('mr:history', (_event, opts) => mrHistory.get({ fresh: !!opts?.fresh }))
   // #422: whether the last Open list read every project, and if not which failed and why.
   ipcMain.handle('mr:listStatus', () => prFetch)
-  // One merged (or refused) PR as the usual detail view, read-only: never mergeable from here.
+  // One merged (or refused) PR as the usual detail view: mergeable for OPEN, read-only for MERGED/CLOSED.
   ipcMain.handle('mr:historyDetail', async (_event, url) => {
     const repo = repoFromPrUrl(url)
     if (!repo) throw new Error('not a PR url')
     const stdout = await ghOut(['pr', 'view', url, '--json', 'number,title,url,body,files,baseRefName,headRefName,headRefOid,mergeable,statusCheckRollup,state,mergedAt'])
     const raw = { ...JSON.parse(stdout), repo }
-    const [pr] = await listPipelinePrs(async () => [raw], { canMerge: () => false, uiPathsFor: (r) => readUiPaths(r) })
-    return { ...pr, readOnly: true, state: raw.state, mergedAt: raw.mergedAt || null }
+    const opts = raw.state === 'OPEN' ? { ...listPipelinePrsOptions, canMerge: (r) => canMergeHere(pullOnly, canMergeFromDashboard(r, readMergeableRepos())) } : { canMerge: () => false, uiPathsFor: (r) => readUiPaths(r) }
+    const [pr] = await listPipelinePrs(async () => [raw], opts)
+    return { ...pr, readOnly: raw.state !== 'OPEN', state: raw.state, mergedAt: raw.mergedAt || null }
   })
 
   ipcMain.handle('mr:autoMergeReport', async () => {
@@ -1113,8 +1116,19 @@ function registerMrReviewHandlers() {
     })
     return cards.find((p) => p.url === url) || null
   }
+  const listPipelinePrsOptions = {
+    canMerge: (repo) => canMergeHere(pullOnly, canMergeFromDashboard(repo, readMergeableRepos())),
+    sentBackTickets,
+    reworkStatus: reworkFromMemory,
+    rebaseStatus: getRebaseStatus,
+    closedTickets,
+    autoMergeShadow: getAutoMergeShadow,
+    uiPathsFor: (repo) => readUiPaths(repo),
+    mergeQueue: getMergeQueue,
+    issuesFor: boardIssuesFor
+  }
   const mrList = coalesce(
-    () => listPipelinePrs(fixturePrs || listOpenPrs, { canMerge: (repo) => canMergeHere(pullOnly, canMergeFromDashboard(repo, readMergeableRepos())), sentBackTickets, reworkStatus: reworkFromMemory, rebaseStatus: getRebaseStatus, closedTickets, autoMergeShadow: getAutoMergeShadow, uiPathsFor: (repo) => readUiPaths(repo), mergeQueue: getMergeQueue, issuesFor: boardIssuesFor })
+    () => listPipelinePrs(fixturePrs || listOpenPrs, listPipelinePrsOptions)
       .then((prs) => withReadOnlyReason(prs, pullOnly)),
     () => `${githubState.localSeq()}:${githubState._genOf(null)}`
   )

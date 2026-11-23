@@ -9,9 +9,9 @@ const noop = () => {}
 const NOW = new Date('2026-10-13T20:00:00')
 const at = (s) => new Date(s).toISOString()
 const rows = [
-  { kind: 'merged', url: 'u414', number: 414, title: 'Fix red main', repo: 'G-Eskayo/marvin', at: at('2026-10-13T12:47:00'), by: 'you' },
-  { kind: 'refused', url: 'u400', number: 400, title: 'Implement #218', repo: 'G-Eskayo/marvin', at: at('2026-10-13T12:46:00'), reason: 'main was failing' },
-  { kind: 'merged', url: 'u135', number: 135, title: 'ADR 0024 beta ingest', repo: 'G-Eskayo/clarity-captions', at: at('2026-10-12T11:51:00'), by: 'unrecorded' }
+  { kind: 'merged', url: 'u414', number: 414, title: 'Fix red main', repo: 'G-Eskayo/marvin', at: at('2026-10-13T12:47:00'), by: 'you', notes: [] },
+  { kind: 'open', url: 'u400', number: 400, title: 'Implement #218', repo: 'G-Eskayo/marvin', at: at('2026-10-13T12:46:00'), plainReason: 'main was failing', notes: [{ code: 'MAIN_RED', reason: 'main was failing', message: '', at: at('2026-10-13T12:46:00') }], refusalCount: 1 },
+  { kind: 'merged', url: 'u135', number: 135, title: 'ADR 0024 beta ingest', repo: 'G-Eskayo/clarity-captions', at: at('2026-10-12T11:51:00'), by: 'unrecorded', notes: [] }
 ]
 
 describe('HistoryList: the "reverted by #N" pill (#838, the owner\'s round-2 look on #761)', () => {
@@ -42,8 +42,8 @@ describe('HistoryList', () => {
     expect(html).toContain('>you<')
     expect(html).toContain('>not recorded<')
   })
-  it('a refused Approve shows as ✗ with its plain reason', () => {
-    expect(html).toContain('data-kind="refused"')
+  it('a still-open PR with refusal shows as ⏳ with its plain reason', () => {
+    expect(html).toContain('data-kind="open"')
     expect(html).toContain('refused: main was failing')
   })
   it('one page has no page controls; more than 5 days does', () => {
@@ -54,6 +54,18 @@ describe('HistoryList', () => {
   it('empty: says reading, or nothing yet once read', () => {
     expect(renderToStaticMarkup(<HistoryList data={{ rows: [], updatedAt: null }} page={0} setPage={noop} onOpen={noop} />)).toContain('Reading merge history')
     expect(renderToStaticMarkup(<HistoryList data={{ rows: [], updatedAt: 5 }} page={0} setPage={noop} onOpen={noop} />)).toContain('Nothing merged or refused yet')
+  })
+  it('filter chips appear and filter results', () => {
+    const html = renderToStaticMarkup(<HistoryList data={{ rows, updatedAt: 1, errors: [] }} page={0} setPage={noop} onOpen={noop} now={NOW} filter="all" setFilter={noop} />)
+    expect(html).toContain('>All<')
+    expect(html).toContain('>Merged<')
+    expect(html).toContain('>Still open<')
+    expect(html).toContain('>Dropped<')
+    // Verify filtering actually works: merged filter shows only merged rows
+    const mergedHtml = renderToStaticMarkup(<HistoryList data={{ rows, updatedAt: 1, errors: [] }} page={0} setPage={noop} onOpen={noop} now={NOW} filter="merged" setFilter={noop} />)
+    expect(mergedHtml).toContain('#414</span> Fix red main')
+    expect(mergedHtml).toContain('#135</span> ADR 0024 beta ingest')
+    expect(mergedHtml).not.toContain('#400</span> Implement #218')
   })
 })
 

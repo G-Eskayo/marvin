@@ -31,3 +31,8 @@ export function pageOf(days, page, size = DAYS_PER_PAGE) {
   const p = Math.min(Math.max(0, page | 0), pages - 1)
   return { page: p, pages, days: (days || []).slice(p * size, p * size + size) }
 }
+
+export function filterRows(rows, kind) {
+  if (!kind || kind === 'all') return rows
+  return (rows || []).filter((r) => r.kind === kind)
+}

@@ -623,7 +623,14 @@ export default function MrReview(props) {
   }
   const openRow = (row) => {
     setHistoryError(null)
-    window.api.mr.historyDetail(row.url).then((pr) => setHistoryPr(row.kind === 'refused' ? { ...pr, refusal: row } : pr)).catch((e) => setHistoryError(`Couldn’t open #${row.number} ${row.title}: ${String(e)}`))
+    window.api.mr.historyDetail(row.url).then((pr) => {
+      if (row.kind === "open" && row.notes && row.notes.length > 0) {
+        const latest = row.notes[row.notes.length - 1]
+        setHistoryPr({ ...pr, refusal: { code: latest.code, reason: latest.reason, message: latest.message, at: latest.at } })
+      } else {
+        setHistoryPr(pr)
+      }
+    }).catch((e) => setHistoryError(`Couldn’t open #${row.number} ${row.title}: ${String(e)}`))
   }
   return (
     <div className="flex h-full flex-col">
