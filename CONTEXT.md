@@ -883,13 +883,14 @@ unbounded: any chat, either machine, raw `gh`, the GitHub UI). Polling stays onl
 - **Local state** (`ticket-stages/`, `dispatch-state.json`, `boards/registry.json`): the Electron main
   process watches the files and emits a debounced `activity` trigger to the renderer. Catches Python
   and Node writers alike.
-- **GitHub state** (issues, labels, PRs, comments): the webhook-server's change-detector
-  (`webhook-server/gh_watch.js`) sends one conditional request per registered board repo every ~20s
-  against its most-recently-updated issue (304 = free against the rate limit) and, on change, pings the
-  app's `/refresh` port with topics. "Change" is the newest issue's number + `updated_at` from a 200's body,
-  never the ETag alone (marvin#603: GitHub sent a new ETag on every 200 for four hours on 2026-10-22 and every
-  repo "changed" every tick, ~150 gh calls a minute). Real GitHub webhooks were rejected: they need a public URL and the
-  one static ngrok domain belongs to Marlin. The events feed was rejected: it lags by minutes.
+- **GitHub state** (issues, labels, PRs, comments, marvin#566): the webhook-server receives
+  GitHub push events via Tailscale Funnel on `/github-webhook`, verified by HMAC-SHA256 signature (fail-closed
+  when secret is missing or forged), deduped by `X-GitHub-Delivery` ID, and checked against the board registry.
+  A webhook changes the queue and triggers the dashboard immediately. The ETag watch (20s conditional request per
+  repo, 304 free) is kept as a backstop; it catches misses (e.g., the secret was not registered, or Tailscale Funnel
+  was down) and verifies the other Mac's webhook reached here (peer relay via `/github-change` on loopback/allowed address).
+  "Change" is the newest issue's number + `updated_at` from a 200's body, never the ETag alone (marvin#603: GitHub sent
+  a new ETag on every 200 for four hours on 2026-10-22 and every repo "changed" every tick, ~150 gh calls a minute).
 - **GitHub checks** (marvin#555, 2026-10-21; replaces #554's 90 s re-read of the whole PR list): checks
   starting or finishing are not issue updates, so the change-detector never sees them. The **check watch**
   (`createCheckWatcher` in `gh_watch.js`) runs in the dashboard's main process and the mobile backend, which
