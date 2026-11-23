@@ -509,3 +509,107 @@ def test_connection_gets_read_timeout_and_keepalive():
     ms._harden_socket(a)
     assert a.gettimeout() == ms.READ_TIMEOUT_S
     assert a.getsockopt(s.SOL_SOCKET, s.SO_KEEPALIVE)
+
+
+# ---------- iCloud / generic IMAP (part of #1357) ----------
+
+class Server(FakeImap):
+    """A FakeImap with a provider, capabilities and a folder list, like a signed-in ImapConnection."""
+
+    def __init__(self, provider="imap", caps=("MOVE", "UIDPLUS"), folders=("INBOX", "Finance", "Job search",
+                 "Job search/Recruiters (cold)", "MARVIN/Tools &- billing"), delimiter="/", **kw):
+        super().__init__(**kw)
+        self.provider, self.capabilities = provider, set(caps)
+        self.folders, self.delimiter = set(folders), delimiter
+
+
+def uidcalls(f, *names):
+    return [c for c in f.calls if c[0] in names]
+
+
+def test_imap_sort_uses_move_with_encoded_mailbox():
+    f = Server()
+    ms.apply(f, 9, ms.Decision("sort", "MARVIN/Tools & billing", "rule"))
+    assert uidcalls(f, "MOVE", "COPY", "STORE", "EXPUNGE") == [("MOVE", "9", '"MARVIN/Tools &- billing"')]
+
+
+def test_imap_sort_maps_hierarchy_delimiter():
+    f = Server(delimiter=".", folders=("INBOX", "Job search.Recruiters (cold)"))
+    ms.apply(f, 4, ms.Decision("sort", "Job search/Recruiters (cold)", "rule"))
+    assert uidcalls(f, "MOVE") == [("MOVE", "4", '"Job search.Recruiters (cold)"')]
+
+
+def test_imap_sort_without_move_copies_deletes_and_expunges_only_that_uid():
+    f = Server(caps=("UIDPLUS",))
+    ms.apply(f, 9, ms.Decision("sort", "Finance", "rule"))
+    assert uidcalls(f, "MOVE", "COPY", "STORE", "EXPUNGE") == [
+        ("COPY", "9", '"Finance"'), ("STORE", "9", "+FLAGS", "(\\Deleted)"), ("EXPUNGE", "9")]
+
+
+def test_imap_sort_without_move_or_uidplus_refuses():
+    # A plain EXPUNGE would also remove any other message flagged \Deleted: never do that.
+    f = Server(caps=())
+    with pytest.raises(ms.ImapError):
+        ms.apply(f, 9, ms.Decision("sort", "Finance", "rule"))
+    assert uidcalls(f, "MOVE", "COPY", "STORE", "EXPUNGE") == []
+
+
+def test_imap_watch_only_flags():
+    f = Server()
+    ms.apply(f, 5, ms.Decision("watch", None, "watch: Anduril", "Anduril"))
+    assert stores(f) == [("5", "+FLAGS", "(\\Flagged)")]
+
+
+def test_missing_folder_is_refused_not_created():
+    for f in [Server(folders=("INBOX",)), Server(provider="gmail", folders=("INBOX",))]:
+        with pytest.raises(ms.ImapError):
+            ms.apply(f, 9, ms.Decision("sort", "Finance", "rule"))
+        assert uidcalls(f, "MOVE", "COPY", "STORE") == []
+
+
+def test_gmail_with_folder_list_still_labels():
+    f = Server(provider="gmail", folders=("INBOX", "Finance"))
+    ms.apply(f, 9, ms.Decision("sort", "Finance", "rule"))
+    assert stores(f) == [("9", "+X-GM-LABELS", '("Finance")'), ("9", "-X-GM-LABELS", "(\\Inbox)")]
+
+
+def test_missing_folder_in_catch_up_is_skipped(tmp_path):
+    (tmp_path / "state.json").write_text(json.dumps({"uidvalidity": 7, "last_uid": 0}))
+    f = Server(folders=("INBOX",), uids=[1, 2], headers={1: H("x@chase.com"), 2: H("jobs@anduril.com")})
+    n, state = run_catch_up(f, tmp_path)
+    assert n == 2 and state.load()["last_uid"] == 2 and stores(f) == [("2", "+FLAGS", "(\\Flagged)")]
+
+
+@pytest.mark.parametrize("lines,delim,names", [
+    ([b'(\\HasNoChildren) "/" "INBOX"', b'(\\HasChildren) "/" "Job search"',
+      b'(\\HasNoChildren) "/" "Job search/Recruiters (cold)"', b'(\\HasNoChildren) "/" Finance'],
+     "/", {"INBOX", "Job search", "Job search/Recruiters (cold)", "Finance"}),
+    ([b'(\\HasNoChildren) "." "Shopping &- orders"', b'(\\Noselect) "." "[Gmail]"'], ".", {"Shopping &- orders"}),
+    ([(b'(\\HasNoChildren) "/" {11}', b'Weird"Name\\'), b'(\\HasNoChildren) "/" "a\\"b"'], "/", {'Weird"Name\\', 'a"b'}),
+    ([None, b""], "/", set()),
+])
+def test_parse_list(lines, delim, names):
+    d, got = ms.parse_list(lines)
+    assert d == delim and got == names
+
+
+def test_alert_link_per_provider():
+    m = ms.Message(1, "a@b.c", "s", "abc@mail.example")
+    assert ms.alert_link("gmail", m).startswith("https://mail.google.com/mail/u/0/#search/rfc822msgid%3Aabc")
+    assert ms.alert_link("imap", m) == "message://%3Cabc%40mail.example%3E"
+    assert ms.alert_link("imap", ms.Message(1, "a", "s")) is None
+
+
+@pytest.mark.parametrize("acct,provider", [
+    ({"address": "a", "host": "imap.gmail.com"}, "gmail"),
+    ({"address": "a", "host": "imap.mail.me.com"}, "imap"),
+    ({"address": "a", "host": "imap.mail.me.com", "provider": "gmail"}, "gmail"),
+    ({"address": "a"}, "gmail"),
+])
+def test_account_provider(acct, provider):
+    assert ms.account_settings("x", acct)["provider"] == provider
+
+
+def test_account_defaults_per_name():
+    s = ms.account_settings("icloud", {"address": "me@icloud.com", "host": "imap.mail.me.com"})
+    assert s["keychain_service"] == "marvin-mail-icloud" and s["provider"] == "imap"
