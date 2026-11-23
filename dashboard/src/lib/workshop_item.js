@@ -25,6 +25,15 @@ export function itemTarget(nav) {
   return { repo, ...(pr != null ? { pr } : {}), ...(ticket != null ? { ticket } : {}) }
 }
 
+// A PR key (e.g., "acme/app#856") becomes a Workshop link target { repo, pr }.
+export function mrLinkTarget(prKey) {
+  const m = /^(.+)#(\d+)$/.exec(String(prKey || ''))
+  if (!m) return null
+  const repo = m[1]
+  const pr = posInt(m[2])
+  return pr != null ? { repo, pr } : null
+}
+
 // One string per target, for "is this the same page".
 export const targetKey = (t) => (t ? `${t.repo}|${t.pr ?? ''}|${t.ticket ?? ''}` : '')
 

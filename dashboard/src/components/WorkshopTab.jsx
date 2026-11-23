@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
-import { buildNow, durationText, stripFor } from '../lib/next_step.js'
+import { buildNow, durationText, stripFor, filterByProject } from '../lib/next_step.js'
 import { itemTarget, targetKey } from '../lib/workshop_item.js'
 import WorkshopItem from './WorkshopItem.jsx'
 import { NOW_TOPICS, SHOWN_ROWS, loadSaved, readEvents, patchSectionState, readSectionState, readSources, save, shownRows, writeSectionState } from '../lib/workshop_feed.js'
@@ -230,7 +230,7 @@ const storageOf = () => {
   try { return globalThis.localStorage } catch { return null }
 }
 
-export function WorkshopNow({ feed, onOpen, now = Date.now(), store = storageOf() }) {
+export function WorkshopNow({ feed, onOpen, now = Date.now(), store = storageOf(), projectFilter = null, onClearFilter = () => {} }) {
   const [sectionState, setSectionState] = useState(() => readSectionState(store))
   const ui = {
     state: sectionState,
@@ -240,11 +240,11 @@ export function WorkshopNow({ feed, onOpen, now = Date.now(), store = storageOf(
       return next
     })
   }
-  const data = feed.now
+  const data = projectFilter ? filterByProject(feed.now, projectFilter) : feed.now
   const stale = feed.failed?.length > 0
   if (!data) {
     return feed.loaded
-      ? <p className="mt-6 text-sm text-red-400">Can’t reach GitHub ({feed.failed.join(', ')}), and nothing is saved from an earlier read yet.</p>
+      ? <p className="mt-6 text-sm text-red-400">Can’t reach GitHub ({feed.failed.join(",")}), and nothing is saved from an earlier read yet.</p>
       : <p className="mt-6 text-sm text-neutral-500">Loading…</p>
   }
   const { stuck, yours, marvin, next, waiting } = data.sections
@@ -260,9 +260,19 @@ export function WorkshopNow({ feed, onOpen, now = Date.now(), store = storageOf(
   const waitingOpen = sectionState.waiting ? !sectionState.waiting.collapsed : false
   return (
     <div>
+      {projectFilter && (
+        <div className="mt-4 flex items-center gap-2 px-4 py-2">
+          <span className="rounded-md border border-neutral-700 bg-neutral-900/70 px-2 py-1 text-xs text-neutral-300">
+            Filtered to <span className="font-medium">{projectFilter}</span>
+          </span>
+          <button onClick={onClearFilter} className="text-xs text-neutral-500 hover:text-neutral-300">
+            clear
+          </button>
+        </div>
+      )}
       {stale && (
         <p className="mt-4 rounded-md border border-amber-900/60 bg-amber-950/30 px-3 py-2 text-xs text-amber-300" data-testid="as-of">
-          Can’t read {feed.failed.join(', ')} right now: showing the last known list{asOf ? `, as of ${asOf}` : ''}.
+          Can’t read {feed.failed.join(",")} right now: showing the last known list{asOf ? `, as of ${asOf}` : ""}.
         </p>
       )}
       {stuck.length > 0 && (
@@ -288,18 +298,16 @@ export function WorkshopNow({ feed, onOpen, now = Date.now(), store = storageOf(
         </Box>
       </Section>
       {waiting.length > 0 && (
-        // Held, blocked and untriaged: nobody's move yet, so one closed line (owner, PR #1030).
-        <section className="mt-4" data-testid="now-waiting" data-collapsed={waitingOpen ? 'no' : 'yes'}>
+        <section className="mt-4" data-testid="now-waiting" data-collapsed={waitingOpen ? "no" : "yes"}>
           <Box>
-            <button onClick={() => ui.set('waiting', { collapsed: waitingOpen })} aria-expanded={waitingOpen}
+            <button onClick={() => ui.set("waiting", { collapsed: waitingOpen })} aria-expanded={waitingOpen}
               className="w-full px-4 py-3 text-left text-sm text-neutral-400 hover:text-neutral-200">
-              {waitingOpen ? '▾' : '▸'} {waiting.length} waiting on something else
+              {waitingOpen ? "▾" : "▸"} {waiting.length} waiting on something else
             </button>
-            {waitingOpen && long(waiting, 'waiting')}
+            {waitingOpen && long(waiting, "waiting")}
           </Box>
         </section>
       )}
-      <p className="mt-3 text-xs text-neutral-500">Machines, helpers’ health and the parallel toggle: Health.</p>
     </div>
   )
 }
@@ -317,8 +325,19 @@ export function useOpenItem(nav) {
   return [current.target, open]
 }
 
+export function useProjectFilter(nav) {
+  const [state, setState] = useState(() => ({ at: nav?.at ?? null, repo: nav?.repo ?? null }))
+  // Sync to nav only when nav changes (new `at`), not on every render where repo differs
+  if ((nav?.at ?? null) !== state.at && nav?.tab === 'workshop') {
+    setState({ at: nav.at, repo: nav.repo ?? null })
+  }
+  const clear = useCallback(() => setState((s) => ({ ...s, repo: null })), [])
+  return [state.repo, (r) => setState((s) => ({ ...s, repo: r })), clear]
+}
+
 export default function WorkshopTab({ feed, navigate, nav = null }) {
   const [target, setTarget] = useOpenItem(nav)
+  const [projectFilter, setProjectFilter, clearProjectFilter] = useProjectFilter(nav)
   const pick = (id) => {
     if (id === 'projects') navigate('activity')
     else if (id === 'shipped') navigate('mr-review', { view: 'merged' })
@@ -339,7 +358,7 @@ export default function WorkshopTab({ feed, navigate, nav = null }) {
   return (
     <div className="max-w-[1100px] px-4 py-5 lg:px-6" data-testid="workshop">
       <WorkshopControl onPick={pick} />
-      <WorkshopNow feed={feed} onOpen={open} />
+      <WorkshopNow feed={feed} onOpen={open} projectFilter={projectFilter} onClearFilter={clearProjectFilter} />
     </div>
   )
 }

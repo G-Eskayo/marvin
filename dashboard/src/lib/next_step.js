@@ -117,6 +117,15 @@ export function prStep(pr, ctx = {}) {
     return step('marvin', verb, 'marvin', { phase })
   }
 
+  // A draft PR (live → "Building" with stuck-after-30-min, same as ticketStep's logic; not live → "Draft")
+  if (kind === 'draft') {
+    if (live) {
+      const moved = lastAt(events)
+      if (moved != null && now - moved > MARVIN_STUCK_MS) return step('marvin', 'No movement', 'stuck', { stuckSince: moved })
+      return step('marvin', 'Building', 'marvin', { phase: phaseOf(events) })
+    }
+    return step('owner', 'Draft', 'waiting')
+  }
   if (kind === 'merging') return mine('Merging', 'ship')
   if (kind === 'in-queue') return mine('In the merge queue', 'ship')
   // The merge queue's order for a PR's own blockers (merge_order.js ownReason, owner 2026-10-30): options, then
@@ -259,4 +268,15 @@ export function durationText(fromMs, now = Date.now()) {
   const h = Math.floor(m / 60)
   if (h < 48) return `${h} h`
   return `${Math.floor(h / 24)} d`
+}
+
+// Filter a built Now by project/repo: return a filtered version with only items matching the repo.
+export function filterByProject(now, repo) {
+  if (!now || !repo) return now
+  return {
+    ...now,
+    items: now.items.filter((i) => i.repo === repo),
+    sections: Object.fromEntries(SECTIONS.map((s) => [s, (now.sections[s] || []).filter((i) => i.repo === repo)])),
+    count: (now.sections.yours || []).filter((i) => i.repo === repo).length
+  }
 }

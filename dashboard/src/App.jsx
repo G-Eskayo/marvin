@@ -16,6 +16,9 @@ import WorkshopTab, { useWorkshopNow } from '@components/WorkshopTab.jsx'
 import { visibleTabs } from './lib/tabs.js'
 import { ScrollArea, useScrollArea } from '@components/ScrollPlaces.jsx'
 import { reviewDotStatus } from './lib/pr_fetch_status.js'
+import { mrLinkTarget } from './lib/workshop_item.js'
+import { startHistory, visit, current } from './lib/nav_history.js'
+import { historyKeyAction, applyHistoryKey } from './lib/app_history.js'
 
 
 const DOT_COLOR = {
@@ -49,15 +52,29 @@ export default function App() {
   // Cross-tab links by project: { tab, ...target, at } -- the target tab reads what it needs
   // (prKey for MR Review, projectId for Docs, repo for Activity) and acts once per `at`.
   const [nav, setNav] = useState(null)
+  // Tab-level history: Cmd/Ctrl+⌫ goes back, Cmd/Ctrl+⇧⌫ goes forward (#756)
+  const [history, setHistory] = useState(() => startHistory({ tab: activeTab, item: null }))
   const navigate = (tab, target = {}) => {
     setNav({ ...target, tab, at: Date.now() })
     setActiveTab(tab)
+    const screen = { tab, ...target }
+    setHistory((h) => visit(h, screen))
   }
   // The Workshop's item page (#863): every cross-tab link to a ticket or a PR opens its one page.
   const openItem = (repo, number, kind) => navigate('workshop', { item: { repo, [kind]: Number(number) } })
   const openPrKey = (prKey) => {
-    const m = /^(.+)#(\d+)$/.exec(String(prKey || ''))
-    if (m) openItem(m[1], m[2], 'pr')
+    const target = mrLinkTarget(prKey)
+    if (target) {
+      // A PR key like "acme/app#856" opens the Workshop to that PR
+      navigate('workshop', { item: target })
+    } else if (prKey && typeof prKey === 'string' && /^[^/\s]+\/[^/\s]+$/.test(prKey)) {
+      // A bare repo like "acme/app" opens the Workshop filtered to that repo
+      navigate('workshop', { repo: prKey })
+    } else {
+      // No prKey, empty string, or unrecognizable format: open Workshop unfiltered
+      // (e.g., MrReviewLink calls onOpenMr?.() with no args to open generic MR Review)
+      navigate('workshop')
+    }
   }
   const [reviewStatus, setReviewStatus] = useState(null)
   const [healthOverall, setHealthOverall] = useState(null)
@@ -129,6 +146,23 @@ export default function App() {
     }
   }, [])
 
+  // History navigation: Cmd/Ctrl+⌫ back, Cmd/Ctrl+⇧⌫ forward (#756)
+  useEffect(() => {
+    const handleKeyDown = (e) => {
+      const action = historyKeyAction(e)
+      if (!action) return
+      const result = applyHistoryKey(action, history)
+      if (!result) return
+      e.preventDefault()
+      setHistory(result.history)
+      const { tab, ...target } = result.screen
+      setActiveTab(tab)
+      setNav({ ...target, tab, at: Date.now() })
+    }
+    window.addEventListener('keydown', handleKeyDown)
+    return () => window.removeEventListener('keydown', handleKeyDown)
+  }, [history])
+
   return (
     <div className="flex h-screen flex-col">
       <BootSequence onNavigate={({ tab, ...target }) => navigate(tab, target)} />
@@ -143,7 +177,12 @@ export default function App() {
             return (
               <button
                 key={tab.id}
-                onClick={() => setActiveTab(tab.id)}
+                onClick={() => {
+                  const screen = { tab: tab.id }
+                  setHistory((h) => visit(h, screen))
+                  setActiveTab(tab.id)
+                  setNav({ tab: tab.id, at: Date.now() })
+                }}
                 title={title}
                 className={`flex items-center gap-1.5 whitespace-nowrap rounded-md px-3 py-1.5 text-sm transition-colors ${
                   activeTab === tab.id

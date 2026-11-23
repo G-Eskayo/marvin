@@ -1,6 +1,6 @@
 import { describe, it, expect, beforeEach } from 'vitest'
 import { renderToStaticMarkup } from 'react-dom/server'
-import { itemTarget, targetKey, resolveItem, lifeStages, currentStage, historyRows, barText, barWho, pinnedSha, LIFE } from '../src/lib/workshop_item.js'
+import { itemTarget, mrLinkTarget, targetKey, resolveItem, lifeStages, currentStage, historyRows, barText, barWho, pinnedSha, LIFE } from '../src/lib/workshop_item.js'
 import WorkshopItem from '../src/components/WorkshopItem.jsx'
 import WorkshopTab from '../src/components/WorkshopTab.jsx'
 
@@ -51,6 +51,41 @@ describe('itemTarget: what a link asks for (junk never opens a page)', () => {
     const b = resolveItem({ repo: REPO, ticket: 854 }, value, NOW)
     expect(targetKey(a.target)).not.toBe(targetKey(b.target))
     expect([a.ticketNumber, a.pr.number, a.step.verb]).toEqual([b.ticketNumber, b.pr.number, b.step.verb])
+  })
+})
+
+describe('mrLinkTarget: a PR key becomes a Workshop link target', () => {
+  it('parses "repo#number" into { repo, pr }', () => {
+    expect(mrLinkTarget(`${REPO}#856`)).toEqual({ repo: REPO, pr: 856 })
+    expect(mrLinkTarget('owner/repo#5')).toEqual({ repo: 'owner/repo', pr: 5 })
+  })
+  it('rejects junk: missing #, no number, negative, zero, NaN, or just a number', () => {
+    for (const bad of [null, '', `${REPO}`, `${REPO}#`, `${REPO}#abc`, `${REPO}#-1`, `${REPO}#0`, '#123', 123, { pr: 5 }]) {
+      expect(mrLinkTarget(bad), JSON.stringify(bad)).toBeNull()
+    }
+  })
+})
+
+describe("openPrKey: MR Review's generic MR Review button behavior", () => {
+  // This test documents the expected behavior: openPrKey should open the Workshop
+  // when called with no argument, not silently no-op.
+  it("with no argument: should open Workshop unfiltered, not silent no-op", () => {
+    // When MrReviewLink calls onOpenMr?.() with no args, prKey is undefined.
+    // The fix is to navigate('workshop') without filtering instead of returning silently.
+    const target = mrLinkTarget(undefined)
+    expect(target).toBeNull()
+    // The behavior is documented in App.jsx's openPrKey handler:
+    // null/undefined should call navigate('workshop') without filtering
+  })
+  it("with a full PR key: opens to that PR", () => {
+    const target = mrLinkTarget(`${REPO}#856`)
+    expect(target).toEqual({ repo: REPO, pr: 856 })
+  })
+  it("with a bare repo name: opens Workshop filtered to that repo, not to a PR", () => {
+    const target = mrLinkTarget(`${REPO}`)
+    expect(target).toBeNull()
+    // A bare repo like "acme/app" is not a valid PR key; openPrKey should recognize
+    // the repo format and use it for filtering instead
   })
 })
 

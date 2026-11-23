@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest'
 import { renderToStaticMarkup } from 'react-dom/server'
-import { buildNow, nextStep, prStep, ticketStep, SECTIONS, MARVIN_STUCK_MS, projectChip } from '../src/lib/next_step.js'
+import { buildNow, nextStep, prStep, ticketStep, SECTIONS, MARVIN_STUCK_MS, projectChip, filterByProject } from '../src/lib/next_step.js'
 import { readSources, loadSaved, save, SAVED_KEY } from '../src/lib/workshop_feed.js'
 import { WorkshopNow } from '../src/components/WorkshopTab.jsx'
 
@@ -207,6 +207,39 @@ describe('the Now view (#862)', () => {
     expect(cls).toEqual(expect.arrayContaining(['flex-col', 'lg:flex-row', 'min-w-0', 'w-full']))
     expect(h).not.toMatch(/\bmin-w-\[\d|\bw-\[(?:9|1\d)\d\dpx\]/)
   })
+
+  it('no footer line about Health, helpers and machines', () => {
+    const h = render(feedOf(snapshot()))
+    expect(h).not.toContain('Machines, helpers\' health and the parallel toggle: Health.')
+  })
+
+  it('project filter: pill shows when active, clear button clears without being reverted by nav', () => {
+    const src = snapshot()
+    const feed = feedOf(src)
+    let cleared = false
+    const onClearFilter = () => { cleared = true }
+    const render_with_filter = (projectFilter) =>
+      renderToStaticMarkup(<WorkshopNow feed={feed} onOpen={() => {}} onClearFilter={onClearFilter} projectFilter={projectFilter} now={NOW} />)
+
+    // No filter: no pill, no clear button
+    const full = render_with_filter(null)
+    expect(full).not.toContain('Filtered to')
+
+    // With a full repo name: pill shows, clear button works
+    const filtered = render_with_filter(REPO)
+    expect(filtered).toContain('Filtered to')
+    expect(filtered).toContain(REPO)
+    expect(filtered).toContain('·')
+    expect(filtered).toContain('clear')
+
+    // Count verification: filtered has fewer rows than full (only REPO items, not OTHER)
+    const fullRowCount = (full.match(/data-testid="now-row"/g) || []).length
+    const filteredRowCount = (filtered.match(/data-testid="now-row"/g) || []).length
+    expect(filteredRowCount).toBeLessThan(fullRowCount)
+    // The unfiltered view includes items from both REPO and OTHER; filtered includes only REPO
+    expect(full).toContain(OTHER) // full includes the OTHER repo
+    expect(filtered).not.toContain(OTHER) // filtered excludes OTHER
+  })
 })
 
 describe('nextStep follows the pipeline\'s queue (#862, found on real data)', () => {
@@ -396,6 +429,17 @@ describe('only a PR that closes a ticket carries it', () => {
   })
 })
 
+describe('draft PRs (kind=draft)', () => {
+  it('a live draft PR is Building; stuck over 30 min is Stuck; not live is Draft in Waiting', () => {
+    const events = (min) => min != null ? new Map([[`${REPO}#1`, [{ stage: 'executing', status: 'running', timestamp: ago(min) }]]]) : new Map()
+    const draftPr = { ...pr(100), ticketRef: 1, isDraft: true }
+    const ctx = { events: events(18), live: new Map([[`${REPO}#1`, { machine: 'builder-1' }]]), now: NOW }
+    expect(prStep(draftPr, ctx)).toMatchObject({ owner: 'marvin', verb: 'Building', section: 'marvin' })
+    expect(prStep(draftPr, { ...ctx, events: events(31) })).toMatchObject({ section: 'stuck', verb: 'No movement' })
+    expect(prStep({ ...pr(100), ticketRef: null, isDraft: true }, { events: new Map(), live: null, now: NOW })).toMatchObject({ owner: 'owner', verb: 'Draft', section: 'waiting' })
+  })
+})
+
 describe('a parked ticket is the owner\'s move, not Stuck (stuck sweep, 2026-11-12, found on real data)', () => {
   // The pipeline parks a ticket after repeated failed builds and hands it over: needs-info plus a comment saying
   // what it needs. The board still says "Pipeline failed", so 25 of the Workshop's ~40 Stuck rows were these.
@@ -414,5 +458,29 @@ describe('a parked ticket is the owner\'s move, not Stuck (stuck sweep, 2026-11-
   })
   it('a claim gone quiet stays Stuck even with needs-info: the claim is MARVIN\'s to release', () => {
     expect(ticketStep(ticket(26, ['needs-info', 'claimed:x'], { column: 'blocked', reason: 'Claimed by x but no activity for 3 days' })).section).toBe('stuck')
+  })
+})
+
+describe('filterByProject: filter the Now feed to a single repo', () => {
+  it('keeps only items from the requested repo, and updates all sections and count', () => {
+    const src = snapshot()
+    const full = buildNow(src, NOW)
+    const filtered = filterByProject(full, REPO)
+    expect(filtered.items.every((i) => i.repo === REPO)).toBe(true)
+    // Filtered has fewer items than full because OTHER and proposals (no repo) are excluded.
+    expect(filtered.items.length).toBeLessThan(full.items.length)
+    expect(filtered.items.length).toBeGreaterThan(0)
+    expect(filtered.sections.yours.every((i) => i.repo === REPO)).toBe(true)
+    expect(filtered.count).toBe(full.sections.yours.filter((i) => i.repo === REPO).length)
+    for (const sec of SECTIONS) expect(filtered.sections[sec].every((i) => i.repo === REPO)).toBe(true)
+  })
+  it('returns null repo unchanged, and other repos are excluded', () => {
+    const src = snapshot()
+    const full = buildNow(src, NOW)
+    expect(filterByProject(full, null)).toBe(full)
+    expect(filterByProject(full, OTHER).items.some((i) => i.repo === REPO)).toBe(false)
+  })
+  it('null feed returns unchanged', () => {
+    expect(filterByProject(null, REPO)).toBeNull()
   })
 })

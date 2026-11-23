@@ -151,6 +151,14 @@ export function Card({ card, repo, onSelect, onOpenMr, activeTags, onTag }) {
   )
 }
 
+function MrReviewLink({ count, repo, onOpenMr }) {
+  return (
+    <button onClick={() => onOpenMr?.(repo)} className="-mt-1 mb-2 text-left text-[11px] text-amber-300 hover:text-amber-200" title="These are the same PRs MR Review lists">
+      {count} waiting in MR Review →
+    </button>
+  )
+}
+
 function Column({ column, repo, onSelect, onOpenMr, activeTags, onTag, onAllCompleted }) {
   const [showArchive, setShowArchive] = useState(false)
   const [showHold, setShowHold] = useState(false)
@@ -166,9 +174,7 @@ function Column({ column, repo, onSelect, onOpenMr, activeTags, onTag, onAllComp
         <span className="text-xs text-neutral-500">{activeTags.size ? `${visible.length} / ${column.cards.length}` : column.cards.length}</span>
       </div>
       {column.id === 'review' && column.cards.length > 0 && (
-        <button onClick={() => onOpenMr?.()} className="-mt-1 mb-2 text-left text-[11px] text-amber-300 hover:text-amber-200" title="These are the same PRs MR Review lists">
-          {column.cards.length} waiting in MR Review →
-        </button>
+        <MrReviewLink count={column.cards.length} repo={repo} onOpenMr={onOpenMr} />
       )}
       <div className="flex flex-col gap-2">
         {openCards.map((card) => (

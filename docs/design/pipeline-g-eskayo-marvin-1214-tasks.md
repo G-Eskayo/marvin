@@ -1,0 +1,17 @@
+1. `dashboard/src/lib/workshop_item.js`: add exported pure `mrLinkTarget(prKey)`; tests first.
+2. `dashboard/src/App.jsx`: `openPrKey` calls `navigate('workshop', mrLinkTarget(prKey))` instead of its current regex-only, silently-failing logic.
+3. `dashboard/src/components/ProjectBoard.jsx`: extract the Column "N waiting in MR Review →" button into a hook-free `MrReviewLink({count, repo, onOpenMr})` that calls `onOpenMr?.(repo)`; use it in place of the inline button (line 169). `WaitingOnYou`'s generic "MR Review →" (line 453-455) needs no code change — step 2 alone fixes it.
+4. `dashboard/src/lib/next_step.js`: add exported pure `filterByProject(now, repo)`; tests first.
+5. `dashboard/src/components/WorkshopTab.jsx`: add `useProjectFilter(nav)` (mirrors `useOpenItem`'s shape); apply `filterByProject` to the feed passed into `WorkshopNow`; render a "Filtered to `<project>` · clear" pill above it when active, styled like `ProjectBoard.jsx`'s `TagBar`/`OtherProjects`.
+6. `dashboard/src/lib/next_step.js`: in `prStep`, add an explicit `kind === 'draft'` branch (live → `marvin`/"Building" with stuck-after-30-min, same as `mine()`'s logic; not live → `waiting`/"Draft"), placed before the generic decisions-check block. Tests first.
+7. `dashboard/src/lib/app_history.js` (new): `historyKeyAction(e)`, `applyHistoryKey(action, history)`, pure, built on `nav_history.js`'s `back`/`forward`. Tests first.
+8. `dashboard/src/App.jsx`: seed one `history` state with `startHistory({ tab: activeTab, item: null })`; every `navigate()`/`setActiveTab` call also `visit()`s it; a `keydown` window listener applies `app_history.js` to move `activeTab` (exactly like the existing tab-bar `onClick={() => setActiveTab(tab.id)}`, no `nav` touch).
+9. `dashboard/src/components/WorkshopTab.jsx`: delete the footer line "Machines, helpers' health and the parallel toggle: Health." (line 302). Test first (negative assertion).
+10. `dashboard/src/components/WorkshopItem.jsx`:
+    - import `projectIdOf` from `../lib/projects.js`; add a "Docs →" button in the item-meta row calling `onOpenDocs?.(projectIdOf(repo))`.
+    - add a `useRead`-based `contextRead` for `api.mr.ticketContext(ticketNumber, repo)` (seeded by `initial.context` in tests); render a `Card` "Design & Architecture (parent PRD)" using `LinkedIssue` (imported from `MrDetail.jsx`) when `ticketNumber != null`.
+    - accept a `notice = null` prop; render `<CorrectionNotice notice={notice} onDismiss={...}/>` (imported from `MrReview.jsx`) when `pr && notice?.url === pr.url`.
+    - Tests first for all three (extend `page()` test helper to pass extra props/`onOpenDocs`, and extend `beforeEach`'s `window.api.mr` mock with `ticketContext: never`).
+11. `dashboard/src/components/WorkshopTab.jsx`: subscribe to `window.api.mr.onCorrected` exactly like `MrReview.jsx:OpenPrs` (lines 682-683), store `notice` in local state, pass it into `<WorkshopItem notice={notice} .../>`.
+12. Run the full dashboard suite (`npm test` in `dashboard/`), then launch the app and capture screenshots for bugs 1, 2 and 5, including under 900 px, per the acceptance criteria — `marvin-show` them in the PR rather than a file card.
+13. On landing: `gh issue reopen 756 --repo G-Eskayo/marvin` with a comment explaining the narrowed scope (tab-level history shipped in this PR; item-level history + trackpad swipe + animation + exclusions are what's left, and need a real trackpad + screen recording).
