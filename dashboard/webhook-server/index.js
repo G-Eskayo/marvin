@@ -13,6 +13,9 @@ import { sendFeedback, dropEntirely, handleDenyRequest } from './deny.js'
 import { forwardRefreshPing } from './refresh_relay.js'
 import { announceMergeHost, relayMergeHostUp } from './merge_host_announce.js'
 import { createStageRelay, createLiveMerges, allowedPeerAddress, cleanStageMessage, stageFanOut } from './merge_stage_relay.js'
+import { createChangeRelay, cleanChangeMessage } from './github_change_relay.js'
+import { loadWebhookSecret } from './webhook_auth.js'
+import { createReplayWindow, handleGithubWebhook } from './github_webhook.js'
 import { copyRoute } from './copy_route.js'
 import { loadGhToken } from './gh_auth.js'
 import { useGhGate } from '../electron/main/path.js'
@@ -45,7 +48,11 @@ const ghTokenSource = loadGhToken()
 // ...and through the GitHub gate (path.js), so dashboard clicks share the cooldown with every other caller.
 useGhGate()
 
+// Load webhook secret for GitHub webhook HMAC verification (see webhook_auth.js).
+const webhookSecretData = loadWebhookSecret()
+
 const PORT = process.env.PORT || 7878
+const GITHUB_SIGNATURE_HEADER = 'x-hub-signature-256'
 
 // ADR 0038: this is the dev host, so the Portfolio tab's backend runs here and other machines' dashboards call it.
 const portfolio = createPortfolio({ exec: promisify(execFile) })
@@ -224,6 +231,56 @@ const server = createServer(async (req, res) => {
     return
   }
 
+  // marvin#566: GitHub webhook: verify HMAC signature and trigger a change reaction. Called by GitHub or the Funnel.
+  // The webhook contains the entire changed issue/PR/commit in the payload; we extract the repo and trigger the same
+  // reaction as a change-watch would. HMAC-verified, replay-window bounded, then immediately relayed to other Macs
+  // before responding to GitHub.
+  if (req.method === 'POST' && req.url === '/gh-webhook') {
+    const signature = req.headers[GITHUB_SIGNATURE_HEADER]
+    const deliveryId = req.headers['x-github-delivery']
+    let body = ''
+    try {
+      body = await readBody(req, 25 * 1024 * 1024) // GitHub webhook payloads can be large
+    } catch (err) {
+      res.writeHead(413, { 'Content-Type': 'application/json' }).end(JSON.stringify({ ok: false, error: 'body too large' }))
+      return
+    }
+    const result = handleGithubWebhook({
+      body,
+      signature,
+      deliveryId,
+      secret: webhookSecretData.secret,
+      replayWindow
+    })
+    if (!result.ok) {
+      res.writeHead(result.error === 'duplicate delivery' ? 202 : 400, { 'Content-Type': 'application/json' }).end(JSON.stringify({ ok: false, error: result.error }))
+      return
+    }
+    res.writeHead(202, { 'Content-Type': 'application/json' }).end(JSON.stringify({ ok: true }))
+    // Fire and forget: tell other Macs about the change, then trigger the local reaction
+    changeRelay({ repo: result.repo, event: null })
+    reactToChange(result.repo)
+    return
+  }
+
+  // marvin#566: Peer-to-peer change relay: other Macs' webhooks forward their changes here.
+  // Only the owner's Macs may send it (loopback or Tailscale); never relayed onward.
+  if (req.method === 'POST' && req.url === '/gh-change') {
+    if (!allowedPeerAddress(req.socket?.remoteAddress)) {
+      res.writeHead(403, { 'Content-Type': 'application/json' }).end('{"ok":false}')
+      return
+    }
+    let msg = null
+    try { msg = cleanChangeMessage(JSON.parse(await readBody(req, 25 * 1024))) } catch { msg = null }
+    if (!msg || !msg.repo) {
+      res.writeHead(400, { 'Content-Type': 'application/json' }).end('{"ok":false}')
+      return
+    }
+    res.writeHead(200, { 'Content-Type': 'application/json' }).end('{"ok":true}')
+    reactToChange(msg.repo)
+    return
+  }
+
   // ...and where a merge running here is now, read once by a dashboard that opens mid-merge (or sees the queue say a
   // PR is merging without having its strip): one url, or every merge still running.
   if (req.method === 'GET' && req.url.split('?')[0] === '/merge-progress') {
@@ -347,6 +404,15 @@ const relayStage = createStageRelay({
   post: (url, body, { timeoutMs }) => fetch(url, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body), signal: AbortSignal.timeout(timeoutMs) }),
   log: (m) => console.warn(m)
 })
+
+// marvin#566: webhook replay-window and change relay for GitHub webhooks
+const replayWindow = createReplayWindow()
+const changeRelay = createChangeRelay({
+  peers: () => peerHosts(),
+  post: (url, body, { timeoutMs }) => fetch(url, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body), signal: AbortSignal.timeout(timeoutMs) }),
+  log: (m) => console.warn(m)
+})
+
 const repoOfPr = (url) => (String(url).match(/github\.com\/([^/]+\/[^/]+)\/pull\//) || [])[1] || null
 
 // One merge through the existing gate, exactly as an Approve ran it before the queue (marvin#568 stages, #845 memory,
@@ -532,24 +598,28 @@ server.listen(PORT, () => {
       skip: () => Date.now() < gateCooldownUntil()
     })
   }
+
+  // marvin#566: extracted so it can be called both from gh_watch and GitHub webhooks
+  function reactToChange(repo) {
+    if (supportRepos().includes(repo)) {
+      console.log(`[gh-watch] support change on ${repo} at ${new Date().toISOString()}`)
+      supportSync(repo)
+      return
+    }
+    console.log(`[gh-watch] change detected on ${repo} at ${new Date().toISOString()}`)
+    githubFeed?.refresh(repo)
+    if (rebuildCheck(repo)) console.log(`[rebuild-check] started for ${repo}`) // #443: any merge path updates the app
+    // marvin#231: a PR updated, a ticket labelled, main's CI opening or closing its main-red ticket: the queue looks
+    // again (answers first, so a just-built PR is seen built).
+    refreshFacts().finally(() => mergeQueue.kick(repo).catch(() => {}))
+    forwardRefreshPing(DASHBOARD_REFRESH_URL, (url) => postJson(url, { topics: ['activity', 'mr'], source: `github:${repo}` }))
+    forwardRefreshPing(MOBILE_REFRESH_URL, postJson)
+  }
+
   startChangeWatch({
     onTick: (answered) => githubFeed?.alive(answered),
     getRepos: () => [...new Set([...readRegistry().map((b) => b.repo), ...supportRepos()])],
     probe: createGithubProbe(),
-    ping: (repo) => {
-      if (supportRepos().includes(repo)) {
-        console.log(`[gh-watch] support change on ${repo} at ${new Date().toISOString()}`)
-        supportSync(repo)
-        return
-      }
-      console.log(`[gh-watch] change detected on ${repo} at ${new Date().toISOString()}`)
-      githubFeed?.refresh(repo)
-      if (rebuildCheck(repo)) console.log(`[rebuild-check] started for ${repo}`) // #443: any merge path updates the app
-      // marvin#231: a PR updated, a ticket labelled, main's CI opening or closing its main-red ticket: the queue looks
-      // again (answers first, so a just-built PR is seen built).
-      refreshFacts().finally(() => mergeQueue.kick(repo).catch(() => {}))
-      forwardRefreshPing(DASHBOARD_REFRESH_URL, (url) => postJson(url, { topics: ['activity', 'mr'], source: `github:${repo}` }))
-      forwardRefreshPing(MOBILE_REFRESH_URL, postJson)
-    }
+    ping: reactToChange
   })
 })

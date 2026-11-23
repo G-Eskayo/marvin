@@ -14,35 +14,19 @@
 //   opens mid-merge reads where it is once, instead of waiting for the next event. Bounded (newest `cap` kept).
 //   allowedPeerAddress(ip): /merge-stage is for the other Macs only: loopback or the Tailscale ranges.
 
-export const RELAY_TIMEOUT_MS = 2000
-export const PEER_QUIET_MS = 60_000
+import { createPeerRelay, DEFAULT_RELAY_TIMEOUT_MS, DEFAULT_PEER_QUIET_MS } from './peer_relay.js'
+
+export const RELAY_TIMEOUT_MS = DEFAULT_RELAY_TIMEOUT_MS
+export const PEER_QUIET_MS = DEFAULT_PEER_QUIET_MS
 
 const URL_OK = (u) => typeof u === 'string' && u.startsWith('https://github.com/') && u.length < 300
 
 export function createStageRelay({ peers = () => [], post, port = 7878, timeoutMs = RELAY_TIMEOUT_MS, quietMs = PEER_QUIET_MS, now = Date.now, log = () => {} }) {
-  const lines = new Map() // host -> { tail: Promise, quietUntil: ms }
-  function send(host, body) {
-    const line = lines.get(host) || { tail: Promise.resolve(), quietUntil: 0 }
-    lines.set(host, line)
-    if (line.quietUntil > now()) return line.tail
-    line.tail = line.tail.then(async () => {
-      if (line.quietUntil > now()) return // went quiet while this one waited: drop it, the next event catches up
-      try {
-        const res = await post(`http://${host}:${port}/merge-stage`, body, { timeoutMs })
-        if (res && res.ok === false) throw new Error(`answered ${res.status}`)
-      } catch (e) {
-        line.quietUntil = now() + quietMs
-        log(`[merge-relay] ${host} did not take a stage event (${String(e?.message || e).slice(0, 80)}); skipped for ${Math.round(quietMs / 1000)} s`)
-      }
-    })
-    return line.tail
-  }
-  return function relay(message) {
+  const relay = createPeerRelay({ peers, post, path: '/merge-stage', port, timeoutMs, quietMs, now, log })
+  return function stageRelay(message) {
     if (!message || !URL_OK(message.url) || !message.event) return Promise.resolve()
-    let list = []
-    try { list = peers() || [] } catch { list = [] }
     const body = { url: message.url, event: message.event, progress: message.progress || null }
-    return Promise.allSettled(list.filter((p) => p && p.host).map((p) => send(p.host, body)))
+    return relay(body)
   }
 }
 

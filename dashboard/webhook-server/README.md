@@ -68,9 +68,81 @@ The dashboard defaults to `http://localhost:7878/approve` and
 `http://localhost:7878/deny`; override with `MARVIN_MR_WEBHOOK_URL` /
 `MARVIN_MR_DENY_WEBHOOK_URL` if this runs on a different port or machine.
 
+## Contract: `POST /gh-webhook` (marvin#566)
+
+GitHub's webhook delivery — receives signed notifications of changes to board repos.
+Called by GitHub (the Funnel must be reachable from the network, behind a tunnel or on a stable IP).
+
+**Request**: JSON body (GitHub's full webhook payload for push, pull_request, issues events)
+with signature and delivery headers:
+- `x-hub-signature-256: sha256=<hmac>` (HMAC-SHA256 of the body, signed with the webhook secret)
+- `x-github-delivery: <UUID>` (unique delivery ID, used for replay-window deduplication)
+- `content-type: application/json`
+
+**Behavior**: 
+1. Verifies the HMAC signature against the secret in `~/.claude/.gh-webhook-secret`
+2. Checks the replay window: rejects duplicate deliveries (same UUID within 5 min)
+3. Extracts the repo from the payload (`repository.full_name`)
+4. Calls the same `reactToChange(repo)` as the ETag-backed change-detector would
+5. Relays to other Macs via `POST /gh-change` (peer-only, loopback/Tailscale)
+
+**Response**:
+- `202 { "ok": true }` on success (accepted for async processing)
+- `202 { "ok": false, "error": "duplicate delivery" }` on replay-window hit
+- `400 { "ok": false, "error": "<message>" }` on signature failure, invalid payload, etc.
+
+**Verification logic** (not exposed, internal):
+- Secret is loaded from `~/.claude/.gh-webhook-secret` at startup (`webhook_auth.js:loadWebhookSecret`)
+- Signature is verified with `crypto.timingSafeEqual` to prevent timing attacks
+- Payload is parsed as JSON; repo is extracted only if `repository.full_name` exists
+
+**Limitations**:
+- Webhook secret is managed manually or via `lib/webhook_setup.py sync`; rotation requires restarting the webhook server
+- Only board repos and support repos (defined in the registry) trigger changes
+
+## Contract: `POST /gh-change` (marvin#566)
+
+Peer-to-peer change relay: other Macs' webhooks forward their changes here (private network only).
+Only the owner's Macs may send it (loopback or Tailscale ranges, checked with `allowedPeerAddress`).
+Never relayed onward (peer-only, never federated).
+
+**Request**: JSON body `{ "repo": "<owner/repo>", "event": <optional event data> }`
+
+**Behavior**: calls `reactToChange(repo)` to trigger the same response as a local change detection.
+
+**Response**:
+- `200 { "ok": true }` on success
+- `403 { "ok": false }` if the sender is not on a private network (loopback or Tailscale)
+- `400 { "ok": false }` on invalid JSON or missing repo
+
+## Setup: GitHub webhook registration
+
+**Once, at setup time**: generate a secret and store it, then register webhooks on all board repos.
+
+```bash
+# Generate a secret and store it
+openssl rand -hex 32 | tee ~/.claude/.gh-webhook-secret
+
+# Start the webhook server and run the setup
+PORT=7878 node dashboard/webhook-server/index.js &
+MARVIN_WEBHOOK_URL='https://your-funnel-domain.com/gh-webhook' python3 lib/webhook_setup.py sync
+
+# Check that webhooks are registered
+MARVIN_WEBHOOK_URL='...' python3 lib/webhook_setup.py existing
+```
+
+**Secret rotation** (if compromised):
+1. Generate a new secret: `openssl rand -hex 32 > ~/.claude/.gh-webhook-secret`
+2. Restart the webhook server
+3. Manually delete the old webhook(s) from GitHub (they'll keep sending with the old secret and be rejected)
+
+(Future work: add a `rotate` command to `lib/webhook_setup.py` to automate step 3.)
+
 ## Deliberately out of scope here
 
-No auth, no queueing, no retry. This is the same "dashboard is a trigger,
-not a queue" scope line #11 itself draws — a real production n8n workflow
-should add whatever's appropriate (auth on the webhook, at minimum) before
-this is exposed beyond localhost.
+No auth on peer relay (`/gh-change`), no queueing, no retry. This is the same "dashboard is a trigger,
+not a queue" scope line #11 itself draws. The GitHub webhook is HMAC-verified but only as protection
+against accidental misuse (bad config, malicious caller on the network); if the secret is stolen,
+GitHub itself validates the sender (a thief would need to also compromise GitHub). A real production
+setup should add TLS and optional bearer-token auth to `POST /gh-change` before it's exposed beyond
+the owner's private network.

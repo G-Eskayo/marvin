@@ -883,13 +883,15 @@ unbounded: any chat, either machine, raw `gh`, the GitHub UI). Polling stays onl
 - **Local state** (`ticket-stages/`, `dispatch-state.json`, `boards/registry.json`): the Electron main
   process watches the files and emits a debounced `activity` trigger to the renderer. Catches Python
   and Node writers alike.
-- **GitHub state** (issues, labels, PRs, comments): the webhook-server's change-detector
-  (`webhook-server/gh_watch.js`) sends one conditional request per registered board repo every ~20s
-  against its most-recently-updated issue (304 = free against the rate limit) and, on change, pings the
-  app's `/refresh` port with topics. "Change" is the newest issue's number + `updated_at` from a 200's body,
-  never the ETag alone (marvin#603: GitHub sent a new ETag on every 200 for four hours on 2026-10-22 and every
-  repo "changed" every tick, ~150 gh calls a minute). Real GitHub webhooks were rejected: they need a public URL and the
-  one static ngrok domain belongs to Marlin. The events feed was rejected: it lags by minutes.
+- **GitHub state** (issues, labels, PRs, comments): marvin#566 added support for real GitHub webhooks:
+  GitHub calls `POST /gh-webhook` on the Funnel (a machine on the network, running the dashboard webhook-server)
+  with a signed payload. The webhook verifies the HMAC signature (secret from `~/.claude/.gh-webhook-secret`,
+  managed by `lib/webhook_setup.py sync`), checks the replay window to prevent duplicate deliveries, extracts
+  the repo, then calls the same `reactToChange` function as the change-detector, plus relays the change to other
+  Macs via `POST /gh-change` (peer-only, loopback/Tailscale). The 20s change-detector (`webhook-server/gh_watch.js`,
+  one conditional request per repo per tick) stays as the ETag-backed backstop: when a webhook is unavailable or
+  GitHub fails to deliver, the next tick catches the change. Real GitHub webhooks need a public URL; the Funnel
+  reaches GitHub from the network (outside NAT). The events feed was rejected: it lags by minutes.
 - **GitHub checks** (marvin#555, 2026-10-21; replaces #554's 90 s re-read of the whole PR list): checks
   starting or finishing are not issue updates, so the change-detector never sees them. The **check watch**
   (`createCheckWatcher` in `gh_watch.js`) runs in the dashboard's main process and the mobile backend, which
