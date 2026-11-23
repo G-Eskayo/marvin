@@ -1,0 +1,70 @@
+## North-star fit
+
+**Reuses before adding anything new:** `bench/bench.py:run_hidden_check` (line 297) for real pytest-based gate scoring, `bench/bench.py:_ollama_available` (line 210) for dependency preflight, and `bench/lib/score.py:score_correctness` (line 65, substring-against-`expect[]`) for the no-test-file fallback. All three already exist and are used elsewhere in `bench.py` — none need to be rebuilt. Most importantly: this worktree's own prior attempt, preserved as orphan commit `8a8fe733` ("WIP preserved before redispatch", Nov 23 05:09 local), already built `bench/lib/opencode_runner.py`, `bench/lib/energy_apple.py`, `bench/lib/ticket_replay.py`, `bench/local_agent_spike.py` and 5 test files, and already fixed two of the four historical must-fix/crash bugs (the dead `from score import ...` import, and the `git worktree prune` call). Recovering it is far cheaper than rewriting.
+
+**Why it's the simplest sufficient approach:** I read the actual recovered code (not just its own design doc's claims) and found the "Fix first" must-fix is **not actually resolved** — just narrowed. `score_gate_pass` in `8a8fe733:bench/local_agent_spike.py` only calls `run_hidden_check` when a ticket's merge touched a dedicated test file; when it didn't (the docs-only ticket case), it falls back to `bool(result_text)` — true for *any* non-empty string, even one containing "error". The recovered test suite proves this isn't a reading error: `bench/tests/test_collection_safety.py:test_score_gate_pass_with_no_tests` explicitly asserts `result_text = "Error: could not generate output"` → `gate is True`. That is the exact bug named in the issue ("Any non-empty output... passes, even if the agent did nothing"), just with the keyword scan removed instead of replaced. Fixing only this remaining gap (plus two smaller gaps found below) is simpler than a rewrite and directly targets why review keeps parking this ticket.
+
+Two further gaps, found by reading rather than assuming the design doc was accurate:
+- `bench/README.md`'s new "Local agent spike" section still describes the *old* heuristic — "scores whether the output suggests a correct solution (simple heuristic: output present and no error markers)" — even though the code was partly rewritten. Stale docs contradicting fixed-but-incomplete behavior; this is the same class of defect the issue's must-fix #1 named.
+- `main()` only calls `opencode_available()`; it never calls `bench.py:_ollama_available(model)` before running, despite the design doc's own stated test plan ("test the spike calls it before spending wall-clock time on any ticket"). If Ollama is down or the model isn't pulled, all 5 live runs fail individually and slowly instead of failing fast with one clear message.
+- `DEFAULT_TICKET_LIST` / `bench/.local-spike-tickets.json` still hold `["720","627","654","414","541"]` with vague `# Feature` comments — stale placeholders from before the design doc's own `gh pr list --state merged` research identified a better, verified set. I re-verified those five PRs myself via `gh pr view` (#980 docs/2 files no test, #973/#1023 one-line-bug-with-its-own-test, #1147/#1048 test-only) — all check out against the issue's three named ticket categories (docs, one-line bug, test addition), unlike the current placeholder list.
+
+**Tokens/resources:** one-time measured spike ("no adoption yet"); recovering working code instead of re-deriving it is the resource saving. The only real spend is the model pull on the Mini (flagged below as a Decision, not assumed) and the five short live runs, which must happen outside the automated verification gate — two of the four historical parks were 1200s verification timeouts caused by running the live sweep *inside* that gate (bench's own prior Run history already establishes there's no fast path for a live 5-ticket agent sweep).
+
+**Phone-OS / capability fit:** produces the one measurement #594/M3 needs to decide whether a "small tickets go local" lane exists. Leaves Gil more capable: a fifth attempt that closes the loop with a stated, evidenced recommendation, rather than another parked review cycle repeating the same unresolved gate bug under new cover.
+
+**Which machine:** the Mini — it already has Ollama, has the free disk headroom measured in the research doc, and is the instance's standing local-model host (ADR 0071 keeps local models instance-side, not the engine repo).
+
+## Why it keeps failing — root cause confirmed, not guessed
+
+The prior four parks blamed: (1) two 1200s verification timeouts — live run was inside the fast verify gate; (2) "review found must-fix issues" twice, most recently the keyword gate and the energy `finally` ordering; (3) one 15-error pytest collection crash from the dead `score` import. All three are addressed in the recovered `8a8fe733` code (dead import deleted, `git worktree prune` deleted, energy `stop_sampling` now reachable via `finally`, test-file gate now runs real pytest). What review has evidently kept rejecting on repeat passes is the part the fix didn't finish: the no-test-file gate path, which still lets any non-empty opencode output pass, same bug, narrower trigger. That's why this plan's first task is closing exactly that gap rather than anything else.
+
+## Tests to write FIRST
+
+Ticket is a spike with no "How we'll try to break it"/"Attacks" section; applying the standard misuse list, reusing the 35 already-TDD'd mocked tests in the recovered `bench/tests/*` as the base and adding/rewriting only where behavior changes:
+
+1. **Docs-only gate correctness (the real must-fix target)** — `score_gate_pass(result, test_files=[], worktree_path=<wt>)` for a ticket with no test file in its merge diff: build `expect[]` from the merge diff's added lines in non-test files and call `score.py:score_correctness` against the workdir, same as `score_gate_pass` already does for the test-file branch via `run_hidden_check`. Case A: opencode writes "I fixed the error handling, this should resolve the issue" with **no matching edit on disk** → gate is `False` (today's code: `True`). Case B: opencode's edit actually contains the expected diff content → gate is `True`.
+2. **`run_hidden_check` returns `None`** (check folder missing/empty, or an exception) when `test_files` was non-empty → gate is `None` (not scored), never silently falls through to the weak output-presence fallback.
+3. **Collection-safety regression** (already exists, `test_collection_safety.py`) — keep, it caught the real historical crash (#3 above); run first.
+4. **`opencode_available()` missing CLI** → `(False, msg)`, never a stack trace, never scored as if the agent ran (already covered, keep).
+5. **Ollama down / model not pulled (the real gap, currently untested and uncalled)** — `main()` calls `bench.py:_ollama_available(model)` before `orchestrate_spike`; test that a down server or missing model exits with a clear message and runs zero tickets, never burns wall-clock on 5 individual failures.
+6. **Energy cleanup ordering** (already exists) — `orchestrate_spike` with `measure_energy=True`, a run that returns the `continue` path, and a run that raises inside the try: `ea.stop_sampling` still called. Keep, and add one assertion that it's called **exactly once on the handle actually used** (today's code calls it a second, redundant time in the outer `finally` even on the success path — harmless since it's called on an already-terminated process, but worth asserting call count isn't silently masking a double-sample bug).
+7. **powermetrics dependency failing** (already exists) — binary missing, `sudo -n` needs a password → `start_sampling` returns `None`; other metrics still score; no stuck subprocess (assert `terminate`/`kill` on a mock `Popen`). Keep.
+8. **Bad/empty/huge/malformed opencode output** (already exists) — non-zero exit, timeout, non-JSON stdout → recorded failure, never an uncaught exception, never silent `continue`. Keep.
+9. **Repeats/concurrency** (already exists) — same ticket run twice doesn't corrupt `RESULTS.md` (append-only); two spikes' worktrees get distinct paths and both clean up even if one fails. Keep.
+10. **No `git worktree prune`** (already exists, `test_no_git_worktree_prune`) — direct regression against the shared-repo-unsafe pattern my own standing rule forbids. Keep.
+11. **Wrong/stale history** (already exists) — unresolvable PR/merge commit (force-push, history scrub) → `resolve_merge_commit`/`create_worktree` fail closed with a recorded error, ticket skipped from the table with a reason, never a crash. Keep.
+12. **A person's mistakes** (already exists) — mistyped/unknown ticket number in the instance fixture skipped with a reason; invalid JSON falls back to the public default. Keep.
+13. **Mis-filed "test" match** (new, found while reading `get_test_files`) — a changed non-test file whose name happens to contain "test" (e.g. `latest_config.py`) must not be treated as a hidden-check file; tighten the filter to a real test-file pattern (`test_*.py` / `*_test.py`) and add a case proving the false-positive is excluded.
+14. **README accuracy** — not a unit test, but part of done: the "Local agent spike" section's prose must describe the actual gate (test-based when a test file exists, `expect[]`-diff-based otherwise), not the retired keyword heuristic.
+15. Table/recommendation rendering (already exists) — pure function over fixed fake result dicts, no subprocess. Keep.
+
+All of 1–14 run against mocks/fakes for `opencode`, Ollama's HTTP endpoint, `gh`, `git`, and `powermetrics` — never the real binaries inside the test suite, so verify stays off the critical path that caused two of the four historical timeouts. The real 5-ticket run is a separate, manual, documented invocation outside the verify gate; its output (the `RESULTS.md` entry) ships as the PR's evidence.
+
+## Decisions
+
+<!-- marvin:decisions -->
+### model: Which local model(s) does the live spike pull and run?
+- [ ] A: Qwen3.5-9B only (6.6 GB pull, ~44% of the Mini's 15 GB free disk, deleted after) — matches the 2026-11-11 research doc's primary recommendation
+- [ ] B: Qwen3.5-9B and Mellum2.1-12B-A2.5B both (~14 GB combined, both deleted after) — the research doc's fuller "measure both" option; Mellum is ~3x faster per JetBrains' own harness, within 3 points of Qwen3.5-9B on SWE-bench Verified
+- [ ] C: `qwen2.5:3b` only — already resident on the Mini, zero download, but it's the classify/front-desk model, not benchmarked for coding; expect most/all of the 5 tickets to fail, weaker signal at lower cost
+
+### tickets: Use the corrected 5-ticket candidate set, or the stale placeholder list already in code?
+- [ ] A: Use the corrected set, re-verified today against `gh pr view`: #980 (docs, 2 files, no dedicated test), #973 (one-line bug + its own test), #1023 (one-line bug + its own test), #1147 (test-only fix), #1048 (test-only fix) — replaces the current `DEFAULT_TICKET_LIST`/`bench/.local-spike-tickets.json` placeholders (`720, 627, 654, 414, 541`, labeled only "Feature")
+- [ ] B: Substitute one or more of the five (name which, in a follow-up comment)
+
+<!-- marvin:decisions-end -->
+
+## Task List
+
+1. Recover commit `8a8fe733`'s four modules (`bench/lib/opencode_runner.py`, `bench/lib/energy_apple.py`, `bench/lib/ticket_replay.py`, `bench/local_agent_spike.py`) and its test files into the working tree as the starting point.
+2. Fix `ticket_replay.py:get_test_files` to match real test-file names (`test_*.py` / `*_test.py`) instead of any filename containing the substring "test", closing the mis-filed-match gap found in review.
+3. Rewrite `score_gate_pass`'s no-test-file branch (the actual unresolved must-fix): derive `expect[]` ground-truth strings from the merge diff's added lines in non-test files touched by the ticket, and call `bench/lib/score.py:score_correctness(task, result_text, worktree_path)` the same way `bench.py` already does, instead of `bool(result_text)`. Return `None` (not scored) rather than falling through to a weak heuristic when `run_hidden_check` itself returns `None` for a ticket that does have test files.
+4. Add a `get_expected_strings(base_commit, merge_commit, repo_path, files)` helper in `ticket_replay.py` to extract those added-line substrings, reusing `git diff`/`git show` calls already present in the file rather than inventing a new diff mechanism.
+5. Add the missing Ollama/model preflight to `main()`: call `bench.py:_ollama_available(model)` before `orchestrate_spike`, exit with a clear message and run zero tickets on failure (mirrors the existing `opencode_available()` check already in `main()`).
+6. Rewrite/extend `bench/tests/*` per the "Tests to write FIRST" list above: new/updated assertions for items 1, 2, 5, 13 (and the already-passing 3, 4, 6–12, 15 carried over verbatim where still correct); red first, then green.
+7. Update `bench/README.md`'s "Local agent spike" section to describe the actual gate (test-based via `run_hidden_check` when a test file exists in the merge; `expect[]`-diff-based via `score_correctness` otherwise) in place of the retired "output present and no error markers" line.
+8. Update `DEFAULT_TICKET_LIST` in `local_agent_spike.py` and `bench/.local-spike-tickets.json` to the corrected 5-ticket set once Decision `tickets` is answered, with descriptive comments (what kind of fix each is), replacing the current vague "Feature" placeholders.
+9. Once Decisions `model`/`tickets` are answered: on the Mini, pull the chosen model(s), run `python3 bench/local_agent_spike.py <model> --energy` against the confirmed 5 tickets **outside** the automated verification gate (manual invocation — this is what caused 2 of 4 historical timeouts), write raw transcripts/diffs to the instance-private location (ADR 0071).
+10. Append the resulting table plus a stated recommendation ("is there a 'small tickets go local' lane, and which ticket kinds qualify") to the public `bench/RESULTS.md`.
+11. Commit the code + README + public `RESULTS.md` entry; do not commit raw instance-private logs or the pulled model weights to the engine repo.

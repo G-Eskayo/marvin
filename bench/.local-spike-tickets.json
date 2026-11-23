@@ -1,0 +1,11 @@
+{
+  "tickets": [
+    "720",
+    "627",
+    "654",
+    "414",
+    "541"
+  ],
+  "description": "Local agent spike: confirmed tickets for benchmarking Ollama models locally",
+  "created": "2026-11-23"
+}

@@ -76,6 +76,29 @@ tasks/<id>/
 - **qa** tasks run in a fixed `cwd` (default home) so MARVIN's project-scoped
   memory engages; the clean profile loads no memory regardless.
 
+## Local agent spike
+
+Proof-of-concept spike to test code-generating agents (e.g., opencode) on real merged pull requests.
+
+```bash
+python3 bench/local_agent_spike.py qwen2.5:7b
+python3 bench/local_agent_spike.py qwen2.5:7b --energy   # measure power (requires sudo passwordless)
+python3 bench/local_agent_spike.py qwen2.5:7b --tickets-file ~/.agents/bench-tickets.json
+```
+
+For each selected ticket:
+1. **Replay the scenario**: resolve merge commit, create isolated worktree at pre-merge base, extract PR body as prompt.
+2. **Run agent**: execute opencode (or other agent) in the worktree.
+3. **Score the gate**: 
+   - If the merge diff touched test files, copy those test files at their original relative paths and run them via pytest. If all tests pass, gate passes.
+   - If no test files, identify non-test files modified in the merge, extract added-line substrings from those files, and call `score_correctness()` to check whether the agent's output (or generated files) contains those strings. If all expected strings match, gate passes.
+   - If no test files and no expected strings found, return None (not scored).
+   - If infra error (timeout, spawn failure, extraction failure), gate is marked as None (not scored).
+4. **Measure energy** (optional): sample `powermetrics` before/after to compute joules (using `-i 1000` for 1-second intervals, unlimited samples until process terminates).
+5. **Append results** to `bench/RESULTS.md` in a timestamped run section.
+
+Worktrees are cleaned up automatically after each ticket. Results are logged to public `RESULTS.md` (transcripts/weights stay instance-private).
+
 ## Known limitations
 
 - Substring grading (v0) is always active. LLM-judge grading (v1) is opt-in via `--judge`.
