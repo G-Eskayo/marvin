@@ -31,3 +31,31 @@ export function pageOf(days, page, size = DAYS_PER_PAGE) {
   const p = Math.min(Math.max(0, page | 0), pages - 1)
   return { page: p, pages, days: (days || []).slice(p * size, p * size + size) }
 }
+
+export function openDuration(createdAt, now = Date.now()) {
+  if (!createdAt) return ''
+  const ms = now - Date.parse(createdAt)
+  if (ms < 0) return ''
+  const days = Math.floor(ms / 86_400_000)
+  if (days > 0) return `open ${days}d`
+  const hours = Math.floor(ms / 3_600_000)
+  if (hours > 0) return `open ${hours}h`
+  const mins = Math.floor(ms / 60_000)
+  return `open ${mins}m`
+}
+
+export function notesLine(notes = [], max = 3) {
+  if (!notes?.length) return ''
+  const shown = notes.slice(0, max)
+  const text = shown.map((n) => n.reason).join(' → ')
+  const more = notes.length > max ? ` (+${notes.length - max} more)` : ''
+  return text + more
+}
+
+export function filterRows(rows = [], filter = 'All') {
+  if (filter === 'All') return rows
+  if (filter === 'Merged') return rows.filter((r) => r.kind === 'merged')
+  if (filter === 'Still open') return rows.filter((r) => r.kind === 'open')
+  if (filter === 'Dropped') return rows.filter((r) => r.kind === 'dropped')
+  return rows
+}

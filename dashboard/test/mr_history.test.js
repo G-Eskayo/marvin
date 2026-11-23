@@ -96,50 +96,149 @@ describe('buildRows', () => {
     { url: PR(135, 'G-Eskayo/clarity-captions'), number: 135, title: 'ADR 0024 beta ingest', repo: 'G-Eskayo/clarity-captions', mergedAt: '2026-10-13T17:51:22Z' },
     { url: PR(380), number: 380, title: 'Older', repo: 'G-Eskayo/marvin', mergedAt: '2026-10-12T16:02:00Z' }
   ]
+  const closed = [
+    { url: PR(500), number: 500, title: 'Dropped PR', repo: 'G-Eskayo/marvin', closedAt: '2026-10-13T10:00:00Z', mergedAt: null }
+  ]
+  const openPrs = [
+    { url: PR(400), number: 400, title: 'Implement #218', repo: 'G-Eskayo/marvin', createdAt: '2026-10-13T10:00:00Z' },
+    { url: PR(401), number: 401, title: 'Still open, no refusal', repo: 'G-Eskayo/marvin', createdAt: '2026-10-12T12:00:00Z' }
+  ]
   const history = {
     merges: [{ pr_url: PR(414), t: '2026-10-13T18:47:50Z', by: 'you' }, { pr_url: PR(380), t: '2026-10-12T16:02:00Z', by: 'auto' }],
-    refusals: [{ pr_url: PR(400), t: '2026-10-13T18:46:35Z', code: 'MAIN_RED', message: 'm' }, { pr_url: PR(414), t: '2026-10-13T18:40:00Z', code: 'CI_PENDING', message: 'wait' }]
+    refusals: [
+      { pr_url: PR(400), t: '2026-10-13T18:46:35Z', code: 'MAIN_RED', message: 'm' },
+      { pr_url: PR(400), t: '2026-10-13T18:40:00Z', code: 'CI_PENDING', message: 'wait' },
+      { pr_url: PR(414), t: '2026-10-13T18:30:00Z', code: 'GATE_TESTS_FAILED', message: 'tests' }
+    ]
   }
-  const rows = buildRows(merged, history, [{ url: PR(400), number: 400, title: 'Implement #218', repo: 'G-Eskayo/marvin' }])
+  const rows = buildRows({ merged, closed, openPrs, history })
 
-  it('newest first, merges and refusals in one list', () => {
-    expect(rows.map((r) => `${r.kind}:${r.number}`)).toEqual(['merged:414', 'refused:400', 'refused:414', 'merged:135', 'merged:380'])
+  it('newest first, merges/open/dropped in one list', () => {
+    expect(rows.map((r) => `${r.kind}:${r.number}`)).toEqual(['merged:414', 'merged:135', 'open:400', 'dropped:500', 'merged:380'])
   })
-  it('who merged: you, auto, or unrecorded when MARVIN has no record (never guessed)', () => {
+  it('who merged: you, auto, or unrecorded when MARVIN has no record', () => {
     expect(Object.fromEntries(rows.filter((r) => r.kind === 'merged').map((r) => [r.number, r.by]))).toEqual({ 414: 'you', 135: 'unrecorded', 380: 'auto' })
   })
-  it('a refused PR carries its title (from the open list) and a plain reason, never a bare number', () => {
-    const r = rows.find((x) => x.kind === 'refused' && x.number === 400)
-    expect(r).toMatchObject({ title: 'Implement #218', repo: 'G-Eskayo/marvin', reason: 'main was failing' })
+  it('open PRs with refusals group notes newest first', () => {
+    const r = rows.find((x) => x.kind === 'open' && x.number === 400)
+    expect(r.notes.map((n) => n.code)).toEqual(['MAIN_RED', 'CI_PENDING'])
   })
-  it('a refusal for a PR we know nothing else about still gets a readable title', () => {
-    const r = buildRows([], { merges: [], refusals: [{ pr_url: PR(9), t: '2026-10-13T00:00:00Z', code: 'X' }] }, [])[0]
-    expect(r.title).toBe('(title unknown)')
-    expect(r.number).toBe(9)
+  it('open PRs with no refusals are not in the view', () => {
+    const r = rows.find((x) => x.number === 401)
+    expect(r).toBeUndefined()
   })
-  it('refusals with no parsable PR url are dropped', () => {
-    expect(buildRows([], { merges: [], refusals: [{ pr_url: 'nope', t: 'x', code: 'X' }] }, [])).toEqual([])
+  it('dropped: closed non-merged PRs from the closed list', () => {
+    const r = rows.find((x) => x.kind === 'dropped' && x.number === 500)
+    expect(r.title).toBe('Dropped PR')
+  })
+  it('refusals with no matching PR in any list are dropped from the view', () => {
+    const r = buildRows({ merged: [], closed: [], openPrs: [], history: { merges: [], refusals: [{ pr_url: PR(99), t: '2026-10-13T00:00:00Z', code: 'X' }] } })
+    expect(r).toEqual([])
+  })
+  it('refusals with no parsable PR url are ignored', () => {
+    const r = buildRows({ merged: [], closed: [], openPrs: [], history: { merges: [], refusals: [{ pr_url: 'nope', t: 'x', code: 'X' }] } })
+    expect(r).toEqual([])
+  })
+  it('merged PRs with refusals have notes (test 5)', () => {
+    const merged = [{ url: PR(414), number: 414, title: 'Fix red main', repo: 'G-Eskayo/marvin', mergedAt: '2026-10-13T18:47:50Z' }]
+    const history = {
+      merges: [{ pr_url: PR(414), t: '2026-10-13T18:47:50Z', by: 'you' }],
+      refusals: [
+        { pr_url: PR(414), t: '2026-10-13T18:46:35Z', code: 'GATE_TESTS_FAILED', message: 'tests' },
+        { pr_url: PR(414), t: '2026-10-13T18:30:00Z', code: 'MAIN_RED', message: 'main red' }
+      ]
+    }
+    const rows = buildRows({ merged, closed: [], openPrs: [], history })
+    const r = rows.find((x) => x.kind === 'merged' && x.number === 414)
+    expect(r.notes.length).toBe(2)
+    expect(r.notes.map((n) => n.code)).toEqual(['GATE_TESTS_FAILED', 'MAIN_RED'])
+  })
+  it('closed PRs with refusals have notes', () => {
+    const closed = [{ url: PR(500), number: 500, title: 'Closed PR', repo: 'G-Eskayo/marvin', closedAt: '2026-10-13T10:00:00Z', mergedAt: null }]
+    const history = {
+      merges: [],
+      refusals: [{ pr_url: PR(500), t: '2026-10-13T09:00:00Z', code: 'CI_PENDING', message: 'wait' }]
+    }
+    const rows = buildRows({ merged: [], closed, openPrs: [], history })
+    const r = rows.find((x) => x.kind === 'dropped' && x.number === 500)
+    expect(r.notes.length).toBe(1)
+    expect(r.notes[0].code).toBe('CI_PENDING')
+  })
+  it('open PR rows persist and restore with number, repo, and createdAt', async () => {
+    const dir = tmp()
+    const cachePath = path.join(dir, 'mr-history.json')
+    const openPrs = [{ url: PR(400), number: 400, title: 'Implement #218', repo: 'G-Eskayo/marvin', createdAt: '2026-10-13T10:00:00Z' }]
+    const setup = { ghList: async () => [], ghListClosed: async () => [], webhook: async () => ({ merges: [], refusals: [] }) }
+
+    // First refresh saves the cache
+    const h = createMrHistory({
+      repos: () => ['G-Eskayo/marvin'],
+      ghList: setup.ghList,
+      ghListClosed: setup.ghListClosed,
+      webhookHistory: setup.webhook,
+      openPrs: async () => openPrs,
+      cachePath,
+      now: () => 1000
+    })
+    await h.get({ fresh: true })
+
+    // Load the cache and check that open PRs have all fields
+    const cached = JSON.parse(readFileSync(cachePath, 'utf-8'))
+    const openRow = cached.open[0]
+    expect(openRow.number).toBe(400)
+    expect(openRow.repo).toBe('G-Eskayo/marvin')
+    expect(openRow.createdAt).toBe('2026-10-13T10:00:00Z')
+
+    // Verify buildRows can render it without undefined fields
+    const rows = buildRows({ merged: [], closed: [], openPrs: cached.open, history: { merges: [], refusals: [] } })
+    expect(rows.length).toBe(0) // no refusals, so not shown
+  })
+  it('old cache without closed field does not crash on refresh', async () => {
+    const dir = tmp()
+    const cachePath = path.join(dir, 'mr-history.json')
+    // Simulate an old cache without the closed field
+    writeFileSync(cachePath, JSON.stringify({ merged: [], updatedAt: 1000, history: { merges: [], refusals: [] } }))
+
+    const h = createMrHistory({
+      repos: () => ['G-Eskayo/marvin'],
+      ghList: async () => [],
+      ghListClosed: async () => [],
+      webhookHistory: async () => ({ merges: [], refusals: [] }),
+      openPrs: async () => [],
+      cachePath,
+      now: () => 2000
+    })
+    // Should not crash
+    const result = await h.get({ fresh: true })
+    expect(result.rows).toEqual([])
+    expect(result.errors).toEqual([])
   })
 })
 
 describe('createMrHistory: instant from cache, then incremental', () => {
-  function setup({ ghList, webhook = async () => ({ merges: [], refusals: [] }) } = {}) {
+  function setup({ ghList, ghListClosed = async () => [], webhook = async () => ({ merges: [], refusals: [] }) } = {}) {
     const dir = tmp()
-    return { cachePath: path.join(dir, 'mr-history.json'), ghList, webhook }
+    return { cachePath: path.join(dir, 'mr-history.json'), ghList, ghListClosed, webhook }
   }
-  const row = (n, mergedAt, repo = 'G-Eskayo/marvin') => ({ number: n, title: `PR ${n}`, url: PR(n, repo), mergedAt })
+  const row = (n, mergedAt, repo = 'G-Eskayo/marvin') => ({ number: n, title: `PR ${n}`, url: PR(n, repo), mergedAt, createdAt: mergedAt })
+  const closedRow = (n, closedAt, repo = 'G-Eskayo/marvin') => ({ number: n, title: `Closed ${n}`, url: PR(n, repo), closedAt, mergedAt: null })
 
-  it('first read fetches everything per repo, then only since the newest merge, never duplicating', async () => {
-    const calls = []
+  it('first read fetches everything per repo, then only since the newest merge/closed, never duplicating', async () => {
+    const calls = [], closedCalls = []
     const ghList = vi.fn(async (repo, since) => {
       calls.push([repo, since])
       return since ? [row(2, '2026-10-13T10:00:00Z'), row(3, '2026-10-13T12:00:00Z')] : [row(1, '2026-10-12T09:00:00Z'), row(2, '2026-10-13T10:00:00Z')]
     })
-    const s = setup({ ghList })
-    const h = createMrHistory({ repos: () => ['G-Eskayo/marvin'], ghList, webhookHistory: s.webhook, openPrs: async () => [], cachePath: s.cachePath, now: () => 1000 })
+    const ghListClosed = vi.fn(async (repo, since) => {
+      closedCalls.push([repo, since])
+      return []
+    })
+    const s = setup({ ghList, ghListClosed })
+    const h = createMrHistory({ repos: () => ['G-Eskayo/marvin'], ghList, ghListClosed, webhookHistory: s.webhook, openPrs: async () => [], cachePath: s.cachePath, now: () => 1000 })
     await h.get({ fresh: true })
     const second = await h.get({ fresh: true })
     expect(calls).toEqual([['G-Eskayo/marvin', null], ['G-Eskayo/marvin', '2026-10-13T10:00:00Z']])
+    expect(closedCalls.length).toBe(2)
     expect(second.rows.map((r) => r.number)).toEqual([3, 2, 1])
   })
 

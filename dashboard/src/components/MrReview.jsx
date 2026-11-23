@@ -619,11 +619,18 @@ export default function MrReview(props) {
   // Open, Merged and Proposals each keep their place; a merged PR opens at its top and Back returns to it (#755).
   useScrollPlace('mr-view', historyPr ? `merged:${historyPr.url}` : view)
   if (historyPr) {
-    return <MrDetail pr={historyPr} onBack={() => setHistoryPr(null)} onOpenDocs={props.onOpenDocs} onOpenBoard={props.onOpenBoard} onOpenTicket={props.onOpenTicket} />
+    const isOpen = historyPr.kind === "open"
+    return <MrDetail pr={historyPr} onBack={() => setHistoryPr(null)} onOpenDocs={props.onOpenDocs} onOpenBoard={props.onOpenBoard} onOpenTicket={props.onOpenTicket} onApproved={isOpen ? () => { setHistoryPr(null) } : undefined} onDenied={isOpen ? () => { setHistoryPr(null) } : undefined} onChanged={isOpen ? () => {} : undefined} />
   }
   const openRow = (row) => {
     setHistoryError(null)
-    window.api.mr.historyDetail(row.url).then((pr) => setHistoryPr(row.kind === 'refused' ? { ...pr, refusal: row } : pr)).catch((e) => setHistoryError(`Couldn’t open #${row.number} ${row.title}: ${String(e)}`))
+    window.api.mr.historyDetail(row.url).then((pr) => {
+      if (row.kind === "open" && row.notes?.length) {
+        setHistoryPr({ ...pr, kind: "open", refusal: row.notes[0] })
+      } else {
+        setHistoryPr(pr)
+      }
+    }).catch((e) => setHistoryError(`Couldn’t open #${row.number} ${row.title}: ${String(e)}`))
   }
   return (
     <div className="flex h-full flex-col">

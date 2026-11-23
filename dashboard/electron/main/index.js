@@ -122,7 +122,7 @@ import { createRelationsService } from './relations_service.js'
 import { machineNames } from './machine_names.js'
 import { summarizeBoard, buildCompleted } from './board.js'
 import { createTriggerHub, createReconciler, refetchesGithub } from './triggers.js'
-import { createMrHistory, mergedPrArgs, readSavedMerged } from './mr_history.js'
+import { createMrHistory, mergedPrArgs, closedPrArgs, readSavedMerged } from './mr_history.js'
 import { createProjectProgress } from './project_progress.js'
 import { appendError } from './error_log.js'
 import { listOpenPrsAcrossRepos, prListArgs, normalizeSeen, canMergeFromDashboard, repoFromPrUrl, MARVIN_REPO, pendingCheckHeads } from './mr_repos.js'
@@ -1016,6 +1016,7 @@ function registerMrReviewHandlers() {
   const mrHistory = createMrHistory({
     repos: () => readRegistry().map((b) => b.repo),
     ghList: async (repo, since) => JSON.parse((await ghOut(mergedPrArgs(repo, since))) || '[]'),
+    ghListClosed: async (repo, since) => JSON.parse((await ghOut(closedPrArgs(repo, since))) || '[]'),
     webhookHistory: async () => {
       const res = await fetch(MR_WEBHOOK_URL.replace(/\/approve$/, '/merge-history'), { signal: AbortSignal.timeout(5000) })
       if (!res.ok) throw new Error(`merge server answered ${res.status}`)
@@ -1027,10 +1028,18 @@ function registerMrReviewHandlers() {
   ipcMain.handle('mr:history', (_event, opts) => mrHistory.get({ fresh: !!opts?.fresh }))
   // #422: whether the last Open list read every project, and if not which failed and why.
   ipcMain.handle('mr:listStatus', () => prFetch)
-  // One merged (or refused) PR as the usual detail view, read-only: never mergeable from here.
+  // One merged (or refused) PR as the usual detail view: check the live list first (mergeable if still open),
+  // else read-only from GitHub.
   ipcMain.handle('mr:historyDetail', async (_event, url) => {
     const repo = repoFromPrUrl(url)
     if (!repo) throw new Error('not a PR url')
+    try {
+      const list = await mrList()
+      const inList = list?.find((p) => p.url === url)
+      if (inList) return inList
+    } catch {
+      // fall through to read-only view from GitHub
+    }
     const stdout = await ghOut(['pr', 'view', url, '--json', 'number,title,url,body,files,baseRefName,headRefName,headRefOid,mergeable,statusCheckRollup,state,mergedAt'])
     const raw = { ...JSON.parse(stdout), repo }
     const [pr] = await listPipelinePrs(async () => [raw], { canMerge: () => false, uiPathsFor: (r) => readUiPaths(r) })

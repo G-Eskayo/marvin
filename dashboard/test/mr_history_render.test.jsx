@@ -10,7 +10,7 @@ const NOW = new Date('2026-10-13T20:00:00')
 const at = (s) => new Date(s).toISOString()
 const rows = [
   { kind: 'merged', url: 'u414', number: 414, title: 'Fix red main', repo: 'G-Eskayo/marvin', at: at('2026-10-13T12:47:00'), by: 'you' },
-  { kind: 'refused', url: 'u400', number: 400, title: 'Implement #218', repo: 'G-Eskayo/marvin', at: at('2026-10-13T12:46:00'), reason: 'main was failing' },
+  { kind: 'open', url: 'u400', number: 400, title: 'Implement #218', repo: 'G-Eskayo/marvin', at: at('2026-10-13T12:46:00'), notes: [{ reason: 'main was failing', code: 'MAIN_RED', message: '', at: at('2026-10-13T12:45:00') }] },
   { kind: 'merged', url: 'u135', number: 135, title: 'ADR 0024 beta ingest', repo: 'G-Eskayo/clarity-captions', at: at('2026-10-12T11:51:00'), by: 'unrecorded' }
 ]
 
@@ -42,9 +42,9 @@ describe('HistoryList', () => {
     expect(html).toContain('>you<')
     expect(html).toContain('>not recorded<')
   })
-  it('a refused Approve shows as ✗ with its plain reason', () => {
-    expect(html).toContain('data-kind="refused"')
-    expect(html).toContain('refused: main was failing')
+  it('an open PR with refusal notes shows as ⏳ with its reasons', () => {
+    expect(html).toContain('data-kind="open"')
+    expect(html).toContain('main was failing')
   })
   it('one page has no page controls; more than 5 days does', () => {
     expect(html).not.toContain('Older →')
