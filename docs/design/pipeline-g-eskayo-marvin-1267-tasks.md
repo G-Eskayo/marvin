@@ -1,0 +1,9 @@
+1. `lib/test_slot.py` / `lib/conflict_repair.py`: route `default_tests`'s pytest and vitest subprocess calls through `test_slot.slot(what=..., merge=False)` instead of bare `subprocess.run`, with graceful failure on a slot/OSError.
+2. `lib/ticket_pipeline.py` + `lib/conflict_repair.py`: add per-PR timing to `_try_conflict_repair`/`_requeue_conflicted_prs` and fold total/slowest-PR timing into the `Conflicted PRs` step's `job_events` detail.
+3. `lib/conflict_repair.py`: add an optional `deadline: float | None` to `attempt()`/the repair-loop entry points so a caller can bound total wall time.
+4. `lib/ticket_pipeline.py`: add `deadline` threading through `_requeue_all`/`_requeue_conflicted_prs`, with early-stop-and-defer logic once `CONFLICTED_PRS_BUDGET_S` (10 min) elapses.
+5. `lib/ticket_pipeline.py`: reorder `_scan()` so the `Conflicted PRs` block runs after the dispatch while-loop, at the end of the function; update the step-order assertion.
+6. `lib/health_checks.py`: add the new cross-machine scan-duration check (local + SSH, modeled on `check_dispatch_lock` + `check_pipeline_breaker`) and register it in `default_checks()`.
+7. `dashboard` (preload/IPC if needed, else the existing `window.api.health.status()` path already covers it): surface the new check as an amber banner in Workshop's Now view, reusing the `stale`-banner pattern.
+8. Write/update all tests listed above (TDD: each lands before or with its corresponding implementation change).
+9. Run the full pytest suite plus the dashboard's vitest suite (per `CLAUDE.md`'s "full suites before a hand-merge") before raising the PR.

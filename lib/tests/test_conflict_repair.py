@@ -44,7 +44,7 @@ def _main_moves(clone, edits):
     git(clone, "checkout", "-q", "--detach")
 
 
-PASS = lambda repo, cwd, changed: (True, "")  # noqa: E731
+PASS = lambda repo, cwd, changed, deadline=None: (True, "")  # noqa: E731
 
 
 def test_both_appending_tests_is_repaired_tested_and_pushed(origin_and_clone):
@@ -53,7 +53,7 @@ def test_both_appending_tests_is_repaired_tested_and_pushed(origin_and_clone):
     _main_moves(clone, {"tests.py": "def test_a():\n    pass\n\ndef test_main():\n    pass\n"})
     assert cr.conflicted_files(str(clone), "main", "pr") == ["tests.py"]
     seen = []
-    res = cr.repair("o/r", "pr", str(clone), "main", run_tests=lambda r, cwd, ch: (seen.append(ch) or True, ""))
+    res = cr.repair("o/r", "pr", str(clone), "main", run_tests=lambda r, cwd, ch, deadline=None: (seen.append(ch) or True, ""))
     assert res["outcome"] == "repaired" and "tests.py" in res["detail"]
     assert res["cost_usd"] == 0.0  # No model call needed for both-added conflict
     git(clone, "fetch", "-q", "origin")
@@ -80,7 +80,7 @@ def test_failing_tests_after_resolving_push_nothing(origin_and_clone):
     _branch(clone, "pr", {"tests.py": "def test_a():\n    pass\n\ndef test_pr():\n    pass\n"})
     _main_moves(clone, {"tests.py": "def test_a():\n    pass\n\ndef test_main():\n    pass\n"})
     before = git(clone, "rev-parse", "origin/pr")
-    res = cr.repair("o/r", "pr", str(clone), "main", run_tests=lambda r, cwd, ch: (False, "FAILED test_pr"))
+    res = cr.repair("o/r", "pr", str(clone), "main", run_tests=lambda r, cwd, ch, deadline=None: (False, "FAILED test_pr"))
     assert res["outcome"] == "rebuild" and "tests fail" in res["reason"]
     assert res["cost_usd"] == 0.0
     git(clone, "fetch", "-q", "origin")
@@ -100,9 +100,9 @@ def test_the_shared_checkout_is_never_used_or_left_dirty(origin_and_clone):
 def test_budget_and_memory(tmp_path, monkeypatch):
     monkeypatch.setattr(cr, "where", lambda repo: ("/clone", "main"))
     calls = []
-    def fake(repo, head, clone, base, pr=None):
+    def fake(repo, head, clone, base, pr=None, deadline=None):
         calls.append(head)
-        return {"outcome": "rebuild", "files": ["a.py"], "reason": "real", "cost_usd": 0.0}
+        return {"outcome": "rebuild", "files": ["a.py"], "reason": "real", "cost_usd": 0.0, "wall_time_s": 0.0}
     state = tmp_path / "s.json"
     b = cr.Budget(1)
     pr = {"number": 5, "headRefName": "h", "headRefOid": "sha1"}
@@ -204,7 +204,7 @@ def test_model_resolution_fails_tests(origin_and_clone):
         resolved_file.write_text("x = 2\ny = 3\n")  # Valid merge
         return {"cost_usd": 0.01, "text": "ok", "exit_code": 0}
 
-    def failing_tests(repo, cwd, changed):
+    def failing_tests(repo, cwd, changed, deadline=None):
         return False, "test_x failed"
 
     res = cr.repair("o/r", "pr", str(clone), "main", run_tests=failing_tests, resolve_hunks=fake_resolve_hunks)
@@ -254,7 +254,7 @@ def scan_repair(origin_and_clone, tmp_path, monkeypatch):
     monkeypatch.setattr(cr, "STATE_PATH", tmp_path / "state" / "conflict-repair.json")
     monkeypatch.setattr(tp, "_REPAIR_BUDGET", None)
     seen = []
-    monkeypatch.setattr(cr, "default_tests", lambda repo, cwd, changed: (seen.append(changed) or True, ""))
+    monkeypatch.setattr(cr, "default_tests", lambda repo, cwd, changed, deadline=None: (seen.append(changed) or True, ""))
     monkeypatch.setenv("GIT_COMMITTER_NAME", "t"); monkeypatch.setenv("GIT_COMMITTER_EMAIL", "t@t")
     return clone, seen
 
@@ -319,3 +319,21 @@ def test_a_crash_inside_repair_still_falls_back_to_a_rebuild(monkeypatch, tmp_pa
     monkeypatch.setattr(cr, "repair", boom)
     res = REAL_TRY_CONFLICT_REPAIR("o/r", {"number": 1, "headRefName": "h", "headRefOid": "s"})
     assert res["outcome"] == "rebuild" and "boom" in res["reason"]
+
+
+def test_deadline_stops_repairs_mid_scan():
+    """Once deadline is passed, attempt() returns "later" immediately."""
+    import time
+    deadline = time.time() - 1  # Already passed
+    res = cr.attempt("o/r", {"number": 1, "headRefName": "h"}, cr.Budget(), deadline=deadline)
+    assert res["outcome"] == "later" and res["cost_usd"] == 0.0
+
+
+def test_repair_includes_wall_time(origin_and_clone):
+    """Every repair outcome includes wall_time_s."""
+    origin, clone = origin_and_clone
+    _branch(clone, "pr", {"tests.py": "def test_a():\n    pass\n\ndef test_pr():\n    pass\n"})
+    _main_moves(clone, {"tests.py": "def test_a():\n    pass\n\ndef test_main():\n    pass\n"})
+    res = cr.repair("o/r", "pr", str(clone), "main", run_tests=PASS)
+    assert "wall_time_s" in res
+    assert res["wall_time_s"] >= 0

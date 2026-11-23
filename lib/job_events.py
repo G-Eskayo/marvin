@@ -175,3 +175,22 @@ def status_of(doc: dict, now: datetime | None = None) -> str:
         age = ((now or _now()) - started).total_seconds() if started else CRASHED_AFTER_S + 1
         return "running" if age <= CRASHED_AFTER_S else "crashed"
     return "failed" if last.get("status") == "failed" else "idle"
+
+
+def latest_job_duration(job: str, directory: Path | None = None) -> dict | None:
+    """Duration in seconds of the latest completed run for a job. Returns {"duration_s": float} or None if unavailable."""
+    directory = directory or JOBS_DIR
+    path = directory / f"{job}.json"
+    try:
+        doc = json.loads(path.read_text())
+        runs = doc.get("runs") or []
+        for run in reversed(runs):  # find the last finished run
+            if run.get("status") in ("passed", "failed"):
+                started = _parse(run.get("started_at"))
+                finished = _parse(run.get("finished_at"))
+                if started and finished:
+                    duration = (finished - started).total_seconds()
+                    return {"duration_s": duration}
+        return None
+    except (OSError, ValueError):
+        return None

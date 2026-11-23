@@ -226,8 +226,15 @@ def _parked() -> str:
         return f"skipped ({str(exc)[:120]})"
 
 
-def _requeue_all(repos) -> list[str]:
-    return [f"{r.split('/')[-1]}#{n}" for r in repos for n in _requeue_conflicted_prs(r)]
+def _requeue_all(repos, deadline: float | None = None) -> tuple[list[str], dict]:
+    """Requeue conflicting PRs across repos. Returns (names, timing_detail)."""
+    results = []
+    timings = {}
+    for r in repos:
+        sent, timing = _requeue_conflicted_prs(r, deadline=deadline)
+        results.extend(f"{r.split('/')[-1]}#{n}" for n in sent)
+        timings[r] = timing
+    return results, timings
 
 _CLOSES = __import__("re").compile(r"Closes\s+(?:[\w.-]+/[\w.-]+)?#(\d+)")
 
@@ -247,6 +254,7 @@ def _failing_checks(rollup) -> list[str]:
 
 _REPAIR_BUDGET = None
 FLAGGED_PATH = Path.home() / ".claude" / "logs" / "conflict-flagged.json"
+CONFLICTED_PRS_BUDGET_S = 10 * 60  # 10 minutes total wall time for all repairs in a scan
 
 
 def _resolve_hunks_with_model(scratch_dir: str, prompt: str) -> dict:
@@ -262,8 +270,9 @@ def _resolve_hunks_with_model(scratch_dir: str, prompt: str) -> dict:
     return {"cost_usd": result.cost_usd, "text": result.text, "exit_code": result.exit_code}
 
 
-def _try_conflict_repair(repo: str, pr: dict) -> dict:
-    """The cheap fix before any rebuild (conflict_repair.py): rebase resolving only safe conflicts, test, push."""
+def _try_conflict_repair(repo: str, pr: dict, deadline: float | None = None) -> dict:
+    """The cheap fix before any rebuild (conflict_repair.py): rebase resolving only safe conflicts, test, push.
+    deadline (time.time() + seconds) bounds total wall time for all repairs."""
     global _REPAIR_BUDGET
     import conflict_repair
     if _REPAIR_BUDGET is None:
@@ -277,9 +286,10 @@ def _try_conflict_repair(repo: str, pr: dict) -> dict:
         # up at call time so a test can swap them; bound as repair()'s default they never could be.
         return conflict_repair.attempt(repo, pr, _REPAIR_BUDGET,
                                       do_repair=functools.partial(conflict_repair.repair, resolve_hunks=resolve_hunks,
-                                                                  run_tests=conflict_repair.default_tests))
+                                                                  run_tests=conflict_repair.default_tests),
+                                      deadline=deadline)
     except Exception as e:  # noqa: BLE001 -- a broken repair falls back to today's behaviour
-        return {"outcome": "rebuild", "files": [], "reason": f"repair crashed: {e}", "cost_usd": 0.0}
+        return {"outcome": "rebuild", "files": [], "reason": f"repair crashed: {e}", "cost_usd": 0.0, "wall_time_s": 0.0}
 
 
 def _flagged_before(url: str, sha: str) -> bool:
@@ -318,26 +328,29 @@ def _still_needs_sending_back(gh, repo: str, pr: dict, red: list) -> bool:
     return cur.get("mergeable") == "CONFLICTING"
 
 
-def _requeue_conflicted_prs(repo: str) -> list[int]:
+def _requeue_conflicted_prs(repo: str, deadline: float | None = None) -> tuple[list[int], dict]:
     """A PR that GitHub says CONFLICTS with its base can never be merged as it stands, and the first anyone
     learned was a human clicking Approve (finance-os #9, clarity #48). So the pipeline sends the ticket back
     by itself: label `needs-reengagement` + a comment saying why, and the existing sent-back loop rebuilds it
     on the current main. Tickets already sent back, protected by `pinned`/`held`, or with a person
     (ticket_policy.NEEDS_PERSON_LABELS) are left alone, and any
-    gh failure just means 'try again next scan'."""
+    gh failure just means 'try again next scan'.
+    Returns (sent_back_numbers, timing_detail) where timing_detail has keys: start, end, total, slowest_pr."""
+    start = time.time()
     def gh(*args):
         return subprocess.run(["gh", *args], capture_output=True, text=True, timeout=30)
 
     prs = gh("pr", "list", "--repo", repo, "--state", "open", "--limit", "100", "--json", "number,title,url,body,mergeable,headRefName,headRefOid,statusCheckRollup")
     issues = gh("issue", "list", "--repo", repo, "--state", "open", "--limit", "1000", "--json", "number,labels")
     if prs.returncode != 0 or issues.returncode != 0:
-        return []
+        return [], {"start": start, "end": time.time(), "total": time.time() - start, "pr_times": []}
     try:
         labels_of = {i["number"]: set(ticket_policy.label_names(i)) for i in json.loads(issues.stdout)}
         pr_list = json.loads(prs.stdout)
     except (ValueError, KeyError, TypeError):
-        return []
+        return [], {"start": start, "end": time.time(), "total": time.time() - start, "pr_times": []}
     sent: list[int] = []
+    pr_times: list[tuple[int, float]] = []
     for pr in pr_list:
         m = _CLOSES.search(pr.get("body") or "")
         red = _failing_checks(pr.get("statusCheckRollup"))
@@ -351,7 +364,10 @@ def _requeue_conflicted_prs(repo: str) -> list[int]:
             # Already sent back, but its PR still conflicts: the rebuild hasn't happened (#257 sat 12 hours, still
             # claimed). A repair makes the rebuild unnecessary; anything else stays the sent-back loop's business.
             if not red and pr.get("mergeable") == "CONFLICTING":
-                fix = _try_conflict_repair(repo, pr)
+                pr_start = time.time()
+                fix = _try_conflict_repair(repo, pr, deadline=deadline)
+                pr_time = time.time() - pr_start
+                pr_times.append((n, pr_time))
                 ts.record_stage(n, "gate", "passed" if fix["outcome"] == "repaired" else "failed",
                                detail=fix.get("detail", fix.get("reason", "")),
                                cost_usd=fix.get("cost_usd", 0.0), repo=repo)
@@ -365,7 +381,10 @@ def _requeue_conflicted_prs(repo: str) -> list[int]:
         files: list[str] = []
         if not red:
             # A conflict: try the cheap fix first (2026-10-09, #314). Most are two PRs appending to the same file.
-            fix = _try_conflict_repair(repo, pr)
+            pr_start = time.time()
+            fix = _try_conflict_repair(repo, pr, deadline=deadline)
+            pr_time = time.time() - pr_start
+            pr_times.append((n, pr_time))
             ts.record_stage(n, "gate", "passed" if fix["outcome"] == "repaired" else "failed",
                            detail=fix.get("detail", fix.get("reason", "")),
                            cost_usd=fix.get("cost_usd", 0.0), repo=repo)
@@ -375,7 +394,7 @@ def _requeue_conflicted_prs(repo: str) -> list[int]:
                 print(f"{LOG_PREFIX} {repo}#{n}: PR #{pr['number']} conflict repaired ({fix.get('detail', '')})", file=sys.stderr)
                 continue
             if fix["outcome"] == "later":
-                continue  # out of repair budget this scan: try again next scan rather than rebuild
+                continue  # out of repair budget or deadline this scan: try again next scan rather than rebuild
             files = fix.get("files") or []
             if not str(pr.get("headRefName", "")).startswith("pipeline/"):
                 # Made by hand, not by the pipeline: an agent rebuild would replace someone's work. Flag it, once per commit.
@@ -408,7 +427,9 @@ def _requeue_conflicted_prs(repo: str) -> list[int]:
            f"{ticket_policy.SENT_BACK_MARKER} the pipeline will rebuild it on the current main and update the same PR.")
         print(f"{LOG_PREFIX} {repo}#{n}: PR #{pr['number']} {'failed its checks' if red else 'conflicts with main'}, sent back for rework", file=sys.stderr)
         sent.append(n)
-    return sent
+    end = time.time()
+    slowest = max(pr_times, key=lambda x: x[1])[1] if pr_times else 0.0
+    return sent, {"start": start, "end": end, "total": end - start, "pr_times": pr_times, "slowest_pr": slowest}
 
 
 def _attempts(repo: str, number: int) -> int:
@@ -934,9 +955,6 @@ def _scan(run, dry_run: bool) -> str | None:
 
     if not dry_run:
         _background_checks()
-        step("Conflicted PRs", "sending back PRs that no longer merge")
-        sent = _requeue_all([REPO, *pp.runnable_repos()])
-        step("Conflicted PRs", ", ".join(sent) + " sent back" if sent else "none")
         step("Owner decisions", "PRs whose owner decisions went unanswered (#607)")
         step("Owner decisions", _owner_decisions())
         step("Parked choices", "choices parked on the owner whose review-by passed (#1222)")
@@ -970,7 +988,6 @@ def _scan(run, dry_run: bool) -> str | None:
         extra = sum(n for m, n in settings.get("credit_slots", {}).items() if ready.get(m))
         settings = {**settings, "credit_ready": ready, "max_total": settings["max_total"] + extra,
                     "max_per_project": settings["max_per_project"] + extra}
-    step("Scanning tickets", ", ".join(r.split("/")[-1] for r in repos) + ": ready-for-agent, unclaimed, unblocked")
     pools: dict[str, list] = {}
     for r in repos:
         ready = _unclaimed_ready_tickets() if r == REPO else _unclaimed_ready_tickets(repo=r)
@@ -979,17 +996,49 @@ def _scan(run, dry_run: bool) -> str | None:
 
     if not repos:
         summary("dispatch paused by the circuit breaker")
+        if not dry_run:
+            step("Conflicted PRs", "sending back PRs that no longer merge")
+            deadline = time.time() + CONFLICTED_PRS_BUDGET_S
+            result = _requeue_all([REPO, *pp.runnable_repos()], deadline=deadline)
+            if isinstance(result, tuple):
+                sent, timings = result
+                total_time = sum(t.get("total", 0) for t in timings.values())
+                slowest_time = max((t.get("slowest_pr", 0) for t in timings.values()), default=0.0)
+                detail = ", ".join(sent) + f" sent back ({total_time:.1f}s, slowest {slowest_time:.1f}s)" if sent else "none"
+            else:
+                sent = result
+                detail = ", ".join(sent) + " sent back" if sent else "none"
+            step("Conflicted PRs", detail)
+        else:
+            step("Conflicted PRs", "(skipped in dry-run)")
         return
 
     if not pools:
         print(f"{LOG_PREFIX} no unclaimed ready-for-agent tickets", file=sys.stderr)
         step("Scanning tickets", "none ready")
-        # If the breaker is tripped, report that even if there are no ready tickets in dispatchable repos.
         if breaker_tripped:
             summary("Pipeline stopped by circuit breaker; no ready tickets elsewhere")
         else:
             summary("no ready tickets")
+        if not dry_run:
+            step("Conflicted PRs", "sending back PRs that no longer merge")
+            deadline = time.time() + CONFLICTED_PRS_BUDGET_S
+            result = _requeue_all([REPO, *pp.runnable_repos()], deadline=deadline)
+            if isinstance(result, tuple):
+                sent, timings = result
+                total_time = sum(t.get("total", 0) for t in timings.values())
+                slowest_time = max((t.get("slowest_pr", 0) for t in timings.values()), default=0.0)
+                detail = ", ".join(sent) + f" sent back ({total_time:.1f}s, slowest {slowest_time:.1f}s)" if sent else "none"
+            else:
+                sent = result
+                detail = ", ".join(sent) + " sent back" if sent else "none"
+            step("Conflicted PRs", detail)
+        else:
+            step("Conflicted PRs", "(skipped in dry-run)")
         return
+
+    scan_detail = ", ".join(r.split("/")[-1] for r in repos) + ": ready-for-agent, unclaimed, unblocked"
+    step("Scanning tickets", scan_detail)
 
     inflight = _inflight_by_repo(repos) if parallel else {}
     local_base = _local_slots_used() if parallel else 0
@@ -1036,6 +1085,20 @@ def _scan(run, dry_run: bool) -> str | None:
             break                        # off: one ticket per scan, exactly as before
     if parallel and refusals and not started:
         step("Choosing a machine", "; ".join(dict.fromkeys(refusals)))
+
+    if not dry_run:
+        step("Conflicted PRs", "sending back PRs that no longer merge")
+        deadline = time.time() + CONFLICTED_PRS_BUDGET_S
+        result = _requeue_all([REPO, *pp.runnable_repos()], deadline=deadline)
+        if isinstance(result, tuple):
+            sent, timings = result
+            total_time = sum(t.get("total", 0) for t in timings.values())
+            slowest_time = max((t.get("slowest_pr", 0) for t in timings.values()), default=0.0)
+            detail = ", ".join(sent) + f" sent back ({total_time:.1f}s, slowest {slowest_time:.1f}s)" if sent else "none"
+        else:
+            sent = result
+            detail = ", ".join(sent) + " sent back" if sent else "none"
+        step("Conflicted PRs", detail)
 
 
 def _dispatch_one(repo, ticket, ready_total, step, summary, fail, dry_run, settings, taken, local_base, refusals) -> str:

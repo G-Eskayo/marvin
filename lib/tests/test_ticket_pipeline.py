@@ -225,7 +225,7 @@ def test_a_scan_with_nothing_ready_leaves_a_run_log_saying_so(monkeypatch):
     run = json.loads((job_events.JOBS_DIR / "ticket-pipeline.json").read_text())["runs"][-1]
     assert run["status"] == "passed" and run["summary"] == "no ready tickets"
     steps = [s["step"] for s in run["steps"]]
-    assert steps == ["Code freshness", "Board discovery", "Onboarding plans", "Project catalog", "Conflicted PRs", "Owner decisions", "Parked choices", "Circuit breaker", "Scanning tickets"]
+    assert steps == ["Code freshness", "Board discovery", "Onboarding plans", "Project catalog", "Owner decisions", "Parked choices", "Circuit breaker", "Scanning tickets", "Conflicted PRs"]
 
 
 def test_a_tripped_breaker_is_visible_in_the_run_log(monkeypatch):
@@ -610,7 +610,8 @@ def test_a_pr_repaired_by_another_scan_since_the_list_is_not_sent_back(monkeypat
     listed = {**_pr(358, "o/r#102"), "headRefOid": "old"}
     now = {358: {**listed, "headRefOid": "new", "mergeable": "MERGEABLE"}}
     monkeypatch.setattr(tp.subprocess, "run", _requeue([listed], [{"number": 102, "labels": []}], calls, now))
-    assert tp._requeue_conflicted_prs("o/r") == []
+    sent, _ = tp._requeue_conflicted_prs("o/r")
+    assert sent == []
     assert not any("needs-reengagement" in c for c in calls)
 
 
@@ -620,7 +621,8 @@ def test_a_pr_whose_head_moved_is_not_sent_back_even_if_github_still_says_confli
     listed = {**_pr(358, "o/r#102"), "headRefOid": "old"}
     now = {358: {**listed, "headRefOid": "new"}}   # mergeability not recomputed yet
     monkeypatch.setattr(tp.subprocess, "run", _requeue([listed], [{"number": 102, "labels": []}], calls, now))
-    assert tp._requeue_conflicted_prs("o/r") == []
+    sent, _ = tp._requeue_conflicted_prs("o/r")
+    assert sent == []
 
 
 def test_unknown_mergeability_at_send_back_time_waits_for_the_next_scan(monkeypatch):
@@ -629,7 +631,8 @@ def test_unknown_mergeability_at_send_back_time_waits_for_the_next_scan(monkeypa
     listed = {**_pr(358, "o/r#102"), "headRefOid": "a"}
     now = {358: {**listed, "mergeable": "UNKNOWN"}}
     monkeypatch.setattr(tp.subprocess, "run", _requeue([listed], [{"number": 102, "labels": []}], calls, now))
-    assert tp._requeue_conflicted_prs("o/r") == []
+    sent, _ = tp._requeue_conflicted_prs("o/r")
+    assert sent == []
 
 
 def test_a_failed_recheck_never_sends_back(monkeypatch):
@@ -639,7 +642,8 @@ def test_a_failed_recheck_never_sends_back(monkeypatch):
         listed = {**_pr(358, "o/r#102"), "headRefOid": "a"}
         now = {358: bad}
         monkeypatch.setattr(tp.subprocess, "run", _requeue([listed], [{"number": 102, "labels": []}], calls, now))
-        assert tp._requeue_conflicted_prs("o/r") == [], bad
+        sent, _ = tp._requeue_conflicted_prs("o/r")
+        assert sent == [], bad
 
 
 def test_checks_that_went_green_since_the_list_are_not_sent_back(monkeypatch):
@@ -648,7 +652,8 @@ def test_checks_that_went_green_since_the_list_are_not_sent_back(monkeypatch):
     listed = {**_pr(48, "o/r#34", "MERGEABLE"), "headRefOid": "a", "statusCheckRollup": red}
     now = {48: {**listed, "statusCheckRollup": [{"name": "tests", "status": "COMPLETED", "conclusion": "SUCCESS"}]}}
     monkeypatch.setattr(tp.subprocess, "run", _requeue([listed], [{"number": 34, "labels": []}], calls, now))
-    assert tp._requeue_conflicted_prs("o/r") == []
+    sent, _ = tp._requeue_conflicted_prs("o/r")
+    assert sent == []
 
 
 def test_a_pr_that_still_conflicts_on_the_same_commit_is_still_sent_back(monkeypatch):
@@ -656,7 +661,8 @@ def test_a_pr_that_still_conflicts_on_the_same_commit_is_still_sent_back(monkeyp
     _repair(monkeypatch, {"outcome": "rebuild", "files": ["a.py"]})
     listed = {**_pr(48, "o/r#34"), "headRefOid": "a"}
     monkeypatch.setattr(tp.subprocess, "run", _requeue([listed], [{"number": 34, "labels": []}], calls))
-    assert tp._requeue_conflicted_prs("o/r") == [34]
+    sent, _ = tp._requeue_conflicted_prs("o/r")
+    assert sent == [34]
 
 
 # ── the hold label stops the pipeline (#387) ──
@@ -666,7 +672,8 @@ def test_a_ticket_on_hold_is_never_sent_back(monkeypatch):
         calls = []
         _repair(monkeypatch, {"outcome": "rebuild", "files": []})
         monkeypatch.setattr(tp.subprocess, "run", _requeue([_pr(358, "o/r#102")], [{"number": 102, "labels": [{"name": label}]}], calls))
-        assert tp._requeue_conflicted_prs("o/r") == [], label
+        sent, _ = tp._requeue_conflicted_prs("o/r")
+        assert sent == [], label
         assert not any("edit" in c or "comment" in c for c in calls), label
 
 
@@ -682,7 +689,8 @@ def test_a_ticket_with_a_person_is_never_sent_back_even_if_it_still_says_ready_f
             names = labels + (["needs-reengagement"] if already_sent_back else [])
             issues = [{"number": 81, "labels": [{"name": l} for l in names]}]
             monkeypatch.setattr(tp.subprocess, "run", _requeue([_pr(359, "o/r#81")], issues, calls))
-            assert tp._requeue_conflicted_prs("o/r") == [], names
+            sent, _ = tp._requeue_conflicted_prs("o/r")
+            assert sent == [], names
             assert not any("edit" in c or "comment" in c for c in calls), names
             assert seen == [], names     # no paid repair attempt on a person's ticket either
 
@@ -739,7 +747,8 @@ def test_sending_a_ticket_back_releases_its_claim_or_nothing_would_ever_rebuild_
     calls = []
     issues = [{"number": 34, "labels": [{"name": "ready-for-agent"}, {"name": "claimed:mac-mini"}]}]
     monkeypatch.setattr(tp.subprocess, "run", _requeue([_pr(48, "o/r#34")], issues, calls))
-    assert tp._requeue_conflicted_prs("o/r") == [34]
+    sent, _ = tp._requeue_conflicted_prs("o/r")
+    assert sent == [34]
     edit = [c for c in calls if "edit" in c][0]
     assert "needs-reengagement" in edit
     assert edit[edit.index("--remove-label") + 1] == "claimed:mac-mini"
@@ -749,7 +758,7 @@ def test_a_conflicting_pr_sends_its_ticket_back_with_a_reason(monkeypatch):
     calls = []
     issues = [{"number": 34, "labels": [{"name": "ready-for-agent"}]}]
     monkeypatch.setattr(tp.subprocess, "run", _requeue([_pr(48, "o/r#34")], issues, calls))
-    sent = tp._requeue_conflicted_prs("o/r")
+    sent, _ = tp._requeue_conflicted_prs("o/r")
     assert sent == [34]
     assert any("--add-label" in c and "needs-reengagement" in c for c in calls)
     comment = [c for c in calls if "comment" in c][0]
@@ -762,7 +771,8 @@ def test_only_conflicting_prs_whose_ticket_is_not_already_sent_back_are_touched(
     issues = [{"number": 36, "labels": [{"name": "needs-reengagement"}]},                # already sent back
               {"number": 37, "labels": [{"name": "pinned"}]}]                            # a person's hands off
     monkeypatch.setattr(tp.subprocess, "run", _requeue(prs, issues, calls))
-    assert tp._requeue_conflicted_prs("o/r") == []
+    sent, _ = tp._requeue_conflicted_prs("o/r")
+    assert sent == []
     assert not any("--add-label" in c for c in calls)
 
 
@@ -770,12 +780,14 @@ def test_a_pr_with_no_ticket_reference_is_left_alone(monkeypatch):
     calls = []
     pr = {"number": 60, "body": "hand-made PR", "mergeable": "CONFLICTING", "headRefName": "x", "labels": []}
     monkeypatch.setattr(tp.subprocess, "run", _requeue([pr], [], calls))
-    assert tp._requeue_conflicted_prs("o/r") == []
+    sent, _ = tp._requeue_conflicted_prs("o/r")
+    assert sent == []
 
 
 def test_a_gh_failure_is_swallowed_not_fatal(monkeypatch):
     monkeypatch.setattr(tp.subprocess, "run", lambda *a, **k: SimpleNamespace(returncode=1, stdout="", stderr="boom"))
-    assert tp._requeue_conflicted_prs("o/r") == []
+    sent, _ = tp._requeue_conflicted_prs("o/r")
+    assert sent == []
 
 
 def _pr_ci(number, ticket_ref, rollup, mergeable="MERGEABLE"):
@@ -786,7 +798,8 @@ def test_a_pr_with_failing_github_checks_is_sent_back_with_the_check_names(monke
     calls = []
     prs = [_pr_ci(57, "o/r#9", [{"__typename": "CheckRun", "name": "swift test", "status": "COMPLETED", "conclusion": "FAILURE"}])]
     monkeypatch.setattr(tp.subprocess, "run", _requeue(prs, [{"number": 9, "labels": [{"name": "ready-for-agent"}]}], calls))
-    assert tp._requeue_conflicted_prs("o/r") == [9]
+    sent, _ = tp._requeue_conflicted_prs("o/r")
+    assert sent == [9]
     comment = " ".join([c for c in calls if "comment" in c][0])
     assert "swift test" in comment and "#57" in comment
 
@@ -800,7 +813,8 @@ def test_checks_that_failed_for_the_runners_sake_or_are_still_running_do_not_sen
            _pr_ci(5, "o/r#5", [])]
     issues = [{"number": n, "labels": [{"name": "ready-for-agent"}]} for n in range(1, 6)]
     monkeypatch.setattr(tp.subprocess, "run", _requeue(prs, issues, calls))
-    assert tp._requeue_conflicted_prs("o/r") == []
+    sent, _ = tp._requeue_conflicted_prs("o/r")
+    assert sent == []
 
 
 def test_marvins_own_tickets_are_only_offered_to_the_machines_named_for_them(monkeypatch):
@@ -1101,7 +1115,7 @@ def test_onboarding_pass_reports_skipped_count(monkeypatch):
 
 def _repair(monkeypatch, outcome):
     seen = []
-    def fake(repo, pr):
+    def fake(repo, pr, deadline=None):
         seen.append(pr["number"])
         return outcome
     monkeypatch.setattr(tp, "_try_conflict_repair", fake)
@@ -1112,7 +1126,8 @@ def test_a_conflict_the_repair_resolves_is_pushed_and_never_sent_back(monkeypatc
     calls = []
     seen = _repair(monkeypatch, {"outcome": "repaired", "detail": "both sides added to lib/tests/test_x.py; tests pass"})
     monkeypatch.setattr(tp.subprocess, "run", _requeue([_pr(48, "o/r#34")], [{"number": 34, "labels": []}], calls))
-    assert tp._requeue_conflicted_prs("o/r") == []
+    sent, _ = tp._requeue_conflicted_prs("o/r")
+    assert sent == []
     assert seen == [48]
     assert not any("needs-reengagement" in c for c in calls)
     comment = [c for c in calls if "comment" in c][0]
@@ -1127,7 +1142,8 @@ def test_a_hand_made_pr_is_never_sent_for_an_agent_rebuild_it_is_flagged_once(mo
     monkeypatch.setattr(tp, "_flagged_before", lambda url, sha: False)
     marks = []
     monkeypatch.setattr(tp, "_mark_flagged", lambda url, sha: marks.append(url))
-    assert tp._requeue_conflicted_prs("o/r") == []
+    sent, _ = tp._requeue_conflicted_prs("o/r")
+    assert sent == []
     assert not any("needs-reengagement" in c for c in calls)
     comment = " ".join([c for c in calls if "comment" in c][0])
     assert "lib/x.py" in comment and "by hand" in comment
@@ -1148,7 +1164,8 @@ def test_a_pipeline_pr_with_a_real_conflict_is_sent_back_naming_the_files(monkey
     calls = []
     _repair(monkeypatch, {"outcome": "rebuild", "files": ["lib/a.py", "lib/b.py"]})
     monkeypatch.setattr(tp.subprocess, "run", _requeue([_pr(48, "o/r#34")], [{"number": 34, "labels": []}], calls))
-    assert tp._requeue_conflicted_prs("o/r") == [34]
+    sent, _ = tp._requeue_conflicted_prs("o/r")
+    assert sent == [34]
     comment = " ".join([c for c in calls if "comment" in c][0])
     assert "lib/a.py" in comment and "lib/b.py" in comment
 
@@ -1157,7 +1174,8 @@ def test_out_of_repair_budget_waits_for_the_next_scan_instead_of_rebuilding(monk
     calls = []
     _repair(monkeypatch, {"outcome": "later"})
     monkeypatch.setattr(tp.subprocess, "run", _requeue([_pr(48, "o/r#34")], [{"number": 34, "labels": []}], calls))
-    assert tp._requeue_conflicted_prs("o/r") == []
+    sent, _ = tp._requeue_conflicted_prs("o/r")
+    assert sent == []
     assert not any("needs-reengagement" in c or "comment" in c for c in calls)
 
 
@@ -1166,7 +1184,8 @@ def test_failing_checks_are_not_a_conflict_and_skip_the_repair(monkeypatch):
     seen = _repair(monkeypatch, {"outcome": "repaired", "detail": "x"})
     pr = {**_pr(48, "o/r#34", "MERGEABLE"), "statusCheckRollup": [{"name": "tests", "status": "COMPLETED", "conclusion": "FAILURE"}]}
     monkeypatch.setattr(tp.subprocess, "run", _requeue([pr], [{"number": 34, "labels": []}], calls))
-    assert tp._requeue_conflicted_prs("o/r") == [34]
+    sent, _ = tp._requeue_conflicted_prs("o/r")
+    assert sent == [34]
     assert seen == []
 
 
@@ -1177,7 +1196,8 @@ def test_a_sent_back_ticket_whose_pr_still_conflicts_gets_the_repair_and_the_fla
     seen = _repair(monkeypatch, {"outcome": "repaired", "detail": "both sides only added lines in lib/tests/x.py"})
     issues = [{"number": 255, "labels": [{"name": "needs-reengagement"}, {"name": "claimed:mac-mini"}]}]
     monkeypatch.setattr(tp.subprocess, "run", _requeue([_pr(257, "o/r#255")], issues, calls))
-    assert tp._requeue_conflicted_prs("o/r") == []
+    sent, _ = tp._requeue_conflicted_prs("o/r")
+    assert sent == []
     assert seen == [257]
     edit = [c for c in calls if "edit" in c and "issue" in c][0]
     assert edit[edit.index("--remove-label") + 1] == "needs-reengagement"
@@ -1188,7 +1208,8 @@ def test_a_sent_back_ticket_the_repair_cannot_fix_is_left_as_it_is(monkeypatch):
     _repair(monkeypatch, {"outcome": "rebuild", "files": ["a.py"]})
     issues = [{"number": 255, "labels": [{"name": "needs-reengagement"}]}]
     monkeypatch.setattr(tp.subprocess, "run", _requeue([_pr(257, "o/r#255")], issues, calls))
-    assert tp._requeue_conflicted_prs("o/r") == []
+    sent, _ = tp._requeue_conflicted_prs("o/r")
+    assert sent == []
     assert not any("comment" in c or "edit" in c for c in calls)
 
 
@@ -1611,7 +1632,7 @@ def test_the_guard_runs_before_anything_that_changes_github(monkeypatch):
     # Stale code also decides which PRs to send back and what ticket agents apply: none of it may run.
     called = []
     _ready_one(monkeypatch, called)
-    monkeypatch.setattr(tp, "_requeue_all", lambda repos: called.append("requeue") or [])
+    monkeypatch.setattr(tp, "_requeue_all", lambda repos, deadline=None: called.append("requeue") or [])
     monkeypatch.setattr(tp, "_run_ticket_agents", lambda step, summary: called.append("agents"))
     monkeypatch.setattr(tp, "_refresh_onboarding_plans", lambda: called.append("onboarding") or "")
     monkeypatch.setattr(tp.failure_breaker, "code_freshness", lambda *a, **k: {"state": "stale", "detail": "", "behind": 1, "oldest_hours": 3.0})

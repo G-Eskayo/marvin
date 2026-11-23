@@ -99,9 +99,9 @@ def holder(d: Path | None = None) -> dict | None:
 
 
 @contextmanager
-def slot(what: str, merge: bool = False, d: Path | None = None, say=None) -> Iterator[bool]:
+def slot(what: str, merge: bool = False, d: Path | None = None, say=None, deadline: float | None = None) -> Iterator[bool]:
     """Hold this machine's test slot for the block. Yields True when taken here, False inside an already held slot.
-    say(text) is told once when the run has to wait."""
+    say(text) is told once when the run has to wait. deadline (seconds since epoch) bounds wait time; raises OSError if exceeded."""
     if os.environ.get(HELD_ENV):
         yield False
         return
@@ -114,6 +114,8 @@ def slot(what: str, merge: bool = False, d: Path | None = None, say=None) -> Ite
         told = False
         waited_from = time.monotonic()
         while True:
+            if deadline is not None and time.time() >= deadline:
+                raise OSError("deadline exceeded while waiting for test slot")
             try:
                 if not merge and merge_pending(d):
                     raise BlockingIOError
@@ -124,6 +126,8 @@ def slot(what: str, merge: bool = False, d: Path | None = None, say=None) -> Ite
                     say(f"waiting for {'a merge' if not merge and merge_pending(d) else (h or {}).get('what', 'another test run')}"
                         " to finish (one test run at a time on this machine)")
                     told = True
+                if deadline is not None and time.time() >= deadline:
+                    raise OSError("deadline exceeded while waiting for test slot")
                 if merge:
                     fcntl.flock(fh, fcntl.LOCK_EX)
                 else:

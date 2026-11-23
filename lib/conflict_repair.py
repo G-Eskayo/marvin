@@ -16,6 +16,9 @@ agent redoing someone's work. So, before any send-back:
 
 At most MAX_PER_SCAN repairs per scan (each runs a test suite); a PR whose current commit already failed a repair is
 not retried. Outcomes: {"outcome": "repaired", "detail", "cost_usd"} | {"outcome": "rebuild", "files", "reason", "cost_usd"} | {"outcome": "later"}.
+
+deadline: optional float (time.time() + seconds) to bound total wall time. Once elapsed, attempt() returns
+{"outcome": "later"} and skips remaining PRs. Used by the scan to enforce a per-step budget (CONFLICTED_PRS_BUDGET_S).
 """
 from __future__ import annotations
 import json
@@ -24,6 +27,7 @@ import re
 import subprocess
 import sys
 import tempfile
+import time
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
@@ -109,30 +113,53 @@ def _other_pr(wt: str, base: str, path: str, hunk_start: int, hunk_end: int) -> 
         return None
 
 
-def default_tests(repo: str, cwd: str, changed: list[str]) -> tuple[bool, str]:
-    """The merge gate's tests: marvin = pytest (+ vitest when the PR touches dashboard/); others = their profile's verify."""
+def default_tests(repo: str, cwd: str, changed: list[str], deadline: float | None = None) -> tuple[bool, str]:
+    """The merge gate's tests: marvin = pytest (+ vitest when the PR touches dashboard/); others = their profile's verify.
+    Uses test_slot to serialize with other test runs on this machine. deadline bounds total wall time."""
     try:
+        import test_slot
+        def _remaining_time(timeout_fallback=TEST_TIMEOUT_S):
+            if deadline is None:
+                return timeout_fallback
+            remaining = deadline - time.time()
+            return max(1, min(timeout_fallback, remaining)) if remaining > 0 else 1
         if repo.lower() == MARVIN.lower():
             env = {**os.environ, "MARVIN_MERGE_GATE": "1"}
             import cleanup_sweep
             with cleanup_sweep.disposable_basetemp() as basetemp_args:
-                p = subprocess.run([VENV_PYTHON, "-m", "pytest", "-q", "-p", "no:cacheprovider", *basetemp_args], cwd=cwd, env=env,
-                                   capture_output=True, text=True, timeout=TEST_TIMEOUT_S)
+                try:
+                    with test_slot.slot(what="pytest", merge=False, deadline=deadline):
+                        timeout = _remaining_time()
+                        p = subprocess.run([VENV_PYTHON, "-m", "pytest", "-q", "-p", "no:cacheprovider", *basetemp_args], cwd=cwd, env=env,
+                                           capture_output=True, text=True, timeout=timeout)
+                except OSError as e:
+                    return False, f"timeout: {e}"
             if p.returncode != 0:
                 return False, p.stdout[-1500:]
             if any(f.startswith("dashboard/") for f in changed):
                 dash = Path(cwd) / "dashboard"
                 import node_modules_seed  # #687: seeded from the cache, so the install writes almost nothing
+                timeout = _remaining_time()
                 p = node_modules_seed.npm_install(dash, ["npm", "install", "--no-audit", "--no-fund"],
-                                                  capture_output=True, text=True, timeout=TEST_TIMEOUT_S)
+                                                  capture_output=True, text=True, timeout=timeout)
                 if p.returncode != 0:
                     return False, (p.stdout + p.stderr)[-1500:]
-                p = subprocess.run(["npx", "vitest", "run"], cwd=dash, capture_output=True, text=True, timeout=TEST_TIMEOUT_S)
+                try:
+                    with test_slot.slot(what="vitest", merge=False, deadline=deadline):
+                        timeout = _remaining_time()
+                        p = subprocess.run(["npx", "vitest", "run"], cwd=dash, capture_output=True, text=True, timeout=timeout)
+                except OSError as e:
+                    return False, f"timeout: {e}"
                 if p.returncode != 0:
                     return False, (p.stdout + p.stderr)[-1500:]
             return True, ""
-        p = subprocess.run([VENV_PYTHON, str(HOME / ".agents" / "lib" / "project_profile.py"), "verify", repo, cwd],
-                           capture_output=True, text=True, timeout=TEST_TIMEOUT_S)
+        try:
+            with test_slot.slot(what="verify", merge=False, deadline=deadline):
+                timeout = _remaining_time()
+                p = subprocess.run([VENV_PYTHON, str(HOME / ".agents" / "lib" / "project_profile.py"), "verify", repo, cwd],
+                                   capture_output=True, text=True, timeout=timeout)
+        except OSError as e:
+            return False, f"timeout: {e}"
         return p.returncode == 0, (p.stdout + p.stderr)[-1500:]
     except (subprocess.SubprocessError, OSError) as e:
         return False, str(e)
@@ -180,14 +207,20 @@ def _verify_resolution(wt: str, files: list[str], originals: dict[str, bytes]) -
 
 
 def repair(repo: str, head: str, clone: str, base: str, run_tests=default_tests, pr: dict | None = None,
-           resolve_hunks=None) -> dict:
+           resolve_hunks=None, deadline: float | None = None) -> dict:
     """Rebase `head` onto `base` resolving only safe conflicts, test, push. Never touches the shared checkout.
 
     If genuine conflicts are found, tries model-assisted resolution if resolve_hunks is provided.
-    `pr` dict (with title, body, number) is passed to the model for context."""
+    `pr` dict (with title, body, number) is passed to the model for context.
+    `deadline` is a float from time.time() (or None for unlimited); wall_time_s is returned."""
+    if deadline is not None and time.time() >= deadline:
+        return {"outcome": "later", "cost_usd": 0.0, "wall_time_s": 0.0}
     files = conflicted_files(clone, base, head)
     wt = tempfile.mkdtemp(prefix="conflict-repair-")
     model_cost = 0.0
+    start = time.time()
+    def _wall():
+        return time.time() - start
     try:
         _git(clone, "fetch", "-q", "origin", base, head)
         old = _git(clone, "rev-parse", f"origin/{head}").stdout.strip()
@@ -232,29 +265,29 @@ def repair(repo: str, head: str, clone: str, base: str, run_tests=default_tests,
                             if cont.returncode == 0 or not _git(wt, "diff", "--name-only", "--diff-filter=U").stdout.strip():
                                 resolved = {"ok": True, "model_assisted": True}
                             else:
-                                return {"outcome": "rebuild", "files": real_files, "reason": "rebase could not continue after model fix", "cost_usd": model_cost}
+                                return {"outcome": "rebuild", "files": real_files, "reason": "rebase could not continue after model fix", "cost_usd": model_cost, "wall_time_s": _wall()}
                         else:
-                            return {"outcome": "rebuild", "files": real_files, "reason": "model resolution verification failed", "cost_usd": model_cost}
+                            return {"outcome": "rebuild", "files": real_files, "reason": "model resolution verification failed", "cost_usd": model_cost, "wall_time_s": _wall()}
                     finally:
                         import shutil
                         shutil.rmtree(scratch, ignore_errors=True)
                 else:
-                    return {"outcome": "rebuild", "files": real_files, "reason": resolved.get("reason", ""), "cost_usd": 0.0}
+                    return {"outcome": "rebuild", "files": real_files, "reason": resolved.get("reason", ""), "cost_usd": 0.0, "wall_time_s": _wall()}
         changed = [l for l in _git(wt, "diff", "--name-only", f"origin/{base}", "HEAD").stdout.splitlines() if l]
-        ok, out = run_tests(repo, wt, changed)
+        ok, out = run_tests(repo, wt, changed, deadline=deadline)
         if not ok:
-            return {"outcome": "rebuild", "files": files, "reason": f"tests fail after resolving the conflict:\n{out[-800:]}", "cost_usd": model_cost}
+            return {"outcome": "rebuild", "files": files, "reason": f"tests fail after resolving the conflict:\n{out[-800:]}", "cost_usd": model_cost, "wall_time_s": _wall()}
         push = _git(wt, "push", "-q", f"--force-with-lease={head}:{old}", "origin", f"HEAD:{head}", check=False)
         if push.returncode != 0:
-            return {"outcome": "later", "reason": f"push refused (the branch moved?): {push.stderr[-300:]}", "cost_usd": model_cost}
+            return {"outcome": "later", "reason": f"push refused (the branch moved?): {push.stderr[-300:]}", "cost_usd": model_cost, "wall_time_s": _wall()}
         kinds = [f"both sides only added lines in {', '.join(resolved.get('both_inserted') or [])}" if resolved.get("both_inserted") else "",
                  f"{', '.join(resolved.get('already_on_base') or [])} already had this change on {base}" if resolved.get("already_on_base") else ""]
         if resolved.get("model_assisted"):
             kinds.insert(0, "model-assisted resolution of genuine conflicts")
         detail = "; ".join(k for k in kinds if k) or "it rebased cleanly"
-        return {"outcome": "repaired", "detail": f"{detail}. Tests pass on the rebased branch.", "cost_usd": model_cost}
+        return {"outcome": "repaired", "detail": f"{detail}. Tests pass on the rebased branch.", "cost_usd": model_cost, "wall_time_s": _wall()}
     except (subprocess.SubprocessError, OSError) as e:
-        return {"outcome": "rebuild", "files": files, "reason": f"repair could not run: {e}", "cost_usd": model_cost}
+        return {"outcome": "rebuild", "files": files, "reason": f"repair could not run: {e}", "cost_usd": model_cost, "wall_time_s": _wall()}
     finally:
         _git(clone, "worktree", "remove", "--force", wt, check=False)
 
@@ -281,23 +314,26 @@ class Budget:
         self.left = n
 
 
-def attempt(repo: str, pr: dict, budget: Budget, state_path: Path | None = None, do_repair=repair) -> dict:
+def attempt(repo: str, pr: dict, budget: Budget, state_path: Path | None = None, do_repair=repair, deadline: float | None = None) -> dict:
     """One PR: repair it if this commit hasn't already failed a repair and the scan has budget left.
-    state_path is read at call time: bound as a default it pinned the real file, so tests could not move it."""
+    state_path is read at call time: bound as a default it pinned the real file, so tests could not move it.
+    deadline bounds total wall time for all attempts (time.time() + seconds); returns {"outcome": "later"} once elapsed."""
+    if deadline is not None and time.time() >= deadline:
+        return {"outcome": "later", "cost_usd": 0.0, "wall_time_s": 0.0}
     state_path = STATE_PATH if state_path is None else state_path
     clone, base = where(repo)
     head, sha = pr.get("headRefName"), pr.get("headRefOid") or ""
     if not clone or not head:
-        return {"outcome": "rebuild", "files": [], "reason": "no clone of this project here to repair it in", "cost_usd": 0.0}
+        return {"outcome": "rebuild", "files": [], "reason": "no clone of this project here to repair it in", "cost_usd": 0.0, "wall_time_s": 0.0}
     state = _load(state_path)
     key = f"{repo}#{pr.get('number')}"
     if sha and state.get(key, {}).get("failed_sha") == sha:
         prev = state[key]
-        return {"outcome": "rebuild", "files": prev.get("files", []), "reason": prev.get("reason", ""), "cost_usd": 0.0}
+        return {"outcome": "rebuild", "files": prev.get("files", []), "reason": prev.get("reason", ""), "cost_usd": 0.0, "wall_time_s": 0.0}
     if budget.left <= 0:
-        return {"outcome": "later", "cost_usd": 0.0}
+        return {"outcome": "later", "cost_usd": 0.0, "wall_time_s": 0.0}
     budget.left -= 1
-    res = do_repair(repo, head, clone, base, pr=pr)
+    res = do_repair(repo, head, clone, base, pr=pr, deadline=deadline)
     if res["outcome"] == "rebuild" and sha:
         state[key] = {"failed_sha": sha, "files": res.get("files", []), "reason": res.get("reason", "")[:500]}
         _save(state, state_path)

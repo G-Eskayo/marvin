@@ -150,6 +150,61 @@ def check_dispatch_lock(state_path: Path | None = None) -> dict:
     return _result(cid, label, "green", f"busy {age_min:.0f}min on '{task}' — normal range", value=age_min)
 
 
+# ── scan duration (cross-machine) ───────────────────────────────────────
+
+SCAN_DURATION_YELLOW_S = 15 * 60  # 15 minutes
+SCAN_DURATION_RED_S = 25 * 60     # 25 minutes
+
+
+def _run_scan_duration_remote(host: str) -> dict | None:
+    """Read the scan duration log on a remote machine over SSH, return latest scan timing."""
+    script = "~/.agents/venv/bin/python -c \"import sys; sys.path.insert(0, '~/.agents/lib'); import job_events; d = job_events.latest_job_duration('ticket-pipeline'); print(__import__('json').dumps(d or {}))\" 2>/dev/null"
+    cmd = ["ssh", *SSH_OPTS, host, "bash -s"]
+    try:
+        proc = subprocess.run(cmd, input=script, capture_output=True, text=True, timeout=10)
+        if proc.returncode == 0 and proc.stdout.strip():
+            data = json.loads(proc.stdout)
+            return data if isinstance(data, dict) and data else None
+    except (subprocess.SubprocessError, json.JSONDecodeError):
+        pass
+    return None
+
+
+def check_scan_duration(reachability: dict[str, str] | None = None, remote=None) -> list[dict]:
+    """The hourly ticket-pipeline scan: local + SSH, yellow if >15min, red if >25min. Cross-machine."""
+    remote = remote or _run_scan_duration_remote
+    results = []
+    me = machine_profile.registry_id()
+    devices = [(me, None)] + [(dev, info.get("tailscale_hostname")) for dev, info in machine_profile.remote_devices().items()]
+    for dev, host in devices:
+        cid, label = f"scan:duration@{dev}", f"Ticket pipeline scan — {dev}"
+        if host is None:
+            try:
+                import job_events
+                data = job_events.latest_job_duration("ticket-pipeline")
+                if data is None:
+                    results.append(_result(cid, label, "yellow", "ticket-pipeline has not completed on this machine yet", value=None))
+                    continue
+                duration_s = data.get("duration_s", 0)
+            except Exception as exc:
+                results.append(_unknown(cid, label, f"scan duration unreadable: {exc}"))
+                continue
+        else:
+            if not _reachable(reachability, dev):
+                continue
+            data = remote(host)
+            if data is None:
+                results.append(_unknown(cid, label, f"could not read scan duration over SSH"))
+                continue
+            duration_s = data.get("duration_s", 0)
+        sev = "red" if duration_s >= SCAN_DURATION_RED_S else "yellow" if duration_s >= SCAN_DURATION_YELLOW_S else "green"
+        detail = f"{duration_s / 60:.1f}min"
+        if sev != "green":
+            detail += " — may be slowing down dispatch" if sev == "yellow" else " — dispatch at risk of timing out"
+        results.append(_result(cid, label, sev, detail, value=round(duration_s, 1)))
+    return results
+
+
 # ── cron jobs (absorbed from cron_health.py -- literally the same
 # check_job() + persistent offset-tracking state, not a reimplementation,
 # per ADR 0033. Reimplementing the log-scan naively (whole-tail regex, no
@@ -1801,6 +1856,7 @@ def default_checks(reach: dict[str, str] | None = None, reach_results: list[dict
         ("token", "Auth tokens", check_token_files, CHECK_BUDGET_S),
         ("route:intent-routing-collection", "route.py embedding classifier (ChromaDB)", check_intent_routing_collection, CHECK_BUDGET_S),
         ("dispatch:lock-age", "Local dispatch lock", check_dispatch_lock, CHECK_BUDGET_S),
+        ("scan:duration", "Ticket pipeline scan duration", lambda: check_scan_duration(reach), CROSS_MACHINE_BUDGET_S),
         ("pipeline:breaker", "Ticket pipeline circuit breaker", lambda: check_pipeline_breaker(reach), CROSS_MACHINE_BUDGET_S),
         ("sync:stuck", "Code sync", lambda: check_sync_stuck(reach), CROSS_MACHINE_BUDGET_S),
         ("sync:union-review", "Code sync: merged lines to check", check_union_merge_review, CHECK_BUDGET_S),

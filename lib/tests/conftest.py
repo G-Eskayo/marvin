@@ -231,7 +231,7 @@ def _no_real_code_review(monkeypatch):
 def _no_real_conflict_repair(monkeypatch):
     # The scan's conflict repair rebases, tests and force-pushes real branches; tests opt in by replacing it.
     import ticket_pipeline
-    monkeypatch.setattr(ticket_pipeline, "_try_conflict_repair", lambda repo, pr: {"outcome": "rebuild", "files": [], "cost_usd": 0.0})
+    monkeypatch.setattr(ticket_pipeline, "_try_conflict_repair", lambda repo, pr, deadline=None: {"outcome": "rebuild", "files": [], "cost_usd": 0.0})
     monkeypatch.setattr(ticket_pipeline, "_flagged_before", lambda url, sha: False)
     monkeypatch.setattr(ticket_pipeline, "_mark_flagged", lambda url, sha: None)
 
@@ -241,7 +241,7 @@ def _isolate_ticket_evidence(monkeypatch):
     # The pre-dispatch "does work already exist" guard shells out to gh/git; tests opt in explicitly.
     import ticket_pipeline
     monkeypatch.setattr(ticket_pipeline, "_evidence_facts", lambda repo: None)
-    monkeypatch.setattr(ticket_pipeline, "_requeue_all", lambda repos: [])
+    monkeypatch.setattr(ticket_pipeline, "_requeue_all", lambda repos, deadline=None: ([], {}))
     monkeypatch.setattr(ticket_pipeline, "_background_checks", lambda: None)  # no background test runs from tests  # no real gh calls from the scan
     monkeypatch.setattr(ticket_pipeline, "_retry_not_before", lambda repo, ticket, now=None: None)  # reads comments (gh)
 
@@ -367,3 +367,5 @@ def _no_real_alerts(tmp_path_factory, monkeypatch):
     monkeypatch.setattr(mr_notification, "desktop_notify", lambda *a, **k: None)
     monkeypatch.setattr(mr_notification, "dashboard_refresh_ping", lambda: None)
     monkeypatch.setattr(mr_notification, "phone_notify", None)
+
+
