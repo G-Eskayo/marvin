@@ -169,7 +169,7 @@ describe('one window per project, reused', () => {
     const { sw, windows, sessions } = make()
     await sw.show({ kind: 'file', path: a })
     const w = windows[0]
-    expect(w.opts.webPreferences).toMatchObject({ partition: SHOW_PARTITION, contextIsolation: true, nodeIntegration: false, nodeIntegrationInSubFrames: false, webviewTag: false, preload: '/app/preload.cjs' })
+    expect(w.opts.webPreferences).toMatchObject({ sandbox: true, partition: SHOW_PARTITION, contextIsolation: true, nodeIntegration: false, nodeIntegrationInSubFrames: false, webviewTag: false, preload: '/app/preload.cjs' })
     expect(w.openHandler()).toEqual({ action: 'deny' })
     const nav = { preventDefault: vi.fn() }
     w.webContents.emit('will-navigate', nav, 'https://evil.example/')

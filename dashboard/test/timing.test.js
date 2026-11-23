@@ -39,6 +39,24 @@ describe('instrumentIpc', () => {
     await expect(handlers['mr:ticketContext']({}, '#5', 'G-Eskayo/marvin')).resolves.toBe('#5@G-Eskayo/marvin')
     expect(record).toHaveBeenCalledWith(expect.objectContaining({ side: 'ipc', name: 'mr:ticketContext', ok: true }))
   })
+
+  it('handles unexpected argument types gracefully and records errors', async () => {
+    const handlers = {}
+    const ipcMain = { handle: (channel, fn) => { handlers[channel] = fn } }
+    const record = vi.fn()
+    instrumentIpc(ipcMain, { record, now })
+    ipcMain.handle('mr:typeCheck', async (_e, { required }) => {
+      if (typeof required !== 'string') throw new Error('required must be a string')
+      return `ok:${required}`
+    })
+    // Valid call
+    await expect(handlers['mr:typeCheck']({}, { required: 'value' })).resolves.toBe('ok:value')
+    expect(record).toHaveBeenLastCalledWith(expect.objectContaining({ side: 'ipc', name: 'mr:typeCheck', ok: true }))
+    // Invalid call - wrong type, should record error
+    record.mockClear()
+    await expect(handlers['mr:typeCheck']({}, { required: 123 })).rejects.toThrow()
+    expect(record).toHaveBeenCalledWith(expect.objectContaining({ side: 'ipc', name: 'mr:typeCheck', ok: false }))
+  })
 })
 
 describe('timeRequest (webhook routes)', () => {
