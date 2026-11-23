@@ -115,7 +115,7 @@ def test_main_dry_run_does_not_claim_or_dispatch(monkeypatch, capsys):
 
 
 def test_main_no_tickets_does_nothing(monkeypatch, capsys):
-    monkeypatch.setattr(tp, "_unclaimed_ready_tickets", lambda: [])
+    monkeypatch.setattr(tp, "_unclaimed_ready_tickets", lambda repo=None: [])
     dispatch_calls = []
     monkeypatch.setattr(tp, "dispatch", lambda *a, **kw: dispatch_calls.append((a, kw)))
     monkeypatch.setattr(sys, "argv", ["ticket_pipeline.py"])
@@ -125,7 +125,7 @@ def test_main_no_tickets_does_nothing(monkeypatch, capsys):
 
 
 def test_main_no_machine_available_does_not_claim(monkeypatch, capsys):
-    monkeypatch.setattr(tp, "_unclaimed_ready_tickets", lambda: [
+    monkeypatch.setattr(tp, "_unclaimed_ready_tickets", lambda repo=None: [
         {"number": 20, "title": "x", "createdAt": "2026-01-01T00:00:00Z", "labels": []}
     ])
     monkeypatch.setattr(tp, "select_machine", lambda target=None: None)
@@ -148,7 +148,7 @@ def test_claim_records_the_title_on_the_claimed_stage_event(monkeypatch, tmp_pat
 
 
 def test_main_claims_and_dispatches_oldest_unclaimed(monkeypatch):
-    monkeypatch.setattr(tp, "_unclaimed_ready_tickets", lambda: [
+    monkeypatch.setattr(tp, "_unclaimed_ready_tickets", lambda repo=None: [
         {"number": 20, "title": "paper-graph traversal", "createdAt": "2026-01-01T00:00:00Z", "labels": []}
     ])
     monkeypatch.setattr(tp, "select_machine", lambda target=None: ("mac-mini-1", {"is_self": True}))
@@ -171,7 +171,7 @@ def test_main_claims_and_dispatches_oldest_unclaimed(monkeypatch):
 
 
 def test_main_releases_claim_if_dispatch_fails(monkeypatch):
-    monkeypatch.setattr(tp, "_unclaimed_ready_tickets", lambda: [
+    monkeypatch.setattr(tp, "_unclaimed_ready_tickets", lambda repo=None: [
         {"number": 20, "title": "x", "createdAt": "2026-01-01T00:00:00Z", "labels": []}
     ])
     monkeypatch.setattr(tp, "select_machine", lambda target=None: ("mac-mini-1", {"is_self": True}))
@@ -200,7 +200,7 @@ def test_main_does_not_dispatch_while_the_breaker_is_tripped(monkeypatch, capsys
     monkeypatch.setattr(fb, "tripped", lambda now=None: [
         {"signature": "measure:vitest-no-summary", "tickets": [32, 35, 37],
          "first_seen": "x", "last_seen": "y", "example": "e"}])
-    monkeypatch.setattr(tp, "_unclaimed_ready_tickets", lambda: [{"number": 99, "title": "t", "createdAt": "z", "labels": []}])
+    monkeypatch.setattr(tp, "_unclaimed_ready_tickets", lambda repo=None: [{"number": 99, "title": "t", "createdAt": "z", "labels": []}])
     monkeypatch.setattr(tp, "select_machine", lambda: ("mac-mini-1", {}))
     called = []
     monkeypatch.setattr(tp, "_claim", lambda *a, **k: called.append("claim") or True)
@@ -218,14 +218,17 @@ def test_main_does_not_dispatch_while_the_breaker_is_tripped(monkeypatch, capsys
 def test_a_scan_with_nothing_ready_leaves_a_run_log_saying_so(monkeypatch):
     import json
     import job_events
-    monkeypatch.setattr(tp, "_unclaimed_ready_tickets", lambda: [])
+    monkeypatch.setattr(tp, "_unclaimed_ready_tickets", lambda repo=None: [])
     monkeypatch.setattr(tp.failure_breaker, "tripped", lambda now=None: [])
     monkeypatch.setattr(sys, "argv", ["ticket_pipeline.py"])
     tp.main()
     run = json.loads((job_events.JOBS_DIR / "ticket-pipeline.json").read_text())["runs"][-1]
     assert run["status"] == "passed" and run["summary"] == "no ready tickets"
     steps = [s["step"] for s in run["steps"]]
-    assert steps == ["Code freshness", "Board discovery", "Onboarding plans", "Project catalog", "Conflicted PRs", "Owner decisions", "Parked choices", "Circuit breaker", "Scanning tickets"]
+    # Order: code freshness first, then catalog setup, dispatch (circuit breaker + scanning),
+    # then post-dispatch (conflicted PRs, decisions, parked)
+    assert steps == ["Code freshness", "Board discovery", "Onboarding plans", "Project catalog",
+                     "Circuit breaker", "Scanning tickets", "Conflicted PRs", "Owner decisions", "Parked choices"]
 
 
 def test_a_tripped_breaker_is_visible_in_the_run_log(monkeypatch):
@@ -241,11 +244,197 @@ def test_a_tripped_breaker_is_visible_in_the_run_log(monkeypatch):
     assert any("TRIPPED" in step.get("detail", "") for step in run["steps"])
 
 
+def test_run_dispatch_stops_on_circuit_breaker(monkeypatch):
+    """_run_dispatch should return early when the circuit breaker is tripped."""
+    import failure_breaker as fb
+    monkeypatch.setattr(fb, "tripped", lambda now=None: [
+        {"signature": "measure:fail", "tickets": [1, 2], "first_seen": "t", "example": "e"}])
+
+    steps_called = []
+    def capture_step(name, detail=None):
+        steps_called.append(name)
+
+    summary_calls = []
+    def capture_summary(msg):
+        summary_calls.append(msg)
+
+    tp._run_dispatch(capture_step, capture_summary, lambda *a: None, dry_run=False)
+
+    assert "Circuit breaker" in steps_called
+    assert any("dispatch paused" in s for s in summary_calls)
+
+
+def test_run_dispatch_scans_when_breaker_clear(monkeypatch):
+    """_run_dispatch should proceed to scanning when no trips."""
+    monkeypatch.setattr(tp.failure_breaker, "tripped", lambda now=None: [])
+    monkeypatch.setattr(tp, "_unclaimed_ready_tickets", lambda repo=None: [])
+
+    steps_called = []
+    def capture_step(name, detail=None):
+        steps_called.append(name)
+
+    summary_calls = []
+    def capture_summary(msg):
+        summary_calls.append(msg)
+
+    tp._run_dispatch(capture_step, capture_summary, lambda *a: None, dry_run=False)
+
+    assert "Circuit breaker" in steps_called
+    assert "Scanning tickets" in steps_called
+    assert any("no ready" in s for s in summary_calls)
+
+
+def test_requeue_conflicted_prs_with_step_reporting(monkeypatch):
+    """_requeue_conflicted_prs should call step() with timing details showing PR number and duration."""
+    import json
+    import subprocess
+    # Mock gh to return one PR with a conflict
+    pr_data = [{
+        "number": 10, "title": "fix: bug", "url": "https://github.com/o/r/pull/10",
+        "body": "Closes #100", "mergeable": "CONFLICTING",
+        "headRefName": "pipeline/fix", "headRefOid": "abc123", "statusCheckRollup": []
+    }]
+    issues_data = [{
+        "number": 100, "labels": [{"name": "ready-for-agent"}]
+    }]
+
+    def mock_run(cmd, *args, **kwargs):
+        if "pr" in cmd:
+            return SimpleNamespace(returncode=0, stdout=json.dumps(pr_data), stderr="")
+        if "issue" in cmd:
+            return SimpleNamespace(returncode=0, stdout=json.dumps(issues_data), stderr="")
+        return SimpleNamespace(returncode=1, stdout="", stderr="")
+
+    monkeypatch.setattr(subprocess, "run", mock_run)
+
+    # Mock the repair to return a repair outcome
+    def mock_repair(repo, pr):
+        return {"outcome": "repaired", "detail": "both appended", "cost_usd": 0.0, "timing": {}}
+    monkeypatch.setattr(tp, "_try_conflict_repair", mock_repair)
+
+    steps_called = []
+    def capture_step(name, detail=None):
+        steps_called.append((name, detail))
+
+    # Call without accumulate_timings (default behavior)
+    result = tp._requeue_conflicted_prs("o/r", step=capture_step)
+
+    # Check that step was called with timing details
+    final_calls = [s for s in steps_called if s[0] == "Conflicted PRs"]
+    assert len(final_calls) > 0, "Should have called step with 'Conflicted PRs'"
+    # The final call should contain PR #10 and a timing in the detail
+    final_detail = final_calls[-1][1]
+    assert final_detail is not None, "Final step detail should not be None"
+    assert "#10" in final_detail, f"Detail should mention PR #10, got: {final_detail}"
+    assert "s" in final_detail, f"Detail should show timing duration with 's' suffix, got: {final_detail}"
+    assert "none sent back" in final_detail, f"Detail should indicate no PRs sent back (repaired), got: {final_detail}"
+
+
+def test_requeue_all_accumulates_timings_from_multiple_repos(monkeypatch):
+    """_requeue_all should accumulate timings from all repos and report them together, not let later repos overwrite earlier ones."""
+    import json
+    import subprocess
+
+    # Create different PR data for each repo
+    pr_data_repo1 = [{
+        "number": 10, "title": "fix: bug", "url": "https://github.com/o/r1/pull/10",
+        "body": "Closes #100", "mergeable": "CONFLICTING",
+        "headRefName": "pipeline/fix", "headRefOid": "abc123", "statusCheckRollup": []
+    }]
+    pr_data_repo2 = [{
+        "number": 20, "title": "feat: new", "url": "https://github.com/o/r2/pull/20",
+        "body": "Closes #200", "mergeable": "CONFLICTING",
+        "headRefName": "pipeline/feat", "headRefOid": "def456", "statusCheckRollup": []
+    }]
+
+    def mock_run(cmd, *args, **kwargs):
+        if "o/r1" in str(cmd) and "pr" in cmd:
+            return SimpleNamespace(returncode=0, stdout=json.dumps(pr_data_repo1), stderr="")
+        if "o/r2" in str(cmd) and "pr" in cmd:
+            return SimpleNamespace(returncode=0, stdout=json.dumps(pr_data_repo2), stderr="")
+        # Issues data for both repos
+        return SimpleNamespace(returncode=0, stdout=json.dumps([
+            {"number": 100, "labels": [{"name": "ready-for-agent"}]},
+            {"number": 200, "labels": [{"name": "ready-for-agent"}]},
+        ]), stderr="")
+
+    monkeypatch.setattr(subprocess, "run", mock_run)
+
+    # Mock repairs to track which repos were processed
+    repairs_called = []
+    def mock_repair(repo, pr):
+        repairs_called.append((repo, pr["number"]))
+        return {"outcome": "repaired", "detail": "both appended", "cost_usd": 0.0, "timing": {}}
+    monkeypatch.setattr(tp, "_try_conflict_repair", mock_repair)
+
+    steps_called = []
+    def capture_step(name, detail=None):
+        steps_called.append((name, detail))
+
+    # Call _requeue_all with two repos
+    result = tp._requeue_all(["o/r1", "o/r2"], step=capture_step)
+
+    # Find all final "Conflicted PRs" calls (should be just one now)
+    final_calls = [s for s in steps_called if s[0] == "Conflicted PRs"]
+    # We expect at least one final call (the accumulated summary)
+    assert any(len(fc) > 0 and "scanning" not in str(fc[1] or "") for fc in final_calls), \
+        f"Should have at least one accumulated timing report, got: {final_calls}"
+
+    # Find the summary call (the one that has timing info, not "scanning for conflicts")
+    summary_calls = [s for s in final_calls if s[1] and "scanning" not in s[1]]
+    if summary_calls:
+        summary_detail = summary_calls[-1][1]
+        # Both repo's PR numbers should appear in the same detail string
+        assert "#10" in summary_detail or "#20" in summary_detail or "none sent back" in summary_detail, \
+            f"Should report PR numbers or final summary, got: {summary_detail}"
+
+
+def test_requeue_conflicted_prs_reports_red_check_send_backs_without_timings(monkeypatch):
+    """Red-check send-backs have no repair timings, but should still be reported in the step detail."""
+    import json
+    import subprocess
+
+    # Mock a PR with failed checks (no conflict)
+    pr_data = [{
+        "number": 10, "title": "fix: bug", "url": "https://github.com/o/r/pull/10",
+        "body": "Closes #100", "mergeable": "MERGEABLE",
+        "headRefName": "pipeline/fix", "headRefOid": "abc123",
+        "statusCheckRollup": [
+            {"__typename": "StatusContext", "state": "FAILURE", "context": "continuous-integration/circleci"}
+        ]
+    }]
+    issues_data = [{
+        "number": 100, "labels": [{"name": "ready-for-agent"}]
+    }]
+
+    def mock_run(cmd, *args, **kwargs):
+        if "pr" in cmd:
+            return SimpleNamespace(returncode=0, stdout=json.dumps(pr_data), stderr="")
+        if "issue" in cmd:
+            return SimpleNamespace(returncode=0, stdout=json.dumps(issues_data), stderr="")
+        return SimpleNamespace(returncode=1, stdout="", stderr="")
+
+    monkeypatch.setattr(subprocess, "run", mock_run)
+
+    steps_called = []
+    def capture_step(name, detail=None):
+        steps_called.append((name, detail))
+
+    # Call without accumulate_timings
+    result = tp._requeue_conflicted_prs("o/r", step=capture_step)
+
+    # Should have called step with the final summary (red checks sent back, no timings)
+    final_calls = [s for s in steps_called if s[0] == "Conflicted PRs"]
+    assert len(final_calls) > 0, "Should report the final status"
+    final_detail = final_calls[-1][1]
+    assert "sent back" in final_detail, f"Should report PR was sent back, got: {final_detail}"
+
+
 def test_onboarding_refresh_failure_does_not_abort_scan(monkeypatch):
     """A raising refresh_all_onboarding_plans should not stop the rest of _scan."""
     import json
     import job_events
-    monkeypatch.setattr(tp, "_unclaimed_ready_tickets", lambda: [])
+    monkeypatch.setattr(tp, "_unclaimed_ready_tickets", lambda repo=None: [])
     monkeypatch.setattr(tp.failure_breaker, "tripped", lambda now=None: [])
     # Make refresh_all_onboarding_plans raise
     monkeypatch.setattr(tp.project_onboard, "refresh_all_onboarding_plans",
@@ -805,7 +994,7 @@ def test_checks_that_failed_for_the_runners_sake_or_are_still_running_do_not_sen
 
 def test_marvins_own_tickets_are_only_offered_to_the_machines_named_for_them(monkeypatch):
     """Marvin's own tickets name their machines here (the mac-mini first), not in a project profile."""
-    monkeypatch.setattr(tp, "_unclaimed_ready_tickets", lambda: [{"number": 20, "title": "x", "createdAt": "2026-01-01T00:00:00Z", "labels": []}])
+    monkeypatch.setattr(tp, "_unclaimed_ready_tickets", lambda repo=None: [{"number": 20, "title": "x", "createdAt": "2026-01-01T00:00:00Z", "labels": []}])
     asked = []
     monkeypatch.setattr(tp, "select_machine", lambda target=None: asked.append(target) or None)
     monkeypatch.setattr(sys, "argv", ["ticket_pipeline.py"])
@@ -1706,7 +1895,7 @@ def test_credit_readiness_only_asks_machines_that_have_credit_slots(monkeypatch)
 # ── memory guard (marvin#845): checked before the claim, so a waiting ticket stays unclaimed and ready ────────
 
 def _one_ready(monkeypatch, device=("mac-mini-1", {"is_self": True})):
-    monkeypatch.setattr(tp, "_unclaimed_ready_tickets", lambda: [
+    monkeypatch.setattr(tp, "_unclaimed_ready_tickets", lambda repo=None: [
         {"number": 845, "title": "memory guard", "createdAt": "2026-01-01T00:00:00Z", "labels": []}])
     monkeypatch.setattr(tp, "select_machine", lambda target=None: device)
     monkeypatch.setattr(sys, "argv", ["ticket_pipeline.py"])

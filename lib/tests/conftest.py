@@ -241,7 +241,7 @@ def _isolate_ticket_evidence(monkeypatch):
     # The pre-dispatch "does work already exist" guard shells out to gh/git; tests opt in explicitly.
     import ticket_pipeline
     monkeypatch.setattr(ticket_pipeline, "_evidence_facts", lambda repo: None)
-    monkeypatch.setattr(ticket_pipeline, "_requeue_all", lambda repos: [])
+    monkeypatch.setattr(ticket_pipeline, "_requeue_all", lambda repos, step=None: [])
     monkeypatch.setattr(ticket_pipeline, "_background_checks", lambda: None)  # no background test runs from tests  # no real gh calls from the scan
     monkeypatch.setattr(ticket_pipeline, "_retry_not_before", lambda repo, ticket, now=None: None)  # reads comments (gh)
 

@@ -91,6 +91,85 @@ def test_check_dispatch_lock_green_shortly_after_start():
     assert result["severity"] == "green"
 
 
+def test_check_dispatch_lock_handles_naive_datetime():
+    """Check that naive started_at timestamps (without timezone) are handled gracefully."""
+    import tempfile
+    with tempfile.TemporaryDirectory() as d:
+        p = Path(d) / "dispatch-state.json"
+        # Write a naive datetime (no timezone info) - should be converted to UTC aware
+        # Use naive datetime from 5 minutes ago
+        naive_ts = (datetime.utcnow() - timedelta(minutes=5)).isoformat()
+        p.write_text(json.dumps({"busy": True, "task": "t", "started_at": naive_ts}))
+        result = hc.check_dispatch_lock(state_path=p)
+    # Should not raise TypeError and should report green (5 minutes is normal)
+    assert result["severity"] in ("green", "yellow"), f"Expected green or yellow but got {result['severity']}: {result['detail']}"
+
+
+# ── pipeline scan duration ───────────────────────────────────────────────
+
+def test_check_pipeline_scan_duration_no_file():
+    import tempfile
+    with tempfile.TemporaryDirectory() as d:
+        result = hc.check_pipeline_scan_duration(path=Path(d) / "ticket-pipeline.json")
+    assert result["severity"] == "yellow"
+    assert "not run yet" in result["detail"]
+
+
+def test_check_pipeline_scan_duration_green_fast_scan():
+    import tempfile
+    with tempfile.TemporaryDirectory() as d:
+        p = Path(d) / "ticket-pipeline.json"
+        now = datetime.now(timezone.utc)
+        started = (now - timedelta(minutes=5)).isoformat()
+        p.write_text(json.dumps({
+            "runs": [{
+                "started_at": started,
+                "ended_at": now.isoformat(),
+                "steps": [{"step": "Board discovery"}]
+            }]
+        }))
+        result = hc.check_pipeline_scan_duration(path=p, now=now)
+    assert result["severity"] == "green"
+    assert "5min" in result["detail"]
+
+
+def test_check_pipeline_scan_duration_yellow_slow_scan():
+    import tempfile
+    with tempfile.TemporaryDirectory() as d:
+        p = Path(d) / "ticket-pipeline.json"
+        now = datetime.now(timezone.utc)
+        started = (now - timedelta(minutes=20)).isoformat()
+        p.write_text(json.dumps({
+            "runs": [{
+                "started_at": started,
+                "ended_at": now.isoformat(),
+                "steps": [{"step": "Conflicted PRs"}]
+            }]
+        }))
+        result = hc.check_pipeline_scan_duration(path=p, now=now)
+    assert result["severity"] == "yellow"
+    assert "20min" in result["detail"]
+    assert "Conflicted PRs" in result["detail"]
+
+
+def test_check_pipeline_scan_duration_red_very_slow_scan():
+    import tempfile
+    with tempfile.TemporaryDirectory() as d:
+        p = Path(d) / "ticket-pipeline.json"
+        now = datetime.now(timezone.utc)
+        started = (now - timedelta(minutes=50)).isoformat()
+        p.write_text(json.dumps({
+            "runs": [{
+                "started_at": started,
+                "ended_at": now.isoformat(),
+                "steps": [{"step": "Scanning tickets"}]
+            }]
+        }))
+        result = hc.check_pipeline_scan_duration(path=p, now=now)
+    assert result["severity"] == "red"
+    assert "50min" in result["detail"]
+
+
 # ── coverage / auto-discovery ────────────────────────────────────────────
 
 def test_coverage_flags_jobs_with_no_registered_check(monkeypatch):

@@ -138,10 +138,16 @@ def check_dispatch_lock(state_path: Path | None = None) -> dict:
     if not started_at:
         return _result(cid, label, "yellow", "busy with no started_at timestamp — can't judge age")
     try:
-        started = datetime.fromisoformat(started_at)
-    except ValueError:
+        started = datetime.fromisoformat(str(started_at).replace("Z", "+00:00"))
+        # Ensure the datetime is timezone-aware to match _now()
+        if started.tzinfo is None:
+            started = started.replace(tzinfo=timezone.utc)
+    except (ValueError, TypeError):
         return _result(cid, label, "yellow", f"busy, unparseable started_at: {started_at}")
-    age_min = (_now() - started).total_seconds() / 60
+    try:
+        age_min = (_now() - started).total_seconds() / 60
+    except TypeError:
+        return _result(cid, label, "yellow", f"busy, can't compare datetimes: {started_at}")
     task = state.get("task", "unknown task")
     if age_min >= MAX_DISPATCH_MINUTES_RED:
         return _result(cid, label, "red", f"busy {age_min:.0f}min on '{task}' — almost certainly stuck", value=age_min)
@@ -548,6 +554,79 @@ def check_hold_revisit(path: Path | None = None, now: datetime | None = None) ->
 
 MAIN_HEALTH_PATH = Path.home() / ".claude" / "logs" / "main-health.json"
 MAIN_HEALTH_STALE_HOURS = 24
+
+PIPELINE_SCAN_DURATION_YELLOW_S = 15 * 60  # 15 minutes
+PIPELINE_SCAN_DURATION_RED_S = 45 * 60     # 45 minutes
+PIPELINE_JOBS_PATH = Path.home() / ".claude" / "logs" / "jobs" / "ticket-pipeline.json"
+
+
+def check_pipeline_scan_duration(path: Path | None = None, now: datetime | None = None) -> dict:
+    """The hourly ticket pipeline scan: yellow ≥15 min, red ≥45 min. Reusing check_dispatch_lock's
+    age-threshold pattern to read the latest run's duration from the job log."""
+    cid, label = "pipeline:scan-duration", "Ticket pipeline scan duration"
+    path = path or PIPELINE_JOBS_PATH
+    now = now or _now()
+
+    if not path.exists():
+        return _result(cid, label, "yellow", "ticket pipeline has not run yet on this machine")
+
+    try:
+        import stamped
+        copy = stamped.read(path)
+        if copy.missing:
+            return _result(cid, label, "yellow", "job log unreadable")
+        data = copy.value
+        if not isinstance(data, dict):
+            return _result(cid, label, "yellow", "job log format unexpected")
+
+        # Find the latest run (jobs are logged as individual entries)
+        # The file is typically a JSON array or object; look for a 'runs' array or similar
+        runs = data.get("runs", []) if isinstance(data, dict) else []
+        if not runs:
+            # Try to treat the whole thing as a run log
+            if "started_at" not in data:
+                return _result(cid, label, "yellow", "no run data found in job log")
+            runs = [data]
+
+        # Get the latest run
+        latest = max(runs, key=lambda r: r.get("started_at", ""), default=None)
+        if not latest:
+            return _result(cid, label, "yellow", "no run data in job log")
+
+        started = latest.get("started_at")
+        ended = latest.get("ended_at") or latest.get("completed_at")
+
+        if not started:
+            return _result(cid, label, "yellow", "job log missing started_at")
+
+        try:
+            start_dt = datetime.fromisoformat(str(started).replace("Z", "+00:00"))
+        except (ValueError, TypeError):
+            return _result(cid, label, "yellow", f"unparseable started_at: {started}")
+
+        if ended:
+            try:
+                end_dt = datetime.fromisoformat(str(ended).replace("Z", "+00:00"))
+                duration_s = (end_dt - start_dt).total_seconds()
+            except (ValueError, TypeError):
+                return _result(cid, label, "yellow", f"unparseable ended_at: {ended}")
+        else:
+            # Still running
+            duration_s = (now - start_dt).total_seconds()
+
+        # Last step name from the steps array for more context
+        last_step = "unknown"
+        steps = latest.get("steps", [])
+        if steps:
+            last_step = steps[-1].get("step", "unknown")
+
+        if duration_s >= PIPELINE_SCAN_DURATION_RED_S:
+            return _result(cid, label, "red", f"scan running for {duration_s / 60:.0f}min (last: {last_step})", value=duration_s)
+        if duration_s >= PIPELINE_SCAN_DURATION_YELLOW_S:
+            return _result(cid, label, "yellow", f"scan running for {duration_s / 60:.0f}min (last: {last_step})", value=duration_s)
+        return _result(cid, label, "green", f"last scan {duration_s / 60:.0f}min", value=duration_s)
+    except Exception as exc:  # noqa: BLE001
+        return _result(cid, label, "yellow", f"couldn't check: {str(exc)[:100]}")
 
 
 def check_main_health(path: Path | None = None, now: datetime | None = None) -> dict:
@@ -1801,6 +1880,7 @@ def default_checks(reach: dict[str, str] | None = None, reach_results: list[dict
         ("token", "Auth tokens", check_token_files, CHECK_BUDGET_S),
         ("route:intent-routing-collection", "route.py embedding classifier (ChromaDB)", check_intent_routing_collection, CHECK_BUDGET_S),
         ("dispatch:lock-age", "Local dispatch lock", check_dispatch_lock, CHECK_BUDGET_S),
+        ("pipeline:scan-duration", "Ticket pipeline scan duration", check_pipeline_scan_duration, CHECK_BUDGET_S),
         ("pipeline:breaker", "Ticket pipeline circuit breaker", lambda: check_pipeline_breaker(reach), CROSS_MACHINE_BUDGET_S),
         ("sync:stuck", "Code sync", lambda: check_sync_stuck(reach), CROSS_MACHINE_BUDGET_S),
         ("sync:union-review", "Code sync: merged lines to check", check_union_merge_review, CHECK_BUDGET_S),

@@ -120,6 +120,38 @@ def test_budget_and_memory(tmp_path, monkeypatch):
     assert calls == ["h", "h"]
 
 
+def test_budget_deadline_cutoff(tmp_path, monkeypatch):
+    import time
+    monkeypatch.setattr(cr, "where", lambda repo: ("/clone", "main"))
+    calls = []
+    def fake(repo, head, clone, base, pr=None):
+        calls.append(head)
+        time.sleep(0.05)  # simulate work
+        return {"outcome": "repaired", "detail": "test", "cost_usd": 0.0}
+
+    state = tmp_path / "s.json"
+    # Create a budget with deadline already in the past
+    now = time.time()
+    b = cr.Budget(100, deadline_s=now - 1)
+    pr = {"number": 5, "headRefName": "h", "headRefOid": "sha1"}
+    result = cr.attempt("o/r", pr, b, state, fake)
+    assert result["outcome"] == "later"  # deadline exceeded
+    assert calls == []  # repair not called
+
+
+def test_repair_returns_timing_dict(origin_and_clone):
+    origin, clone = origin_and_clone
+    _branch(clone, "pr", {"tests.py": "def test_a():\n    pass\n\ndef test_pr():\n    pass\n"})
+    _main_moves(clone, {"tests.py": "def test_a():\n    pass\n\ndef test_main():\n    pass\n"})
+    res = cr.repair("o/r", "pr", str(clone), "main", run_tests=PASS)
+    assert res["outcome"] == "repaired"
+    assert "timing" in res
+    assert isinstance(res["timing"], dict)
+    assert "rebase/resolve" in res["timing"]
+    assert "run_tests" in res["timing"]
+    assert "push" in res["timing"]
+
+
 def test_no_clone_here_means_no_repair(monkeypatch):
     monkeypatch.setattr(cr, "where", lambda repo: (None, "main"))
     result = cr.attempt("o/r", {"number": 1, "headRefName": "h"}, cr.Budget())
@@ -319,3 +351,67 @@ def test_a_crash_inside_repair_still_falls_back_to_a_rebuild(monkeypatch, tmp_pa
     monkeypatch.setattr(cr, "repair", boom)
     res = REAL_TRY_CONFLICT_REPAIR("o/r", {"number": 1, "headRefName": "h", "headRefOid": "s"})
     assert res["outcome"] == "rebuild" and "boom" in res["reason"]
+
+
+def test_budget_deadline_stops_repairs_when_time_runs_out(monkeypatch, tmp_path):
+    """When REPAIR_SCAN_BUDGET_S expires, attempt() returns 'later' without calling do_repair."""
+    import time
+    monkeypatch.setattr(cr, "where", lambda repo: (str(tmp_path / "clone"), "main"))
+    monkeypatch.setattr(cr, "STATE_PATH", tmp_path / "state.json")
+
+    # Create a Budget with deadline already passed
+    deadline = time.time() - 1  # 1 second in the past
+    budget = cr.Budget(deadline_s=deadline)
+
+    repairs_called = []
+    def mock_repair(*a, **k):
+        repairs_called.append(True)
+        return {"outcome": "repaired", "detail": "test", "cost_usd": 0.0}
+
+    pr = {"number": 1, "headRefName": "h", "headRefOid": "s"}
+    res = cr.attempt("o/r", pr, budget, state_path=tmp_path / "state.json", do_repair=mock_repair)
+
+    # Should return "later" without calling do_repair
+    assert res["outcome"] == "later"
+    assert len(repairs_called) == 0, "do_repair should not be called when deadline has passed"
+
+
+def test_budget_tracks_repair_timing_in_result():
+    """repair() should return timing information for each phase (rebase, model-assist, run_tests, push)."""
+    import tempfile
+    import os
+
+    # Create a minimal test case with timing
+    with tempfile.TemporaryDirectory() as origin_dir:
+        with tempfile.TemporaryDirectory() as clone_dir:
+            # Initialize origin repo
+            subprocess.run(["git", "init", "-q", "--bare", "-b", "main", origin_dir], check=True)
+            subprocess.run(["git", "clone", "-q", origin_dir, clone_dir], check=True)
+
+            # Set up initial commit
+            os.chdir(clone_dir)
+            subprocess.run(["git", "config", "user.email", "t@t"], check=True)
+            subprocess.run(["git", "config", "user.name", "t"], check=True)
+            Path("test.txt").write_text("base\n")
+            subprocess.run(["git", "add", "-A"], check=True)
+            subprocess.run(["git", "commit", "-q", "-m", "base"], check=True)
+            subprocess.run(["git", "push", "-q", "origin", "main"], check=True)
+
+            # Create a branch with no conflicts (simple addition)
+            subprocess.run(["git", "checkout", "-q", "-b", "feature"], check=True)
+            Path("feature.txt").write_text("feature work\n")
+            subprocess.run(["git", "add", "-A"], check=True)
+            subprocess.run(["git", "commit", "-q", "-m", "feature"], check=True)
+            subprocess.run(["git", "push", "-q", "origin", "feature"], check=True)
+
+            # Repair should collect timing for each phase
+            result = cr.repair("o/r", "feature", clone_dir, "main",
+                             run_tests=lambda *a, **k: (True, ""))
+
+            # Result should have timing info
+            assert "timing" in result, f"Result should have timing, got: {result}"
+            assert isinstance(result["timing"], dict), "timing should be a dict"
+            # Should have timing for at least one phase (since no conflicts)
+            assert len(result["timing"]) > 0, "Should have collected timing for at least one phase"
+            assert "rebase/resolve" in result["timing"] or "run_tests" in result["timing"] or "push" in result["timing"], \
+                f"Should have timing for rebase, tests, or push, got: {result['timing'].keys()}"

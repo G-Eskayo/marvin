@@ -321,6 +321,47 @@ def _mirror_failures(days: float = PROBE_WINDOW_DAYS, path: Path | None = None, 
     return float(mirror_health.recent_failures(entries, now.timestamp(), window_s=days * 86400))
 
 
+def _conflict_repair_scan_duration(days: float = PROBE_WINDOW_DAYS, path: Path | None = None,
+                                   now: datetime | None = None) -> float:
+    """Conflicted PR repair scans that exceeded 15 minutes (yellow threshold), over the window.
+    Looks at the latest scan's duration from ~/.claude/logs/jobs/ticket-pipeline.json."""
+    now = now or datetime.now(timezone.utc)
+    cut = now - timedelta(days=days)
+    try:
+        job_path = Path(path or (Path.home() / ".claude" / "logs" / "jobs" / "ticket-pipeline.json"))
+        if not job_path.exists():
+            return 0.0
+        import stamped
+        copy = stamped.read(job_path)
+        if copy.missing or not isinstance(copy.value, dict):
+            return 0.0
+        data = copy.value
+        runs = data.get("runs", []) if isinstance(data, dict) else []
+        if not runs:
+            return 0.0
+        latest = max(runs, key=lambda r: r.get("started_at", ""), default=None)
+        if not latest:
+            return 0.0
+        try:
+            started = datetime.fromisoformat(str(latest.get("started_at", "")).replace("Z", "+00:00"))
+        except (ValueError, TypeError):
+            return 0.0
+        if started < cut:
+            return 0.0  # outside the window
+        ended = latest.get("ended_at") or latest.get("completed_at")
+        if ended:
+            try:
+                end_dt = datetime.fromisoformat(str(ended).replace("Z", "+00:00"))
+                duration_s = (end_dt - started).total_seconds()
+            except (ValueError, TypeError):
+                return 0.0
+        else:
+            duration_s = (now - started).total_seconds()
+        return float(duration_s)
+    except Exception:  # noqa: BLE001
+        return 0.0
+
+
 def _slot_wait_timeouts(days: float = PROBE_WINDOW_DAYS, path: Path | None = None, now: datetime | None = None) -> float:
     """#1113 (2026-11-04): pipeline verify timeouts that were spent waiting in line for the test slot, in this Mac's
     pipeline-failures.jsonl over the window. The run's last line was the slot's "waiting for ... to finish", so the
@@ -510,6 +551,8 @@ PROBES: dict[str, tuple[Callable[..., float], float, str]] = {
     # Six is one hour of failed runs in a week: a blip passes, an outage Health let run for an hour doesn't.
     "box-mirror-failures": (lambda days=PROBE_WINDOW_DAYS: _mirror_failures(days=days), 6.0,
                             "mirror failures on pull-only nodes (sync:mirror in errors.jsonl) over 7 days (#910)"),
+    "conflicted-prs-repair-duration": (lambda days=PROBE_WINDOW_DAYS: _conflict_repair_scan_duration(days=days), 15*60,
+                                       "ticket pipeline scan duration in seconds (yellow ≥15min, red ≥45min)"),
     "verify-timeout-in-slot-wait": (lambda days=PROBE_WINDOW_DAYS: _slot_wait_timeouts(days=days), 0.0,
                                     "pipeline verify timeouts spent waiting for the test slot over 7 days, per Mac, summed (#1113)"),
     # Two a week leaves room for one genuinely hung run; the affected tests take seconds to minutes, not 20+.

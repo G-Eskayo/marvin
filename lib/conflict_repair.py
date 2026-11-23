@@ -36,6 +36,7 @@ STATE_PATH = HOME / ".claude" / "logs" / "conflict-repair.json"
 VENV_PYTHON = str(HOME / ".agents" / "venv" / "bin" / "python")
 MAX_PER_SCAN = 2
 TEST_TIMEOUT_S = 25 * 60
+REPAIR_SCAN_BUDGET_S = 15 * 60  # 15 minutes per scan
 
 
 def _git(cwd, *args, check=True, timeout=300):
@@ -185,9 +186,12 @@ def repair(repo: str, head: str, clone: str, base: str, run_tests=default_tests,
 
     If genuine conflicts are found, tries model-assisted resolution if resolve_hunks is provided.
     `pr` dict (with title, body, number) is passed to the model for context."""
+    import time
     files = conflicted_files(clone, base, head)
     wt = tempfile.mkdtemp(prefix="conflict-repair-")
     model_cost = 0.0
+    timing: dict = {}
+    phase_start = time.time()
     try:
         _git(clone, "fetch", "-q", "origin", base, head)
         old = _git(clone, "rev-parse", f"origin/{head}").stdout.strip()
@@ -199,8 +203,10 @@ def repair(repo: str, head: str, clone: str, base: str, run_tests=default_tests,
             resolved = gp.resolve_rebase(wt, gp.rules_for(repo), abort_on_real_conflict=False)
             if not resolved.get("ok"):
                 real_files = resolved.get("files") or []
+                timing["rebase/resolve"] = time.time() - phase_start
                 # If there are real conflicts and we have a model resolver, try it
                 if real_files and resolve_hunks is not None:
+                    model_start = time.time()
                     scratch = tempfile.mkdtemp(prefix="conflict-model-")
                     try:
                         # Copy only conflicted files to scratch dir
@@ -232,29 +238,37 @@ def repair(repo: str, head: str, clone: str, base: str, run_tests=default_tests,
                             if cont.returncode == 0 or not _git(wt, "diff", "--name-only", "--diff-filter=U").stdout.strip():
                                 resolved = {"ok": True, "model_assisted": True}
                             else:
-                                return {"outcome": "rebuild", "files": real_files, "reason": "rebase could not continue after model fix", "cost_usd": model_cost}
+                                timing["model-assist"] = time.time() - model_start
+                                return {"outcome": "rebuild", "files": real_files, "reason": "rebase could not continue after model fix", "cost_usd": model_cost, "timing": timing}
                         else:
-                            return {"outcome": "rebuild", "files": real_files, "reason": "model resolution verification failed", "cost_usd": model_cost}
+                            timing["model-assist"] = time.time() - model_start
+                            return {"outcome": "rebuild", "files": real_files, "reason": "model resolution verification failed", "cost_usd": model_cost, "timing": timing}
                     finally:
                         import shutil
                         shutil.rmtree(scratch, ignore_errors=True)
+                    timing["model-assist"] = time.time() - model_start
                 else:
-                    return {"outcome": "rebuild", "files": real_files, "reason": resolved.get("reason", ""), "cost_usd": 0.0}
+                    return {"outcome": "rebuild", "files": real_files, "reason": resolved.get("reason", ""), "cost_usd": 0.0, "timing": timing}
         changed = [l for l in _git(wt, "diff", "--name-only", f"origin/{base}", "HEAD").stdout.splitlines() if l]
+        timing["rebase/resolve"] = timing.get("rebase/resolve") or (time.time() - phase_start)
+        test_start = time.time()
         ok, out = run_tests(repo, wt, changed)
+        timing["run_tests"] = time.time() - test_start
         if not ok:
-            return {"outcome": "rebuild", "files": files, "reason": f"tests fail after resolving the conflict:\n{out[-800:]}", "cost_usd": model_cost}
+            return {"outcome": "rebuild", "files": files, "reason": f"tests fail after resolving the conflict:\n{out[-800:]}", "cost_usd": model_cost, "timing": timing}
+        push_start = time.time()
         push = _git(wt, "push", "-q", f"--force-with-lease={head}:{old}", "origin", f"HEAD:{head}", check=False)
+        timing["push"] = time.time() - push_start
         if push.returncode != 0:
-            return {"outcome": "later", "reason": f"push refused (the branch moved?): {push.stderr[-300:]}", "cost_usd": model_cost}
+            return {"outcome": "later", "reason": f"push refused (the branch moved?): {push.stderr[-300:]}", "cost_usd": model_cost, "timing": timing}
         kinds = [f"both sides only added lines in {', '.join(resolved.get('both_inserted') or [])}" if resolved.get("both_inserted") else "",
                  f"{', '.join(resolved.get('already_on_base') or [])} already had this change on {base}" if resolved.get("already_on_base") else ""]
         if resolved.get("model_assisted"):
             kinds.insert(0, "model-assisted resolution of genuine conflicts")
         detail = "; ".join(k for k in kinds if k) or "it rebased cleanly"
-        return {"outcome": "repaired", "detail": f"{detail}. Tests pass on the rebased branch.", "cost_usd": model_cost}
+        return {"outcome": "repaired", "detail": f"{detail}. Tests pass on the rebased branch.", "cost_usd": model_cost, "timing": timing}
     except (subprocess.SubprocessError, OSError) as e:
-        return {"outcome": "rebuild", "files": files, "reason": f"repair could not run: {e}", "cost_usd": model_cost}
+        return {"outcome": "rebuild", "files": files, "reason": f"repair could not run: {e}", "cost_usd": model_cost, "timing": timing}
     finally:
         _git(clone, "worktree", "remove", "--force", wt, check=False)
 
@@ -277,13 +291,16 @@ def _save(state: dict, path: Path) -> None:
 
 
 class Budget:
-    def __init__(self, n: int = MAX_PER_SCAN):
+    def __init__(self, n: int = MAX_PER_SCAN, deadline_s: float | None = None):
+        import time
         self.left = n
+        self.deadline = deadline_s if deadline_s is not None else time.time() + REPAIR_SCAN_BUDGET_S
 
 
 def attempt(repo: str, pr: dict, budget: Budget, state_path: Path | None = None, do_repair=repair) -> dict:
     """One PR: repair it if this commit hasn't already failed a repair and the scan has budget left.
     state_path is read at call time: bound as a default it pinned the real file, so tests could not move it."""
+    import time
     state_path = STATE_PATH if state_path is None else state_path
     clone, base = where(repo)
     head, sha = pr.get("headRefName"), pr.get("headRefOid") or ""
@@ -294,7 +311,7 @@ def attempt(repo: str, pr: dict, budget: Budget, state_path: Path | None = None,
     if sha and state.get(key, {}).get("failed_sha") == sha:
         prev = state[key]
         return {"outcome": "rebuild", "files": prev.get("files", []), "reason": prev.get("reason", ""), "cost_usd": 0.0}
-    if budget.left <= 0:
+    if budget.left <= 0 or time.time() >= budget.deadline:
         return {"outcome": "later", "cost_usd": 0.0}
     budget.left -= 1
     res = do_repair(repo, head, clone, base, pr=pr)
