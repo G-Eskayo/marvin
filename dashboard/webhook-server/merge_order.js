@@ -89,7 +89,8 @@ export function enrichForOrder(prs, { repo = null, issues = [], unbuilt = new Se
       decisionsUnbuilt: unbuilt.has(p.url) && !answersAsBuilt(p.body || ''),
       conflict,
       conflictAfter: rbConflict && Number.isFinite(rb.after) ? rb.after : null,
-      repairFailed: !!p.headRefOid && repairFailed?.[`${r}#${p.number}`] === p.headRefOid,
+      repairFailed: !!p.headRefOid && repairFailed?.[`${r}#${p.number}`]?.sha === p.headRefOid,
+      conflictFiles: rbConflict ? (rb.files || []) : (repairFailed?.[`${r}#${p.number}`]?.sha === p.headRefOid ? repairFailed[`${r}#${p.number}`].files : null),
       gateCovers: covers
     }
   })
@@ -156,7 +157,9 @@ function ownReason(pr, base) {
   if (ci.state === 'failing') return { reason: `checks failing: ${ci.failing.join(', ')}` }
   if (pr.conflict) {
     const after = pr.conflictAfter ? ` after #${pr.conflictAfter}` : ''
-    return { reason: `conflicts with ${base}${after} · ${pr.repairFailed ? 'needs a rebuild' : 'MARVIN is fixing it'}`, conflict: true }
+    const files = Array.isArray(pr.conflictFiles) ? pr.conflictFiles : []
+    const fileList = files.length > 0 ? ` in ${files.slice(0, 3).join(', ')}${files.length > 3 ? ` and ${files.length - 3} more` : ''}` : ''
+    return { reason: `Held: conflicts with ${base}${after}${fileList} · ${pr.repairFailed ? 'needs a rebuild' : 'MARVIN is fixing it'}`, conflict: true }
   }
   if (pr.sentBack) return { reason: 'sent back for rework' }
   return null

@@ -1,0 +1,11 @@
+1. `merge_facts.js`: change `readRepairFailures()` to return `{ [repo#n]: { sha, files } }` instead of `{ [repo#n]: sha }`, defaulting `files` to `[]` on anything malformed.
+2. `merge_order.js` `enrichForOrder()`: update the `repairFailed` comparison to `repairFailed?.[key]?.sha === p.headRefOid`, and add `conflictFiles: rbConflict ? (rb.files || []) : (repairFailed?.[key]?.sha === p.headRefOid ? repairFailed[key].files : null)` (or equivalent) onto the enriched PR.
+3. `merge_order.js` `ownReason()`: change the `pr.conflict` branch to produce `"Held: conflicts with ${base}${after}"` + a truncated file list (reuse the 3-file "and N more" convention) + the existing `"needs a rebuild"` / `"MARVIN is fixing it"` suffix, keeping the exact substring `"needs a rebuild"` intact for `next_step.js`'s regex.
+4. Update the three pre-existing wording assertions in `merge_order.test.js` to match, then add the new tests (#2-#8 above).
+5. Add tests for `readRepairFailures()`'s new shape (#9), then implement if any gap surfaces.
+6. `index.js`: add a `log(...)` call in `onWaiting`'s conflict branch (currently silent — the actual "webhook log never mentions it" gap from the ticket's Task description).
+7. `merge.js`: extract `export function notifyConflictStuck(repo, pr, info, { exec = execFileAsync, notify = ... } = {})` that keeps the existing notify.py desktop call and adds a fail-soft `gh pr comment` on `pr.url` with the same message; wire `index.js`'s `onStuck` to call it.
+8. Add tests #13-#15 for `notifyConflictStuck`, then the `merge_queue.test.js` tests #10-#12.
+9. `prState.js`: add the new `mq.state === 'waiting' && mq.conflict` branch (headline `"Held: conflicts with ${main}"`) ahead of the generic `mq?.queued` branch; narrow that generic branch to `mq.state !== 'waiting'`; widen `SAID_BY_HEADLINE.conflict` to match the new wording.
+10. Add/extend `prState.test.js` tests #16-#19, and `next_step.test.js` test #20 (expected to pass unchanged — confirms no collateral damage).
+11. Run the full `dashboard` vitest suite and the Python suite once, locally, before considering this done — three prior automated attempts on this ticket failed on commit/verify/timeout issues, not necessarily on code correctness, so keep this diff to exactly the files above and avoid anything that lengthens the test run (no new slow/integration tests, no new npm deps).

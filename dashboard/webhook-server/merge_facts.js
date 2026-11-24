@@ -28,7 +28,14 @@ export const readMainHealth = () => readJson(path.join(logs(), 'main-health.json
 export const readRepairFailures = () => {
   const all = readJson(path.join(logs(), 'conflict-repair.json'), {})
   const out = {}
-  for (const [k, v] of Object.entries(all && typeof all === 'object' ? all : {})) if (v?.failed_sha) out[k] = v.failed_sha
+  for (const [k, v] of Object.entries(all && typeof all === 'object' ? all : {})) {
+    if (v?.failed_sha) {
+      out[k] = {
+        sha: v.failed_sha,
+        files: Array.isArray(v.files) ? v.files : []
+      }
+    }
+  }
   return out
 }
 

@@ -2,7 +2,7 @@ import { readFileSync } from 'fs'
 import os from 'os'
 import path from 'path'
 import { createServer } from 'http'
-import { mergePr, baselineFailsOnMain, mergesAhead, execWithGroupTimeout, runDiskFirstAid, memoryGuardCheck, withMergeMark, forgetQueuedMerge, readMergeReady, sweepGateClones, repoJobsDone, triggerTicketPipeline } from './merge.js'
+import { mergePr, baselineFailsOnMain, mergesAhead, execWithGroupTimeout, runDiskFirstAid, memoryGuardCheck, withMergeMark, forgetQueuedMerge, readMergeReady, sweepGateClones, repoJobsDone, triggerTicketPipeline, notifyConflictStuck } from './merge.js'
 import { createMergeQueue, createQueueStore } from './merge_queue.js'
 import { createUnbuiltCache, createFixTicketsCache, createQueueLoader, createBaseLookup, createFollowUpRequester, readMainHealth, readRepairFailures } from './merge_facts.js'
 import { pendingCheckHeads } from '../electron/main/mr_repos.js'
@@ -33,6 +33,9 @@ import { gateCooldownUntil } from '../electron/main/github_state.js'
 import { readRegistry } from '../electron/main/boards.js'
 import { execFile } from 'child_process'
 import { promisify } from 'util'
+
+const execFileAsync = promisify(execFile)
+
 import { createPortfolio } from '../electron/main/portfolio.js'
 import { handlePortfolioRequest } from '../electron/main/portfolio_remote.js'
 import { resolveServiceDefaults } from '../electron/main/device_identity.js'
@@ -447,20 +450,17 @@ const mergeQueue = createMergeQueue({
   onWaiting: (repo, pr, entry) => {
     if (entry.unbuilt) requestFollowUp(repo, pr.number)
     // A conflict goes to the #230 resolver, which the ticket scan runs (conflict_repair.py): started once per commit.
-    if (entry.conflict && !pr.repairFailed && triggeredResolver.get(pr.url) !== pr.headRefOid) {
-      triggeredResolver.set(pr.url, pr.headRefOid)
-      try { triggerTicketPipeline() } catch { /* the hourly scan gets it */ }
+    if (entry.conflict) {
+      if (!pr.repairFailed && triggeredResolver.get(pr.url) !== pr.headRefOid) {
+        triggeredResolver.set(pr.url, pr.headRefOid)
+        console.log(`[merge-queue] ${repo} #${pr.number}: waiting on conflict${entry.reason ? ` - ${entry.reason}` : ''}`)
+        try { triggerTicketPipeline() } catch { /* the hourly scan gets it */ }
+      }
     }
   },
   // marvin#1183: held on one conflicting commit for a day, so the resolver couldn't fix it: tell the owner, once.
   onStuck: (repo, pr, { since }) => {
-    const days = Math.max(1, Math.round((Date.now() - since) / 86_400_000))
-    const notify = path.resolve(path.dirname(new URL(import.meta.url).pathname), '..', '..', 'lib', 'notify.py')
-    const venv = path.resolve(path.dirname(notify), '..', 'venv', 'bin', 'python')
-    const code = 'import sys; sys.path.insert(0, sys.argv[1]); import notify; notify.notify(sys.argv[2], sys.argv[3], sys.argv[4])'
-    execFile(venv, ['-c', code, path.dirname(notify), `#${pr.number} is stuck on a conflict`,
-      `${repo} #${pr.number} has waited ${days} day${days === 1 ? '' : 's'} in the merge queue on a conflict the resolver couldn't fix. It needs main merged in by hand.`,
-      pr.url], { timeout: 30_000 }, () => {})
+    notifyConflictStuck(repo, pr, { since }, { exec: execFileAsync }).catch(() => {})
   },
   log: (m) => console.log(m)
 })

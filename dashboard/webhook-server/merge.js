@@ -145,6 +145,33 @@ export async function conflictsWithBase(headRef, exec = execFileAsync, repoPath 
   }
 }
 
+// A PR stuck on a conflict for too long: notify the owner via desktop and PR comment.
+export async function notifyConflictStuck(repo, pr, info, { exec = execFileAsync, notify = null } = {}) {
+  const days = Math.max(1, Math.round((Date.now() - info.since) / 86_400_000))
+  const message = `${repo} #${pr.number} has waited ${days} day${days === 1 ? '' : 's'} in the merge queue on a conflict the resolver couldn't fix. It needs main merged in by hand.`
+
+  // Desktop notification
+  if (!notify) {
+    const notifyPath = path.resolve(path.dirname(new URL(import.meta.url).pathname), '..', '..', 'lib', 'notify.py')
+    const venv = path.resolve(path.dirname(notifyPath), '..', 'venv', 'bin', 'python')
+    notify = async () => {
+      const code = 'import sys; sys.path.insert(0, sys.argv[1]); import notify; notify.notify(sys.argv[2], sys.argv[3], sys.argv[4])'
+      return new Promise((resolve) => {
+        execFile(venv, ['-c', code, path.dirname(notifyPath), `#${pr.number} is stuck on a conflict`, message, pr.url], { timeout: 30_000 }, () => resolve())
+      })
+    }
+  }
+
+  try {
+    await notify()
+  } catch { /* notification is best-effort */ }
+
+  // PR comment
+  try {
+    await exec('gh', ['pr', 'comment', pr.url, `--body=${message}`], { timeout: 30_000 })
+  } catch { /* comment is best-effort */ }
+}
+
 // ADR 0026: dispatch stays concurrent (no throttling), so two tickets can
 // finish out of order -- whichever merges second may already be behind
 // whatever the first merge just landed on main. `origin/main` being an

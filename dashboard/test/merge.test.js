@@ -1458,3 +1458,41 @@ describe('rebaseAndRetest on a branch whose base PR was squash-merged (#1183)', 
     }
   })
 })
+
+describe('notifyConflictStuck', () => {
+  it('calls gh pr comment with the message', async () => {
+    const { notifyConflictStuck } = await import('../webhook-server/merge.js')
+    const exec = vi.fn().mockResolvedValue({ stdout: '', stderr: '' })
+    const repo = 'G-Eskayo/marvin'
+    const pr = { number: 972, url: 'https://github.com/G-Eskayo/marvin/pull/972' }
+    const since = Date.now() - 2 * 86_400_000 // 2 days ago
+
+    await notifyConflictStuck(repo, pr, { since }, { exec, notify: vi.fn().mockResolvedValue() })
+
+    expect(exec).toHaveBeenCalledWith('gh', ['pr', 'comment', pr.url, expect.stringContaining('body=')], { timeout: 30_000 })
+  })
+
+  it('handles exec errors gracefully', async () => {
+    const { notifyConflictStuck } = await import('../webhook-server/merge.js')
+    const exec = vi.fn().mockRejectedValue(new Error('Network error'))
+    const repo = 'G-Eskayo/marvin'
+    const pr = { number: 972, url: 'https://github.com/G-Eskayo/marvin/pull/972' }
+    const since = Date.now() - 1 * 86_400_000
+
+    await expect(notifyConflictStuck(repo, pr, { since }, { exec, notify: vi.fn().mockResolvedValue() })).resolves.not.toThrow()
+  })
+
+  it('formats the message with the correct number of days', async () => {
+    const { notifyConflictStuck } = await import('../webhook-server/merge.js')
+    const exec = vi.fn().mockResolvedValue({ stdout: '', stderr: '' })
+    const repo = 'G-Eskayo/marvin'
+    const pr = { number: 972, url: 'https://github.com/G-Eskayo/marvin/pull/972' }
+    const since = Date.now() - 3 * 86_400_000 // 3 days ago
+
+    await notifyConflictStuck(repo, pr, { since }, { exec, notify: vi.fn().mockResolvedValue() })
+
+    const callArgs = exec.mock.calls.find(c => c[0] === 'gh')[1]
+    const bodyArg = callArgs.find(a => a.includes('body='))
+    expect(bodyArg).toContain('3 days')
+  })
+})

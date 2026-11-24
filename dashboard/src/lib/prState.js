@@ -89,15 +89,28 @@ function describeState(pr, { status = 'idle', errorMessage = null, progress = fa
   // itself in its turn; the line under the title says where it is or what it waits for. Deny still takes it out.
   // A merge that just failed here says so (its failed stage on the strip), even while the list still shows it queued.
   const mq = status === 'error' ? null : pr.mergeQueue
+  const rb = pr.rebase || null
   if (mq?.state === 'running') {
     return base('merging', 'working', 'Merging…', 'You can leave this screen; it carries on.', 'hidden', 'hidden')
+  }
+  if (mq?.state === 'waiting' && mq?.conflict) {
+    // If the PR also has pr.conflicts (actual GitHub conflict), return 'conflict' so next_step.js routes it correctly
+    if (pr.conflicts) {
+      const since = rb?.state === 'conflict' && rb.files?.length ? `Since #${rb.after} merged it conflicts in ${rb.files.join(', ')}. ` : ''
+      const repairMsg = pr.repairFailed ? 'needs a rebuild' : 'The hourly scan tries to resolve it; if it still fails after a day, the resolver gives up'
+      return base('conflict', 'blocked', `Conflicts with ${main}`,
+        `${since}It is approved and queued, but waiting to be merged because of a conflict. ${repairMsg}.`, 'hidden', 'enabled', { conflict: true })
+    }
+    // If only gate-held on a conflictHead without pr.conflicts, show it's in-queue-conflict
+    return base('in-queue-conflict', 'blocked', 'Held in the queue: waiting on a conflict',
+      'It is approved and queued, but waiting to be merged because of a conflict. The hourly scan tries to resolve it; if it still fails after a day, the resolver gives up and you can merge it by hand.',
+      'hidden', 'enabled')
   }
   if (mq?.queued) {
     return base('in-queue', 'working', 'Approved: in the merge queue', null, 'hidden', 'enabled')
   }
 
   // What the post-merge rebase found (#225): {state: clean | conflict | tests_failed | error, after, files}.
-  const rb = pr.rebase || null
 
   if (pr.conflicts) {
     const since = rb?.state === 'conflict' && rb.files?.length ? `Since #${rb.after} merged it conflicts in ${rb.files.join(', ')}. ` : ''
@@ -208,11 +221,12 @@ const SAID_BY_HEADLINE = {
   'checks-failed': /^checks failing\b/,
   'decisions-pending': /\bDecisions? (?:is|are) waiting for you$/,
   'needs-options': /^asks you to choose without options$/,
-  conflict: /^conflicts with\b/,
+  conflict: /^Held: conflicts with\b/,
   'sent-back': /^sent back for rework$/,
   stacked: /^waits for #\d+ \(it's built on it\)$/,
   'wrong-base': /^targets\b/,
-  merging: /^merging now$/
+  merging: /^merging now$/,
+  'in-queue-conflict': /^Held in the queue: waiting on a conflict$/
 }
 export function queueLineFor(pr, opts = {}) {
   const entry = pr?.mergeQueue
