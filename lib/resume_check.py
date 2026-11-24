@@ -260,12 +260,17 @@ def changes_since(node: dict, as_of: datetime, repo: str) -> list[str]:
     return [f"{what} {_day(t)}" for t, what in sorted(events, key=lambda x: x[0])]
 
 
-def sanitize(text: str) -> str:
-    """A GitHub title as data: one line, no markup that could render or read as an instruction heading."""
+def strip_markup(text: str, max_len: int) -> str:
+    """Remove control chars, markup, and whitespace noise; truncate to max_len with graceful ellipsis."""
     s = re.sub(r"[\x00-\x1f\x7f]+", " ", str(text or ""))
     s = re.sub(r"[`<>\[\]#~*|\\]", "", s).replace('"', "'")
     s = re.sub(r"\s+", " ", s).strip()
-    return s if len(s) <= TITLE_MAX else s[:TITLE_MAX - 1].rstrip() + "…"
+    return s if len(s) <= max_len else s[:max_len - 1].rstrip() + "…"
+
+
+def sanitize(text: str) -> str:
+    """A GitHub title as data: one line, no markup that could render or read as an instruction heading."""
+    return strip_markup(text, TITLE_MAX)
 
 
 # ── the check ────────────────────────────────────────────────────────────────

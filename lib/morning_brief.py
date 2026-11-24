@@ -19,11 +19,36 @@ import json
 import re
 import subprocess
 import sys
+from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Callable
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
+
+import resume_check
+
+# ── Item structure ──────────────────────────────────────────────────────────
+
+@dataclass
+class Item:
+    section: str           # one of SECTIONS
+    line: str              # one-line summary with markup removed
+    summary: str | None    # optional extended summary
+    source: dict           # {label, url?, related?}
+    rank: int              # 1–5 (lower is higher priority)
+
+    def to_md_line(self) -> str:
+        return f"- {self.line}"
+
+
+SECTIONS = ("World & security", "Research", "Your day", "Your projects")
+LINE_MAX = 100
+SUMMARY_MAX = 200
+
+def _sanitize(text: str, max_len: int = LINE_MAX) -> str:
+    """Remove markup and control chars from externally-sourced strings."""
+    return resume_check.strip_markup(text, max_len) if text else ""
 
 CLAUDE = Path.home() / ".claude"
 BRIEFS = CLAUDE / "briefs"
@@ -32,6 +57,114 @@ OVERRIDES = CLAUDE / "catalog" / "overrides.json"
 REPOS = ("G-Eskayo/marvin", "G-Eskayo/clarity-captions", "G-Eskayo/marvin-mobile")
 DEADLINE_HORIZON_DAYS = 45
 LATE_HOUR = 23  # local time; a session still active after this counts as a late night
+
+
+# ── item builders (map feeds → candidate items) ──────────────────────────────────
+
+def _item_from_red_check(check: dict) -> Item | None:
+    if not check.get("label") or not check.get("detail"):
+        return None
+    return Item(
+        section="Your projects",
+        line=f"Health: {_sanitize(check['label'])}: {_sanitize(check['detail'])}",
+        summary=None,
+        source={"label": "Health"},
+        rank=0
+    )
+
+
+def _item_from_open_pr(pr: dict) -> Item | None:
+    if pr.get("waiting_on_marvin"):
+        return None
+    if not pr.get("number") or not pr.get("title"):
+        return None
+    repo = f"{pr.get('repo', 'marvin')} " if pr.get("repo") != "marvin" else ""
+    return Item(
+        section="Your projects",
+        line=f"Review {repo}PR #{pr['number']} {_sanitize(pr['title'])}",
+        summary=None,
+        source={"label": "open PRs", "repo": pr.get("repo"), "number": pr.get("number")},
+        rank=0
+    )
+
+
+def _item_from_human_ticket(ticket: dict) -> Item | None:
+    if not ticket.get("number") or not ticket.get("title"):
+        return None
+    repo = f"{ticket.get('repo', 'marvin')} " if ticket.get("repo") != "marvin" else ""
+    return Item(
+        section="Your projects",
+        line=f"Your task: {repo}#{ticket['number']} {_sanitize(ticket['title'])}",
+        summary=None,
+        source={"label": "ready-for-human", "repo": ticket.get("repo"), "number": ticket.get("number")},
+        rank=0
+    )
+
+
+def _item_from_top_ticket(ticket: dict) -> Item | None:
+    if not ticket.get("number") or not ticket.get("title"):
+        return None
+    priority = ticket.get("priority", "p0")
+    repo = f"{ticket.get('repo', 'marvin')} " if ticket.get("repo") != "marvin" else ""
+    return Item(
+        section="Your projects",
+        line=f"{priority}: {repo}#{ticket['number']} {_sanitize(ticket['title'])}",
+        summary=None,
+        source={"label": "top tickets", "repo": ticket.get("repo"), "number": ticket.get("number"), "priority": priority},
+        rank=0
+    )
+
+
+def _item_from_regression(regression: dict) -> Item | None:
+    if regression.get("kind") != "needs-you":
+        return None
+    if not regression.get("line"):
+        return None
+    return Item(
+        section="Your projects",
+        line=_sanitize(regression["line"]),
+        summary=None,
+        source={"label": "incident ladder"},
+        rank=0
+    )
+
+
+def _item_from_auto_merge(text: str) -> Item | None:
+    if not text:
+        return None
+    return Item(
+        section="Your projects",
+        line=_sanitize(text),
+        summary=None,
+        source={"label": "auto-merge"},
+        rank=0
+    )
+
+
+def _item_from_deadline(deadline: dict, now: datetime) -> Item | None:
+    if not deadline.get("project") or not deadline.get("date"):
+        return None
+    days = _days_until(deadline["date"], now)
+    hard = ", hard deadline" if deadline.get("hard") else ""
+    return Item(
+        section="Your day",
+        line=f"{deadline['project']}: {days} days ({deadline['date']}{hard})",
+        summary=None,
+        source={"label": "deadlines", "project": deadline.get("project")},
+        rank=1
+    )
+
+
+def _item_from_research_idea(text: str) -> Item | None:
+    if not text:
+        return None
+    return Item(
+        section="Research",
+        line=f"From research: {_sanitize(text)}",
+        summary=None,
+        source={"label": "research digest"},
+        rank=2
+    )
 
 
 # ── sources (each is a small reader; gather() tolerates any of them failing) ──────────────────────────────────
@@ -232,61 +365,143 @@ def gather(now: datetime, sources: dict[str, Callable] | None = None) -> dict:
     return data
 
 
-def _ref(item: dict, pr: bool = False) -> str:
-    repo = f"{item['repo']} " if item.get("repo") and item["repo"] != "marvin" else ""
-    return f"{repo}{'PR ' if pr else ''}#{item['number']} {item['title']}"
+def _build_candidates(brief: dict, now: datetime) -> list[Item]:
+    """Convert gathered data into candidate items."""
+    candidates = []
+
+    # Your projects section
+    for check in brief.get("red_checks") or []:
+        item = _item_from_red_check(check)
+        if item:
+            candidates.append(item)
+
+    for pr in brief.get("open_prs") or []:
+        item = _item_from_open_pr(pr)
+        if item:
+            candidates.append(item)
+
+    for ticket in brief.get("human_tickets") or []:
+        item = _item_from_human_ticket(ticket)
+        if item:
+            candidates.append(item)
+
+    for ticket in brief.get("top_tickets") or []:
+        item = _item_from_top_ticket(ticket)
+        if item:
+            candidates.append(item)
+
+    for regression in brief.get("regressions") or []:
+        item = _item_from_regression(regression)
+        if item:
+            candidates.append(item)
+
+    if brief.get("auto_merge"):
+        item = _item_from_auto_merge(brief["auto_merge"])
+        if item:
+            candidates.append(item)
+
+    # Your day section
+    for deadline in brief.get("deadlines") or []:
+        item = _item_from_deadline(deadline, now)
+        if item:
+            candidates.append(item)
+
+    # Research section
+    if brief.get("research_idea"):
+        item = _item_from_research_idea(brief["research_idea"])
+        if item:
+            candidates.append(item)
+
+    return candidates
+
+
+def _dedup_key(item: Item) -> tuple:
+    """Return a key for de-duplication: (repo, number) if available, else normalized line."""
+    src = item.source
+    if src.get("repo") is not None and src.get("number") is not None:
+        return ("ref", src["repo"], src["number"])
+    return ("line", _sanitize(item.line, 1000).lower())
+
+
+def rank_items(candidates: list[Item]) -> list[Item]:
+    """Assign ranks 1–5 based on tier, de-duplicate, sort, and truncate to 5, with stable tie-breaker."""
+    tier_1 = [c for c in candidates if c.rank == 0]
+    tier_2 = [c for c in candidates if c.rank == 1]
+    tier_3 = [c for c in candidates if c.rank == 2]
+
+    seen = set()
+    deduped = []
+    for tier in [tier_1, tier_2, tier_3]:
+        sorted_tier = sorted(tier, key=lambda x: (x.source.get("label", ""), x.line.lower()))
+        for item in sorted_tier:
+            key = _dedup_key(item)
+            if key not in seen:
+                seen.add(key)
+                deduped.append(item)
+
+    ranked = []
+    for i, item in enumerate(deduped[:5]):
+        new_item = Item(
+            section=item.section,
+            line=item.line,
+            summary=item.summary,
+            source=item.source,
+            rank=i + 1
+        )
+        ranked.append(new_item)
+
+    return ranked
 
 
 def render(brief: dict, now: datetime) -> str:
     day = now.astimezone().strftime("%A %Y-%m-%d")
     lines = [f"# Morning brief, {day}", ""]
-    needs = [f"- {brief['auto_merge']}"] if brief.get("auto_merge") else []
+
+    items = rank_items(_build_candidates(brief, now))
+
+    for section in SECTIONS:
+        section_items = [item for item in items if item.section == section]
+        lines.append(f"## {section}")
+        lines.append("")
+        if section_items:
+            lines.extend(item.to_md_line() for item in section_items)
+        else:
+            if section == "World & security":
+                lines.append("- Nothing new yet.")
+            elif section == "Research":
+                lines.append("- Nothing from research digests today.")
+            elif section == "Your day":
+                lines.append("- No deadlines close.")
+            elif section == "Your projects":
+                lines.append("- Nothing is waiting on you.")
+        lines.append("")
+
     prs = brief.get("open_prs") or []
-    needs += [f"- Review {_ref(p, pr=True)}" for p in prs if not p.get("waiting_on_marvin")]
-    needs += [f"- {c['label']}: {c['detail']}" for c in brief.get("red_checks") or []]
-    needs += [f"- Your task: {_ref(t)}" for t in brief.get("human_tickets") or []]
-    regressions = brief.get("regressions") or []
-    needs += [f"- {r['line']}" for r in regressions if r.get("kind") == "needs-you"]
-    lines += ["## Needs you", "", *(needs or ["- Nothing is waiting on you."]), ""]
-    marvin = [f"- {_ref(p, pr=True)}: your decisions are in{' and you asked a question' if p.get('question') else ''}"
-              for p in prs if p.get("waiting_on_marvin")]
+    marvin = []
+    for p in prs:
+        if p.get("waiting_on_marvin"):
+            repo = f"{p.get('repo', 'marvin')} " if p.get("repo") != "marvin" else ""
+            marvin.append(f"- {repo}PR #{p['number']} {_sanitize(p['title'])}: your decisions are in"
+                          f"{' and you asked a question' if p.get('question') else ''}")
     if marvin:
-        lines += ["## Waiting on MARVIN", "", *marvin, ""]
-
-    runs = brief.get("launches") or []
-    merged = brief.get("merged") or []
-    revisited = brief.get("revisited") or []
-    overnight = []
-    if runs:
-        by_kind: dict[str, int] = {}
-        for r in runs:
-            by_kind[r.get("kind", "?")] = by_kind.get(r.get("kind", "?"), 0) + 1
-        cost = sum(r.get("cost_usd") or 0 for r in runs)
-        overnight.append(f"- {len(runs)} model runs (" + ", ".join(f"{n} {k}" for k, n in sorted(by_kind.items()))
-                         + f"), ${cost:.2f}")
-    overnight += [f"- Merged {_ref(p, pr=True)}" for p in merged]
-    overnight += [f"- Returned from hold: {_ref(t)}" for t in revisited]
-    overnight += [f"- {r['line']}" for r in regressions if r.get("kind") != "needs-you"]
-    lines += ["## Overnight", "", *(overnight or ["- Quiet: no model runs or merges in the last day."]), ""]
-
-    today = []
-    for d in brief.get("deadlines") or []:
-        days = _days_until(d["date"], now)
-        today.append(f"- {d['project']}: {days} days ({d['date']}{', hard deadline' if d['hard'] else ''})")
-    today += [f"- {t['priority']}: {_ref(t)}" for t in brief.get("top_tickets") or []]
-    lines += ["## Today", "", *(today or ["- No deadlines close and nothing marked p0/p1."]), ""]
-
-    ideas = [f"- **Compounding move:** {brief['digest_idea']}"] if brief.get("digest_idea") else []
-    ideas += [f"- **From research:** {brief['research_idea']}"] if brief.get("research_idea") else []
-    if ideas:
-        lines += ["## One idea each", "", *ideas, ""]
+        lines.append("## Waiting on MARVIN")
+        lines.append("")
+        lines.extend(marvin)
+        lines.append("")
 
     if brief.get("late_night"):
-        lines += ["## Balance", "",
-                  f"- Last night's last session was still going at {brief['late_night']}. Today's list above is what "
-                  "matters; the rest can wait for tomorrow.", ""]
+        lines.append("## Balance")
+        lines.append("")
+        lines.append(f"- Last night's last session was still going at {brief['late_night']}. Today's list above is what "
+                    "matters; the rest can wait for tomorrow.")
+        lines.append("")
+
     if brief.get("missing"):
-        lines += ["## Gaps", "", *[f"- {m}" for m in brief["missing"]], ""]
+        lines.append("## Gaps")
+        lines.append("")
+        lines.extend(f"- {m}" for m in brief["missing"])
+        lines.append("")
+
     return "\n".join(lines).rstrip() + "\n"
 
 
