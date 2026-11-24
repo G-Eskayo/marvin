@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""MARVIN's own mail sorter, slice 1 (#1405, part of #1357): Gmail over IMAP IDLE, a watch list, and rule sorting.
+"""MARVIN's own mail sorter (#1357): Gmail and iCloud over IMAP IDLE, a watch list, and rule sorting.
 
 Trigger-based: one IMAP connection sits in IDLE and the server pushes each new message. There's no schedule and no
 polling. The only timer is IDLE's own refresh (RFC 2177: re-issue before 29 min). Each refresh also runs a catch-up, so
@@ -16,7 +16,9 @@ For each new message in the Inbox, cheapest decision first:
 Containment (north star 1): one account, read + label only, never send or delete. The app password lives in Keychain
 (service from the account file, account = address), never in a file. Every owner-specific value (address, rules,
 watch list) lives in the private instance at instance/config/mail/; the engine holds none.
-  gmail.json  {"address": "...", "keychain_service": "marvin-mail-gmail", "host": "imap.gmail.com"}
+  <account>.json  {"address", "host", "provider"?, "keychain_service"?}  one file per account, one process each
+              gmail.json   host imap.gmail.com     (provider "gmail": labels via X-GM-LABELS)
+              icloud.json  host imap.mail.me.com   (provider "imap": real folders via UID MOVE)
   rules.json  {"personal": [domains], "rules": [{"folder", "domains": [...], "subject": "regex"?}]}  first match wins
   watch.json  [{"name", "domains"?, "addresses"?, "mentions"?, "mentions_from"?}]
               mentions match the display name or subject; with mentions_from, only from those domains (so a newsletter
@@ -31,7 +33,7 @@ Complexity: decide is O(R + W) over rules and watch entries, catch-up is O(new m
 two STOREs each, and the state write is O(1). Idle costs nothing: one blocked socket.
 
 CLI:
-  mail_sorter.py run   [--config DIR] [--account gmail]     the daemon (launchd: com.marvin.mail-sorter)
+  mail_sorter.py run   [--config DIR] [--account gmail]     the daemon (launchd: com.marvin.mail-sorter.<account>)
   mail_sorter.py check [--config DIR] "<From header>" "<subject>"   dry-run decision as JSON
   mail_sorter.py status [--account gmail]                   state + the last few log entries
 """
@@ -264,13 +266,66 @@ def _ok(typ, data, what: str):
 
 
 def apply(imap, uid: int, d: Decision) -> None:
+    """Act on one message. Gmail: flag + \\Important, or add the label and remove \\Inbox. Any other IMAP server
+    (iCloud): flag, or a real MOVE (COPY + \\Deleted + UID EXPUNGE of just this UID without MOVE; with neither MOVE
+    nor UIDPLUS, refuse, because a plain EXPUNGE would also remove other deleted messages). A folder missing from the
+    server's list is refused, never created, so a typo in rules.json can't spawn a stray folder."""
+    provider = getattr(imap, "provider", "gmail")
     u = str(uid)
     if d.kind == "watch":
         _ok(*imap.uid("STORE", u, "+FLAGS", "(\\Flagged)"), what="star")
-        _ok(*imap.uid("STORE", u, "+X-GM-LABELS", "(\\Important)"), what="important")
+        if provider == "gmail":
+            _ok(*imap.uid("STORE", u, "+X-GM-LABELS", "(\\Important)"), what="important")
     elif d.kind == "sort":
-        _ok(*imap.uid("STORE", u, "+X-GM-LABELS", f"({imap_quote(imap_utf7(d.folder))})"), what="label")
-        _ok(*imap.uid("STORE", u, "-X-GM-LABELS", "(\\Inbox)"), what="unInbox")
+        box = imap_utf7(d.folder.replace("/", getattr(imap, "delimiter", None) or "/"))
+        folders = getattr(imap, "folders", None)
+        if folders is not None and box not in folders:
+            raise ImapError(f"no folder {d.folder!r} on the server")
+        if provider == "gmail":
+            _ok(*imap.uid("STORE", u, "+X-GM-LABELS", f"({imap_quote(box)})"), what="label")
+            _ok(*imap.uid("STORE", u, "-X-GM-LABELS", "(\\Inbox)"), what="unInbox")
+            return
+        caps = getattr(imap, "capabilities", set())
+        if "MOVE" in caps:
+            _ok(*imap.uid("MOVE", u, imap_quote(box)), what="move")
+        elif "UIDPLUS" in caps:
+            _ok(*imap.uid("COPY", u, imap_quote(box)), what="copy")
+            _ok(*imap.uid("STORE", u, "+FLAGS", "(\\Deleted)"), what="delete-from-inbox")
+            _ok(*imap.uid("EXPUNGE", u), what="expunge")
+        else:
+            raise ImapError("server has neither MOVE nor UIDPLUS: can't move one message safely")
+
+
+_LIST_RE = re.compile(rb'^\((?P<flags>[^)]*)\) (?P<delim>"(?:\\.|[^"])*"|NIL) ?(?P<name>.*)$')
+
+
+def _unquote(b: bytes) -> str:
+    t = b.decode("ascii", errors="replace").strip()
+    if len(t) >= 2 and t[0] == t[-1] == '"':
+        t = re.sub(r'\\(.)', r'\1', t[1:-1])
+    return t
+
+
+def parse_list(lines) -> tuple[str, set[str]]:
+    """LIST responses -> (hierarchy delimiter, selectable mailbox names, still modified-UTF-7 encoded)."""
+    delim, names = "/", set()
+    for item in lines or []:
+        literal = None
+        if isinstance(item, tuple):
+            item, literal = item[0], item[1]
+        if not isinstance(item, bytes) or not item:
+            continue
+        m = _LIST_RE.match(item.strip())
+        if not m:
+            continue
+        if m.group("delim") != b"NIL":
+            delim = _unquote(m.group("delim")) or delim
+        if b"\\noselect" in m.group("flags").lower():
+            continue
+        name = literal.decode("ascii", errors="replace") if literal is not None else _unquote(m.group("name"))
+        if name:
+            names.add(name)
+    return delim, names
 
 
 def fetch_message(imap, uid: int) -> Message:
@@ -380,12 +435,17 @@ def _harden_socket(sock) -> None:
                 pass
 
 
-class GmailConnection:
-    """imaplib with the two things it lacks on Python 3.12: IDLE, and UIDVALIDITY/UIDNEXT read after SELECT."""
+class ImapConnection:
+    """imaplib with what it lacks on Python 3.12 (IDLE, and UIDVALIDITY/UIDNEXT after SELECT), plus what apply()
+    needs to know about the server: provider, capabilities, hierarchy delimiter and folder list."""
 
-    def __init__(self, host: str, address: str, password: str):
+    def __init__(self, host: str, address: str, password: str, provider: str = "gmail"):
+        self.provider = provider
         self.M = imaplib.IMAP4_SSL(host, timeout=60)
         self.M.login(address, password)
+        typ, data = self.M.capability()
+        self.capabilities = set(b" ".join(d for d in data or [] if isinstance(d, bytes)).decode().upper().split())
+        self.delimiter, self.folders = parse_list(_ok(*self.M.list(), what="list"))
         self._select()
 
     def _select(self):
@@ -444,13 +504,29 @@ class GmailConnection:
             pass
 
 
-def _alert(d: Decision, m: Message) -> None:
+GmailConnection = ImapConnection   # the slice-1 name
+
+
+def alert_link(provider: str, m: Message) -> str | None:
+    """Where clicking the alert goes: the message in Gmail on the web, or in Mail.app (message: URL) otherwise."""
+    if provider == "gmail":
+        return ("https://mail.google.com/mail/u/0/#search/" + quote(f"rfc822msgid:{m.message_id}")
+                if m.message_id else "https://mail.google.com/mail/u/0/#inbox")
+    return "message://%3C" + quote(m.message_id, safe="") + "%3E" if m.message_id else None
+
+
+def _alert(d: Decision, m: Message, provider: str = "gmail") -> None:
     import notify
     s = parse_sender(m.sender)
     who = s.display or s.address
-    link = ("https://mail.google.com/mail/u/0/#search/" + quote(f"rfc822msgid:{m.message_id}")
-            if m.message_id else "https://mail.google.com/mail/u/0/#inbox")
-    notify.notify(f"Mail from {d.watch}", f"{who}: {m.subject or '(no subject)'}"[:200], link)
+    notify.notify(f"Mail from {d.watch}", f"{who}: {m.subject or '(no subject)'}"[:200], alert_link(provider, m))
+
+
+def account_settings(name: str, acct: dict) -> dict:
+    host = acct.get("host", "imap.gmail.com")
+    return {"address": acct["address"], "host": host,
+            "provider": acct.get("provider") or ("gmail" if "gmail" in host.lower() else "imap"),
+            "keychain_service": acct.get("keychain_service", f"marvin-mail-{name}")}
 
 
 def _is_auth_failure(exc: BaseException) -> bool:
@@ -459,12 +535,11 @@ def _is_auth_failure(exc: BaseException) -> bool:
 
 
 def run(config_dir: Path, account: str = "gmail", *, once: bool = False, connect=None, sleep=time.sleep) -> int:
-    connect = connect or GmailConnection
+    connect = connect or ImapConnection
     acct_path = Path(config_dir) / f"{account}.json"
     try:
-        acct = json.loads(acct_path.read_text())
-        address, service = acct["address"], acct.get("keychain_service", f"marvin-mail-{account}")
-        host = acct.get("host", "imap.gmail.com")
+        a = account_settings(account, json.loads(acct_path.read_text()))
+        address, service, host, provider = a["address"], a["keychain_service"], a["host"], a["provider"]
         load_config(config_dir)   # refuse to start on a broken config
     except (OSError, KeyError, json.JSONDecodeError, ConfigError) as exc:
         _record(f"{account}: not started, config problem", exc)
@@ -476,9 +551,9 @@ def run(config_dir: Path, account: str = "gmail", *, once: bool = False, connect
     while True:
         conn = None
         try:
-            conn = connect(host, address, keychain_password(service, address))
+            conn = connect(host, address, keychain_password(service, address), provider)
             while True:
-                n = catch_up(conn, load_config(config_dir), state, _alert, log_path)
+                n = catch_up(conn, load_config(config_dir), state, lambda d, m: _alert(d, m, provider), log_path)
                 if n:
                     print(f"{datetime.now().isoformat(timespec='seconds')} handled {n}", flush=True)
                 if once:
@@ -493,7 +568,7 @@ def run(config_dir: Path, account: str = "gmail", *, once: bool = False, connect
         except Exception as exc:  # noqa: BLE001 - any connection failure: log, back off, reconnect
             if _is_auth_failure(exc):
                 _record(f"{account}: sign-in refused", exc)
-                _tell_once("Mail sorter can't sign in to Gmail. The app password may have been revoked.")
+                _tell_once(f"Mail sorter can't sign in to {account}. The app password may have been revoked.")
                 return 0
             _record(f"{account}: connection lost, reconnecting in {backoff}s", f"{type(exc).__name__}: {exc}")
             if once:
