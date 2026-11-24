@@ -841,8 +841,8 @@ its ticketing system creates shows up there with drill-down status. Boards live 
      repo or any other onboarded project's: see **Names its ticket** below), or the last
      pipeline stage is verifying/gate/merging. Card shows the PR link and whether the PR carries
      Dev Environment Evidence; clicking the PR opens it in the MR Review tab.
-  3. **Blocked** — label `blocked`; or `Blocked by #n` in the body with #n still open; or the
-     pipeline's last stage failed and nothing is running. Card always states the reason.
+  3. **Blocked** — label `blocked`; or `Blocked by #n` in the body (same-repo or `owner/repo#n`) with #n still open; or the
+     pipeline's last stage failed and nothing is running. Card always states the reason. Cross-repo blockers are shown but do not block the ticket in the board (only same-repo blockers gate the column).
   4. **In progress** — `claimed:*` label or a live dispatch, **and** some sign of life: a live dispatch, a
      pipeline stage, or a touch on the ticket within 24h. A claim with none of those is a stale claim and
      sits in Blocked ("Claimed by X but no activity for N days"): a claim label is a statement, not
@@ -871,9 +871,17 @@ its ticketing system creates shows up there with drill-down status. Boards live 
   `part-of` ("part of" / "worked on in" in the Related panel); a bare mention or "for #n" is only `mentions`. Both put
   the ticket's card In review and satisfy the parity check. PRs are matched across repos: every board gets every
   onboarded project's open PRs (read once per project, the same cached board data the relation index uses), so a
-  marvin-instance PR that closes a marvin ticket moves that card. One parser per language,
-  `dashboard/electron/main/ticket_refs.js` and `lib/pr_ticket_check.py`, both run
-  `dashboard/test/fixtures/pr_ticket_refs_cases.json`. `bin/gh` refuses a PR body that names no ticket
+  marvin-instance PR that closes a marvin ticket moves that card. 
+  
+  **Seven-word vocabulary** (all case-insensitive, can appear on ticket bodies or PR bodies, except only Closes/Part of
+  in PRs are board-facing): `Closes #n` / `Fixes #n` / `Resolves #n` (synonym closes), `Part of #n`, plus five ticket-only
+  relations: `Blocked by #n`, `Duplicate of #n`, `Covered by #n`, `Supersedes #n`, `Related to #n`. Each can list multiple
+  refs separated by commas or and. Relations show in the Related panel; only Closes/Part of gate the board and satisfy the
+  parity check.
+  
+  One parser per language, `dashboard/electron/main/ticket_refs.js` and `lib/pr_ticket_check.py`, both run
+  `dashboard/test/fixtures/pr_ticket_refs_cases.json`. `bin/gh` refuses a PR body that names no ticket (PR-facing relations
+  only: `Closes` or `Part of`; it ignores the five ticket-only relations if a PR mentions them)
   (`PR_NAMES_NO_TICKET`; override `MARVIN_NO_TICKET="<reason>"`). The rule: `docs/agents/issue-tracker.md`.
 
 ### Triggers over polling (decided 2026-10-03)
@@ -1072,9 +1080,10 @@ nothing connected them. "Where things are" was only the tidy agent's file-filing
   Review. Navigation is one `nav` object in `App.jsx` that the target tab reads once per navigation.
 - **Relationships are derived from text, not stored (decided 2026-10-05, Gil: "connect them relationally,
   not another button")**: `electron/main/relations.js` reads every ticket and PR body, every doc, and each
-  PR's changed files, and derives edges: ticket->ticket (blocked by / mentions), ticket->doc ("ADR 0033"
-  resolves to that project's `docs/adr/0033-*.md`, also `CONTEXT.md`/`README.md` and explicit paths),
-  PR->ticket (closes / part of / mentions), PR->doc (changes / mentions), doc->ticket (`#12`, `owner/repo#12`),
+  PR's changed files, and derives edges: ticket->ticket (blocked-by / duplicate-of / covered-by / supersedes /
+  related-to / mentions), PR->ticket (closes / part-of / blocked-by / duplicate-of / covered-by / supersedes /
+  related-to / mentions), ticket->doc ("ADR 0033" resolves to that project's `docs/adr/0033-*.md`, also
+  `CONTEXT.md`/`README.md` and explicit paths), PR->doc (changes / mentions), doc->ticket (`#12`, `owner/repo#12`),
   doc->doc. Edit a doc or a ticket and its relations change with it; nothing to sync. Code fences and
   inline code are ignored. Surfaces: `#12` and `ADR 0033` inside a doc or ticket body are clickable
   (linkify, `dash://` links that stay in the app); a **Related** panel on every doc, ticket and MR lists

@@ -29,6 +29,10 @@
     When `Part of #N` names a red ticket (a main-red ticket, or bug+p0 titled "Main red"), `bin/gh` prints a warning
     that main merges are blocked (marvin#1147).
 
+  Only these two are "PR-facing" and shown in the board's In review column. Five other relations can be used in ticket
+  bodies (not PRs) to link tickets to each other: `Blocked by #N`, `Duplicate of #N`, `Covered by #N`, `Supersedes #N`,
+  `Related to #N`. These appear in the Related panel and relations index; they do not gate the board.
+
   Write `owner/repo#N` (or paste the issue's URL) for a ticket in another repo, e.g. a private instance PR for a public
   engine ticket: `Closes G-Eskayo/marvin#623`. Either way the ticket's board card shows **In review** with the PR on it,
   and the dashboard's parity check is satisfied. "for #N" or a bare "#N" links nothing. `bin/gh` refuses

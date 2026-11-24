@@ -137,9 +137,9 @@ export function Card({ card, repo, onSelect, onOpenMr, activeTags, onTag }) {
             {card.evidence.verdict === 'in-flight' ? '⚠ work in flight' : '✓ commit mentions this'}
           </span>
         )}
-        {card.blockedBy.map((n) => (
-          <span key={n} className="rounded bg-red-950 px-1.5 py-0.5 font-mono text-[10px] text-red-300" title={`Blocked by #${n}`}>
-            ⛔ #{n}
+        {card.blockedBy.map((dep) => (
+          <span key={`${dep.repo || ''}#${dep.number}`} className="rounded bg-red-950 px-1.5 py-0.5 font-mono text-[10px] text-red-300" title={`Blocked by ${dep.repo ? `${dep.repo}#${dep.number}` : `#${dep.number}`}`}>
+            ⛔ {dep.repo ? `${dep.repo.split('/')[1]}#${dep.number}` : `#${dep.number}`}
           </span>
         ))}
         {card.prs.map((pr) => (

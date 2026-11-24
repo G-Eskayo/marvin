@@ -24,6 +24,17 @@
     { "name": "a ref glued to more text is not a ref", "prRepo": "o/r", "body": "Closes #5abc, Part of #6-x", "refs": [] },
     { "name": "pipeline template body", "prRepo": "G-Eskayo/marvin", "body": "## Summary\nDoes the thing.\n\nCloses #1004\n\n## Dev Environment Evidence\nN/A", "refs": [["G-Eskayo/marvin#1004", "closes"]] },
     { "name": "part of, lowercase", "prRepo": "o/r", "body": "part of #235", "refs": [["o/r#235", "part-of"]] },
-    { "name": "part of, lowercase with colon", "prRepo": "o/r", "body": "part of: #235", "refs": [["o/r#235", "part-of"]] }
+    { "name": "part of, lowercase with colon", "prRepo": "o/r", "body": "part of: #235", "refs": [["o/r#235", "part-of"]] },
+    { "name": "blocked by, bare", "prRepo": "o/r", "body": "Blocked by #42", "refs": [["o/r#42", "blocked-by"]] },
+    { "name": "blocked by another repo", "prRepo": "o/r", "body": "Blocked by other/repo#99", "refs": [["other/repo#99", "blocked-by"]] },
+    { "name": "blocked by, a list", "prRepo": "o/r", "body": "Blocked by #1, #2 and #3", "refs": [["o/r#1", "blocked-by"], ["o/r#2", "blocked-by"], ["o/r#3", "blocked-by"]] },
+    { "name": "duplicate of, bare", "prRepo": "o/r", "body": "Duplicate of #15", "refs": [["o/r#15", "duplicate-of"]] },
+    { "name": "covered by, bare", "prRepo": "o/r", "body": "Covered by #88", "refs": [["o/r#88", "covered-by"]] },
+    { "name": "supersedes, bare", "prRepo": "o/r", "body": "Supersedes #200", "refs": [["o/r#200", "supersedes"]] },
+    { "name": "related to, bare", "prRepo": "o/r", "body": "Related to #77", "refs": [["o/r#77", "related-to"]] },
+    { "name": "multiple new relations", "prRepo": "o/r", "body": "Blocked by #10\nDuplicate of #11\nRelated to #12", "refs": [["o/r#10", "blocked-by"], ["o/r#11", "duplicate-of"], ["o/r#12", "related-to"]] },
+    { "name": "part-of outranks related-to", "prRepo": "o/r", "body": "Related to #5\nPart of #5", "refs": [["o/r#5", "part-of"]] },
+    { "name": "part-of outranks blocked-by", "prRepo": "o/r", "body": "Blocked by #7\nPart of #7", "refs": [["o/r#7", "part-of"]] },
+    { "name": "closes outranks part-of for same ticket", "prRepo": "o/r", "body": "Part of #3\nCloses #3", "refs": [["o/r#3", "closes"]] }
   ]
 }

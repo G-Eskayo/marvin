@@ -88,13 +88,13 @@ export function blocksGraph(tickets, repo) {
 
   const ignored = new Set([...heldNumbers, ...notPlannedNumbers])
 
-  // Build reverse edges
+  // Build reverse edges (openDependencies returns [{ repo, number }] for same-repo blockers)
   for (const t of tickets) {
     if (!openNumbers.has(t.number)) continue
-    const deps = openDependencies(t, openNumbers, ignored)
+    const deps = openDependencies(t, openNumbers, ignored, repo)
     for (const dep of deps) {
-      if (!graph[dep]) graph[dep] = []
-      graph[dep].push(t.number)
+      if (!graph[dep.number]) graph[dep.number] = []
+      graph[dep.number].push(t.number)
     }
   }
 

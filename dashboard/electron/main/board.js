@@ -1,5 +1,5 @@
 import { hasEvidenceSchema, parseTicketRef } from './mr_review.js'
-import { ticketLinked } from './ticket_refs.js'
+import { ticketLinked, prTicketRefs } from './ticket_refs.js'
 import { latestRevisit } from '../../src/lib/revisit.js'
 
 // Jira-style project board (CONTEXT.md "Project boards"). A board is never
@@ -65,19 +65,48 @@ const prLabel = (p) => (p.repo ? `PR ${p.repo.split('/')[1]}#${p.number}` : `PR 
 
 // Dependencies come from either inline "Blocked by #n" or the to-issues
 // template's "## Blocked by" section (bullets of #n refs, or "None ...").
+// Returns [{ repo, number }] where repo is null for same-repo refs, 'owner/repo' for cross-repo.
+// Handles lists ("Blocked by #1, #2, #3") and code stripping via prTicketRefs.
 export function dependencyRefs(issue) {
   const body = issue.body || ''
   const refs = []
-  for (const m of body.matchAll(/\bBlocked by\s+(?:[\w.-]+\/[\w.-]+)?#(\d+)/gi)) refs.push(Number(m[1]))
+
+  // Inline patterns: use prTicketRefs to handle lists and URLs
+  const blockedRefs = prTicketRefs(body, issue.repo).filter((r) => r.relation === 'blocked-by')
+  for (const r of blockedRefs) {
+    refs.push({ repo: r.repo || null, number: r.number })
+  }
+
+  // "## Blocked by" section (bullets of refs or "None ...")
   const sec = body.match(/##\s*Blocked by\s*\n([\s\S]*?)(?=\n##\s|$)/i)
-  if (sec) for (const m of sec[1].matchAll(/#(\d+)/g)) refs.push(Number(m[1]))
-  return [...new Set(refs)]
+  if (sec) {
+    for (const m of sec[1].matchAll(/((?:[\w.-]+\/[\w.-]+)?#\d+)/g)) {
+      const match = m[1].match(/^([\w.-]+\/[\w.-]+)?#(\d+)$/)
+      if (match) refs.push({ repo: match[1] || null, number: Number(match[2]) })
+    }
+  }
+
+  const seen = new Set()
+  const unique = []
+  for (const r of refs) {
+    const key = `${r.repo}#${r.number}`
+    if (!seen.has(key)) {
+      seen.add(key)
+      unique.push(r)
+    }
+  }
+  return unique
 }
 
 // A ticket that is on hold, or was closed as not planned, will not be finished soon (or ever), so waiting on
 // it would park the dependent forever. Those are not blockers; the dependent's card says it is ignoring them.
-export function openDependencies(issue, openNumbers, ignored = new Set()) {
-  return dependencyRefs(issue).filter((n) => openNumbers.has(n) && !ignored.has(n))
+// Returns the same [{ repo, number }] as dependencyRefs, filtered to open same-repo blockers.
+export function openDependencies(issue, openNumbers, ignored = new Set(), boardRepo = null) {
+  const issueRepo = (issue.repo || boardRepo || '').toLowerCase()
+  return dependencyRefs(issue).filter((r) => {
+    const refRepo = (r.repo || '').toLowerCase()
+    return (refRepo === '' || refRepo === issueRepo) && openNumbers.has(r.number) && !ignored.has(r.number)
+  })
 }
 
 const refList = (nums) => nums.map((n) => `#${n}`).join(', ')
@@ -96,13 +125,20 @@ export function checklistProgress(body) {
 export function deriveColumn(issue, ctx = {}) {
   const result = deriveColumnCore(issue, ctx)
   if (result.column === 'done') return result
-  const { heldNumbers = new Set(), notPlannedNumbers = new Set() } = ctx
+  const { repo = issue.repo || null, heldNumbers = new Set(), notPlannedNumbers = new Set() } = ctx
   const refs = dependencyRefs(issue)
-  const held = refs.filter((n) => heldNumbers.has(n))
-  const dropped = refs.filter((n) => notPlannedNumbers.has(n))
+  const issueRepo = (issue.repo || repo || '').toLowerCase()
+  const held = refs.filter((r) => {
+    const refRepo = (r.repo || '').toLowerCase()
+    return (refRepo === '' || refRepo === issueRepo) && heldNumbers.has(r.number)
+  })
+  const dropped = refs.filter((r) => {
+    const refRepo = (r.repo || '').toLowerCase()
+    return (refRepo === '' || refRepo === issueRepo) && notPlannedNumbers.has(r.number)
+  })
   const notes = []
-  if (held.length) notes.push(`${refList(held)} ${held.length === 1 ? 'is' : 'are'} on hold, not blocking`)
-  if (dropped.length) notes.push(`${refList(dropped)} ${dropped.length === 1 ? 'was' : 'were'} closed as not planned, not blocking`)
+  if (held.length) notes.push(`${refList(held.map((r) => r.number))} ${held.length === 1 ? 'is' : 'are'} on hold, not blocking`)
+  if (dropped.length) notes.push(`${refList(dropped.map((r) => r.number))} ${dropped.length === 1 ? 'was' : 'were'} closed as not planned, not blocking`)
   return notes.length ? { ...result, reason: `${result.reason} (${notes.join('; ')})` } : result
 }
 
@@ -128,8 +164,8 @@ function deriveColumnCore(issue, { repo = issue.repo || null, prs = [], events =
 
   if (labels.includes('hold')) return { ...base, column: 'backlog', reason: 'On hold', held: true }
   if (labels.includes('blocked')) return { ...base, column: 'blocked', reason: 'Labelled blocked' }
-  const deps = openDependencies(issue, openNumbers, new Set([...heldNumbers, ...notPlannedNumbers]))
-  if (deps.length) return { ...base, column: 'blocked', reason: `Blocked by ${deps.map((d) => `#${d}`).join(', ')}, still open` }
+  const deps = openDependencies(issue, openNumbers, new Set([...heldNumbers, ...notPlannedNumbers]), repo)
+  if (deps.length) return { ...base, column: 'blocked', reason: `Blocked by ${deps.map((d) => `#${d.number}`).join(', ')}, still open` }
   if (last && last.status === 'failed' && !isLive) {
     const why = last.detail ? `: ${last.detail}` : ''
     return { ...base, column: 'blocked', reason: `Pipeline failed at ${last.stage}${why}` }
@@ -184,9 +220,21 @@ export function buildBoard({ repo, issues, prs, eventsByNumber = {}, liveNumbers
       labels: names,
       tags: names.map((name) => ({ name, kind: labelKind(name) })),
       claimedBy: names.find((l) => l.startsWith('claimed:'))?.slice('claimed:'.length) || null,
-      blockedBy: openDependencies(issue, openNumbers, ignored),
-      heldDependencies: dependencyRefs(issue).filter((n) => heldNumbers.has(n)),
-      notPlannedDependencies: dependencyRefs(issue).filter((n) => notPlannedNumbers.has(n)),
+      blockedBy: openDependencies(issue, openNumbers, ignored, repo),
+      heldDependencies: (() => {
+        const issueRepo = (issue.repo || repo || '').toLowerCase()
+        return dependencyRefs(issue).filter((r) => {
+          const refRepo = (r.repo || '').toLowerCase()
+          return (refRepo === '' || refRepo === issueRepo) && heldNumbers.has(r.number)
+        })
+      })(),
+      notPlannedDependencies: (() => {
+        const issueRepo = (issue.repo || repo || '').toLowerCase()
+        return dependencyRefs(issue).filter((r) => {
+          const refRepo = (r.repo || '').toLowerCase()
+          return (refRepo === '' || refRepo === issueRepo) && notPlannedNumbers.has(r.number)
+        })
+      })(),
       held: !!d.held,
       progress: checklistProgress(issue.body),
       createdAt: issue.createdAt,

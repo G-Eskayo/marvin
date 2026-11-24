@@ -47,13 +47,48 @@ export function extractRefs(text, { repos = null, words = false } = {}) {
   return { tickets, adrs: [...adrs], paths, context: /\bCONTEXT\.md\b/.test(clean), readme: /\bREADME\.md\b/.test(clean) }
 }
 
-function blockedByNumbers(body) {
+function blockedByRefs(body, repo) {
+  // Extract blocked-by refs from both inline patterns and the ## Blocked by section.
+  // This mirrors dependencyRefs from board.js, but returns relation objects instead of just numbers.
+  const refs = []
   const text = stripCode(body)
-  const out = new Set()
-  for (const m of text.matchAll(/\bBlocked by\s+(?:[\w.-]+\/[\w.-]+)?#(\d+)/gi)) out.add(Number(m[1]))
+
+  // Inline "Blocked by #n" pattern (also captured by prTicketRefs)
+  for (const m of text.matchAll(/\bBlocked by\s+((?:[\w.-]+\/[\w.-]+)?#\d+)/gi)) {
+    const match = m[1].match(/^([\w.-]+\/[\w.-]+)?#(\d+)$/)
+    if (match) {
+      const refRepo = match[1] || repo
+      refs.push({ repo: refRepo, number: Number(match[2]), relation: 'blocked-by' })
+    }
+  }
+
+  // "## Blocked by" section (bullets of refs or "None ...")
   const sec = text.match(/##\s*Blocked by\s*\n([\s\S]*?)(?=\n##\s|$)/i)
-  if (sec) for (const m of sec[1].matchAll(/#(\d+)/g)) out.add(Number(m[1]))
-  return out
+  if (sec) {
+    for (const m of sec[1].matchAll(/((?:[\w.-]+\/[\w.-]+)?#\d+)/g)) {
+      const match = m[1].match(/^([\w.-]+\/[\w.-]+)?#(\d+)$/)
+      if (match) {
+        const refRepo = match[1] || repo
+        refs.push({ repo: refRepo, number: Number(match[2]), relation: 'blocked-by' })
+      }
+    }
+  }
+
+  // Also get blocked-by from the shared parser (inline "Blocked by" is already covered above)
+  const sharedRefs = prTicketRefs(body, repo)
+    .filter((r) => r.relation === 'blocked-by')
+
+  // Merge, deduping by repo + number
+  const seen = new Set()
+  const unique = []
+  for (const r of [...refs, ...sharedRefs]) {
+    const key = `${r.repo}#${r.number}`
+    if (!seen.has(key)) {
+      seen.add(key)
+      unique.push(r)
+    }
+  }
+  return unique
 }
 
 // ── index ───────────────────────────────────────────────────────────────────
@@ -99,9 +134,26 @@ export function buildRelationIndex({ tickets = [], prs = [], docs = [], projects
     const me = T(tk(t.repo, t.number))
     const project = projectByRepo[t.repo]
     const refs = extractRefs(`${t.title}\n${t.body}`)
-    const blocked = blockedByNumbers(t.body)
-    for (const n of blocked) add(me, T(tk(t.repo, n)), 'blocked-by')
-    for (const r of refs.tickets) if (!(r.repo === null || r.repo === t.repo) || !blocked.has(r.number)) add(me, T(tk(r.repo || t.repo, r.number)), 'mentions')
+    const ticketRefs = prTicketRefs(`${t.title}\n${t.body}`, t.repo)
+    const sectionBlockedBy = blockedByRefs(t.body, t.repo)
+    // Merge section-based blocked-by with inline ones, deduping by repo + number
+    const allBlockedBy = ticketRefs.filter((r) => r.relation === 'blocked-by').concat(sectionBlockedBy)
+    const seen = new Set()
+    const deduped = []
+    for (const r of allBlockedBy) {
+      const key = `${r.repo}#${r.number}`
+      if (!seen.has(key)) {
+        seen.add(key)
+        deduped.push(r)
+      }
+    }
+    const blockedSet = new Set(deduped.map((r) => r.number))
+    for (const r of deduped) add(me, T(tk(r.repo || t.repo, r.number)), 'blocked-by')
+    for (const r of ticketRefs.filter((r) => r.relation === 'duplicate-of')) add(me, T(tk(r.repo || t.repo, r.number)), 'duplicate-of')
+    for (const r of ticketRefs.filter((r) => r.relation === 'covered-by')) add(me, T(tk(r.repo || t.repo, r.number)), 'covered-by')
+    for (const r of ticketRefs.filter((r) => r.relation === 'supersedes')) add(me, T(tk(r.repo || t.repo, r.number)), 'supersedes')
+    for (const r of ticketRefs.filter((r) => r.relation === 'related-to')) add(me, T(tk(r.repo || t.repo, r.number)), 'related-to')
+    for (const r of refs.tickets) if (!(r.repo === null || r.repo === t.repo) || !blockedSet.has(r.number)) add(me, T(tk(r.repo || t.repo, r.number)), 'mentions')
     if (project) for (const d of docsMentioned(refs, project)) add(me, D(dk(d.project, d.path)), 'mentions')
   }
 
@@ -145,8 +197,8 @@ export function buildRelationIndex({ tickets = [], prs = [], docs = [], projects
     return { project: n?.project || key.split('/')[0], path: n?.path || key.slice(key.indexOf('/') + 1), label: n?.label || key }
   }
   const INFO = { t: infoT, p: infoP, d: infoD }
-  const OUT_WORD = { 'blocked-by': 'blocked by', mentions: 'mentions', closes: 'closes', 'part-of': 'part of', changes: 'changes' }
-  const IN_WORD = { 'blocked-by': 'blocks', mentions: 'mentioned in', closes: 'closed by', 'part-of': 'worked on in', changes: 'changed by' }
+  const OUT_WORD = { 'blocked-by': 'blocked by', mentions: 'mentions', closes: 'closes', 'part-of': 'part of', 'duplicate-of': 'duplicate of', 'covered-by': 'covered by', supersedes: 'supersedes', 'related-to': 'related to', changes: 'changes' }
+  const IN_WORD = { 'blocked-by': 'blocks', mentions: 'mentioned in', closes: 'closed by', 'part-of': 'worked on in', 'duplicate-of': 'duplicated by', 'covered-by': 'covers', supersedes: 'superseded by', 'related-to': 'related from', changes: 'changed by' }
 
   function around(type, key) {
     const out = { docs: [], tickets: [], prs: [] }

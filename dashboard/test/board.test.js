@@ -73,6 +73,24 @@ describe('deriveColumn', () => {
     expect(deriveColumn(sec('None - can start immediately'), open).column).toBe('backlog')
   })
 
+  it('handles qualified blockers like "Blocked by owner/repo#n" matching same-repo refs', () => {
+    const r = deriveColumn(
+      issue({ repo: 'o/r', body: 'Blocked by o/r#7' }),
+      ctx({ openNumbers: new Set([1, 7]) })
+    )
+    expect(r.column).toBe('blocked')
+    expect(r.reason).toContain('#7')
+  })
+
+  it('handles case-insensitive repo matching for qualified blockers', () => {
+    const r = deriveColumn(
+      issue({ repo: 'G-Eskayo/marvin', body: 'Blocked by g-eskayo/MARVIN#99' }),
+      ctx({ openNumbers: new Set([1, 99]) })
+    )
+    expect(r.column).toBe('blocked')
+    expect(r.reason).toContain('#99')
+  })
+
   it('does not block when the dependency is already closed', () => {
     const r = deriveColumn(issue({ body: 'Blocked by #7', labels: labels('ready-for-agent') }), ctx())
     expect(r.column).toBe('ready')
@@ -219,7 +237,7 @@ describe('tags on cards', () => {
     ])
     expect(card(b, 7).tags.map((t) => [t.name, t.kind])).toEqual([['bug', 'type'], ['ready-for-agent', 'state'], ['priority:p1', 'priority'], ['area:docs', 'other']])
     expect(card(b, 8).claimedBy).toBe('mac-mini')
-    expect(card(b, 9).blockedBy).toEqual([7])
+    expect(card(b, 9).blockedBy).toEqual([{ repo: null, number: 7 }])
   })
 
   it('carries age in days from creation', () => {
@@ -393,7 +411,7 @@ describe('on hold and not planned (marvin #139)', () => {
     const cardOf = (n) => board.columns.flatMap((c) => c.cards).find((c) => c.number === n)
     expect(cardOf(1).held).toBe(true)
     expect(cardOf(2).blockedBy).toEqual([])
-    expect(cardOf(2).heldDependencies).toEqual([1])
+    expect(cardOf(2).heldDependencies).toEqual([{ repo: null, number: 1 }])
     expect(cardOf(4).blockedBy).toEqual([])
     expect(board.columns.find((c) => c.id === 'ready').cards.map((c) => c.number).sort()).toEqual([2, 4])
   })
