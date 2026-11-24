@@ -389,3 +389,123 @@ def test_idle_connection_closed_during_done_means_reconnect():
     c, socks = conn_with([b"+ idling\r\n"])
     assert c.idle(0.1) == "bye"
 
+
+
+# ---------- #1409: modified UTF-7, refused commands, backoff ----------
+
+import imaplib  # noqa: E402
+
+
+@pytest.mark.parametrize("name,encoded", [
+    ("Finance", "Finance"),
+    ("MARVIN/Tools & billing", "MARVIN/Tools &- billing"),
+    ("Shopping & orders", "Shopping &- orders"),
+    ("Café", "Caf&AOk-"),
+    ("日本語", "&ZeVnLIqe-"),
+    ("a&&b", "a&-&-b"),
+])
+def test_utf7_encode(name, encoded):
+    assert ms.imap_utf7(name) == encoded
+
+
+def test_apply_sort_encodes_ampersand_folder():
+    f = FakeImap()
+    ms.apply(f, 3, ms.Decision("sort", "MARVIN/Tools & billing", "rule"))
+    assert stores(f)[0] == ("3", "+X-GM-LABELS", '("MARVIN/Tools &- billing")')
+
+
+class Refusing(FakeImap):
+    """The server answers BAD (imaplib raises IMAP4.error) for one message's STORE."""
+
+    def __init__(self, bad_uid, exc=None, **kw):
+        super().__init__(**kw)
+        self.bad_uid, self.exc = bad_uid, exc or imaplib.IMAP4.error("UID command error: BAD [b'Could not parse command']")
+
+    def uid(self, command, *args):
+        if command.upper() == "STORE" and int(args[0]) == self.bad_uid:
+            self.calls.append((command.upper(),) + args)
+            raise self.exc
+        return super().uid(command, *args)
+
+
+def test_refused_command_skips_that_message_and_continues(tmp_path):
+    (tmp_path / "state.json").write_text(json.dumps({"uidvalidity": 7, "last_uid": 11}))
+    f = Refusing(12, uids=[12, 13], headers={12: H("x@chase.com"), 13: H("y@chase.com")})
+    n, state = run_catch_up(f, tmp_path)
+    assert n == 2 and state.load()["last_uid"] == 13
+    assert ("13", "-X-GM-LABELS", "(\\Inbox)") in stores(f)
+    log = [json.loads(x) for x in (tmp_path / "moves.jsonl").read_text().splitlines()]
+    assert log[0]["kind"] == "error" and "Could not parse" in log[0]["reason"] and log[1]["kind"] == "sort"
+
+
+def test_no_response_also_skips(tmp_path):
+    (tmp_path / "state.json").write_text(json.dumps({"uidvalidity": 7, "last_uid": 0}))
+
+    class No(FakeImap):
+        def uid(self, command, *args):
+            if command.upper() == "STORE" and args[0] == "1":
+                return "NO", [b"[TRYCREATE] no such label"]
+            return super().uid(command, *args)
+    f = No(uids=[1, 2], headers={1: H("x@chase.com"), 2: H("y@chase.com")})
+    n, state = run_catch_up(f, tmp_path)
+    assert n == 2 and state.load()["last_uid"] == 2
+
+
+def test_abort_still_reconnects_without_advancing(tmp_path):
+    (tmp_path / "state.json").write_text(json.dumps({"uidvalidity": 7, "last_uid": 11}))
+    f = Refusing(12, exc=imaplib.IMAP4.abort("socket error: EOF"), uids=[12], headers={12: H("x@chase.com")})
+    with pytest.raises(imaplib.IMAP4.abort):
+        run_catch_up(f, tmp_path)
+    assert ms.State(tmp_path / "state.json").load()["last_uid"] == 11
+
+
+def test_failed_fetch_is_a_skip_too(tmp_path):
+    (tmp_path / "state.json").write_text(json.dumps({"uidvalidity": 7, "last_uid": 0}))
+
+    class BadFetch(FakeImap):
+        def uid(self, command, *args):
+            if command.upper() == "FETCH" and args[0] == "1":
+                raise imaplib.IMAP4.error("FETCH command error: BAD")
+            return super().uid(command, *args)
+    f = BadFetch(uids=[1, 2], headers={2: H("y@chase.com")})
+    n, state = run_catch_up(f, tmp_path)
+    assert n == 2 and state.load()["last_uid"] == 2
+
+
+class FlakyConn:
+    """Signs in, then the connection dies at once: the loop that hammered Gmail."""
+    made = 0
+
+    def __init__(self, *a):
+        FlakyConn.made += 1
+
+    def status_values(self):
+        raise OSError("connection reset")
+
+    def close(self):
+        pass
+
+
+def test_backoff_grows_when_connections_keep_failing(tmp_path, monkeypatch):
+    for name, body in [("gmail.json", {"address": "a@b.c"}), ("rules.json", RULES)]:
+        (tmp_path / name).write_text(json.dumps(body))
+    monkeypatch.setattr(ms, "STATE_DIR", tmp_path)
+    monkeypatch.setattr(ms, "keychain_password", lambda s, a: "pw")
+    sleeps = []
+
+    def sleep(s):
+        sleeps.append(s)
+        if len(sleeps) >= 5:
+            raise KeyboardInterrupt
+    with pytest.raises(KeyboardInterrupt):
+        ms.run(tmp_path, "gmail", connect=FlakyConn, sleep=sleep)
+    assert sleeps == [5, 10, 20, 40, 80]
+
+
+def test_connection_gets_read_timeout_and_keepalive():
+    import socket as s
+    srv = s.socket(); srv.bind(("127.0.0.1", 0)); srv.listen(1)
+    a = s.create_connection(srv.getsockname())
+    ms._harden_socket(a)
+    assert a.gettimeout() == ms.READ_TIMEOUT_S
+    assert a.getsockopt(s.SOL_SOCKET, s.SO_KEEPALIVE)
