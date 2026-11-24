@@ -146,7 +146,7 @@ function OverallBadge({ overall, generatedAt, refreshing, onRefresh }) {
   )
 }
 
-export default function HealthDashboard({ nav, onOpenTicket = null }) {
+export default function HealthDashboard({ nav, onOpenTicket = null, vitalsMockup = null }) {
   const [status, setStatus] = useState(null)
   const [error, setError] = useState(null)
   const [selected, setSelected] = useState(null)
@@ -284,6 +284,16 @@ export default function HealthDashboard({ nav, onOpenTicket = null }) {
             {id === 'agents' && agentProblems > 0 && <span className="ml-1.5 inline-block h-2 w-2 rounded-full bg-red-500" title={`${agentProblems} need attention`} />}
           </button>
         ))}
+        {vitalsMockup && (
+          // The Vitals tab mock-up's switch (#873): adds the tab beside Health; nothing here changes.
+          <span className="ml-auto flex items-center gap-2 text-xs text-neutral-400">
+            <button type="button" role="switch" aria-checked={vitalsMockup.on} data-vitals-switch={vitalsMockup.on ? 'on' : 'off'} onClick={vitalsMockup.onToggle}
+              className={`rounded border px-2 py-1 ${vitalsMockup.on ? 'border-amber-500 text-amber-300' : 'border-neutral-700 text-neutral-400 hover:text-neutral-200'}`}>
+              Vitals mock-up: {vitalsMockup.on ? 'on' : 'off'}
+            </button>
+            {vitalsMockup.on && <button type="button" onClick={vitalsMockup.onOpen} className="text-amber-300 underline">Open it</button>}
+          </span>
+        )}
       </div>
       {view === 'loops' ? (
         <LoopsPanel onOpenTicket={onOpenTicket} />

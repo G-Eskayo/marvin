@@ -130,6 +130,9 @@ contextBridge.exposeInMainWorld('api', {
     setMergeFromDashboard: (repo, value) => ipcRenderer.invoke('health:setMergeFromDashboard', repo, value),
     setDispatch: (repo, value) => ipcRenderer.invoke('health:setDispatch', repo, value)
   },
+  vitals: {
+    planMeter: () => ipcRenderer.invoke('vitals:planMeter')
+  },
   loops: {
     status: () => ipcRenderer.invoke('loops:status'),
     fix: (id) => ipcRenderer.invoke('loops:fix', id)

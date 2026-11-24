@@ -13,7 +13,8 @@ import ActivityHover from '@components/ActivityHover.jsx'
 import SupportTab from '@components/SupportTab.jsx'
 import ItButton from '@components/ItButton.jsx'
 import WorkshopTab, { useWorkshopNow } from '@components/WorkshopTab.jsx'
-import { visibleTabs } from './lib/tabs.js'
+import { visibleTabs, readVitalsSwitch, writeVitalsSwitch } from './lib/tabs.js'
+import VitalsMockup from '@components/VitalsMockup.jsx'
 import { ScrollArea, useScrollArea } from '@components/ScrollPlaces.jsx'
 import { reviewDotStatus } from './lib/pr_fetch_status.js'
 
@@ -62,6 +63,13 @@ export default function App() {
   const [reviewStatus, setReviewStatus] = useState(null)
   const [healthOverall, setHealthOverall] = useState(null)
   const [support, setSupport] = useState({ role: null, badge: 0 })
+  // The Vitals tab mock-up (#873), behind its switch on Health's view row.
+  const [vitalsOn, setVitalsOn] = useState(() => { try { return readVitalsSwitch(window.localStorage) } catch { return false } })
+  const toggleVitals = () => setVitalsOn((on) => {
+    try { writeVitalsSwitch(window.localStorage, !on) } catch { /* the switch just won't stick */ }
+    if (on && activeTab === 'vitals') setActiveTab('health')
+    return !on
+  })
   // Workshop ▸ Now (#862): read on triggers, here so the tab's count shows from any tab.
   const workshop = useWorkshopNow()
   const yourMove = workshop.now?.count ?? 0
@@ -135,7 +143,7 @@ export default function App() {
       <header className="titlebar flex shrink-0 flex-wrap items-center gap-x-1 gap-y-2 border-b border-neutral-800 px-6 pb-3 pt-12">
         <h1 className="mr-6 whitespace-nowrap text-sm font-semibold tracking-wide text-neutral-400">MARVIN METRICS</h1>
         <nav className="flex flex-wrap gap-1">
-          {visibleTabs(support.role).map((tab) => {
+          {visibleTabs(support.role, { vitals: vitalsOn }).map((tab) => {
             const { dot: mrDot, note: mrNote } = tab.id === 'mr-review' && reviewStatus ? reviewDotStatus(reviewStatus) : { dot: null, note: null }
             const dot = tab.id === 'mr-review' ? mrDot : tab.id === 'health' ? healthOverall : null
             const dotColorMap = tab.id === 'health' ? HEALTH_DOT_COLOR : DOT_COLOR
@@ -178,7 +186,9 @@ export default function App() {
           ) : activeTab === 'mr-review' ? (
             <MrReview nav={nav} onOpenDocs={(projectId, path) => navigate('docs', { projectId, path })} onOpenBoard={(repo) => navigate('activity', { repo })} onOpenTicket={(repo, number) => openItem(repo, number, 'ticket')} />
           ) : activeTab === 'health' ? (
-            <HealthDashboard nav={nav} onOpenTicket={(repo, number) => openItem(repo, number, 'ticket')} />
+            <HealthDashboard nav={nav} onOpenTicket={(repo, number) => openItem(repo, number, 'ticket')} vitalsMockup={{ on: vitalsOn, onToggle: toggleVitals, onOpen: () => setActiveTab('vitals') }} />
+          ) : activeTab === 'vitals' && vitalsOn ? (
+            <VitalsMockup workshop={workshop} onOpenItem={openItem} />
           ) : activeTab === 'docs' ? (
             <DocsExplorer nav={nav} onOpenBoard={(repo) => navigate('activity', { repo })} onOpenTicket={(repo, number) => openItem(repo, number, 'ticket')} onOpenPr={(repo, number) => openItem(repo, number, 'pr')} />
           ) : activeTab === 'workshop' ? (

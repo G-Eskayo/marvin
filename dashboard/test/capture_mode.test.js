@@ -45,3 +45,18 @@ describe('installCaptureGuard', () => {
     expect(() => proc.emit('uncaughtException', new Error('x'))).not.toThrow()
   })
 })
+
+// marvin#873: the Vitals mock-up's captures read the worktree's map and a saved accounts sweep. Only in capture mode,
+// only absolute paths; Gil's own dashboard ignores the variables completely.
+import { captureOverride } from '../electron/main/capture_mode.js'
+describe('captureOverride', () => {
+  it('only in evidence-capture mode, only an absolute path', () => {
+    expect(captureOverride({ MARVIN_EVIDENCE_CAPTURE: '1', MARVIN_CAPTURE_MAP_DIR: '/x/brain-map' }, 'MARVIN_CAPTURE_MAP_DIR')).toBe('/x/brain-map')
+    expect(captureOverride({ MARVIN_CAPTURE_MAP_DIR: '/x/brain-map' }, 'MARVIN_CAPTURE_MAP_DIR')).toBe(null)
+    expect(captureOverride({ MARVIN_EVIDENCE_CAPTURE: '0', MARVIN_CAPTURE_MAP_DIR: '/x' }, 'MARVIN_CAPTURE_MAP_DIR')).toBe(null)
+    expect(captureOverride({ MARVIN_EVIDENCE_CAPTURE: '1', MARVIN_CAPTURE_MAP_DIR: 'relative/dir' }, 'MARVIN_CAPTURE_MAP_DIR')).toBe(null)
+    expect(captureOverride({ MARVIN_EVIDENCE_CAPTURE: '1', MARVIN_CAPTURE_MAP_DIR: '' }, 'MARVIN_CAPTURE_MAP_DIR')).toBe(null)
+    expect(captureOverride({ MARVIN_EVIDENCE_CAPTURE: '1', MARVIN_CAPTURE_MAP_DIR: '/a/../../etc' }, 'MARVIN_CAPTURE_MAP_DIR')).toBe('/etc')
+    expect(captureOverride(null, 'X')).toBe(null)
+  })
+})
