@@ -24,6 +24,20 @@
     { "name": "a ref glued to more text is not a ref", "prRepo": "o/r", "body": "Closes #5abc, Part of #6-x", "refs": [] },
     { "name": "pipeline template body", "prRepo": "G-Eskayo/marvin", "body": "## Summary\nDoes the thing.\n\nCloses #1004\n\n## Dev Environment Evidence\nN/A", "refs": [["G-Eskayo/marvin#1004", "closes"]] },
     { "name": "part of, lowercase", "prRepo": "o/r", "body": "part of #235", "refs": [["o/r#235", "part-of"]] },
-    { "name": "part of, lowercase with colon", "prRepo": "o/r", "body": "part of: #235", "refs": [["o/r#235", "part-of"]] }
+    { "name": "part of, lowercase with colon", "prRepo": "o/r", "body": "part of: #235", "refs": [["o/r#235", "part-of"]] },
+    { "name": "blocked by, bare", "prRepo": "o/r", "body": "Blocked by #12", "refs": [] },
+    { "name": "blocked by another repo", "prRepo": "o/r", "body": "Blocked by G-Eskayo/marvin#623", "refs": [] },
+    { "name": "blocked by, a list", "prRepo": "o/r", "body": "Blocked by #1, #2 and o/x#3", "refs": [] },
+    { "name": "duplicate of", "prRepo": "o/r", "body": "Duplicate of #99", "refs": [] },
+    { "name": "covered by", "prRepo": "o/r", "body": "Covered by #88", "refs": [] },
+    { "name": "supersedes", "prRepo": "o/r", "body": "Supersedes o/y#77", "refs": [] },
+    { "name": "related to", "prRepo": "o/r", "body": "Related to #55, #56", "refs": [] },
+    { "name": "PR with closes and blocked-by (blocked-by ignored for PR)", "prRepo": "o/r", "body": "Closes #12\nBlocked by #99", "refs": [["o/r#12", "closes"]] },
+    { "name": "related-to then closes: closes wins", "prRepo": "o/r", "body": "Related to #9\nCloses #9", "refs": [["o/r#9", "closes"]] },
+    { "name": "closes then related-to: closes wins", "prRepo": "o/r", "body": "Closes #9\nRelated to #9", "refs": [["o/r#9", "closes"]] },
+    { "name": "part-of then closes: closes wins", "prRepo": "o/r", "body": "Part of #5\nCloses #5", "refs": [["o/r#5", "closes"]] },
+    { "name": "PR with blocker wins over related (prTicketRefs filters to PR-only)", "prRepo": "o/r", "body": "Closes #12\nRelated to #12\nBlocked by #99", "refs": [["o/r#12", "closes"]] },
+    { "name": "blockers: related-to then blocked-by: blocked-by wins (not for prTicketRefs)", "prRepo": "o/r", "body": "Related to #5\nBlocked by #5", "refs": [] },
+    { "name": "blockers: blocked-by then related-to: blocked-by wins (not for prTicketRefs)", "prRepo": "o/r", "body": "Blocked by #5\nRelated to #5", "refs": [] }
   ]
 }

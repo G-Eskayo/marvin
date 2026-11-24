@@ -841,8 +841,9 @@ its ticketing system creates shows up there with drill-down status. Boards live 
      repo or any other onboarded project's: see **Names its ticket** below), or the last
      pipeline stage is verifying/gate/merging. Card shows the PR link and whether the PR carries
      Dev Environment Evidence; clicking the PR opens it in the MR Review tab.
-  3. **Blocked** — label `blocked`; or `Blocked by #n` in the body with #n still open; or the
-     pipeline's last stage failed and nothing is running. Card always states the reason.
+  3. **Blocked** — label `blocked`; or `Blocked by #n` / `Blocked by: #n` in the body with #n still open
+     (supports multiple refs and cross-repo `owner/repo#n`; blocked-by is one of 7 link words, see **Names its ticket**
+     below); or the pipeline's last stage failed and nothing is running. Card always states the reason.
   4. **In progress** — `claimed:*` label or a live dispatch, **and** some sign of life: a live dispatch, a
      pipeline stage, or a touch on the ticket within 24h. A claim with none of those is a stale claim and
      sits in Blocked ("Claimed by X but no activity for N days"): a claim label is a statement, not
@@ -865,16 +866,26 @@ its ticketing system creates shows up there with drill-down status. Boards live 
   15 min, and a running app is rebuilt once it is >=1h behind (was 2h / 24h, which made a new feature
   take up to a day to show). Trade-off accepted: the relaunch drops unsaved in-tab edits (Portfolio).
 
-- **Names its ticket (2026-11-02, marvin#1004).** An open PR names its ticket as `Closes #n` (it finishes the ticket;
-  GitHub closes it on merge) or `Part of #n` (a step: a mock-up, a stacked slice, a plan, docs; the ticket stays open).
-  Either form takes `owner/repo#n` or the issue URL. The relation index has them as two relations, `closes` and
-  `part-of` ("part of" / "worked on in" in the Related panel); a bare mention or "for #n" is only `mentions`. Both put
-  the ticket's card In review and satisfy the parity check. PRs are matched across repos: every board gets every
-  onboarded project's open PRs (read once per project, the same cached board data the relation index uses), so a
-  marvin-instance PR that closes a marvin ticket moves that card. One parser per language,
-  `dashboard/electron/main/ticket_refs.js` and `lib/pr_ticket_check.py`, both run
-  `dashboard/test/fixtures/pr_ticket_refs_cases.json`. `bin/gh` refuses a PR body that names no ticket
-  (`PR_NAMES_NO_TICKET`; override `MARVIN_NO_TICKET="<reason>"`). The rule: `docs/agents/issue-tracker.md`.
+- **Names its ticket (2026-11-02, marvin#1004; extended 2026-11-21, marvin#447).** PR bodies and ticket bodies name
+  related tickets with 7 link words:
+  - `Closes #n` / `Fixes #n` / `Resolves #n`: PR only. The PR finishes the ticket; GitHub closes it on merge.
+    Ticket card shows In review with the PR.
+  - `Part of #n`: PR only. A step (mock-up, stacked slice, plan, docs); ticket stays open. Card shows In review.
+  - `Blocked by #n`: ticket or PR. This ticket cannot progress until #n is resolved. Card shows Blocked with
+    the reason.
+  - `Duplicate of #n`, `Covered by #n`, `Supersedes #n`, `Related to #n`: ticket or PR. Additional relations
+    shown in the Related panel.
+
+  All link words accept multiple refs in a list (`Blocked by #1, #2 and owner/repo#3`), case-insensitive, and take
+  `owner/repo#n` or the issue URL for a ticket in another repo. Each word or colon form (`Closes:`, `Blocked by:`)
+  counts; "## Blocked by" section in the to-issues template also counts for blocked-by. The relation index has them as
+  `closes`, `part-of`, `blocked-by`, `duplicate-of`, `covered-by`, `supersedes`, `related-to` ("part of" / "worked on
+  in" / "blocks" / "duplicated by" / "covers" / "superseded by" / "related to" in the Related panel); a bare mention or
+  "for #n" is only `mentions`. PRs are matched across repos: every board gets every onboarded project's open PRs (read
+  once per project, the same cached board data the relation index uses), so a marvin-instance PR that closes a marvin
+  ticket moves that card. One parser per language, `dashboard/electron/main/ticket_refs.js` and `lib/pr_ticket_check.py`,
+  both run `dashboard/test/fixtures/pr_ticket_refs_cases.json` (identical). `bin/gh` refuses a PR body that names no
+  ticket (`PR_NAMES_NO_TICKET`; override `MARVIN_NO_TICKET="<reason>"`). The rule: `docs/agents/issue-tracker.md`.
 
 ### Triggers over polling (decided 2026-10-03)
 

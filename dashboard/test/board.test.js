@@ -24,12 +24,14 @@ const pr = (over = {}) => ({
   ...over
 })
 const ctx = (over = {}) => ({
+  repo: 'o/r',
   prs: [],
   events: [],
   isLive: false,
   openNumbers: new Set([1]),
   heldNumbers: new Set(),
   notPlannedNumbers: new Set(),
+  crossRepoIssues: [],
   ...over
 })
 
@@ -78,6 +80,20 @@ describe('deriveColumn', () => {
     expect(r.column).toBe('ready')
   })
 
+  it('blocks on a fully qualified blocker in same-repo issue (defect #89)', () => {
+    const r = deriveColumn(issue({ body: 'Blocked by o/r#7', repo: 'o/r' }), ctx({ openNumbers: new Set([1, 7]) }))
+    expect(r.column).toBe('blocked')
+    expect(r.reason).toContain('#7')
+  })
+
+  it('reads template bullets in "## Blocked by" section with fully qualified refs (defect #52)', () => {
+    const open = ctx({ openNumbers: new Set([1, 7]) })
+    const body = '## What\ntest\n\n## Blocked by\n\n- o/r#7 blocked\n\n## Notes'
+    const r = deriveColumn(issue({ body }), open)
+    expect(r.column).toBe('blocked')
+    expect(r.reason).toContain('#7')
+  })
+
   it('blocks when the pipeline failed and nothing is running', () => {
     const events = [
       { stage: 'executing', status: 'started' },
@@ -115,6 +131,37 @@ describe('deriveColumn', () => {
     const r = deriveColumn(issue(), ctx({ prs: [pr({ body })] }))
     expect(r.prs[0].hasDevEvidence).toBe(true)
   })
+
+  it('blocks on a cross-repo blocker when that repo issue is open', () => {
+    const crossRepoIssues = [{ repo: 'other/repo', number: 7, state: 'OPEN' }]
+    const r = deriveColumn(
+      issue({ body: 'Blocked by other/repo#7' }),
+      ctx({ crossRepoIssues, openNumbers: new Set([1]) })
+    )
+    expect(r.column).toBe('blocked')
+    expect(r.reason).toContain('other/repo#7')
+  })
+
+  it('does not block on a cross-repo blocker when that repo issue is closed', () => {
+    const crossRepoIssues = [{ repo: 'other/repo', number: 7, state: 'CLOSED' }]
+    const r = deriveColumn(
+      issue({ body: 'Blocked by other/repo#7' }),
+      ctx({ crossRepoIssues, openNumbers: new Set([1]) })
+    )
+    expect(r.column).toBe('backlog')
+    expect(r.reason).not.toContain('blocked')
+  })
+
+  it('handles mixed same-repo and cross-repo blockers', () => {
+    const crossRepoIssues = [{ repo: 'other/repo', number: 7, state: 'OPEN' }]
+    const r = deriveColumn(
+      issue({ body: 'Blocked by #2, other/repo#7' }),
+      ctx({ crossRepoIssues, openNumbers: new Set([1, 2]) })
+    )
+    expect(r.column).toBe('blocked')
+    expect(r.reason).toContain('#2')
+    expect(r.reason).toContain('other/repo#7')
+  })
 })
 
 describe('buildBoard', () => {
@@ -129,6 +176,39 @@ describe('buildBoard', () => {
     const byId = Object.fromEntries(board.columns.map((c) => [c.id, c.cards.map((x) => x.number)]))
     expect(byId).toMatchObject({ ready: [1], done: [2], blocked: [3], backlog: [], progress: [], review: [] })
     expect(board.columns.flatMap((c) => c.cards).every((c) => c.title)).toBe(true)
+  })
+
+  it('blocks on cross-repo blocker when that issue is open', () => {
+    const crossRepoIssues = [{ repo: 'other/repo', number: 7, state: 'OPEN', title: 'Other issue' }]
+    const issues = [
+      issue({ number: 1, body: 'Blocked by other/repo#7' })
+    ]
+    const board = buildBoard({ repo: 'o/r', issues, prs: [], eventsByNumber: {}, liveNumbers: new Set(), crossRepoIssues })
+    const cards = board.columns.find((c) => c.id === 'blocked').cards
+    expect(cards.length).toBe(1)
+    expect(cards[0].blockedBy).toEqual([{ repo: 'other/repo', number: 7 }])
+  })
+
+  it('does not block on cross-repo blocker when that issue is closed', () => {
+    const crossRepoIssues = [{ repo: 'other/repo', number: 7, state: 'CLOSED', title: 'Other issue' }]
+    const issues = [
+      issue({ number: 1, body: 'Blocked by other/repo#7' })
+    ]
+    const board = buildBoard({ repo: 'o/r', issues, prs: [], eventsByNumber: {}, liveNumbers: new Set(), crossRepoIssues })
+    const backlogCards = board.columns.find((c) => c.id === 'backlog').cards
+    expect(backlogCards.some((c) => c.number === 1)).toBe(true)
+  })
+
+  it('avoids same-number collision when unqualified and qualified refs both name the same ticket', () => {
+    const issues = [
+      issue({ number: 1, body: 'Blocked by #7 and o/r#7' }),
+      issue({ number: 7, state: 'OPEN' })
+    ]
+    const board = buildBoard({ repo: 'o/r', issues, prs: [], eventsByNumber: {}, liveNumbers: new Set(), crossRepoIssues: [] })
+    const cards = board.columns.find((c) => c.id === 'blocked').cards
+    expect(cards.length).toBe(1)
+    expect(cards[0].number).toBe(1)
+    expect(cards[0].blockedBy).toEqual([7]) // Single dependency, not a duplicate
   })
 })
 

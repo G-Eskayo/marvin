@@ -137,11 +137,17 @@ export function Card({ card, repo, onSelect, onOpenMr, activeTags, onTag }) {
             {card.evidence.verdict === 'in-flight' ? '⚠ work in flight' : '✓ commit mentions this'}
           </span>
         )}
-        {card.blockedBy.map((n) => (
-          <span key={n} className="rounded bg-red-950 px-1.5 py-0.5 font-mono text-[10px] text-red-300" title={`Blocked by #${n}`}>
-            ⛔ #{n}
-          </span>
-        ))}
+        {card.blockedBy.map((dep) => {
+          const depNumber = typeof dep === 'number' ? dep : dep.number
+          const depRepo = typeof dep === 'number' ? undefined : dep.repo
+          const depKey = depRepo ? `${depRepo}#${depNumber}` : depNumber
+          const label = depRepo ? `${depRepo.split('/')[1]}#${depNumber}` : `#${depNumber}`
+          return (
+            <span key={depKey} className="rounded bg-red-950 px-1.5 py-0.5 font-mono text-[10px] text-red-300" title={`Blocked by ${label}`}>
+              ⛔ {label}
+            </span>
+          )
+        })}
         {card.prs.map((pr) => (
           <PrChip key={`${pr.repo || ''}#${pr.number}`} pr={pr} repo={repo} onOpenMr={onOpenMr} />
         ))}

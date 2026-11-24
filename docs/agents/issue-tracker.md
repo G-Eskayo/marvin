@@ -35,6 +35,19 @@
   `pr create` and `pr edit --body*` in a repo with a MARVIN board when the body names no ticket either way
   (`PR_NAMES_NO_TICKET`, `lib/pr_ticket_check.py`); `MARVIN_NO_TICKET="<reason>"` lets one call through, logged, for a
   PR that truly has no ticket.
+
+- **Tickets link to other tickets with 7 relation types** (marvin#447, dashboard/electron/main/ticket_refs.js):
+  - `Closes #N` / `Fixes #N` / `Resolves #N`: the PR finishes the ticket (PR-only, GitHub closes the ticket on merge)
+  - `Part of #N`: the PR is a step towards the ticket (PR-only, ticket stays open)
+  - `Blocked by #N` / `Blocked by: #N`: this ticket cannot progress until #N is resolved
+  - `Duplicate of #N`: this ticket is the same as #N
+  - `Covered by #N`: this ticket is solved or addressed by #N
+  - `Supersedes #N`: this ticket replaces or obsoletes #N
+  - `Related to #N`: this ticket is related to #N (weaker association)
+
+  All link words accept multiple refs in a list: `Blocked by #1, #2 and owner/repo#3` or separated by commas/ampersands.
+  Any line with a linking word (case-insensitive) names the refs; "## Blocked by" section in the to-issues template
+  also counts. Write `owner/repo#N` or the issue's URL for a ticket in another repo.
 - Never force-push, close, or delete issues without explicit user confirmation — these skills
   only create/comment/label by default.
 

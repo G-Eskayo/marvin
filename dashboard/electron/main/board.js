@@ -1,5 +1,5 @@
 import { hasEvidenceSchema, parseTicketRef } from './mr_review.js'
-import { ticketLinked } from './ticket_refs.js'
+import { ticketLinked, allTicketRefs } from './ticket_refs.js'
 import { latestRevisit } from '../../src/lib/revisit.js'
 
 // Jira-style project board (CONTEXT.md "Project boards"). A board is never
@@ -63,21 +63,73 @@ function closingPrs(issue, prs, repo) {
 // "PR #6" for this repo's own PR, "PR marvin-instance#6" for another project's.
 const prLabel = (p) => (p.repo ? `PR ${p.repo.split('/')[1]}#${p.number}` : `PR #${p.number}`)
 
-// Dependencies come from either inline "Blocked by #n" or the to-issues
-// template's "## Blocked by" section (bullets of #n refs, or "None ...").
-export function dependencyRefs(issue) {
+// Dependencies come from "blocked-by" relations in ticket bodies (derived from either inline "Blocked by #n"
+// or the to-issues template's "## Blocked by" section). Returns [{ repo, number }] with repo omitted for
+// same-repo dependencies (mirroring the foreign field in closingPrs).
+// boardRepo: the board's own repo (required to distinguish own vs foreign issues when issue.repo is undefined)
+export function dependencyRefs(issue, boardRepo) {
   const body = issue.body || ''
-  const refs = []
-  for (const m of body.matchAll(/\bBlocked by\s+(?:[\w.-]+\/[\w.-]+)?#(\d+)/gi)) refs.push(Number(m[1]))
+  const ownRepo = issue.repo || boardRepo
+  const all = allTicketRefs(body, ownRepo)
+  const blocked = all.filter((r) => r.relation === 'blocked-by')
+
+  // Also check for "## Blocked by" section (to-issues template format)
   const sec = body.match(/##\s*Blocked by\s*\n([\s\S]*?)(?=\n##\s|$)/i)
-  if (sec) for (const m of sec[1].matchAll(/#(\d+)/g)) refs.push(Number(m[1]))
-  return [...new Set(refs)]
+  if (sec) {
+    for (const m of sec[1].matchAll(/(?:[\w.-]+\/[\w.-]+)?#(\d+)/g)) {
+      const number = Number(m[0].match(/\d+$/)[0])
+      const repoMatch = m[0].match(/^([\w.-]+\/[\w.-]+)/)
+      const repo = repoMatch ? repoMatch[1] : ownRepo
+      const key = `${String(repo).toLowerCase()}#${number}`
+      if (!blocked.some((r) => `${String(r.repo).toLowerCase()}#${r.number}` === key)) {
+        blocked.push({ repo, number, relation: 'blocked-by' })
+      }
+    }
+  }
+
+  // Deduplicate by repo+number, omitting repo when it matches the board's own repo.
+  const found = new Map()
+  const boardRepoLower = String(boardRepo).toLowerCase()
+  for (const r of blocked) {
+    const key = `${String(r.repo).toLowerCase()}#${r.number}`
+    if (!found.has(key)) {
+      // Check if this is a foreign blocker: repo mismatch when compared to board's repo
+      const isForeign = r.repo && r.repo.toLowerCase() !== boardRepoLower
+      found.set(key, { number: r.number, ...(isForeign ? { repo: r.repo } : {}) })
+    }
+  }
+  return [...found.values()]
 }
 
 // A ticket that is on hold, or was closed as not planned, will not be finished soon (or ever), so waiting on
 // it would park the dependent forever. Those are not blockers; the dependent's card says it is ignoring them.
-export function openDependencies(issue, openNumbers, ignored = new Set()) {
-  return dependencyRefs(issue).filter((n) => openNumbers.has(n) && !ignored.has(n))
+// Returns bare numbers for same-repo dependencies (backward compatible) and {repo, number} for cross-repo blockers.
+// crossRepoIssues: list of issues from other repos, each with {repo, number, state, ...}
+// boardRepo: the board's own repo (required to distinguish own vs foreign issues)
+export function openDependencies(issue, openNumbers, ignored = new Set(), crossRepoIssues = [], boardRepo) {
+  const deps = dependencyRefs(issue, boardRepo)
+  const result = []
+
+  // Build a set of open cross-repo issues for quick lookup (only OPEN issues count as blockers)
+  const crossRepoOpen = new Set(crossRepoIssues
+    .filter((i) => i.state === 'OPEN')
+    .map((i) => `${String(i.repo).toLowerCase()}#${i.number}`))
+
+  for (const d of deps) {
+    if (!d.repo) {
+      // Same-repo dependency: check against openNumbers and ignored set
+      if (openNumbers.has(d.number) && !ignored.has(d.number)) {
+        result.push(d.number)
+      }
+    } else {
+      // Cross-repo dependency: check against crossRepoOpen set
+      const key = `${String(d.repo).toLowerCase()}#${d.number}`
+      if (crossRepoOpen.has(key)) {
+        result.push({ repo: d.repo, number: d.number })
+      }
+    }
+  }
+  return result
 }
 
 const refList = (nums) => nums.map((n) => `#${n}`).join(', ')
@@ -96,17 +148,17 @@ export function checklistProgress(body) {
 export function deriveColumn(issue, ctx = {}) {
   const result = deriveColumnCore(issue, ctx)
   if (result.column === 'done') return result
-  const { heldNumbers = new Set(), notPlannedNumbers = new Set() } = ctx
-  const refs = dependencyRefs(issue)
-  const held = refs.filter((n) => heldNumbers.has(n))
-  const dropped = refs.filter((n) => notPlannedNumbers.has(n))
+  const { repo = issue.repo || null, heldNumbers = new Set(), notPlannedNumbers = new Set(), crossRepoIssues = [] } = ctx
+  const refs = dependencyRefs(issue, repo)
+  const held = refs.filter((d) => !d.repo && heldNumbers.has(d.number)).map((d) => d.number)
+  const dropped = refs.filter((d) => !d.repo && notPlannedNumbers.has(d.number)).map((d) => d.number)
   const notes = []
   if (held.length) notes.push(`${refList(held)} ${held.length === 1 ? 'is' : 'are'} on hold, not blocking`)
   if (dropped.length) notes.push(`${refList(dropped)} ${dropped.length === 1 ? 'was' : 'were'} closed as not planned, not blocking`)
   return notes.length ? { ...result, reason: `${result.reason} (${notes.join('; ')})` } : result
 }
 
-function deriveColumnCore(issue, { repo = issue.repo || null, prs = [], events = [], isLive = false, openNumbers = new Set(), heldNumbers = new Set(), notPlannedNumbers = new Set(), now = Date.now() } = {}) {
+function deriveColumnCore(issue, { repo = issue.repo || null, prs = [], events = [], isLive = false, openNumbers = new Set(), heldNumbers = new Set(), notPlannedNumbers = new Set(), crossRepoIssues = [], now = Date.now() } = {}) {
   const labels = labelNames(issue)
   const linked = closingPrs(issue, prs, repo)
   const last = events.length ? events[events.length - 1] : null
@@ -128,8 +180,11 @@ function deriveColumnCore(issue, { repo = issue.repo || null, prs = [], events =
 
   if (labels.includes('hold')) return { ...base, column: 'backlog', reason: 'On hold', held: true }
   if (labels.includes('blocked')) return { ...base, column: 'blocked', reason: 'Labelled blocked' }
-  const deps = openDependencies(issue, openNumbers, new Set([...heldNumbers, ...notPlannedNumbers]))
-  if (deps.length) return { ...base, column: 'blocked', reason: `Blocked by ${deps.map((d) => `#${d}`).join(', ')}, still open` }
+  const deps = openDependencies(issue, openNumbers, new Set([...heldNumbers, ...notPlannedNumbers]), crossRepoIssues, repo)
+  if (deps.length) {
+    const depLabels = deps.map((d) => typeof d === 'number' ? `#${d}` : `${d.repo}#${d.number}`).join(', ')
+    return { ...base, column: 'blocked', reason: `Blocked by ${depLabels}, still open` }
+  }
   if (last && last.status === 'failed' && !isLive) {
     const why = last.detail ? `: ${last.detail}` : ''
     return { ...base, column: 'blocked', reason: `Pipeline failed at ${last.stage}${why}` }
@@ -155,7 +210,7 @@ function deriveColumnCore(issue, { repo = issue.repo || null, prs = [], events =
   return { ...base, column: 'backlog', reason: 'Not yet triaged' }
 }
 
-export function buildBoard({ repo, issues, prs, eventsByNumber = {}, liveNumbers = new Set(), evidenceByNumber = {}, holdComments = {}, now = Date.now() }) {
+export function buildBoard({ repo, issues, prs, eventsByNumber = {}, liveNumbers = new Set(), evidenceByNumber = {}, holdComments = {}, crossRepoIssues = [], now = Date.now() }) {
   const openNumbers = new Set(issues.filter((i) => i.state === 'OPEN').map((i) => i.number))
   const heldNumbers = new Set(issues.filter((i) => i.state === 'OPEN' && labelNames(i).includes('hold')).map((i) => i.number))
   const notPlannedNumbers = new Set(issues.filter((i) => i.state === 'CLOSED' && i.stateReason === 'NOT_PLANNED').map((i) => i.number))
@@ -167,7 +222,7 @@ export function buildBoard({ repo, issues, prs, eventsByNumber = {}, liveNumbers
 
   for (const issue of issues) {
     const events = eventsByNumber[issue.number] || []
-    const d = deriveColumn(issue, { repo, prs, events, isLive: liveNumbers.has(issue.number), openNumbers, heldNumbers, notPlannedNumbers, now })
+    const d = deriveColumn(issue, { repo, prs, events, isLive: liveNumbers.has(issue.number), openNumbers, heldNumbers, notPlannedNumbers, crossRepoIssues, now })
     const names = labelNames(issue)
     const created = Date.parse(issue.createdAt)
     // Git is what happened, labels are what was said: surface work that already exists (lib/ticket_evidence.py).
@@ -184,9 +239,9 @@ export function buildBoard({ repo, issues, prs, eventsByNumber = {}, liveNumbers
       labels: names,
       tags: names.map((name) => ({ name, kind: labelKind(name) })),
       claimedBy: names.find((l) => l.startsWith('claimed:'))?.slice('claimed:'.length) || null,
-      blockedBy: openDependencies(issue, openNumbers, ignored),
-      heldDependencies: dependencyRefs(issue).filter((n) => heldNumbers.has(n)),
-      notPlannedDependencies: dependencyRefs(issue).filter((n) => notPlannedNumbers.has(n)),
+      blockedBy: openDependencies(issue, openNumbers, ignored, crossRepoIssues, repo),
+      heldDependencies: dependencyRefs(issue, repo).filter((d) => !d.repo && heldNumbers.has(d.number)).map((d) => d.number),
+      notPlannedDependencies: dependencyRefs(issue, repo).filter((d) => !d.repo && notPlannedNumbers.has(d.number)).map((d) => d.number),
       held: !!d.held,
       progress: checklistProgress(issue.body),
       createdAt: issue.createdAt,

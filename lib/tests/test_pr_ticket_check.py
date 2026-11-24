@@ -37,6 +37,35 @@ def test_unicode_digits_are_not_ticket_numbers():
     assert pt.ticket_refs("Closes #١٢", "o/r") == []  # Arabic-Indic digits: JS \d wouldn't match them
 
 
+def test_closes_wins_over_related_to_for_same_ticket_defect_45():
+    """PR-specific relations (closes/part-of) always win over other relations (defect #45)."""
+    # Closes after related-to: closes should win
+    result = pt.ticket_refs("Related to #9\nCloses #9", "o/r")
+    assert result == [("o/r", 9, "closes")]
+    # Closes before related-to: closes should still win
+    result = pt.ticket_refs("Closes #9\nRelated to #9", "o/r")
+    assert result == [("o/r", 9, "closes")]
+
+
+def test_first_relation_wins_for_same_ticket_in_non_pr_relations():
+    """For non-PR relations (blockers, duplicates, etc), the first one seen is kept."""
+    # Related-to then blocked-by: related-to keeps the slot
+    result = pt.all_ticket_refs("Related to #5\nBlocked by #5", "o/r")
+    related_to_tickets = [(r, n, rel) for r, n, rel in result if rel == 'related-to']
+    blocked_by_tickets = [(r, n, rel) for r, n, rel in result if rel == 'blocked-by']
+    assert len(related_to_tickets) == 1
+    assert related_to_tickets[0] == ("o/r", 5, "related-to")
+    assert len(blocked_by_tickets) == 0
+
+    # Blocked-by then related-to: blocked-by keeps the slot
+    result = pt.all_ticket_refs("Blocked by #5\nRelated to #5", "o/r")
+    blocked_by_tickets = [(r, n, rel) for r, n, rel in result if rel == 'blocked-by']
+    related_to_tickets = [(r, n, rel) for r, n, rel in result if rel == 'related-to']
+    assert len(blocked_by_tickets) == 1
+    assert blocked_by_tickets[0] == ("o/r", 5, "blocked-by")
+    assert len(related_to_tickets) == 0
+
+
 # ── which calls are checked ─────────────────────────────────────────────────
 
 @pytest.mark.parametrize("argv,repo,target", [

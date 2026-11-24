@@ -71,7 +71,8 @@ export function missingFor(ticket) {
   return missing
 }
 
-// Build a reverse-adjacency (blocks) graph for one repo, excluding held/not-planned
+// Build a reverse-adjacency (blocks) graph for one repo, excluding held/not-planned.
+// Only includes same-repo dependencies (openDependencies filters out cross-repo blockers).
 export function blocksGraph(tickets, repo) {
   const graph = {}
   const openNumbers = new Set()
@@ -88,13 +89,16 @@ export function blocksGraph(tickets, repo) {
 
   const ignored = new Set([...heldNumbers, ...notPlannedNumbers])
 
-  // Build reverse edges
+  // Build reverse edges (same-repo dependencies only, using repo context from blocksGraph call)
   for (const t of tickets) {
     if (!openNumbers.has(t.number)) continue
-    const deps = openDependencies(t, openNumbers, ignored)
+    const deps = openDependencies(t, openNumbers, ignored, [], repo)
     for (const dep of deps) {
-      if (!graph[dep]) graph[dep] = []
-      graph[dep].push(t.number)
+      // Only count same-repo dependencies (bare numbers, not objects with repo field)
+      if (typeof dep === 'number') {
+        if (!graph[dep]) graph[dep] = []
+        graph[dep].push(t.number)
+      }
     }
   }
 

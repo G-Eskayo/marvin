@@ -5,7 +5,7 @@
 
 // ── extraction ──────────────────────────────────────────────────────────────
 
-import { stripCode, prTicketRefs } from './ticket_refs.js'
+import { stripCode, prTicketRefs, allTicketRefs } from './ticket_refs.js'
 
 // Opt-in readings for prose that names work the way people write it (the handoff resume check, marvin#1221):
 //   repos  {shortName: 'owner/repo'}: "portfolio-website-updater #17" (or "marvin#5") is that repo's (an unknown name stays bare)
@@ -47,13 +47,36 @@ export function extractRefs(text, { repos = null, words = false } = {}) {
   return { tickets, adrs: [...adrs], paths, context: /\bCONTEXT\.md\b/.test(clean), readme: /\bREADME\.md\b/.test(clean) }
 }
 
-function blockedByNumbers(body) {
-  const text = stripCode(body)
-  const out = new Set()
-  for (const m of text.matchAll(/\bBlocked by\s+(?:[\w.-]+\/[\w.-]+)?#(\d+)/gi)) out.add(Number(m[1]))
-  const sec = text.match(/##\s*Blocked by\s*\n([\s\S]*?)(?=\n##\s|$)/i)
-  if (sec) for (const m of sec[1].matchAll(/#(\d+)/g)) out.add(Number(m[1]))
-  return out
+// Get all 7 relation types (closes, part-of, blocked-by, duplicate-of, covered-by, supersedes, related-to)
+// from a ticket or PR body, returning them as {repo, number, relation} with duplicate handling.
+function ticketRelations(body, repo) {
+  const all = allTicketRefs(body, repo)
+  const found = new Map()
+  for (const r of all) {
+    const key = `${String(r.repo).toLowerCase()}#${r.number}`
+    // For backward compatibility with blocked-by detection, if we have multiple relations for the same ticket,
+    // we don't override them (each relation type is kept separate).
+    if (!found.has(key)) {
+      found.set(key, r)
+    }
+  }
+
+  // Also check for "## Blocked by" section (to-issues template format), matching bullets like "- #12"
+  const sec = (body || '').match(/##\s*Blocked by\s*\n([\s\S]*?)(?=\n##\s|$)/i)
+  if (sec) {
+    const refPattern = new RegExp(String.raw`(?:[\w.-]+\/[\w.-]+)?#(\d+)`, 'g')
+    for (const m of sec[1].matchAll(refPattern)) {
+      const number = Number(m[0].match(/\d+$/)[0])
+      const repoMatch = m[0].match(/^([\w.-]+\/[\w.-]+)/)
+      const targetRepo = repoMatch ? repoMatch[1] : repo
+      const key = `${String(targetRepo).toLowerCase()}#${number}`
+      if (!found.has(key)) {
+        found.set(key, { repo: targetRepo, number, relation: 'blocked-by' })
+      }
+    }
+  }
+
+  return [...found.values()]
 }
 
 // ── index ───────────────────────────────────────────────────────────────────
@@ -99,9 +122,10 @@ export function buildRelationIndex({ tickets = [], prs = [], docs = [], projects
     const me = T(tk(t.repo, t.number))
     const project = projectByRepo[t.repo]
     const refs = extractRefs(`${t.title}\n${t.body}`)
-    const blocked = blockedByNumbers(t.body)
-    for (const n of blocked) add(me, T(tk(t.repo, n)), 'blocked-by')
-    for (const r of refs.tickets) if (!(r.repo === null || r.repo === t.repo) || !blocked.has(r.number)) add(me, T(tk(r.repo || t.repo, r.number)), 'mentions')
+    const ticketRels = ticketRelations(t.body, t.repo)
+    const relatedByKeyword = new Set(ticketRels.map((r) => `${String(r.repo).toLowerCase()}#${r.number}`))
+    for (const r of ticketRels) add(me, T(tk(r.repo, r.number)), r.relation)
+    for (const r of refs.tickets) if (!(r.repo === null || r.repo === t.repo) || !relatedByKeyword.has(`${String(r.repo || t.repo).toLowerCase()}#${r.number}`)) add(me, T(tk(r.repo || t.repo, r.number)), 'mentions')
     if (project) for (const d of docsMentioned(refs, project)) add(me, D(dk(d.project, d.path)), 'mentions')
   }
 
@@ -109,8 +133,9 @@ export function buildRelationIndex({ tickets = [], prs = [], docs = [], projects
     const me = P(tk(p.repo, p.number))
     const project = projectByRepo[p.repo]
     // "Closes #n" finishes the ticket, "Part of #n" is a step towards it (ticket_refs.js, marvin#1004); either
-    // may name a ticket in another repo.
-    for (const r of prTicketRefs(p.body, p.repo)) add(me, T(tk(r.repo, r.number)), r.relation)
+    // may name a ticket in another repo. For PRs, only these two relations are used.
+    const prRels = ticketRelations(p.body, p.repo).filter((r) => r.relation === 'closes' || r.relation === 'part-of')
+    for (const r of prRels) add(me, T(tk(r.repo, r.number)), r.relation)
     const refs = extractRefs(`${p.title}\n${p.body}`)
     for (const r of refs.tickets) add(me, T(tk(r.repo || p.repo, r.number)), 'mentions')
     if (project) {
@@ -145,8 +170,8 @@ export function buildRelationIndex({ tickets = [], prs = [], docs = [], projects
     return { project: n?.project || key.split('/')[0], path: n?.path || key.slice(key.indexOf('/') + 1), label: n?.label || key }
   }
   const INFO = { t: infoT, p: infoP, d: infoD }
-  const OUT_WORD = { 'blocked-by': 'blocked by', mentions: 'mentions', closes: 'closes', 'part-of': 'part of', changes: 'changes' }
-  const IN_WORD = { 'blocked-by': 'blocks', mentions: 'mentioned in', closes: 'closed by', 'part-of': 'worked on in', changes: 'changed by' }
+  const OUT_WORD = { 'blocked-by': 'blocked by', mentions: 'mentions', closes: 'closes', 'part-of': 'part of', changes: 'changes', 'duplicate-of': 'duplicate of', 'covered-by': 'covered by', 'supersedes': 'supersedes', 'related-to': 'related to' }
+  const IN_WORD = { 'blocked-by': 'blocks', mentions: 'mentioned in', closes: 'closed by', 'part-of': 'worked on in', changes: 'changed by', 'duplicate-of': 'duplicated by', 'covered-by': 'covers', 'supersedes': 'superseded by', 'related-to': 'related to' }
 
   function around(type, key) {
     const out = { docs: [], tickets: [], prs: [] }

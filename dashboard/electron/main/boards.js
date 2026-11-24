@@ -187,7 +187,22 @@ export async function prsOfProjects(repos, getData, except = null) {
   return lists.flat()
 }
 
-export async function loadBoard(repo, { gh, registryRepos = [], stagesFor = defaultStagesFor, liveNumbers, data, evidence = {}, otherPrs = [] } = {}) {
+// Every other project's open issues, each tagged with its repo: one read per project (from the same cached board data),
+// so a blocker in one repo that blocks a ticket in another affects the blocked ticket's column.
+// A project that fails to load only loses its own issues.
+export async function issuesOfProjects(repos, getData, except = null) {
+  const others = [...new Set(repos)].filter((r) => r !== except)
+  const lists = await Promise.all(others.map(async (r) => {
+    try {
+      return ((await getData(r)).issues || []).filter((i) => i.state === 'OPEN').map((i) => ({ ...i, repo: r }))
+    } catch {
+      return []
+    }
+  }))
+  return lists.flat()
+}
+
+export async function loadBoard(repo, { gh, registryRepos = [], stagesFor = defaultStagesFor, liveNumbers, data, evidence = {}, otherPrs = [], otherIssues = [] } = {}) {
   try {
     const { issues: ownIssues, prs: ownPrs } = data || (await fetchBoardData(repo, gh))
     // This repo's PRs plus every other project's (otherPrs): a ticket's PR can live in any project's repo.
@@ -210,6 +225,11 @@ export async function loadBoard(repo, { gh, registryRepos = [], stagesFor = defa
       return true
     })
 
+    // Use otherIssues (from issuesOfProjects) for cross-repo blocker validation.
+    // These are already filtered to open state and tagged with repo.
+    // Fall back to fetchCrossProjectIssues for backward compatibility with tests and direct callers.
+    const crossProjectIssues = otherIssues.length > 0 ? otherIssues : await fetchCrossProjectIssues(repo, registryRepos, gh)
+
     // Build the board for own repo only.
     const { holdComments = {} } = data || {}
     const ownBoard = buildBoard({
@@ -219,11 +239,9 @@ export async function loadBoard(repo, { gh, registryRepos = [], stagesFor = defa
       eventsByNumber: stagesFor(repo),
       liveNumbers: liveNumbers || defaultLiveNumbers(repo),
       evidenceByNumber: evidence,
-      holdComments
+      holdComments,
+      crossRepoIssues: crossProjectIssues
     })
-
-    // Fetch and merge cross-project issues.
-    const crossProjectIssues = await fetchCrossProjectIssues(repo, registryRepos, gh)
 
     // Group cross-project issues by their origin repo.
     const issuesByForeignRepo = new Map()
@@ -235,13 +253,22 @@ export async function loadBoard(repo, { gh, registryRepos = [], stagesFor = defa
       issuesByForeignRepo.get(foreignRepo).push(issue)
     }
 
+    // Build a list of all open issues for cross-repo blocker validation.
+    // Tag own issues with their repo for consistent comparison.
+    const ownIssuesWithRepo = ownIssuesList.map((i) => ({ ...i, repo }))
+    const allOpenIssues = [...ownIssuesWithRepo, ...crossProjectIssues]
+
     // Build a board for each foreign repo's issues.
     const foreignBoards = []
     for (const [foreignRepo, foreignIssues] of issuesByForeignRepo) {
       const foreignBoard = buildBoard({
         repo: foreignRepo,
         issues: foreignIssues,
-        prs: [...ownPrs.map((p) => ({ ...p, repo })), ...otherPrs]
+        prs: [...ownPrs.map((p) => ({ ...p, repo })), ...otherPrs],
+        crossRepoIssues: allOpenIssues,
+        eventsByNumber: stagesFor(foreignRepo),
+        liveNumbers: defaultLiveNumbers(foreignRepo),
+        holdComments: {}
       })
       foreignBoards.push({ repo: foreignRepo, board: foreignBoard })
     }

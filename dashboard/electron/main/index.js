@@ -117,7 +117,7 @@ function checkMergedElsewhere(repo, only = null) {
     .then((urls) => urls.forEach((u) => pushMergeOp(u, mergeOps.get(u))))
     .catch(() => {})
 }
-import { readRegistry, loadBoard, prsOfProjects, fetchBoardData, fetchCompletedData, withProjectStatus, defaultStagesFor, defaultLiveNumbers, getEvidence, clearCrossProjectCache, REGISTRY_PATH } from './boards.js'
+import { readRegistry, loadBoard, prsOfProjects, issuesOfProjects, fetchBoardData, fetchCompletedData, withProjectStatus, defaultStagesFor, defaultLiveNumbers, getEvidence, clearCrossProjectCache, REGISTRY_PATH } from './boards.js'
 import { createRelationsService } from './relations_service.js'
 import { machineNames } from './machine_names.js'
 import { summarizeBoard, buildCompleted } from './board.js'
@@ -600,12 +600,13 @@ function registerActivityHandlers() {
   // from the same cached board data the relation index reads, so this costs no extra GitHub calls once warm.
   const boardInputs = async (repo) => {
     const registryRepos = readRegistry()
-    const [data, evidence, otherPrs] = await Promise.all([
+    const [data, evidence, otherPrs, otherIssues] = await Promise.all([
       getBoardData(repo, ghJson),
       getEvidence(repo),
-      prsOfProjects(registryRepos.map((b) => b.repo), (r) => getBoardData(r, ghJson), repo)
+      prsOfProjects(registryRepos.map((b) => b.repo), (r) => getBoardData(r, ghJson), repo),
+      issuesOfProjects(registryRepos.map((b) => b.repo), (r) => getBoardData(r, ghJson), repo)
     ])
-    return { gh: ghJson, registryRepos, data, evidence, otherPrs }
+    return { gh: ghJson, registryRepos, data, evidence, otherPrs, otherIssues }
   }
   ipcMain.handle('boards:list', () => withProjectStatus(readRegistry(), readCatalog({ deviceId: deviceId() }), readOverrides()))
   ipcMain.handle('boards:load', async (_event, repo, source = 'poll') => {
