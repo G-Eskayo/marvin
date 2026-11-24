@@ -27,7 +27,7 @@ export function createThreadStore(opts = {}) {
   }
 
   return {
-    append({ source, role, text, sessionId = null, clientId = null, ts = null }) {
+    append({ source, role, text, sessionId = null, clientId = null, ts = null, meta = null }) {
       // Validate source
       const validSources = ['chat', 'voice', 'proactive', 'offline']
       if (!validSources.includes(source)) {
@@ -43,6 +43,8 @@ export function createThreadStore(opts = {}) {
         clientId,
         ts: ts ?? Date.now()
       }
+      // Optional context that doesn't change what the message is: for voice, the device and the brain that answered.
+      if (meta && typeof meta === 'object') message.meta = { ...meta }
 
       state.messages.push(message)
       persist()

@@ -15,6 +15,8 @@ import { createPermissionApiRouter } from './permission_api.js'
 import { createLiveChannel } from './live_channel.js'
 import { createLiveApiRouter } from './live_api.js'
 import { createActionsApiRouter } from './actions_api.js'
+import { createVoiceApiRouter, createVoiceApprovalHandler } from './voice_api.js'
+import { warmFastBrain } from './fast_brain.js'
 import { postJson } from './post_json.js'
 import { postTicketInput } from '../electron/main/ticket_input.js'
 import { approveMr, denyMr } from '../electron/main/mr_review.js'
@@ -60,7 +62,11 @@ const threadStore = createThreadStore()
 const chatApiRouter = createChatApiRouter({ threadStore })
 const offlineBatchApiRouter = createOfflineBatchApiRouter({ threadStore })
 const pendingActionStore = createPendingActionsStore()
-const permissionApiRouter = createPermissionApiRouter({ pendingActionStore })
+// A voice request confirmed on the phone (Face ID, then /pending-actions/resolve) runs as a Thread turn (ADR 0075)
+const onVoiceResolved = createVoiceApprovalHandler({ threadStore })
+const permissionApiRouter = createPermissionApiRouter({ pendingActionStore, onResolved: onVoiceResolved })
+// The voice endpoint: POST /voice, POST /voice/timing (ADR 0075)
+const voiceApiRouter = createVoiceApiRouter({ threadStore, pendingActionStore })
 const liveChannel = createLiveChannel()
 const liveApiRouter = createLiveApiRouter(liveChannel)
 
@@ -88,6 +94,10 @@ const server = createServer(async (req, res) => {
 
   // Route through permission API
   let handled = await permissionApiRouter(req, res)
+  if (handled) return
+
+  // Route through the voice endpoint
+  handled = await voiceApiRouter(req, res)
   if (handled) return
 
   // Route through actions API (ticket reply, MR approve/deny)
@@ -136,3 +146,6 @@ const tailscaleIp = await resolveTailscaleIp()
 server.listen(PORT, tailscaleIp, () => {
   console.log(`Mobile backend listening on http://${tailscaleIp}:${PORT}/status`)
 })
+
+// Load the fast brain now so the first spoken turn isn't a cold start (ADR 0075 point 5)
+warmFastBrain().then((ok) => console.log(`Voice fast brain ${ok ? 'warm' : 'not reachable (turns will go to the deep brain)'}`))
