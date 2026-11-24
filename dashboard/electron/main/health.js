@@ -13,6 +13,19 @@ export async function runHealthCheckNow(execFileAsync) {
   await execFileAsync(VENV_PYTHON, [HEALTH_CHECKS_SCRIPT], { timeout: 60_000 })
 }
 
+// In-flight promise de-dup: coalesce multiple concurrent requests into a single sweep (AC2).
+let healthCheckPromise = null
+
+export async function requestHealthSweep(execFileAsync) {
+  if (healthCheckPromise) return healthCheckPromise
+  healthCheckPromise = runHealthCheckNow(execFileAsync)
+    .catch(() => {})  // Swallow errors; failed sweep still clears the in-flight state
+    .finally(() => {
+      healthCheckPromise = null
+    })
+  return healthCheckPromise
+}
+
 // marvin#691: the Health drill-down's "Rebuild graph now" runs the same refresh the git hooks run (one writer), then
 // re-runs the checks so the card shows the result. A failure is returned, never swallowed: the card shows it too.
 const AGENTS_REPO = path.join(homedir(), '.agents')

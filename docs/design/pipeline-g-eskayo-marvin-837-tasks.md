@@ -1,0 +1,12 @@
+1. `lib/job_catalog.py`: change `JOBS["health-check"]["machine"]` from `"mini"` to `"both"` (AC1).
+2. `lib/tests/test_job_units.py`: add the laptop/mini install test for `health-check` under the new placement (test 4).
+3. `lib/health_checks.py`: collapse `check_machine_state_everywhere` to a local-only `check_machine_state()` — drop the `machine_profile.remote_macs()` loop and the `reachability`/"asleep"/"unreachable" branches, keep `evaluate_machine_state()` unchanged, keep the local bash-script runner injectable for tests, keep the `@<registry_id>` id suffix for continuity with existing labels/tests elsewhere.
+4. `lib/health_checks.py`: collapse `check_recent_errors` to local-only — drop the `remote`/`reachability` loop and `_run_errors_remote`; keep the `local` injection point and the `errors@<registry_id>` id.
+5. `lib/health_checks.py`: delete the now-dead `_run_errors_remote`; update `default_checks()` to call the simplified functions with no `reach` argument and move both from `CROSS_MACHINE_BUDGET_S` to `CHECK_BUDGET_S`.
+6. `lib/tests/test_health_checks.py`: rewrite the machine-state-everywhere test and the six recent-errors cross-machine tests to their local-only equivalents (tests 5-6); keep `evaluate_machine_state`'s own ~15 tests untouched.
+7. `dashboard/electron/main/health.js`: add `requestHealthSweep(execFileAsync)` — an in-flight-promise de-dup around `runHealthCheckNow` (same shape as `index.js`'s existing `refreshCatalog`), exported for direct testing.
+8. `dashboard/test/health.test.js` (new): cover tests 2-3 (de-dup, fast return, in-flight-clears-after).
+9. `dashboard/electron/main/index.js`: change the `health:refresh` handler to call `requestHealthSweep(execFileAsync)` without awaiting it, and return `readHealthStatus()` immediately (AC3, first half).
+10. `dashboard/electron/main/index.js`: register `triggerHub.watchFiles('health', [{ dir: <~/.claude/logs>, match: n => n === 'health-status.json' || n === 'health-status.local.json' }])` alongside the existing `docs`/`agents`/`quarantine` watches (AC3, second half).
+11. `dashboard/src/components/HealthDashboard.jsx`: in the `load()` effect, also listen for `window.api.triggers.on(t => t.topic === 'health' && load())`, mirroring the existing `agents` trigger pattern; keep the 60 s poll as backstop.
+12. Run the full Python suite (`run_tests.py` / pytest) and the full dashboard suite (`npm test`) — not just the touched files — before calling this done (main-green, hand-merge discipline).

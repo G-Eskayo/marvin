@@ -68,7 +68,7 @@ JOBS: dict[str, dict] = {
     "cron-health": {"machine": "mini", "goal": "project:marvin", "reporter": "cron-health log",
                     "healthy": "last run exit 0", "consumer": "Health cron:*",
                     "review": "purpose (nothing breaks silently) is falling short: Health missed a 2-day frozen laptop view too. Reached by the Vitals peer heartbeat (P2); this job folds in then"},
-    "health-check": {"machine": "mini", "goal": "project:marvin", "reporter": "health-status.json",
+    "health-check": {"machine": "both", "goal": "project:marvin", "reporter": "health-status.json",
                      "healthy": "a sweep in the last 30 min", "consumer": "Vitals on every machine (once peer push lands)"},
     "process-quarantine-reviews": {"machine": "mini", "goal": "ns1", "reporter": "quarantine.md",
                                    "healthy": "last run exit 0", "consumer": "the session-start report",

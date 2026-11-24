@@ -1534,57 +1534,25 @@ def _run_machine_state(target: str | None, script: str = _MACHINE_STATE_SCRIPT) 
     return subprocess.run(cmd, input=script, capture_output=True, text=True, timeout=60).stdout
 
 
-def _run_errors_remote(host: str) -> list[dict]:
-    """The other Mac's recent errors (lib/error_log.py recent --json), over SSH. Raises on any failure so the caller
-    can say "can't read", never "no errors"."""
-    cmd = ["ssh", *SSH_OPTS, host, "$HOME/.agents/venv/bin/python $HOME/.agents/lib/error_log.py recent --json --hours 24"]
-    proc = subprocess.run(cmd, capture_output=True, text=True, timeout=20)
-    if proc.returncode != 0:
-        raise OSError((proc.stderr or proc.stdout).strip()[:200] or f"ssh exit {proc.returncode}")
-    data = json.loads(proc.stdout or "[]")
-    if not isinstance(data, list):
-        raise ValueError("not an error list")
-    return data
-
-
-def _local_errors() -> list[dict]:
-    import error_log
-    return error_log.recent(hours=24)
-
-
-def check_recent_errors(reachability: dict[str, str], local=_local_errors, remote=_run_errors_remote,
-                        now: datetime | None = None) -> tuple[list[dict], list[dict]]:
-    """marvin#422: one "Recent errors" check per Mac (red while an error keeps repeating within the hour, yellow for
-    anything in the last day), plus every folded error from both Macs, newest first, for the Health list."""
+def check_recent_errors(now: datetime | None = None) -> tuple[list[dict], list[dict]]:
+    """marvin#422: local machine only. Red while an error keeps repeating within the hour, yellow for
+    anything in the last day, plus all errors newest first for the Health list."""
     import error_log
     now = now or _now()
     me = machine_profile.registry_id()
-    devices = [(me, None, "local")] + [(dev, info.get("tailscale_hostname"), reachability.get(f"machine:{dev}", "yellow"))
-                                       for dev, info in machine_profile.remote_devices().items()]
-    results, groups = [], []
-    for dev, host, reach in devices:
-        cid, label = f"errors@{dev}", f"Recent errors -- {dev}"
-        if reach == "asleep":
-            results.append(_result(cid, label, "asleep", "cannot check while the machine is asleep"))
-            continue
-        if reach not in ("local", "green"):
-            results.append(_result(cid, label, "yellow", f"can't read this Mac's errors (unreachable: {reach})"))
-            continue
-        try:
-            mine = local() if host is None else remote(host)
-        except Exception as exc:  # noqa: BLE001
-            results.append(_result(cid, label, "yellow", f"can't read this Mac's errors: {exc}"))
-            continue
-        mine = [{**g, "machine": g.get("machine") or dev, "severity": error_log.severity(g, now)} for g in mine if isinstance(g, dict)]
-        groups += mine
-        if not mine:
-            results.append(_result(cid, label, "green", "no errors in the last 24 hours", value=0))
-            continue
-        sev = "red" if any(g["severity"] == "red" for g in mine) else "yellow"
-        top = "; ".join(f"{g['cause']} ({g['source']}, ×{g['count']})" for g in mine[:3])
-        results.append(_result(cid, label, sev, f"{len(mine)} kind(s) of error in the last 24 hours: {top}", value=len(mine)))
-    groups.sort(key=lambda g: g.get("last_t", ""), reverse=True)
-    return results, groups
+    cid, label = f"errors@{me}", f"Recent errors"
+    try:
+        mine = error_log.recent(hours=24)
+    except Exception as exc:  # noqa: BLE001
+        return [_result(cid, label, "yellow", f"can't read this Mac's errors: {exc}")], []
+    mine = [{**g, "machine": g.get("machine") or me, "severity": error_log.severity(g, now)} for g in mine if isinstance(g, dict)]
+    if not mine:
+        return [_result(cid, label, "green", "no errors in the last 24 hours", value=0)], []
+    sev = "red" if any(g["severity"] == "red" for g in mine) else "yellow"
+    top = "; ".join(f"{g['cause']} ({g['source']}, ×{g['count']})" for g in mine[:3])
+    results = [_result(cid, label, sev, f"{len(mine)} kind(s) of error in the last 24 hours: {top}", value=len(mine))]
+    mine.sort(key=lambda g: g.get("last_t", ""), reverse=True)
+    return results, mine
 
 
 MACHINE_STATE_LABELS = {
@@ -1594,33 +1562,20 @@ MACHINE_STATE_LABELS = {
     "memory:pressure": "Memory pressure", "disk:activity": "Disk writes by work"}
 
 
-def check_machine_state_everywhere(reachability: dict[str, str], runner=_run_machine_state) -> list[dict]:
+def check_machine_state(runner=_run_machine_state) -> list[dict]:
     results = []
     me = machine_profile.registry_id()
-    devices = [(me, None, "local")] + [
-        (dev, info.get("tailscale_hostname"), reachability.get(f"machine:{dev}", "yellow"))
-        for dev, info in machine_profile.remote_macs().items()   # Mac-only state (dashboard, launchd); ADR 0069
-    ]
+    cid_suffix = f"@{me}"
     labels = MACHINE_STATE_LABELS
-    for dev, host, reach in devices:
-        if reach == "asleep":
-            for key, label in labels.items():
-                results.append(_result(f"{key}@{dev}", f"{label} -- {dev}", "asleep", "cannot check while the machine is asleep"))
-            continue
-        if reach not in ("local", "green"):
-            for key, label in labels.items():
-                results.append(_result(f"{key}@{dev}", f"{label} -- {dev}", "yellow", f"machine unreachable ({reach}) -- unverifiable"))
-            continue
-        try:
-            state = parse_machine_state(runner(host, _MACHINE_STATE_SCRIPT))
-        except Exception as exc:
-            for key, label in labels.items():
-                results.append(_result(f"{key}@{dev}", f"{label} -- {dev}", "yellow", f"could not read machine state: {str(exc)[:100]}"))
-            continue
-        state["_device"] = dev
-        for key, sev, detail in evaluate_machine_state(state, _now()):
-            # A key with no label yet shows under its own id instead of failing every card of this machine.
-            results.append(_result(f"{key}@{dev}", f"{labels.get(key, key)} -- {dev}", sev, detail))
+    try:
+        state = parse_machine_state(runner(None, _MACHINE_STATE_SCRIPT))
+    except Exception as exc:
+        for key, label in labels.items():
+            results.append(_result(f"{key}{cid_suffix}", label, "yellow", f"could not read machine state: {str(exc)[:100]}"))
+        return results
+    state["_device"] = me
+    for key, sev, detail in evaluate_machine_state(state, _now()):
+        results.append(_result(f"{key}{cid_suffix}", labels.get(key, key), sev, detail))
     return results
 
 
@@ -1949,7 +1904,7 @@ def default_checks(reach: dict[str, str] | None = None, reach_results: list[dict
         ("repo:sync", "Repo sync", lambda: check_repo_sync_everywhere(reach), CROSS_MACHINE_BUDGET_S),
         ("mirror:sync", "Mirror sync on pull-only nodes", lambda: _mirror_health().check_mirror_sync_everywhere(reach),
          CROSS_MACHINE_BUDGET_S),
-        ("machine-state", "Machine state", lambda: check_machine_state_everywhere(reach), CROSS_MACHINE_BUDGET_S),
+        ("machine-state", "Machine state", check_machine_state, CHECK_BUDGET_S),
     ]
 
 
@@ -1964,10 +1919,10 @@ def run_all(checks=None, recent_errors=None) -> dict:
         box: dict = {}
 
         def errors():
-            rows, box["groups"] = check_recent_errors(reach)
+            rows, box["groups"] = check_recent_errors()
             return rows
 
-        results += guarded("errors", "Recent errors", errors, CROSS_MACHINE_BUDGET_S)
+        results += guarded("errors", "Recent errors", errors, CHECK_BUDGET_S)
         recent_errors = box.get("groups", [])
     else:
         results += run_checks(checks)

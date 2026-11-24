@@ -16,7 +16,7 @@ import { prsForOrderCheck, listPipelinePrs, denyMr, fetchTicketContext, sentBack
 import { approveMrStream } from './approve_stream.js'
 import { readSeenNumbers, markSeen, computeReviewStatus } from './mr_seen.js'
 import { readDispatchStatus } from './dispatch_status.js'
-import { readHealthStatus, readHealthStatusFresh, runHealthCheckNow, rebuildCodeGraph } from './health.js'
+import { readHealthStatus, readHealthStatusFresh, runHealthCheckNow, rebuildCodeGraph, requestHealthSweep } from './health.js'
 import { createPeerCopies } from './peer_copy.js'
 import { createSafetyReviews } from './safety_reviews.js'
 import { buildBootData, createBootGate } from './boot_data.js'
@@ -504,7 +504,7 @@ function registerHealthHandlers() {
   })
   ipcMain.handle('health:ticketAgents', () => readTicketAgentsFresh(peerCopies))
   ipcMain.handle('health:refresh', async () => {
-    await runHealthCheckNow(execFileAsync)
+    requestHealthSweep(execFileAsync).catch(() => {})  // Fire-and-forget, don't await (AC3)
     return readHealthStatus()
   })
   ipcMain.handle('health:rebuildGraph', async () => {
@@ -1418,6 +1418,8 @@ app.whenReady().then(() => {
   triggerHub.onTrigger((t) => t.topic === 'goals' && (goalsCache = null))
   // The safety monitor's quarantine (Health ▸ Safety reviews): an answer here, a new hold or a sync re-reads it once.
   triggerHub.watchFiles('quarantine', [{ dir: join(homedir(), '.claude'), match: (n) => n === 'quarantine.md' }])
+  // Health check results (AC3): sweep output is watched, fresh read on change, file triggers Health UI update.
+  triggerHub.watchFiles('health', [{ dir: join(homedir(), '.claude', 'logs'), match: (n) => n === 'health-status.json' || n === 'health-status.local.json' }])
   triggerHub.onTrigger((t) => mainWindow?.webContents.send('trigger', t))
 
   // External pings (webhook-server): bare = the legacy "MR list changed"; with topics = what changed.

@@ -604,23 +604,15 @@ def test_webhook_build_skips_when_there_is_no_webhook_commit_to_compare_against(
     assert "webhook:build" not in res
 
 
-def test_check_machine_state_everywhere_covers_every_device_and_marks_asleep(monkeypatch):
+def test_check_machine_state_local_only(monkeypatch):
     monkeypatch.setattr(hc.machine_profile, "registry_id", lambda: "mac-mini-1")
-    monkeypatch.setattr(hc.machine_profile, "remote_devices", lambda: {
-        "macbook-pro-1": {"kind": "laptop", "tailscale_hostname": "lap"}})
     monkeypatch.setattr(hc, "_now", lambda: NOW)
     good = f"app_built_ts={int((NOW - timedelta(hours=1)).timestamp())}\ndashboard_commit_ts={int((NOW - timedelta(hours=2)).timestamp())}\ngh_token=ok\n"
-    bad = f"app_built_ts={int((NOW - timedelta(days=30)).timestamp())}\ndashboard_commit_ts={int((NOW - timedelta(hours=2)).timestamp())}\ngh_token=invalid\n"
 
-    results = hc.check_machine_state_everywhere({"machine:macbook-pro-1": "green"},
-                                                runner=lambda target, script: good if target is None else bad)
+    results = hc.check_machine_state(runner=lambda target, script: good)
     by_id = {r["id"]: r["severity"] for r in results}
     assert by_id["dashboard:build@mac-mini-1"] == "green"
-    assert by_id["dashboard:build@macbook-pro-1"] == "red"
-    assert by_id["auth:gh@macbook-pro-1"] == "red"
-
-    asleep = hc.check_machine_state_everywhere({"machine:macbook-pro-1": "asleep"}, runner=lambda t, s: good)
-    assert {r["severity"] for r in asleep if r["id"].endswith("@macbook-pro-1")} == {"asleep"}
+    assert by_id["auth:gh@mac-mini-1"] == "green"
 
 
 # ── dashboard trigger coverage guard ────────────────────────────────────────
@@ -1248,52 +1240,26 @@ def _group(machine, source, cause, count, mins_ago):
     return {"machine": machine, "source": source, "cause": cause, "known": True, "message": "m", "raw": "r", "count": count, "first_t": t, "last_t": t}
 
 
-def _errs(monkeypatch, local, remote, reach):
+def _errs(monkeypatch, local, now=ERR_NOW):
     monkeypatch.setattr(hc.machine_profile, "registry_id", lambda: "macbook-pro")
-    monkeypatch.setattr(hc.machine_profile, "remote_devices", lambda: {"mac-mini": {"tailscale_hostname": "gils-mac-mini"}})
-    return hc.check_recent_errors(reach, local=lambda: local, remote=remote, now=ERR_NOW)
+    import error_log as el
+    monkeypatch.setattr(el, "recent", lambda hours=24: local)
+    return hc.check_recent_errors(now=now)
 
 
-def test_recent_errors_red_when_one_keeps_repeating_on_either_mac(monkeypatch):
-    lock = _group("mac-mini", "sync:pull", "git is locked by a crashed command", 52, 5)
-    results, groups = _errs(monkeypatch, [], lambda host: [lock], {"machine:mac-mini": "green"})
+def test_recent_errors_red_when_one_keeps_repeating_local(monkeypatch):
+    lock = _group("macbook-pro", "sync:pull", "git is locked by a crashed command", 52, 5)
+    results, groups = _errs(monkeypatch, [lock])
     by = {r["id"]: r for r in results}
-    assert by["errors@mac-mini"]["severity"] == "red"
-    assert "git is locked by a crashed command" in by["errors@mac-mini"]["detail"] and "×52" in by["errors@mac-mini"]["detail"]
-    assert by["errors@macbook-pro"]["severity"] == "green"
-    assert groups[0]["machine"] == "mac-mini" and groups[0]["severity"] == "red"
+    assert by["errors@macbook-pro"]["severity"] == "red"
+    assert "git is locked by a crashed command" in by["errors@macbook-pro"]["detail"] and "×52" in by["errors@macbook-pro"]["detail"]
+    assert groups[0]["machine"] == "macbook-pro" and groups[0]["severity"] == "red"
 
 
-def test_recent_errors_amber_for_a_one_off_today(monkeypatch):
+def test_recent_errors_amber_for_a_one_off_today_local(monkeypatch):
     g = _group("macbook-pro", "dashboard:mr:list", "no network, or GitHub unreachable", 1, 300)
-    results, _ = _errs(monkeypatch, [g], lambda host: [], {"machine:mac-mini": "green"})
+    results, _ = _errs(monkeypatch, [g])
     assert {r["id"]: r["severity"] for r in results}["errors@macbook-pro"] == "yellow"
-
-
-def test_an_unreachable_mac_is_unknown_not_clean(monkeypatch):
-    results, _ = _errs(monkeypatch, [], lambda host: [], {"machine:mac-mini": "yellow"})
-    r = {x["id"]: x for x in results}["errors@mac-mini"]
-    assert r["severity"] == "yellow" and "can't read" in r["detail"]
-
-
-def test_an_asleep_mac_is_asleep(monkeypatch):
-    results, _ = _errs(monkeypatch, [], lambda host: [], {"machine:mac-mini": "asleep"})
-    assert {x["id"]: x for x in results}["errors@mac-mini"]["severity"] == "asleep"
-
-
-def test_a_remote_read_that_fails_is_unknown_not_clean(monkeypatch):
-    def boom(host):
-        raise OSError("ssh died")
-    results, _ = _errs(monkeypatch, [], boom, {"machine:mac-mini": "green"})
-    r = {x["id"]: x for x in results}["errors@mac-mini"]
-    assert r["severity"] == "yellow" and "can't read" in r["detail"]
-
-
-def test_groups_from_both_macs_are_newest_first(monkeypatch):
-    a = _group("macbook-pro", "x", "a", 1, 50)
-    b = _group("mac-mini", "y", "b", 1, 5)
-    _, groups = _errs(monkeypatch, [a], lambda host: [b], {"machine:mac-mini": "green"})
-    assert [g["cause"] for g in groups] == ["b", "a"]
 
 
 def test_sync_stuck_streak_is_per_action_so_pushes_do_not_reset_a_failing_pull():
@@ -1640,12 +1606,11 @@ def test_every_machine_state_key_has_a_label_and_an_unlabelled_one_breaks_nothin
     assert emitted <= set(hc.MACHINE_STATE_LABELS), f"no label for {emitted - set(hc.MACHINE_STATE_LABELS)}"
 
     monkeypatch.setattr(hc.machine_profile, "registry_id", lambda: "mac-mini-1")
-    monkeypatch.setattr(hc.machine_profile, "remote_devices", lambda: {})
     monkeypatch.setattr(hc, "_now", lambda: NOW)
     monkeypatch.setattr(hc, "evaluate_machine_state", lambda state, now: [("auth:gh", "green", "ok"), ("brand:new", "yellow", "x")])
-    rows = {r["id"]: r for r in hc.check_machine_state_everywhere({}, runner=lambda t, s: "gh_token=ok\n")}
+    rows = {r["id"]: r for r in hc.check_machine_state(runner=lambda t, s: "gh_token=ok\n")}
     assert rows["auth:gh@mac-mini-1"]["severity"] == "green"
-    assert rows["brand:new@mac-mini-1"]["label"] == "brand:new -- mac-mini-1"
+    assert rows["brand:new@mac-mini-1"]["label"] == "brand:new"  # Unlabeled keys show their id as label
 
 
 # ---- profile parity (marvin#1038) ----

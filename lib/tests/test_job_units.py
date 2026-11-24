@@ -105,6 +105,20 @@ def test_rendered_health_check_plist_is_the_mac_minis():
     assert plistlib.loads(ju.render_plist(ju.load("health-check"), MAC_HOME)) == MINI_HEALTH_CHECK
 
 
+def test_health_check_plist_renders_the_same_on_laptop_and_mini():
+    # health-check is now "both" (AC1): ensure the rendered plist is equivalent on all Macs,
+    # not dependent on hostname or machine-specific paths beyond HOME.
+    job = ju.load("health-check")
+    plist_mini = plistlib.loads(ju.render_plist(job, MAC_HOME))
+    plist_laptop = plistlib.loads(ju.render_plist(job, "/Users/someuser"))
+    # Both must have the same schedule and command structure (HOME differs, so check counts not content).
+    assert plist_mini["StartInterval"] == plist_laptop["StartInterval"]
+    assert len(plist_mini["ProgramArguments"]) == len(plist_laptop["ProgramArguments"])
+    # Check that the venv and script references follow the same path structure
+    assert plist_mini["ProgramArguments"][1].endswith(".agents/lib/health_checks.py")
+    assert plist_laptop["ProgramArguments"][1].endswith(".agents/lib/health_checks.py")
+
+
 @pytest.mark.parametrize("name", JOBS)
 def test_rendered_plist_matches_what_this_mac_has_installed(name):
     """On a Mac that runs the job, the renderer must produce its installed plist exactly (parsed): only then may the

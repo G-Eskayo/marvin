@@ -226,7 +226,11 @@ export default function HealthDashboard({ nav, onOpenTicket = null }) {
   useEffect(() => {
     load()
     const interval = setInterval(load, 60_000) // live-refresh the view against the on-disk snapshot
-    return () => clearInterval(interval)
+    const off = window.api.triggers.on((t) => t.topic === 'health' && load())  // Fire-and-forget sweep (AC3)
+    return () => {
+      clearInterval(interval)
+      off()
+    }
   }, [])
 
   async function handleRefresh() {
