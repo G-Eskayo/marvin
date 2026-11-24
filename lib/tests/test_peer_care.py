@@ -104,12 +104,13 @@ def test_locked_unlock_needs_the_root_script_too(tmp_path):
 class World:
     """A watched peer whose probe answers follow a script; fixes and notices only record."""
 
-    def __init__(self, tmp_path, probes, fix_ok=True):
+    def __init__(self, tmp_path, probes, fix_ok=True, facts=None):
         self.dir = tmp_path / "peer-care"
         self.probes = list(probes)
         self.fixes, self.told = [], []
         self.fix_ok = fix_ok
         self.now = T0
+        self.facts_hook = facts if facts is not None else lambda p: known()
 
     def probe(self, peer):
         return self.probes.pop(0) if len(self.probes) > 1 else self.probes[0]
@@ -123,7 +124,7 @@ class World:
 
     def handle(self, trigger="tailscale-offline", peer="mac-mini-1"):
         return pc.handle(peer, trigger, CFG, probe=self.probe, run_fix=self.run_fix, tell=self.tell,
-                         state_dir=self.dir, now=lambda: self.now, facts=lambda p: known(), unlock_script=None)
+                         state_dir=self.dir, now=lambda: self.now, facts=self.facts_hook, unlock_script=None)
 
 
 DOWN = P(tailscale=False, same_lan=True, lan_ssh=True)          # "network"
@@ -174,6 +175,39 @@ def test_recovery_after_giving_up_starts_a_fresh_budget_next_time(tmp_path):
     w.probes = [DOWN, DOWN]
     w.handle()
     assert pc.load_incident(w.dir, "mac-mini-1")["attempts"] == 1
+
+
+def test_recovery_from_service_state_after_fix_applied(tmp_path):
+    """handle() can recover from service state once its restart-service fix works."""
+    bad = P(tailscale=True, ssh_key=True, services_ok=False, services_detail="webhook :7878")
+    w = World(tmp_path, [bad, UP])
+    r = w.handle()
+    assert r["state"] == "service" and r["action"] == "fixed"
+    assert len(w.fixes) == 1 and pc.load_incident(w.dir, "mac-mini-1") == {}
+
+
+def test_recovery_from_asleep_state_after_wake_fix_applied(tmp_path):
+    """handle() can recover from asleep state once its wake fix works."""
+    bad = P(tailscale=False, same_lan=True, arp=False, port22=False)
+    # asleep state needs ethernet_active=True to trigger the wake fix (not tell-owner)
+    eth_known = dict(known(), ethernet_mac="aa:bb:cc:dd:ee:ff", ethernet_active=True)
+    w = World(tmp_path, [bad, UP], facts=lambda p: eth_known)
+    r = w.handle()
+    assert r["state"] == "asleep" and r["action"] == "fixed"
+    assert "wake" in w.fixes and pc.load_incident(w.dir, "mac-mini-1") == {}
+
+
+@pytest.mark.parametrize("bad_probe,state,expected_fix", [
+    (P(tailscale=True, ssh_key=True, services_ok=False, services_detail="webhook :7878"), "service", "restart-service"),
+    (P(tailscale=False, same_lan=True, arp=False, port22=False), "asleep", "wake"),
+])
+def test_recovery_after_fix_applied_parametrized(tmp_path, bad_probe, state, expected_fix):
+    """handle() can recover from service or asleep states once their fixes work."""
+    eth_known = dict(known(), ethernet_mac="aa:bb:cc:dd:ee:ff", ethernet_active=True)
+    w = World(tmp_path, [bad_probe, UP], facts=lambda p: eth_known)
+    r = w.handle()
+    assert r["state"] == state and r["action"] == "fixed"
+    assert expected_fix in w.fixes and pc.load_incident(w.dir, "mac-mini-1") == {}
 
 
 def test_two_triggers_together_one_acts_the_other_stands_down(tmp_path):

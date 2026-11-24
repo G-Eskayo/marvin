@@ -2163,3 +2163,51 @@ runs no merge or test of its own and its memory is normal).
 - **Reinvested savings**: tokens saved on the front desk may buy a higher frontier model for tasks, but only
   while the bench shows that model meets edge cases and acceptance criteria measurably better. If it doesn't,
   the choice is reconsidered.
+
+## Peer care: machine watchdog (designed #768/#769, built 2026-10-21 marvin#847, closes #763)
+
+The two always-home machines watch each other over Tailscale. No polling: four **no-polling triggers**
+wake the watcher on demand.
+
+- **tailscale-offline** (`watch-ipn`): the IPN bus reader sees a watched peer go offline.
+- **code-sync**: the end of each existing code-sync run probes watched peers (no new clock).
+- **back** (`expect-back`): a restarted machine's boot says "I'm back" and the watcher waits once, bounded, for it.
+- **manual** (`check <peer>`): `peer_care.py check <peer>` on demand.
+
+Each trigger runs one **probe** (~15 s, bounded), then **classify** names the state, then at most one rung of that
+state's **fix ladder**. The ladder has six states:
+
+- **healthy**: Tailscale + SSH key + services ok (or nothing to check). No action.
+- **service**: Tailscale + SSH key but services are failing (webhook not answering). Fix: restart the webhook service.
+- **network**: on the home LAN but Tailscale is down. Fix: restart Tailscale over the LAN.
+- **asleep**: off the network (ARP doesn't answer). Fix: magic packet if Ethernet is on; otherwise tell the owner.
+- **locked**: at the FileVault unlock screen (password-only sshd). Fix: unlock remotely (if `marvin-peer-unlock` installed) or tell the owner.
+- **hung**: NIC answers but the OS doesn't (port 22 closed, ARP yes). Fix: power cycle via smart plug (if configured) or tell the owner.
+- **unknown**: can't see the peer clearly. Fix: tell the owner.
+
+Each incident gets at most **3 attempts** (the owner's budget), then the owner is told once. A per-peer **lock**
+stops concurrent triggers from acting at once. The attempt is **counted before the fix runs**, so a crash can't
+dodge the budget; every step goes to `job_events` as `peer-care-<peer>`.
+
+Fixes switch on without code change as the owner's pieces arrive: Wake-on-LAN once the peer's Ethernet is active,
+remote unlock once `~/.agents/bin/marvin-peer-unlock-setup <peer> <user@host>` runs (one-line setup on the unlocking
+machine), power cycle once a smart plug is listed in `config/peer_care.json` under `smart_plugs.<peer>`.
+
+**Nightly reset**: every configured machine restarts at a fixed slot (e.g., 00:30 for the Mac mini), with a 05:00 deadline. The reset waits and rechecks every 15 minutes while the owner is using the Mac (idle less than 15 minutes), or while a helper/build/test is running, or while the watcher is unreachable. Once the owner is idle, it sends a 5-minute desktop notice, then restarts. It **skips** if still waiting at the deadline, or on power < 1 h (MacBook only, since the Mini is always powered), or if a code-sync is in progress (detected via the same `code_sync.py` lock). Its own restart is `sudo -n /usr/local/libexec/marvin-authrestart`, a root-only script installed by `marvin-reset-setup`. The script reads the FileVault password from the System keychain (where only root can read it) and pipes it straight to `fdesetup authrestart -inputplist` via stdin—never in argv, env, or a file. It runs only under supervision: a go token written by nightly_reset.py right after all guards pass must be fresh (less than 60s old), so a stray call does nothing.
+
+**Owner's remaining physical steps** (code complete, not needing new code):
+
+1. **Ethernet for the Mac mini**: the wake fix requires Ethernet (Wi-Fi alone can't do reliable WoL). Bring the Mini's
+   Ethernet connection online; once active it appears in the probe as `ethernet_active=True`.
+2. **2012 online**: the 2012 must be on and running as the Mini's watcher. Bring it back online.
+3. **Smart plug for the Mac mini**: buy and install a smart plug on the Mini's power outlet, then add it to
+   `config/peer_care.json` under `smart_plugs.mac-mini-1`, e.g. `{"off": "http://plug/off", "on": "http://plug/on"}`.
+   This wires up the power-cycle fix for hung state.
+4. **Nightly reset setup on each Mac**: on the Mini and MacBook (both have reset slots in config), run `sudo
+   ~/.agents/bin/marvin-reset-setup` once. It installs the authrestart script, adds a sudoers rule, and stores your
+   FileVault password in the System keychain. The nightly reset then has the credentials it needs.
+5. **Remote unlock setup (if unlocking peers over SSH)**: on the watcher (the 2012 or any Mac that can unlock a peer),
+   run `sudo ~/.agents/bin/marvin-peer-unlock-setup <peer> <user@address>` once per peer (e.g., `sudo
+   ~/.agents/bin/marvin-peer-unlock-setup <peer> <user>@<lan-ip>`). It installs the unlock script, adds
+   a sudoers rule, and stores the peer's FileVault password in the System keychain. The locked fix then has what it
+   needs to send the unlock command.
