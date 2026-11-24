@@ -647,8 +647,8 @@ def build_arg_parser() -> argparse.ArgumentParser:
                          "default = Claude Code's configured default")
     ap.add_argument("--runner", default="claude", choices=["claude", "ollama"],
                     help="execution backend: 'claude' (default) or 'ollama' (local model)")
-    ap.add_argument("--ollama-model", default="qwen2.5:7b", metavar="MODEL",
-                    help="Ollama model to use with --runner ollama (default: qwen2.5:7b)")
+    ap.add_argument("--ollama-model", default="qwen2.5:3b", metavar="MODEL",
+                    help="Ollama model to use with --runner ollama (default: qwen2.5:3b)")
     ap.add_argument("--context", default="full", choices=["full", "rag"],
                     help="context injection mode for marvin profile with --runner ollama: "
                          "'full' = dump all memory files (default), "

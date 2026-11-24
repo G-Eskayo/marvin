@@ -1698,15 +1698,6 @@ def test_the_health_sweep_entry_point_runs_the_accounts_check():
 
 # ── model availability (ollama runtime) ────────────────────────────────────
 
-def test_query_ollama_models_local_returns_none_on_connection_error(monkeypatch):
-    """When local ollama isn't running, should return None gracefully."""
-    def mock_urlopen(*a, **k):
-        raise OSError("Connection refused")
-    monkeypatch.setattr("urllib.request.urlopen", mock_urlopen)
-    result = hc._query_ollama_models_local()
-    assert result is None
-
-
 def test_query_ollama_models_remote_returns_none_on_ssh_failure(monkeypatch):
     """When SSH fails, should return None."""
     monkeypatch.setattr("subprocess.run",
@@ -1736,7 +1727,7 @@ def test_check_model_availability_unknown_when_no_machines_queried(tmp_path, mon
                 "models": {"qwen2.5:7b": {"runtime": "ollama"}}
             }
     monkeypatch.setattr(mr, "ModelRegistry", lambda: MockRegistry())
-    monkeypatch.setattr(hc, "_query_ollama_models_local", lambda: None)
+    monkeypatch.setattr(mr, "pulled_models", lambda: None)
     monkeypatch.setattr(hc.machine_profile, "remote_devices", lambda: {})
     result = hc.check_model_availability()
     assert result["severity"] == "unknown"
@@ -1752,7 +1743,7 @@ def test_check_model_availability_green_when_models_present_locally(tmp_path, mo
                 "models": {"qwen2.5:7b": {"runtime": "ollama"}}
             }
     monkeypatch.setattr(mr, "ModelRegistry", lambda: MockRegistry())
-    monkeypatch.setattr(hc, "_query_ollama_models_local", lambda: ["qwen2.5:7b"])
+    monkeypatch.setattr(mr, "pulled_models", lambda: ["qwen2.5:7b"])
     monkeypatch.setattr(hc.machine_profile, "remote_devices", lambda: {})
     result = hc.check_model_availability()
     assert result["severity"] == "green"
@@ -1768,7 +1759,7 @@ def test_check_model_availability_green_with_model_variant(tmp_path, monkeypatch
                 "models": {"qwen2.5:7b": {"runtime": "ollama"}}
             }
     monkeypatch.setattr(mr, "ModelRegistry", lambda: MockRegistry())
-    monkeypatch.setattr(hc, "_query_ollama_models_local", lambda: ["qwen2.5:7b-instruct-q4_K_M"])
+    monkeypatch.setattr(mr, "pulled_models", lambda: ["qwen2.5:7b-instruct-q4_K_M"])
     monkeypatch.setattr(hc.machine_profile, "remote_devices", lambda: {})
     result = hc.check_model_availability()
     assert result["severity"] == "green"
@@ -1786,7 +1777,7 @@ def test_check_model_availability_yellow_when_all_machines_answered(tmp_path, mo
                 }
             }
     monkeypatch.setattr(mr, "ModelRegistry", lambda: MockRegistry())
-    monkeypatch.setattr(hc, "_query_ollama_models_local", lambda: ["qwen2.5:7b"])
+    monkeypatch.setattr(mr, "pulled_models", lambda: ["qwen2.5:7b"])
     monkeypatch.setattr(hc.machine_profile, "remote_devices", lambda: {})
     result = hc.check_model_availability()
     assert result["severity"] == "yellow"
@@ -1806,7 +1797,7 @@ def test_check_model_availability_ignores_non_ollama_models(tmp_path, monkeypatc
             }
     monkeypatch.setattr(mr, "ModelRegistry", lambda: MockRegistry())
     # Even though local returns nothing, should be green because there are no ollama models
-    monkeypatch.setattr(hc, "_query_ollama_models_local", lambda: None)
+    monkeypatch.setattr(mr, "pulled_models", lambda: None)
     monkeypatch.setattr(hc.machine_profile, "remote_devices", lambda: {})
     result = hc.check_model_availability()
     assert result["severity"] == "green"
@@ -1821,7 +1812,7 @@ def test_check_model_availability_yellow_when_missing_on_some_machines(tmp_path,
                 "models": {"qwen2.5:7b": {"runtime": "ollama"}}
             }
     monkeypatch.setattr(mr, "ModelRegistry", lambda: MockRegistry())
-    monkeypatch.setattr(hc, "_query_ollama_models_local", lambda: [])  # local is empty
+    monkeypatch.setattr(mr, "pulled_models", lambda: [])  # local is empty
     monkeypatch.setattr(hc.machine_profile, "remote_devices",
                        lambda: {"mac-mini": {"tailscale_hostname": "mini.local"}})
     # Simulate remote also being empty but reachable
@@ -1840,7 +1831,7 @@ def test_check_model_availability_red_on_unregistered_model_in_capability(tmp_pa
                 "models": {}  # nonexistent-model is not registered
             }
     monkeypatch.setattr(mr, "ModelRegistry", lambda: MockRegistry())
-    monkeypatch.setattr(hc, "_query_ollama_models_local", lambda: [])
+    monkeypatch.setattr(mr, "pulled_models", lambda: [])
     monkeypatch.setattr(hc.machine_profile, "remote_devices", lambda: {})
     result = hc.check_model_availability()
     assert result["severity"] == "red"
@@ -1858,7 +1849,7 @@ def test_check_model_availability_red_on_empty_capability(tmp_path, monkeypatch)
                 "models": {"qwen2.5:7b": {"runtime": "ollama"}}
             }
     monkeypatch.setattr(mr, "ModelRegistry", lambda: MockRegistry())
-    monkeypatch.setattr(hc, "_query_ollama_models_local", lambda: ["qwen2.5:7b"])
+    monkeypatch.setattr(mr, "pulled_models", lambda: ["qwen2.5:7b"])
     monkeypatch.setattr(hc.machine_profile, "remote_devices", lambda: {})
     result = hc.check_model_availability()
     assert result["severity"] == "red"
@@ -1875,7 +1866,7 @@ def test_check_model_availability_unknown_when_remote_machine_unreachable(tmp_pa
                 "models": {"qwen2.5:7b": {"runtime": "ollama"}}
             }
     monkeypatch.setattr(mr, "ModelRegistry", lambda: MockRegistry())
-    monkeypatch.setattr(hc, "_query_ollama_models_local", lambda: [])  # local doesn't have it
+    monkeypatch.setattr(mr, "pulled_models", lambda: [])  # local doesn't have it
     monkeypatch.setattr(hc.machine_profile, "remote_devices",
                        lambda: {"mac-mini": {"tailscale_hostname": "mini.local"}})
     # Simulate remote machine query failing (returns None)
@@ -1895,7 +1886,7 @@ def test_check_model_availability_untagged_model_match(tmp_path, monkeypatch):
             }
     monkeypatch.setattr(mr, "ModelRegistry", lambda: MockRegistry())
     # Ollama reports untagged pulls as "name:latest"
-    monkeypatch.setattr(hc, "_query_ollama_models_local", lambda: ["nomic-embed-text:latest"])
+    monkeypatch.setattr(mr, "pulled_models", lambda: ["nomic-embed-text:latest"])
     monkeypatch.setattr(hc.machine_profile, "remote_devices", lambda: {})
     result = hc.check_model_availability()
     assert result["severity"] == "green"

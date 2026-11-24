@@ -394,6 +394,282 @@ class TestCapabilityPointsToAvailableModel:
                     f"Capability '{cap_name}' references unknown model '{model_name}'"
 
 
+# ── Tests 1–6: pulled_models() function ────────────────────────────────────
+
+class TestPulledModels:
+    """Test pulled_models() for querying locally installed models."""
+
+    def test_pulled_models_queries_localhost_11434(self):
+        """pulled_models should query http://localhost:11434/api/tags."""
+        from unittest.mock import Mock, patch
+        def mock_urlopen(url, timeout=None):
+            assert url == "http://localhost:11434/api/tags"
+            assert timeout == 5
+            response = Mock()
+            response.read.return_value = json.dumps({
+                "models": [
+                    {"name": "qwen2.5:7b"},
+                    {"name": "qwen2.5:3b"},
+                    {"name": "nomic-embed-text:latest"}
+                ]
+            }).encode()
+            response.__enter__ = Mock(return_value=response)
+            response.__exit__ = Mock(return_value=None)
+            return response
+
+        with patch('urllib.request.urlopen', mock_urlopen):
+            result = model_registry.pulled_models()
+
+        assert result == ["qwen2.5:7b", "qwen2.5:3b", "nomic-embed-text:latest"]
+
+    def test_pulled_models_returns_none_on_connection_error(self):
+        """pulled_models should return None when server is not reachable."""
+        from unittest.mock import patch
+        def mock_urlopen(url, timeout=None):
+            raise ConnectionError("Connection refused")
+
+        with patch('urllib.request.urlopen', mock_urlopen):
+            result = model_registry.pulled_models()
+
+        assert result is None
+
+    def test_pulled_models_returns_none_on_timeout(self):
+        """pulled_models should return None on timeout."""
+        from unittest.mock import patch
+        def mock_urlopen(url, timeout=None):
+            raise TimeoutError("Connection timed out")
+
+        with patch('urllib.request.urlopen', mock_urlopen):
+            result = model_registry.pulled_models()
+
+        assert result is None
+
+    def test_pulled_models_returns_empty_list_when_no_models(self):
+        """pulled_models should return empty list when API returns no models."""
+        from unittest.mock import Mock, patch
+        def mock_urlopen(url, timeout=None):
+            response = Mock()
+            response.read.return_value = json.dumps({"models": []}).encode()
+            response.__enter__ = Mock(return_value=response)
+            response.__exit__ = Mock(return_value=None)
+            return response
+
+        with patch('urllib.request.urlopen', mock_urlopen):
+            result = model_registry.pulled_models()
+
+        assert result == []
+
+    def test_pulled_models_handles_malformed_json(self):
+        """pulled_models should return None when response is not valid JSON."""
+        from unittest.mock import Mock, patch
+        def mock_urlopen(url, timeout=None):
+            response = Mock()
+            response.read.return_value = b"not json"
+            response.__enter__ = Mock(return_value=response)
+            response.__exit__ = Mock(return_value=None)
+            return response
+
+        with patch('urllib.request.urlopen', mock_urlopen):
+            result = model_registry.pulled_models()
+
+        assert result is None
+
+    def test_pulled_models_accepts_custom_base_url(self):
+        """pulled_models should accept a custom base_url parameter."""
+        from unittest.mock import Mock, patch
+        def mock_urlopen(url, timeout=None):
+            assert url == "http://10.0.0.1:11434/api/tags"
+            response = Mock()
+            response.read.return_value = json.dumps({"models": [{"name": "test:latest"}]}).encode()
+            response.__enter__ = Mock(return_value=response)
+            response.__exit__ = Mock(return_value=None)
+            return response
+
+        with patch('urllib.request.urlopen', mock_urlopen):
+            result = model_registry.pulled_models(base_url="http://10.0.0.1:11434")
+
+        assert result == ["test:latest"]
+
+
+# ── Tests 7–14: ModelUnavailableError and resolve_or_raise() ───────────────
+
+class TestModelUnavailableError:
+    """Test ModelUnavailableError exception."""
+
+    def test_model_unavailable_error_is_an_exception(self):
+        """ModelUnavailableError should be a proper exception."""
+        exc = model_registry.ModelUnavailableError("test", ["qwen2.5:14b"], ["qwen2.5:7b"])
+        assert isinstance(exc, Exception)
+
+    def test_model_unavailable_error_stores_capability_and_models(self):
+        """ModelUnavailableError should store capability and model info."""
+        exc = model_registry.ModelUnavailableError("my-capability", ["model1", "model2"], ["available1"])
+        assert exc.capability == "my-capability"
+        assert exc.required_models == ["model1", "model2"]
+        assert exc.available_models == ["available1"]
+
+    def test_model_unavailable_error_stores_checked_flag(self):
+        """ModelUnavailableError should store checked flag to distinguish 'couldn't check' from 'confirmed missing'."""
+        exc_checked = model_registry.ModelUnavailableError("cap", ["model1"], ["model2"], checked=True)
+        assert exc_checked.checked is True
+        assert "available locally" in str(exc_checked)
+
+        exc_not_checked = model_registry.ModelUnavailableError("cap", ["model1"], [], checked=False)
+        assert exc_not_checked.checked is False
+        assert "couldn't reach Ollama" in str(exc_not_checked)
+
+    def test_model_unavailable_error_str_representation(self):
+        """ModelUnavailableError should have a readable string representation."""
+        exc = model_registry.ModelUnavailableError("my-cap", ["qwen2.5:14b"], ["qwen2.5:7b"])
+        assert "my-cap" in str(exc)
+        assert "qwen2.5:14b" in str(exc)
+
+    def test_model_unavailable_error_message_distinguishes_checked_vs_unreachable(self):
+        """Error messages should clearly distinguish 'confirmed missing' from 'couldn't check'."""
+        exc_checked = model_registry.ModelUnavailableError("cap", ["qwen2.5:14b"], [], checked=True)
+        msg_checked = str(exc_checked)
+        assert "available locally" in msg_checked
+
+        exc_unreachable = model_registry.ModelUnavailableError("cap", ["qwen2.5:14b"], [], checked=False)
+        msg_unreachable = str(exc_unreachable)
+        assert "couldn't reach Ollama" in msg_unreachable
+        assert "couldn't reach Ollama" not in msg_checked
+        assert "available locally" not in msg_unreachable
+
+
+class TestResolveOrRaise:
+    """Test resolve_or_raise() function."""
+
+    def test_resolve_or_raise_returns_model_when_available(self):
+        """resolve_or_raise should return a model when it's available."""
+        from unittest.mock import Mock
+        def mock_pulled():
+            return ["qwen2.5:7b", "qwen2.5:3b"]
+
+        mock_reg = Mock()
+        mock_reg._read.return_value = {
+            "models": {"qwen2.5:7b": {}, "qwen2.5:3b": {}},
+            "capabilities": {"my-cap": ["qwen2.5:7b"]}
+        }
+
+        result = model_registry.resolve_or_raise("my-cap", reg=mock_reg, pulled_fn=mock_pulled)
+        assert result == "qwen2.5:7b"
+
+    def test_resolve_or_raise_raises_when_model_not_available(self):
+        """resolve_or_raise should raise ModelUnavailableError when no model is available."""
+        from unittest.mock import Mock
+        def mock_pulled():
+            return ["some-other-model:latest"]
+
+        mock_reg = Mock()
+        mock_reg._read.return_value = {
+            "models": {"qwen2.5:14b": {"size_gb": 9.0}},
+            "capabilities": {"my-cap": ["qwen2.5:14b"]}
+        }
+
+        with __import__("pytest").raises(model_registry.ModelUnavailableError) as exc_info:
+            model_registry.resolve_or_raise("my-cap", reg=mock_reg, pulled_fn=mock_pulled)
+
+        assert exc_info.value.capability == "my-cap"
+
+    def test_resolve_or_raise_uses_model_present_matching(self):
+        """resolve_or_raise should use model_present for matching variants."""
+        from unittest.mock import Mock
+        def mock_pulled():
+            return ["qwen2.5:7b-instruct"]
+
+        mock_reg = Mock()
+        mock_reg._read.return_value = {
+            "models": {"qwen2.5:7b": {"size_gb": 4.7}},
+            "capabilities": {"my-cap": ["qwen2.5:7b"]}
+        }
+
+        # This should succeed because qwen2.5:7b-instruct matches qwen2.5:7b
+        result = model_registry.resolve_or_raise("my-cap", reg=mock_reg, pulled_fn=mock_pulled)
+        assert result == "qwen2.5:7b"
+
+    def test_resolve_or_raise_handles_unknown_capability(self):
+        """resolve_or_raise should raise KeyError for unknown capability."""
+        from unittest.mock import Mock
+        mock_reg = Mock()
+        mock_reg._read.return_value = {
+            "models": {"qwen2.5:14b": {}},
+            "capabilities": {}
+        }
+
+        with __import__("pytest").raises(KeyError):
+            model_registry.resolve_or_raise("nonexistent-cap", reg=mock_reg, pulled_fn=lambda: [])
+
+    def test_resolve_or_raise_handles_pulled_fn_returning_none(self):
+        """resolve_or_raise should treat None from pulled_fn as 'couldn't check' (checked=False)."""
+        from unittest.mock import Mock
+        mock_reg = Mock()
+        mock_reg._read.return_value = {
+            "models": {"qwen2.5:14b": {}},
+            "capabilities": {"my-cap": ["qwen2.5:14b"]}
+        }
+
+        with __import__("pytest").raises(model_registry.ModelUnavailableError) as exc_info:
+            model_registry.resolve_or_raise("my-cap", reg=mock_reg, pulled_fn=lambda: None)
+
+        # The error should indicate we couldn't check, not that we confirmed missing
+        assert exc_info.value.checked is False
+        assert "couldn't reach Ollama" in str(exc_info.value)
+
+    def test_resolve_or_raise_handles_pulled_fn_returning_empty_list(self):
+        """resolve_or_raise should treat [] from pulled_fn as 'confirmed missing' (checked=True)."""
+        from unittest.mock import Mock
+        mock_reg = Mock()
+        mock_reg._read.return_value = {
+            "models": {"qwen2.5:14b": {}},
+            "capabilities": {"my-cap": ["qwen2.5:14b"]}
+        }
+
+        with __import__("pytest").raises(model_registry.ModelUnavailableError) as exc_info:
+            model_registry.resolve_or_raise("my-cap", reg=mock_reg, pulled_fn=lambda: [])
+
+        # The error should indicate we checked and confirmed missing
+        assert exc_info.value.checked is True
+        assert "available locally" in str(exc_info.value)
+
+    def test_resolve_or_raise_prefers_first_model_in_capability_list(self):
+        """resolve_or_raise should return first available model from capability."""
+        from unittest.mock import Mock
+        def mock_pulled():
+            return ["qwen2.5:3b", "qwen2.5:7b", "qwen2.5:14b"]
+
+        mock_reg = Mock()
+        mock_reg._read.return_value = {
+            "models": {
+                "qwen2.5:3b": {},
+                "qwen2.5:7b": {},
+                "qwen2.5:14b": {}
+            },
+            "capabilities": {"my-cap": ["qwen2.5:14b", "qwen2.5:7b", "qwen2.5:3b"]}
+        }
+
+        result = model_registry.resolve_or_raise("my-cap", reg=mock_reg, pulled_fn=mock_pulled)
+        # Should return the first one in the capability list that's available
+        assert result == "qwen2.5:14b"
+
+    def test_resolve_or_raise_uses_default_registry_if_none_provided(self):
+        """resolve_or_raise should use default ModelRegistry if none provided."""
+        from unittest.mock import patch, Mock
+        def mock_pulled():
+            return ["qwen2.5:7b"]
+
+        # Patch ModelRegistry to return a mock
+        mock_reg = Mock()
+        mock_reg._read.return_value = {
+            "models": {"qwen2.5:7b": {}},
+            "capabilities": {"my-cap": ["qwen2.5:7b"]}
+        }
+
+        with patch('model_registry.ModelRegistry', return_value=mock_reg):
+            result = model_registry.resolve_or_raise("my-cap", pulled_fn=mock_pulled)
+            assert result == "qwen2.5:7b"
+
+
 if __name__ == "__main__":
     import pytest
     pytest.main([__file__, "-v"])

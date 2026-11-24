@@ -11,11 +11,83 @@ from __future__ import annotations
 import fcntl
 import json
 import os
+import urllib.request
 from datetime import datetime, timezone
 from pathlib import Path
 
 HOME = Path.home()
 REGISTRY_PATH = Path(__file__).resolve().parents[1] / "config" / "models.json"
+
+
+class ModelUnavailableError(Exception):
+    """Raised when a required model is not available locally."""
+    def __init__(self, capability: str, required_models: list[str], available_models: list[str], checked: bool = True):
+        self.capability = capability
+        self.required_models = required_models
+        self.available_models = available_models
+        self.checked = checked
+        if checked:
+            msg = (f"Capability '{capability}' requires one of {required_models}, "
+                   f"but only {available_models} are available locally")
+        else:
+            msg = (f"Capability '{capability}' requires one of {required_models}, "
+                   f"but couldn't reach Ollama to verify available models")
+        super().__init__(msg)
+
+
+def pulled_models(base_url: str = "http://localhost:11434") -> list[str] | None:
+    """Query Ollama's /api/tags endpoint and return list of pulled model names.
+
+    Returns None on any error (connection, timeout, JSON parsing, etc.).
+    Returns [] if the server responds but has no models.
+    Never raises.
+    """
+    try:
+        url = f"{base_url}/api/tags"
+        with urllib.request.urlopen(url, timeout=5) as resp:
+            data = json.loads(resp.read())
+            return [m["name"] for m in data.get("models", [])]
+    except Exception:
+        return None
+
+
+def resolve_or_raise(capability: str, reg: "ModelRegistry | None" = None,
+                     pulled_fn: "callable | None" = None) -> str:
+    """Resolve a capability to a model, raising ModelUnavailableError if not found.
+
+    Args:
+        capability: The capability name (e.g., "local-classify-medium")
+        reg: ModelRegistry instance; uses default if None
+        pulled_fn: Function to get list of available models; uses pulled_models() if None
+
+    Returns:
+        The first available model name from the capability's model list
+
+    Raises:
+        KeyError: If capability is unknown
+        ModelUnavailableError: If no required models are available locally
+    """
+    if reg is None:
+        reg = ModelRegistry()
+    if pulled_fn is None:
+        pulled_fn = pulled_models
+
+    # Resolve the capability to get the model list
+    models_for_capability = resolve_capability(capability, reg=reg)
+
+    # Get the list of available models, tracking whether the check succeeded
+    available = pulled_fn()
+    checked = available is not None
+    if available is None:
+        available = []
+
+    # Find the first model from the capability that's available
+    for model_name in models_for_capability:
+        if model_present(available, model_name):
+            return model_name
+
+    # None available
+    raise ModelUnavailableError(capability, models_for_capability, available, checked=checked)
 
 
 class ModelRegistry:
