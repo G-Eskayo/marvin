@@ -620,14 +620,36 @@ def test_the_pipeline_rebuilds_a_regression_despite_the_original_fix_on_main(mon
     assert [i["number"] for i in tp._unclaimed_ready_tickets()] == [707]     # 8 looks done; 9 is in flight
 
 
-def test_the_morning_brief_says_what_the_ladder_did():
+def test_the_morning_brief_says_what_the_ladder_did(monkeypatch):
+    """The ladder's regression items flow through _regressions → _your_projects_items → brief."""
+    import brief_items as bi
     import morning_brief as mb
     now = datetime(2026, 11, 4, 9, tzinfo=timezone.utc)
-    brief = {"regressions": [{"kind": "fixed", "line": "MARVIN fixed a regression of #707 itself: first aid cleared it."},
-                             {"kind": "needs-you", "line": "Regression: #707 code-sync-stuck regressed. First aid failed."}]}
-    text = mb.render(brief, now)
-    needs, overnight = text.split("## Overnight")
-    assert "Regression: #707" in needs and "fixed a regression of #707 itself" in overnight
+
+    # Mock _regressions to return both kinds of regressions (needs-you and fixed)
+    monkeypatch.setattr(mb, "_regressions", lambda now: [
+        {"kind": "needs-you", "line": "Regression: #707 code-sync-stuck regressed. First aid failed."},
+        {"kind": "fixed", "line": "MARVIN fixed a regression of #707 itself: first aid cleared it."},
+    ])
+
+    # Mock other readers to return empty to isolate the regression behavior
+    monkeypatch.setattr(mb, "_red_checks", lambda: [])
+    monkeypatch.setattr(mb, "_open_prs", lambda: [])
+    monkeypatch.setattr(mb, "_human_tickets", lambda: [])
+    monkeypatch.setattr(mb, "_top_tickets", lambda: [])
+    monkeypatch.setattr(mb, "_auto_merge_report", lambda: None)
+    monkeypatch.setattr(mb, "_digest_idea", lambda now: None)
+
+    # Call the production path: _your_projects_items filters out "fixed" regressions
+    items, failures = mb._your_projects_items(now)
+
+    # Verify that only "needs-you" regressions make it to the items
+    assert len(items) == 1
+    assert "Regression: #707" in items[0]["line"]
+    assert "code-sync-stuck" in items[0]["line"]
+    assert "fixed a regression" not in items[0]["line"]  # "fixed" kind is dropped
+    # No reader failures in this test
+    assert failures == []
 
 
 def test_the_regression_notification_uses_every_channel_and_never_raises(monkeypatch):

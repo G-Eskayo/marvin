@@ -25,13 +25,14 @@ from typing import Callable
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
+import brief_items as bi
+
 CLAUDE = Path.home() / ".claude"
 BRIEFS = CLAUDE / "briefs"
 HEALTH_STATUS = CLAUDE / "logs" / "health-status.json"
 OVERRIDES = CLAUDE / "catalog" / "overrides.json"
 REPOS = ("G-Eskayo/marvin", "G-Eskayo/clarity-captions", "G-Eskayo/marvin-mobile")
 DEADLINE_HORIZON_DAYS = 45
-LATE_HOUR = 23  # local time; a session still active after this counts as a late night
 
 
 # ── sources (each is a small reader; gather() tolerates any of them failing) ──────────────────────────────────
@@ -77,28 +78,6 @@ def _human_tickets() -> list[dict]:
     return out
 
 
-def _launches(now: datetime) -> list[dict]:
-    import marvin_launcher
-    since = now - timedelta(days=1)
-    out = []
-    for line in (marvin_launcher.LAUNCH_LOG.read_text().splitlines() if marvin_launcher.LAUNCH_LOG.exists() else []):
-        try:
-            rec = json.loads(line)
-            if datetime.fromisoformat(rec["at"]) >= since:
-                out.append(rec)
-        except (json.JSONDecodeError, KeyError, ValueError):
-            continue
-    return out
-
-
-def _merged(now: datetime) -> list[dict]:
-    since = now - timedelta(days=1)
-    out = []
-    for repo in REPOS:
-        for p in _gh(f"repos/{repo}/pulls?state=closed&sort=updated&direction=desc&per_page=30"):
-            if p.get("merged_at") and datetime.fromisoformat(p["merged_at"].replace("Z", "+00:00")) >= since:
-                out.append({"number": p["number"], "title": p["title"], "repo": repo.split("/")[1]})
-    return out
 
 
 def _days_until(date: str, now: datetime) -> int:
@@ -152,24 +131,6 @@ def _research_idea(now: datetime) -> str | None:
     return _first_paragraph(CLAUDE / "research-digest" / f"{day}.md", None)
 
 
-def _late_night(now: datetime) -> str | None:
-    """The latest time an interactive session was active last night, if it was after LATE_HOUR."""
-    import tool_usage as tu
-    local_now = now.astimezone()
-    start = (local_now - timedelta(days=1)).replace(hour=LATE_HOUR, minute=0, second=0, microsecond=0)
-    end = local_now.replace(hour=5, minute=0, second=0, microsecond=0)
-    latest = None
-    for f in tu.find_transcripts(tu.TRANSCRIPTS, window_days=1, now=now):
-        for line in f.read_text(errors="ignore").splitlines()[-400:]:
-            if '"entrypoint":"cli"' not in line.replace(" ", ""):
-                continue
-            m = re.search(r'"timestamp"\s*:\s*"([^"]+)"', line)
-            when = tu._parse_ts(m.group(1)).astimezone() if m and tu._parse_ts(m.group(1)) else None
-            if when and start <= when <= end and (latest is None or when > latest):
-                latest = when
-    return latest.strftime("%H:%M") if latest else None
-
-
 def _auto_merge_report() -> str | None:
     """Auto-merge's shadow report line once it is ready (ADR 0064, #341), else None."""
     import auto_merge_shadow
@@ -188,48 +149,142 @@ def _regressions(now: datetime) -> list[dict]:
     return lines + ([{"kind": "needs-you", "line": shadow}] if shadow else [])
 
 
-def _revisited(now: datetime) -> list[dict]:
-    """Tickets returned from hold in the last day (revisit agent)."""
-    import ticket_agents
-    since = now - timedelta(days=1)
-    out = []
-    for line in (ticket_agents.AUDIT_PATH.read_text().splitlines() if ticket_agents.AUDIT_PATH.exists() else []):
-        try:
-            rec = json.loads(line)
-            if (rec.get("agent") == "revisit" and rec.get("op") == "remove_label" and rec.get("arg") == "hold" and
-                rec.get("status") == "applied" and datetime.fromisoformat(rec["at"]) >= since):
-                out.append({"number": rec["number"], "title": rec.get("title", ""), "repo": rec.get("repo", "G-Eskayo/marvin")})
-        except (json.JSONDecodeError, KeyError, ValueError):
-            continue
-    return out
+# ── item builders (each returns list[dict] with section, tier, line) ────────────────────────────────────────
+
+def _your_projects_items(now: datetime) -> tuple[list[dict], list[str]]:
+    """Your projects: immediate work and decisions for the day.
+
+    Wraps each reader individually so one failure does not drop the whole section.
+    Returns (items, failures) where failures are reader-level errors to report in Gaps.
+    """
+    items = []
+    failures = []
+
+    # Tier 0: regressions needing you, red checks (each reader separately)
+    try:
+        for r in _regressions(now):
+            if r.get("kind") == "needs-you":
+                items.append(bi.make_item("your_projects", 0, r["line"]))
+    except Exception as e:  # noqa: BLE001 -- regressions failure does not kill the brief
+        failures.append(f"couldn't read regressions ({str(e)[:80]})")
+
+    try:
+        for c in _red_checks():
+            items.append(bi.make_item("your_projects", 0, f"{c['label']}: {c['detail']}"))
+    except Exception as e:  # noqa: BLE001 -- red checks failure does not kill the brief
+        failures.append(f"couldn't read red checks ({str(e)[:80]})")
+
+    # Tier 1: auto-merge decision, PRs needing review, human tickets (each reader separately)
+    try:
+        am = _auto_merge_report()
+        if am:
+            items.append(bi.make_item("your_projects", 1, am))
+    except Exception as e:  # noqa: BLE001 -- auto-merge failure does not kill the brief
+        failures.append(f"couldn't read auto-merge report ({str(e)[:80]})")
+
+    try:
+        for p in _open_prs():
+            if not p.get("waiting_on_marvin"):
+                items.append(bi.make_item("your_projects", 1, _ref(p, pr=True), number=p["number"], repo=p["repo"]))
+            else:
+                # Store waiting PRs as special items (marked so render() knows to handle them)
+                suffix = " and you asked a question" if p.get("question") else ""
+                items.append(bi.make_item("your_projects", 1,
+                                         f"{_ref(p, pr=True)}: your decisions are in{suffix}",
+                                         number=p["number"], repo=p["repo"], waiting_on_marvin=True))
+    except Exception as e:  # noqa: BLE001 -- open PRs failure does not kill the brief
+        failures.append(f"couldn't read open PRs ({str(e)[:80]})")
+
+    try:
+        for t in _human_tickets():
+            items.append(bi.make_item("your_projects", 1, f"Your task: {_ref(t)}", number=t["number"], repo=t["repo"]))
+    except Exception as e:  # noqa: BLE001 -- human tickets failure does not kill the brief
+        failures.append(f"couldn't read human tickets ({str(e)[:80]})")
+
+    # Tier 2: top tickets by priority
+    try:
+        for t in _top_tickets():
+            # _top_tickets already returns sorted by priority, so insertion order is preserved
+            items.append(bi.make_item("your_projects", 2, f"{t['priority']}: {_ref(t)}", number=t["number"], repo=t["repo"]))
+    except Exception as e:  # noqa: BLE001 -- top tickets failure does not kill the brief
+        failures.append(f"couldn't read top tickets ({str(e)[:80]})")
+
+    # Tier 3: digest idea
+    try:
+        idea = _digest_idea(now)
+        if idea:
+            items.append(bi.make_item("your_projects", 3, f"**Compounding move:** {idea}"))
+    except Exception as e:  # noqa: BLE001 -- digest idea failure does not kill the brief
+        failures.append(f"couldn't read digest idea ({str(e)[:80]})")
+
+    return items, failures
+
+
+def _your_day_items(now: datetime) -> list[dict]:
+    """Your day: deadlines and calendar-based urgency."""
+    items = []
+    for d in _deadlines(now):
+        days = _days_until(d["date"], now)
+        # Tier by urgency: hard + ≤7 days highest
+        tier = 0 if (d["hard"] and days <= 7) else (1 if days <= 7 else 2)
+        items.append(bi.make_item("your_day", tier,
+                                   f"{d['project']}: {days} days ({d['date']}{', hard deadline' if d['hard'] else ''})"))
+    return items
+
+
+def _research_items(now: datetime) -> list[dict]:
+    """Research: ideas and insights."""
+    items = []
+    idea = _research_idea(now)
+    if idea:
+        items.append(bi.make_item("research", 2, f"**From research:** {idea}"))
+    return items
+
+
+def _world_security_items(now: datetime) -> list[dict]:
+    """World security: not yet implemented."""
+    return []
 
 
 def default_sources(now: datetime) -> dict[str, Callable]:
-    return {"open_prs": _open_prs, "red_checks": _red_checks, "human_tickets": _human_tickets,
-            "launches": lambda: _launches(now), "merged": lambda: _merged(now), "revisited": lambda: _revisited(now),
-            "deadlines": lambda: _deadlines(now), "top_tickets": _top_tickets, "digest_idea": lambda: _digest_idea(now),
-            "research_idea": lambda: _research_idea(now), "late_night": lambda: _late_night(now),
-            "auto_merge": _auto_merge_report, "regressions": lambda: _regressions(now)}
+    return {"your_projects": lambda: _your_projects_items(now), "your_day": lambda: _your_day_items(now),
+            "research": lambda: _research_items(now), "world_security": lambda: _world_security_items(now)}
 
 
-_SOURCE_NAMES = {"open_prs": "open PRs", "red_checks": "Health", "human_tickets": "tickets waiting on you",
-                 "launches": "the launch log", "merged": "merged PRs", "revisited": "the revisit agent",
-                 "deadlines": "deadlines", "top_tickets": "top tickets", "digest_idea": "the daily digest",
-                 "research_idea": "the research digest", "late_night": "last night's sessions", "auto_merge": "auto-merge's shadow report",
-                 "regressions": "the incident ladder"}
+_SOURCE_NAMES = {"your_projects": "your projects items", "your_day": "your day items",
+                 "research": "research items", "world_security": "world security items"}
 
 
 def gather(now: datetime, sources: dict[str, Callable] | None = None) -> dict:
+    """Gather items from all sources and rank/cap them. Returns {items, waiting, missing}.
+
+    Waiting PRs (waiting_on_marvin=True) are stored separately so they don't consume
+    slots in the 5-item cap; they're shown in a separate "Waiting on MARVIN" section.
+
+    Builders can return either a list of items, or a tuple (items, reader_failures).
+    Reader failures are added to missing so they appear in the Gaps section.
+    """
     sources = sources or default_sources(now)
-    data, missing = {}, []
-    for key, read in sources.items():
+    items, missing = [], []
+    for key, builder in sources.items():
         try:
-            data[key] = read()
+            result = builder()
+            # Handle both old-style (list) and new-style (tuple) returns from builders
+            if isinstance(result, tuple):
+                source_items, reader_failures = result
+                items.extend(source_items or [])
+                missing.extend(reader_failures or [])
+            else:
+                items.extend(result or [])
         except Exception as exc:  # noqa: BLE001 -- a brief with a named gap beats no brief
-            data[key] = None
             missing.append(f"couldn't read {_SOURCE_NAMES.get(key, key)} ({str(exc)[:80]})")
-    data["missing"] = missing
-    return data
+
+    # Separate waiting items (shown separately, don't count toward cap)
+    waiting = [i for i in items if i.get("waiting_on_marvin")]
+    regular = [i for i in items if not i.get("waiting_on_marvin")]
+
+    bi.rank_and_cap(regular)
+    return {"items": regular, "waiting": waiting, "missing": missing}
 
 
 def _ref(item: dict, pr: bool = False) -> str:
@@ -238,55 +293,35 @@ def _ref(item: dict, pr: bool = False) -> str:
 
 
 def render(brief: dict, now: datetime) -> str:
+    """Render the brief as markdown, using brief_items to structure sections.
+
+    Items are the main content (capped at 5 total). Waiting PRs are shown separately
+    in "Waiting on MARVIN" and don't count toward the cap.
+    """
     day = now.astimezone().strftime("%A %Y-%m-%d")
+    items = brief.get("items") or []
+    waiting_items = brief.get("waiting") or []
+
     lines = [f"# Morning brief, {day}", ""]
-    needs = [f"- {brief['auto_merge']}"] if brief.get("auto_merge") else []
-    prs = brief.get("open_prs") or []
-    needs += [f"- Review {_ref(p, pr=True)}" for p in prs if not p.get("waiting_on_marvin")]
-    needs += [f"- {c['label']}: {c['detail']}" for c in brief.get("red_checks") or []]
-    needs += [f"- Your task: {_ref(t)}" for t in brief.get("human_tickets") or []]
-    regressions = brief.get("regressions") or []
-    needs += [f"- {r['line']}" for r in regressions if r.get("kind") == "needs-you"]
-    lines += ["## Needs you", "", *(needs or ["- Nothing is waiting on you."]), ""]
-    marvin = [f"- {_ref(p, pr=True)}: your decisions are in{' and you asked a question' if p.get('question') else ''}"
-              for p in prs if p.get("waiting_on_marvin")]
-    if marvin:
-        lines += ["## Waiting on MARVIN", "", *marvin, ""]
+    if items:
+        lines.append(bi.render_sections(items))
+        lines.append("")
+    else:
+        lines.append("## Needs you")
+        lines.append("")
+        lines.append("- Nothing is waiting on you.")
+        lines.append("")
 
-    runs = brief.get("launches") or []
-    merged = brief.get("merged") or []
-    revisited = brief.get("revisited") or []
-    overnight = []
-    if runs:
-        by_kind: dict[str, int] = {}
-        for r in runs:
-            by_kind[r.get("kind", "?")] = by_kind.get(r.get("kind", "?"), 0) + 1
-        cost = sum(r.get("cost_usd") or 0 for r in runs)
-        overnight.append(f"- {len(runs)} model runs (" + ", ".join(f"{n} {k}" for k, n in sorted(by_kind.items()))
-                         + f"), ${cost:.2f}")
-    overnight += [f"- Merged {_ref(p, pr=True)}" for p in merged]
-    overnight += [f"- Returned from hold: {_ref(t)}" for t in revisited]
-    overnight += [f"- {r['line']}" for r in regressions if r.get("kind") != "needs-you"]
-    lines += ["## Overnight", "", *(overnight or ["- Quiet: no model runs or merges in the last day."]), ""]
+    # Add "Waiting on MARVIN" section (PRs where decisions are in, shown separately)
+    if waiting_items:
+        lines += ["## Waiting on MARVIN", ""]
+        for item in waiting_items:
+            lines.append(f"- {item['line']}")
+        lines.append("")
 
-    today = []
-    for d in brief.get("deadlines") or []:
-        days = _days_until(d["date"], now)
-        today.append(f"- {d['project']}: {days} days ({d['date']}{', hard deadline' if d['hard'] else ''})")
-    today += [f"- {t['priority']}: {_ref(t)}" for t in brief.get("top_tickets") or []]
-    lines += ["## Today", "", *(today or ["- No deadlines close and nothing marked p0/p1."]), ""]
-
-    ideas = [f"- **Compounding move:** {brief['digest_idea']}"] if brief.get("digest_idea") else []
-    ideas += [f"- **From research:** {brief['research_idea']}"] if brief.get("research_idea") else []
-    if ideas:
-        lines += ["## One idea each", "", *ideas, ""]
-
-    if brief.get("late_night"):
-        lines += ["## Balance", "",
-                  f"- Last night's last session was still going at {brief['late_night']}. Today's list above is what "
-                  "matters; the rest can wait for tomorrow.", ""]
     if brief.get("missing"):
         lines += ["## Gaps", "", *[f"- {m}" for m in brief["missing"]], ""]
+
     return "\n".join(lines).rstrip() + "\n"
 
 
@@ -305,7 +340,13 @@ def write(now: datetime | None = None, sources: dict[str, Callable] | None = Non
     if path.exists():
         return path
 
-    path.write_text(render(gather(now, sources), now))
+    brief = gather(now, sources)
+    path.write_text(render(brief, now))
+
+    # Write items JSON store for future consumption (includes waiting items)
+    items_path = BRIEFS / f"{_day(now)}.json"
+    all_items = brief["items"] + brief.get("waiting", [])
+    items_path.write_text(json.dumps(all_items, indent=2))
 
     # Write sidecar tracking which machine built it
     import machine_profile
@@ -329,13 +370,30 @@ def build(now: datetime | None = None, sources: dict[str, Callable] | None = Non
     return write(now, sources, builder_reason=decision.reason)
 
 
+def read_items(now: datetime | None = None) -> list[dict] | None:
+    """Read the items JSON store for a given day, or None if missing/corrupted."""
+    now = now or datetime.now(timezone.utc)
+    items_path = BRIEFS / f"{_day(now)}.json"
+    if not items_path.exists():
+        return None
+    try:
+        return json.loads(items_path.read_text())
+    except (json.JSONDecodeError, OSError):
+        return None
+
+
 def show_today(now: datetime | None = None) -> str | None:
     now = now or datetime.now(timezone.utc)
     path = BRIEFS / f"{_day(now)}.md"
     if not path.exists():
         return None
     (BRIEFS / f"{_day(now)}.read").write_text(now.isoformat())
-    return path.read_text()
+
+    # Try to read the brief markdown; tolerate missing/corrupted JSON sidecar
+    try:
+        return path.read_text()
+    except OSError:
+        return None
 
 
 def _dates(suffix: str) -> list[datetime]:

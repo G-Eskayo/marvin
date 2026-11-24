@@ -1,0 +1,13 @@
+1. Add `lib/brief_items.py`: `SECTIONS`/`SECTION_LABELS` (fixed order: world_security, research, your_day, your_projects), `sanitize()` (collapse whitespace/control chars, escape `[`/`]`/`<`/`>`, truncate with bound), `make_item()` (guarantees all three layers present, rejects empty `line`), `_dedup_key()`, `rank_and_cap()` (stable sort by tier/order_key/insertion index, dedupe, cap at 5, assign `rank`), `render_sections()` (markdown bullets grouped by fixed section order, skipping empty sections).
+2. Write `lib/tests/test_brief_items.py` covering items 1–13 above; implement `brief_items.py` against them.
+3. In `lib/morning_brief.py`, replace the old raw-data source functions feeding `render()` with item-returning builders per section:
+   - `your_projects`: red checks (tier 0), PR-needs-review (tier 1), human tickets (tier 1), regressions filtered to `needs-you` (tier 0), auto-merge decision line (tier 1), top tickets by priority (tier 2), daily-digest idea (tier 3).
+   - `your_day`: deadlines, tier by urgency (hard + ≤7 days highest).
+   - `research`: research-digest idea (tier 2).
+   - `world_security`: returns `[]` (no feed yet).
+4. Rewrite `gather()` to call each builder inside the existing try/except-and-collect-missing loop, concatenate all returned items, and call `brief_items.rank_and_cap()`; rewrite `render()` to emit `# Morning brief, <day>` plus `brief_items.render_sections(items)` plus a Gaps footer from `missing`.
+5. Update `write()` to also persist `<day>.json` (the items store) alongside the existing `.md` and `.built-by` sidecar; add `read_items(now)` for future tickets (#463/#467) to consume; make `show_today()`/render path defensively tolerate a corrupted/missing `<day>.json`.
+6. Delete now-dead `_launches`, `_merged`, `_revisited`, `_late_night` and their `default_sources`/`_SOURCE_NAMES` entries (Overnight/Balance dropped per scope above); remove their now-obsolete tests.
+7. Rewrite `lib/tests/test_morning_brief.py`'s brief-content tests (items 14–20 above) against the new shape; keep the plumbing tests (idempotency, sidecar, fallback-gate) with fixtures updated to the new source-function shape.
+8. Update `lib/tests/test_incident_ladder.py`'s single `morning_brief.render()`-dependent test to the new item shape.
+9. Run the full Python suite (per CLAUDE.md's "full suites before a hand-merge") to confirm no other consumer of `morning_brief` broke.

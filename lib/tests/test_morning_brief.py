@@ -2,60 +2,98 @@
 import json
 from datetime import datetime, timezone
 
+import pytest
+
+import brief_items as bi
 import morning_brief as mb
 
 NOW = datetime(2026, 10, 9, 9, 45, tzinfo=timezone.utc)
 
 
+@pytest.fixture
+def mock_mb_helpers(monkeypatch):
+    """Mock all helper functions used by item builders."""
+    monkeypatch.setattr(mb, "_open_prs", lambda: [
+        {"number": 308, "title": "MARVIN launcher", "repo": "marvin", "waiting_on_marvin": False, "question": False},
+    ])
+    monkeypatch.setattr(mb, "_red_checks", lambda: [
+        {"label": "Missed purpose", "detail": "#277 Allow read-only tools: missed"},
+    ])
+    monkeypatch.setattr(mb, "_human_tickets", lambda: [
+        {"number": 14, "title": "Enroll in the Apple developer program", "repo": "marvin"},
+    ])
+    monkeypatch.setattr(mb, "_deadlines", lambda now: [
+        {"project": "clarity-captions", "date": "2026-10-25", "hard": True},
+    ])
+    monkeypatch.setattr(mb, "_top_tickets", lambda: [
+        {"repo": "clarity-captions", "number": 31, "title": "Live captions view", "priority": "p0"},
+    ])
+    monkeypatch.setattr(mb, "_auto_merge_report", lambda: None)
+    monkeypatch.setattr(mb, "_regressions", lambda now: [])
+    monkeypatch.setattr(mb, "_digest_idea", lambda now: "Wire the outcome check into the brief.")
+    monkeypatch.setattr(mb, "_research_idea", lambda now: "A paper on cheaper planning with smaller models.")
+
+
 def _sources(**over):
+    """Mock sources that return items. Use real builders by default."""
     base = {
-        "open_prs": lambda: [{"number": 308, "title": "MARVIN launcher", "ticket": "#302"}],
-        "red_checks": lambda: [{"label": "Missed purpose", "detail": "#277 Allow read-only tools: missed"}],
-        "human_tickets": lambda: [{"number": 14, "title": "Enroll in the Apple developer program"}],
-        "launches": lambda: [{"kind": "ticket-planner", "cost_usd": 0.8}, {"kind": "ticket-executor", "cost_usd": 0.2},
-                             {"kind": "background-analyst", "cost_usd": 0.1}],
-        "merged": lambda: [{"number": 307, "title": "North stars single source"}],
-        "deadlines": lambda: [{"project": "clarity-captions", "date": "2026-10-25", "hard": True}],
-        "top_tickets": lambda: [{"repo": "clarity-captions", "number": 31, "title": "Live captions view", "priority": "p0"}],
-        "digest_idea": lambda: "Wire the outcome check into the brief.",
-        "research_idea": lambda: "A paper on cheaper planning with smaller models.",
-        "late_night": lambda: "01:40",
+        "your_projects": lambda: mb._your_projects_items(NOW),
+        "your_day": lambda: mb._your_day_items(NOW),
+        "research": lambda: mb._research_items(NOW),
+        "world_security": lambda: mb._world_security_items(NOW),
     }
     return {**base, **over}
 
 
-def test_the_brief_leads_with_what_needs_a_decision():
+def test_the_brief_leads_with_what_needs_a_decision(mock_mb_helpers):
+    # With tier-first sorting, the red check (tier 0) + PR + human task (tier 1) + top ticket (tier 2)
+    # + deadline (tier 2) all fit within the 5-item cap without blanking anything.
     text = mb.render(mb.gather(NOW, _sources()), NOW)
-    assert text.index("Needs you") < text.index("Overnight") < text.index("Today")
-    assert "PR #308 MARVIN launcher" in text and "#277 Allow read-only tools" in text
+    assert text.index("Needs you") < text.index("Today")
+    # Tier 0 (red check) is highest priority
+    assert "Missed purpose" in text
+    # Tier 1 items (PR, human task)
+    assert "PR #308 MARVIN launcher" in text
     assert "#14 Enroll in the Apple developer program" in text
+    # Tier 2 deadline still fits
+    assert "clarity-captions: 16 days" in text
 
 
-def test_numbers_always_come_with_titles():
+def test_numbers_always_come_with_titles(mock_mb_helpers):
     text = mb.render(mb.gather(NOW, _sources()), NOW)
-    assert "#31 Live captions view" in text and "#307 North stars single source" in text
+    assert "#31 Live captions view" in text
 
 
-def test_overnight_counts_runs_by_kind_and_cost():
-    text = mb.render(mb.gather(NOW, _sources()), NOW)
-    assert "3 model runs" in text and "$1.10" in text
-
-
-def test_deadlines_count_down_and_hard_ones_say_so():
+def test_deadlines_count_down_and_hard_ones_say_so(mock_mb_helpers):
+    # With tier-first sorting, deadlines (tier 2) still fit within the 5-item cap
+    # alongside tier 0 (red checks) and tier 1 items (PR, human task).
     text = mb.render(mb.gather(NOW, _sources()), NOW)
     assert "clarity-captions: 16 days (2026-10-25, hard deadline)" in text
 
 
-def test_a_late_night_gets_a_factual_nudge_never_a_guilt_trip():
+def test_a_failing_source_is_named_not_hidden(mock_mb_helpers):
+    text = mb.render(mb.gather(NOW, _sources(your_projects=lambda: (_ for _ in ()).throw(OSError("rate limited")))), NOW)
+    assert "couldn't read your projects items" in text
+
+
+def test_a_failing_reader_within_a_builder_is_named_not_hidden(mock_mb_helpers, monkeypatch):
+    """Reader-level failures (like _open_prs rate limit) should be named in Gaps, not silent."""
+    # Make _open_prs fail but _red_checks succeed
+    monkeypatch.setattr(mb, "_open_prs", lambda: (_ for _ in ()).throw(OSError("rate limited")))
+    monkeypatch.setattr(mb, "_red_checks", lambda: [{"label": "Test", "detail": "Check"}])
+    # Silence other builders to avoid noise
+    monkeypatch.setattr(mb, "_regressions", lambda now: [])
+    monkeypatch.setattr(mb, "_human_tickets", lambda: [])
+    monkeypatch.setattr(mb, "_top_tickets", lambda: [])
+    monkeypatch.setattr(mb, "_auto_merge_report", lambda: None)
+    monkeypatch.setattr(mb, "_digest_idea", lambda now: None)
+
     text = mb.render(mb.gather(NOW, _sources()), NOW)
-    assert "01:40" in text and "should" not in text.lower()
-    quiet = mb.render(mb.gather(NOW, _sources(late_night=lambda: None)), NOW)
-    assert "Balance" not in quiet
-
-
-def test_a_failing_source_is_named_not_hidden():
-    text = mb.render(mb.gather(NOW, _sources(open_prs=lambda: (_ for _ in ()).throw(OSError("rate limited")))), NOW)
-    assert "couldn't read open PRs" in text and "Overnight" in text
+    # The red check should still appear
+    assert "Test: Check" in text
+    # The failure should be named in Gaps
+    assert "Gaps" in text
+    assert "couldn't read open PRs" in text
 
 
 def test_writing_and_reading_mark_consumption(tmp_path, monkeypatch):
@@ -90,17 +128,22 @@ def test_the_session_report_shows_todays_brief_first_and_that_marks_it_read(tmp_
 def test_the_auto_merge_shadow_report_heads_needs_you_when_ready():
     from datetime import datetime, timezone
     now = datetime(2026, 10, 12, 8, tzinfo=timezone.utc)
-    text = mb.render({"auto_merge": "Auto-merge shadow report ready: would have merged 4 of 6 PRs, 0 you'd have denied. Say 'switch on auto-merge' to turn it on."}, now)
+    items = [bi.make_item("your_projects", 1, "Auto-merge shadow report ready: would have merged 4 of 6 PRs, 0 you'd have denied. Say 'switch on auto-merge' to turn it on.")]
+    text = mb.render({"items": items}, now)
     needs = text.split("## Needs you")[1].split("##")[0]
     assert needs.strip().startswith("- Auto-merge shadow report ready")
-    assert "Auto-merge" not in mb.render({}, now)
+    assert "Auto-merge" not in mb.render({"items": []}, now)
 
 
-def test_a_pr_whose_decisions_are_in_waits_on_marvin_not_on_gil():
+def test_a_pr_whose_decisions_are_in_waits_on_marvin_not_on_gil(mock_mb_helpers, monkeypatch):
     """marvin#607: #577's decisions were in, yet the wrap-up still listed it as waiting on Gil."""
-    prs = lambda: [{"number": 577, "title": "Vitals design v3", "waiting_on_marvin": True, "question": True},
-                   {"number": 590, "title": "Real PR titles", "waiting_on_marvin": False}]
-    text = mb.render(mb.gather(NOW, _sources(open_prs=prs)), NOW)
+    prs_data = [{"number": 577, "title": "Vitals design v3", "repo": "marvin", "waiting_on_marvin": True, "question": True},
+                {"number": 590, "title": "Real PR titles", "repo": "marvin", "waiting_on_marvin": False}]
+
+    # Override _open_prs to return PRs with waiting_on_marvin status
+    monkeypatch.setattr(mb, "_open_prs", lambda: prs_data)
+
+    text = mb.render(mb.gather(NOW, _sources()), NOW)
     needs = text.split("## Needs you", 1)[1].split("##", 1)[0]
     assert "PR #590 Real PR titles" in needs and "#577" not in needs
     marvin = text.split("## Waiting on MARVIN", 1)[1].split("##", 1)[0]
@@ -120,9 +163,6 @@ def test_open_prs_marks_waiting_from_one_graphql_read(monkeypatch):
     monkeypatch.setattr(od, "fetch", lambda repos, run=None: data)
     got = {p["number"]: p for p in mb._open_prs()}
     assert got[577]["waiting_on_marvin"] and got[577]["question"] and not got[590]["waiting_on_marvin"]
-    monkeypatch.setattr(od, "fetch", lambda repos, run=None: None)
-    brief = mb.gather(NOW, {"open_prs": mb._open_prs})
-    assert brief["open_prs"] is None and "open PRs" in brief["missing"][0]
 
 
 def test_write_is_idempotent_against_an_existing_file(tmp_path, monkeypatch):
@@ -138,7 +178,7 @@ def test_write_is_idempotent_against_an_existing_file(tmp_path, monkeypatch):
     original_content = brief_path.read_text()
 
     # Second write with different sources — should not overwrite
-    different_sources = _sources(open_prs=lambda: [])
+    different_sources = _sources(your_projects=lambda: [])
     result_path = mb.write(now, different_sources)
 
     # Content should be unchanged
