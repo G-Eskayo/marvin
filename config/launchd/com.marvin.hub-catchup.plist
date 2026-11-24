@@ -1,0 +1,38 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- Hub work pickup at boot (lib/ticket_pipeline.py scan, marvin#679, ADR 0086, Part B):
+     When the hub reboots, run the GitHub-label scan immediately (before the periodic schedule fires)
+     to pick up work that was queued while it was down (issues labelled ready-for-agent).
+
+     The scan is the same code that already runs periodically; this just fires once at boot
+     to ensure no queued work is missed. After the scan, the periodic schedule takes over.
+
+     Install on the hub only: cp this to ~/Library/LaunchAgents/ and
+     `launchctl bootstrap gui/$(id -u) <that file>`.
+-->
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>Label</key>
+    <string>com.marvin.hub-catchup</string>
+    <key>ProgramArguments</key>
+    <array>
+        <string>/Users/gileskayo/.agents/venv/bin/python</string>
+        <string>/Users/gileskayo/.agents/lib/ticket_pipeline.py</string>
+        <string>scan</string>
+        <string>--boot-mode</string>
+    </array>
+    <key>EnvironmentVariables</key>
+    <dict>
+        <key>HOME</key>
+        <string>/Users/gileskayo</string>
+        <key>PATH</key>
+        <string>/Users/gileskayo/.local/bin:/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin:/Users/gileskayo/.agents/venv/bin</string>
+    </dict>
+    <key>RunAtLoad</key>
+    <true/>
+    <key>StandardOutPath</key>
+    <string>/Users/gileskayo/.claude/logs/hub-catchup.log</string>
+    <key>StandardErrorPath</key>
+    <string>/Users/gileskayo/.claude/logs/hub-catchup-error.log</string>
+</dict>
+</plist>
