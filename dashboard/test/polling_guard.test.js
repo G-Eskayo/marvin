@@ -30,6 +30,7 @@ export const ALLOWLIST = {
   'src/lib/scroll_places.js': { ttl: [1, 'cutoff on a scroll restore driven by ResizeObserver events (3 s), so a late refresh never moves the page; no timer'] },
   'src/lib/cdp_capture.js': { 'timeout-loop': [3, 'bounded wait for a local Electron CDP port/window to appear; no event exists'] },
   // Main process.
+  'electron/main/app_update.js': { 'timeout-loop': [1, 'bounded 60 s idle timer armed on window blur; no network, no polling'] },
   'electron/main/boards.js': { ttl: [2, 'cache bounds: cross-project 30 min safety net cleared by change pings (#318); evidence 5 min'] },
   'electron/main/chat_helpers.js': { ttl: [1, 'read-through cache bound (10 s) on the other Mac\'s GET /helpers; no timer'] },
   'electron/main/chat_tabs.js': { ttl: [1, 'read-through cache bound (10 s) on the other Mac\'s GET /chats (marvin#1064); no timer'] },

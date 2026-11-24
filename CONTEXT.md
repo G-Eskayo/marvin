@@ -861,9 +861,14 @@ its ticketing system creates shows up there with drill-down status. Boards live 
   Boards *appear* via `board_registry.discover()` (hourly, inside the `ticket-pipeline` run: any
   non-archived repo of the owner that has the `ready-for-agent` label gets a board) plus the claim and
   `to-issues` hooks. Board *contents* poll GitHub every 60s while the tab is open. The *app itself* is
-  rebuilt and relaunched by the 30-min code-sync cycle (`dashboard_rebuild.py`): a change settles for
-  15 min, and a running app is rebuilt once it is >=1h behind (was 2h / 24h, which made a new feature
-  take up to a day to show). Trade-off accepted: the relaunch drops unsaved in-tab edits (Portfolio).
+  rebuilt by the 30-min code-sync cycle (`dashboard_rebuild.py`): a change settles for 2 minutes,
+  then rebuilds when the installed app detects staleness. If the app is running, the new build stages
+  and notifies the app via `refresh_relay.js`; the app shows an "Update ready" banner in the Demo &
+  Updates section and restarts itself after the user is idle for 60 seconds (window blur + timer) or
+  immediately if the user clicks "Restart now". The UpdateBanner also has a demo/screenshot mode that
+  pauses updates while enabled (useful when recording). If the app is not running, it swaps into
+  place and launches. Unsaved drafts in Support replies, ticket comments, and Decisions answers
+  persist via localStorage per ticket, so the restart loses no work.
 
 - **Names its ticket (2026-11-02, marvin#1004).** An open PR names its ticket as `Closes #n` (it finishes the ticket;
   GitHub closes it on merge) or `Part of #n` (a step: a mock-up, a stacked slice, a plan, docs; the ticket stays open).

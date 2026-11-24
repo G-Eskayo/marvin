@@ -1,10 +1,22 @@
 import { defineConfig, externalizeDepsPlugin } from 'electron-vite'
 import react from '@vitejs/plugin-react'
 import { resolve } from 'path'
+import { execSync } from 'child_process'
+
+function getBuildSha() {
+  try {
+    return execSync('git rev-parse --short HEAD', { encoding: 'utf8' }).trim()
+  } catch {
+    return 'dev'
+  }
+}
 
 export default defineConfig({
   main: {
     plugins: [externalizeDepsPlugin()],
+    define: {
+      __BUILD_SHA__: JSON.stringify(getBuildSha())
+    },
     build: {
       rollupOptions: {
         input: {

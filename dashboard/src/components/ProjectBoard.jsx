@@ -13,6 +13,7 @@ import CompletedView from './CompletedView.jsx'
 import { useScrollPlace } from './ScrollPlaces.jsx'
 import StageStrip from './StageStrip.jsx'
 import { GoalHeader, useGoals } from './ProjectGoals.jsx'
+import { readStored, writeStored, clearStored } from '../lib/persisted_draft.js'
 
 // Backstop only: triggers (window.api.triggers) drive refreshes; a poll that
 // finds a change no trigger announced is logged as a gap.
@@ -388,15 +389,22 @@ export function HumanTaskPanel({ body, ctx }) {
 }
 
 export function TicketReply({ repo, number, labels, state, sendBack, onSent }) {
-  const [text, setText] = useState('')
+  const [text, setText] = useState(() => readStored(`ticket-reply:${repo}#${number}`, ''))
   const [busy, setBusy] = useState(false)
   const [result, setResult] = useState(null)
   const [error, setError] = useState(null)
   const plan = planInput(labels, state)
+
+  // Persist reply text
+  useEffect(() => {
+    writeStored(`ticket-reply:${repo}#${number}`, text)
+  }, [text, repo, number])
+
   const send = async () => {
     setBusy(true); setError(null); setResult(null)
     try {
       const r = await window.api.boards.input(repo, number, text)
+      clearStored(`ticket-reply:${repo}#${number}`)
       setResult(r); setText(''); onSent?.()
     } catch (e) {
       setError(cleanIpcError(e))

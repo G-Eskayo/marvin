@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react'
 import { createPortal } from 'react-dom'
+import { readStored, writeStored, clearStored } from '../lib/persisted_draft.js'
 
 // The owner answers a PR's or ticket's Decisions section here (2026-10-09): big tappable options, a note per question,
 // and text boxes for written answers. Submitting writes the answers into the description on GitHub (decisions_submit.js)
@@ -139,11 +140,56 @@ export function followGithub({ questions, editing, status }) {
 // panel's foot. The same button and the same rules; only where it sits changes.
 export default function Decisions({ repo, number, decisions, onSubmitted, refsFor = () => [], onSeeImage, submitSlot = null, submit = (p) => window.api.decisions.submit(p), onRecorded = (cb) => window.api.decisions.onRecorded?.(cb) }) {
   const questions = decisions?.questions || []
-  const [draft, setDraft] = useState(() => initialDraft(questions))
-  const [editing, setEditing] = useState(() => (decisions?.pending || []).length > 0)
+  const [draft, setDraft] = useState(() => {
+    const base = initialDraft(questions)
+    const savedStr = readStored(`decisions:${repo}#${number}`, '')
+    if (!savedStr) return base
+    // Merge saved diff over the initial draft
+    try {
+      const saved = JSON.parse(savedStr)
+      const merged = { ...base }
+      for (const [qId, change] of Object.entries(saved)) {
+        if (merged[qId]) {
+          merged[qId] = { ...merged[qId], ...change }
+        }
+      }
+      return merged
+    } catch (err) {
+      console.warn(`[Decisions] could not parse saved diff: ${err.message}`)
+      return base
+    }
+  })
+  const [editing, setEditing] = useState(() => {
+    const saved = readStored(`decisions:${repo}#${number}`, '')
+    return saved ? true : (decisions?.pending || []).length > 0
+  })
   const [status, setStatus] = useState({ state: 'idle' }) // idle | saving | saved | error
   // Local-first: the answers show as soon as GitHub accepted the edit; the record comment lands a moment later.
   const sig = answersSignature(questions)
+
+  // Track last persisted value to avoid re-writing after a successful submit (before GitHub updates)
+  const lastPersistedRef = typeof window !== 'undefined' ? (window.__decisionsLastPersisted || {}) : {}
+  if (typeof window !== 'undefined') {
+    window.__decisionsLastPersisted = lastPersistedRef
+  }
+
+  // Persist the diff of changed answers (but skip if unchanged from last persist)
+  useEffect(() => {
+    const changes = changedAnswers(questions, draft)
+    const changeStr = JSON.stringify(changes)
+    const key = `decisions:${repo}#${number}`
+
+    if (changeStr === lastPersistedRef[key]) return
+
+    lastPersistedRef[key] = changeStr
+
+    if (Object.keys(changes).length > 0) {
+      writeStored(key, changeStr)
+    } else {
+      clearStored(key)
+    }
+  }, [draft, repo, number, questions])
+
   useEffect(() => {
     const next = followGithub({ questions, editing, status })
     if (!next) return
@@ -166,6 +212,9 @@ export default function Decisions({ repo, number, decisions, onSubmitted, refsFo
     try {
       const r = await submit({ repo, number, answers: changes })
       const out = submitOutcome(r)
+      if (out.status.state === 'saved') {
+        clearStored(`decisions:${repo}#${number}`)
+      }
       setStatus(out.status)
       setEditing(out.editing)
       onSubmitted?.(r)

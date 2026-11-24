@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react'
 import { useScrollArea } from './ScrollPlaces.jsx'
 import Markdown from './Markdown.jsx'
+import { readStored, writeStored, clearStored } from '../lib/persisted_draft.js'
 
 // The Support tab (ADR 0073), on both sides of a support link, showing the same conversation:
 //   helper install: "Needs you" (the counter: what the helper's MARVIN couldn't solve) and "Handled by MARVIN", each
@@ -323,6 +324,27 @@ export default function SupportTab({ api = window.api.support, triggers = window
   const [original, setOriginal] = useState(null) // the helper's own words while their rewrite is previewed
   const [config, setConfig] = useState({ autoApply: false })
 
+  // Load draft when selection changes (runs first)
+  useEffect(() => {
+    if (!selected) {
+      setDraft('')
+      return
+    }
+    const key = `support:${selected.repo}#${selected.number}`
+    const saved = readStored(key, '')
+    setDraft(saved)
+  }, [selected])
+
+  // Persist draft when it changes, but only if it differs from what's stored (skip the initial load)
+  useEffect(() => {
+    if (!selected) return
+    const key = `support:${selected.repo}#${selected.number}`
+    const stored = readStored(key, '')
+    if (draft !== stored) {
+      writeStored(key, draft)
+    }
+  }, [draft, selected])
+
   useEffect(() => {
     const load = () => api.state().then(setState).catch(() => {})
     load()
@@ -419,14 +441,14 @@ export default function SupportTab({ api = window.api.support, triggers = window
             preview={original !== null}
             onPreview={() => act('adapt', { text: draft }, (r) => { setOriginal(draft); setDraft(r.text) })}
             onBack={() => { setDraft(original ?? draft); setOriginal(null) }}
-            onSendOriginal={() => act('reply', { text: original, check }, () => { setDraft(''); setCheck(''); setOriginal(null); setMessage({ text: 'Sent as you wrote it.' }); loadThread(selected) })}
-            onSend={() => act('reply', { text: draft, check }, () => { setDraft(''); setCheck(''); setOriginal(null); setMessage({ text: 'Sent.' }); loadThread(selected) })}
-            onResolve={() => act('resolve', {}, () => setMessage({ text: 'Resolved.' }))}
+            onSendOriginal={() => act('reply', { text: original, check }, () => { clearStored(`support:${selected.repo}#${selected.number}`); setDraft(''); setCheck(''); setOriginal(null); setMessage({ text: 'Sent as you wrote it.' }); loadThread(selected) })}
+            onSend={() => act('reply', { text: draft, check }, () => { clearStored(`support:${selected.repo}#${selected.number}`); setDraft(''); setCheck(''); setOriginal(null); setMessage({ text: 'Sent.' }); loadThread(selected) })}
+            onResolve={() => act('resolve', {}, () => { clearStored(`support:${selected.repo}#${selected.number}`); setMessage({ text: 'Resolved.' }) })}
             onApply={() => act('open', {}, () => setMessage({ text: 'MARVIN is open in a new window. It will walk you through it, and the result shows up here.' }))}
             autoApply={!!config.autoApply}
-            onGotIt={() => act('got-it', {}, () => setMessage({ text: 'Marked as answered.' }))}
-            onGuide={() => act('guide', { text: draft }, () => { setDraft(''); setCheck(''); setMessage({ text: 'Sent to your MARVIN. It will try again with your note.' }); loadThread(selected) })}
-            onFollowup={() => act('followup', { text: draft }, () => { setDraft(''); setMessage({ text: "Sent to your helper's MARVIN." }); loadThread(selected) })}
+            onGotIt={() => act('got-it', {}, () => { clearStored(`support:${selected.repo}#${selected.number}`); setMessage({ text: 'Marked as answered.' }) })}
+            onGuide={() => act('guide', { text: draft }, () => { clearStored(`support:${selected.repo}#${selected.number}`); setDraft(''); setCheck(''); setMessage({ text: 'Sent to your MARVIN. It will try again with your note.' }); loadThread(selected) })}
+            onFollowup={() => act('followup', { text: draft }, () => { clearStored(`support:${selected.repo}#${selected.number}`); setDraft(''); setMessage({ text: "Sent to your helper's MARVIN." }); loadThread(selected) })}
           />
         )}
       </div>

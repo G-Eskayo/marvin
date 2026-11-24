@@ -277,5 +277,16 @@ contextBridge.exposeInMainWorld('api', {
     input: (repo, number, body) => ipcRenderer.invoke('boards:input', repo, number, body),
     summary: (repo) => ipcRenderer.invoke('boards:summary', repo),
     completed: (repo) => ipcRenderer.invoke('boards:completed', repo)
+  },
+  app: {
+    getDemoHold: () => ipcRenderer.invoke('app:getDemoHold'),
+    setDemoHold: (enabled) => ipcRenderer.invoke('app:setDemoHold', enabled),
+    onUpdateReady: (callback) => {
+      const listener = (_e, { sha }) => callback({ sha })
+      ipcRenderer.on('app:updateReady', listener)
+      return () => ipcRenderer.removeListener('app:updateReady', listener)
+    },
+    restartForUpdate: () => ipcRenderer.invoke('app:restartForUpdate'),
+    lastUpdate: () => ipcRenderer.invoke('app:lastUpdate')
   }
 })

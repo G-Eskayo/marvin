@@ -40,6 +40,7 @@ import { sendBackForOptions } from './decisions_submit.js'
 import { createLocalFirst, coalesce, createIssueReader, createRepoHeadCheck } from './local_first.js'
 import { createMrActions } from './mr_actions.js'
 import { createInstanceHandlers } from './instance.js'
+import { registerAppUpdateHandlers, handleRefreshServerUpdate } from './app_update.js'
 
 const mergeOps = createMergeOps()
 // marvin#568: every change to a merge op is pushed to the renderer (the card subscribes; it reads once on mount).
@@ -1422,11 +1423,14 @@ app.whenReady().then(() => {
 
   // External pings (webhook-server): bare = the legacy "MR list changed"; with topics = what changed.
   // Port already taken (another dashboard running) = one log line, not a crash (#384).
+  const appUpdateHandlers = registerAppUpdateHandlers({ mainWindow: () => mainWindow })
   startPrCheckWatch()
   startRefreshServer((payload = {}) => {
     const topics = Array.isArray(payload.topics) ? payload.topics : ['mr']
     for (const topic of topics) {
-      if (topic === 'mr') {
+      if (topic === 'update') {
+        handleRefreshServerUpdate(payload, mainWindow, appUpdateHandlers)
+      } else if (topic === 'mr') {
         githubChanged(payload.source)
         mainWindow?.webContents.send('mr:refresh')
         checkMergedElsewhere(repoOfSource(payload.source))

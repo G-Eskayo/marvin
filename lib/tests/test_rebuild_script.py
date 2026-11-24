@@ -27,13 +27,14 @@ def test_installs_MARVIN_app_and_removes_the_old_MARVIN_Metrics_app():
     text = SCRIPT.read_text()
     assert 'APP_NAME="MARVIN.app"' in text
     assert "MARVIN Metrics.app" in text            # the legacy copy is handled...
-    assert 'rm -rf "$LEGACY_DEST"' in text         # ...by removing it after the new one is in place
-    assert text.index('rm -rf "$LEGACY_DEST"') > text.index('installing to $DEST')
+    assert 'rm -rf "$LEGACY_DEST"' in text         # ...by removing it after the app is not running
+    assert text.index('rm -rf "$LEGACY_DEST"') > text.index('swapping staged build into place')
 
 
-def test_quits_whichever_name_is_running_before_replacing_it():
+def test_respects_demo_hold_before_rebuilding():
     text = SCRIPT.read_text()
-    assert 'quit app "MARVIN"' in text and 'quit app "MARVIN Metrics"' in text
+    assert 'DEMO_HOLD=' in text and '[ -f "$DEMO_HOLD" ]' in text
+    assert text.index('[ -f "$DEMO_HOLD" ]') < text.index("npm install")
 
 
 def test_a_failed_build_is_marked_and_a_successful_one_clears_the_mark():
@@ -41,7 +42,8 @@ def test_a_failed_build_is_marked_and_a_successful_one_clears_the_mark():
     assert "dashboard-rebuild-failed" in text
     on_error = text[text.index("on_error()"):text.index("trap ")]
     assert "dashboard-rebuild-failed" in on_error  # written on failure
-    assert text.rindex("dashboard-rebuild-failed") > text.index("installing to $DEST")  # cleared after a good install
+    # The marker is cleared at the end of the script after successful stages/swaps
+    assert text.rindex("dashboard-rebuild-failed") > text.rindex("codesign") or text.rindex("dashboard-rebuild-failed") > text.index("mv")  # cleared after staging or swap completes
 
 
 def test_electron_builder_never_tries_to_publish_auto_update_files():

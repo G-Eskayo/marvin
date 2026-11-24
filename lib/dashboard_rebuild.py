@@ -26,6 +26,8 @@ APP_ASAR = Path("/Applications/MARVIN.app/Contents/Resources/app.asar")  # renam
 SCRIPT = HOME / ".agents" / "dashboard" / "scripts" / "rebuild_and_install.sh"
 FAILED_FILE = HOME / ".claude" / "logs" / "dashboard-rebuild-failed"  # written by the script on failure, cleared on success
 LOG_FILE = HOME / ".claude" / "logs" / "dashboard-rebuild.log"
+DEMO_HOLD_FILE = HOME / ".claude" / "logs" / "dashboard-demo-hold"  # presence means: skip rebuilds (demo/screenshot mode)
+STAGED_BUILT_FILE = HOME / ".claude" / "logs" / "dashboard-staged-built"  # ts of last successful stage into ${DEST}.staged
 
 # Only these go into the installed app. webhook-server/ is a separate launchd node
 # process and test/ never ships, so changes there must not trigger a rebuild.
@@ -37,21 +39,24 @@ SETTLE_SECONDS = 2 * 60          # let a merge (and any follow-up push) finish l
 RETRY_FAILED_AFTER = 6 * 3600    # a failure on the same code is retried after this, in case it was transient
 
 
-def decide(*, app_built_ts, dashboard_commit_ts, rebuild_running, last_failure_ts, now) -> tuple[str, str]:
+def decide(*, demo_hold, app_built_ts, dashboard_commit_ts, rebuild_running, last_failure_ts, staged_built_ts, now) -> tuple[str, str]:
     """('rebuild' | 'skip', reason)."""
+    if demo_hold:
+        return "skip", "demo/screenshot hold is active"
     if dashboard_commit_ts is None:
         return "skip", "no dashboard commit to compare against"
     if rebuild_running:
         return "skip", "a rebuild is already running"
-    if app_built_ts is not None and app_built_ts >= dashboard_commit_ts:
-        return "skip", "installed app is current"
     if now - dashboard_commit_ts < SETTLE_SECONDS:
         return "skip", "latest dashboard change is too fresh -- letting it settle"
     if last_failure_ts is not None and last_failure_ts >= dashboard_commit_ts and now - last_failure_ts < RETRY_FAILED_AFTER:
         return "skip", "the last build of this code failed -- waiting for newer code (or a retry later)"
-    if app_built_ts is None:
+    if app_built_ts is None and staged_built_ts is None:
         return "rebuild", "no dashboard app installed"
-    return "rebuild", f"installed app is {(now - app_built_ts) / 3600:.1f}h behind the latest dashboard change"
+    max_built_ts = max(ts for ts in (app_built_ts, staged_built_ts) if ts is not None)
+    if max_built_ts >= dashboard_commit_ts:
+        return "skip", "installed app or staged build is current"
+    return "rebuild", f"installed app is {(now - max_built_ts) / 3600:.1f}h behind the latest dashboard change"
 
 
 def _mtime(path: Path):
@@ -68,8 +73,10 @@ def _facts(now: int) -> dict:
     newest = subprocess.run(["git", "-C", agents, "log", "-1", "--format=%ct", "origin/main", "--", *APP_SOURCE_PATHS],
                             capture_output=True, text=True).stdout.strip()
     running = subprocess.run(["pgrep", "-f", "rebuild_and_install.sh"], capture_output=True).returncode == 0
-    return dict(app_built_ts=_mtime(APP_ASAR), dashboard_commit_ts=int(newest) if newest.isdigit() else None,
-                rebuild_running=running, last_failure_ts=_mtime(FAILED_FILE), now=now)
+    return dict(demo_hold=DEMO_HOLD_FILE.exists(), app_built_ts=_mtime(APP_ASAR),
+                dashboard_commit_ts=int(newest) if newest.isdigit() else None,
+                rebuild_running=running, last_failure_ts=_mtime(FAILED_FILE), staged_built_ts=_mtime(STAGED_BUILT_FILE),
+                now=now)
 
 
 def main() -> None:

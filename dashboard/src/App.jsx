@@ -16,6 +16,8 @@ import WorkshopTab, { useWorkshopNow } from '@components/WorkshopTab.jsx'
 import { visibleTabs } from './lib/tabs.js'
 import { ScrollArea, useScrollArea } from '@components/ScrollPlaces.jsx'
 import { reviewDotStatus } from './lib/pr_fetch_status.js'
+import { readStored, writeStored } from './lib/persisted_draft.js'
+import UpdateBanner from '@components/UpdateBanner.jsx'
 
 
 const DOT_COLOR = {
@@ -45,7 +47,12 @@ const HEALTH_DOT_COLOR = {
 }
 
 export default function App() {
-  const [activeTab, setActiveTab] = useState('metrics')
+  const [activeTab, setActiveTab] = useState(() => {
+    const saved = readStored('app:activeTab', null)
+    // Validate saved tab is still visible (tabs may change based on support role)
+    const visible = visibleTabs(null).map(t => t.id)
+    return (saved && visible.includes(saved)) ? saved : 'metrics'
+  })
   // Cross-tab links by project: { tab, ...target, at } -- the target tab reads what it needs
   // (prKey for MR Review, projectId for Docs, repo for Activity) and acts once per `at`.
   const [nav, setNav] = useState(null)
@@ -53,6 +60,11 @@ export default function App() {
     setNav({ ...target, tab, at: Date.now() })
     setActiveTab(tab)
   }
+
+  // Persist activeTab on change
+  useEffect(() => {
+    writeStored('app:activeTab', activeTab)
+  }, [activeTab])
   // The Workshop's item page (#863): every cross-tab link to a ticket or a PR opens its one page.
   const openItem = (repo, number, kind) => navigate('workshop', { item: { repo, [kind]: Number(number) } })
   const openPrKey = (prKey) => {
@@ -171,6 +183,9 @@ export default function App() {
           </ActivityHover>
         </div>
       </header>
+      <div className="shrink-0 border-b border-neutral-800 px-6 py-3">
+        <UpdateBanner />
+      </div>
       <main ref={main.ref} className="flex-1 overflow-auto">
         <ScrollArea value={main.area}>
           {activeTab === 'metrics' ? (

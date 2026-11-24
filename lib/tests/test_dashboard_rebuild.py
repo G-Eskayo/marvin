@@ -18,7 +18,7 @@ NOW = 1_800_000_000
 
 def d(**kw):
     base = dict(app_built_ts=NOW - 10 * H, dashboard_commit_ts=NOW - 6 * H, rebuild_running=False,
-                last_failure_ts=None, now=NOW)
+                last_failure_ts=None, demo_hold=False, staged_built_ts=None, now=NOW)
     base.update(kw)
     return dr.decide(**base)
 
@@ -104,3 +104,21 @@ def test_only_files_that_go_into_the_app_count_as_a_dashboard_change():
 def test_the_app_icon_counts_as_an_app_change():
     # dashboard/resources/icon.png (#435) ships inside the app
     assert "dashboard/resources" in dr.APP_SOURCE_PATHS
+
+
+def test_demo_hold_is_checked_first_before_any_rebuild():
+    # demo/screenshot mode prevents rebuilds, even when the app is stale
+    assert d(app_built_ts=NOW - 10 * H, dashboard_commit_ts=NOW - 6 * H, demo_hold=True)[0] == "skip"
+    assert d(demo_hold=True)[0] == "skip"
+    assert d(demo_hold=True, app_built_ts=None)[0] == "skip"
+
+
+def test_staged_built_ts_is_considered_alongside_app_built_ts():
+    # Either the installed app or the staged build can be current; whichever is newer is what matters
+    # If staged is newer than app, staged being current means no rebuild needed
+    commit = NOW - 3 * H
+    assert d(app_built_ts=NOW - 10 * H, staged_built_ts=NOW - 2 * H, dashboard_commit_ts=commit)[0] == "skip"
+    # If app is newer than staged, app being current means no rebuild needed
+    assert d(app_built_ts=NOW - 2 * H, staged_built_ts=NOW - 10 * H, dashboard_commit_ts=commit)[0] == "skip"
+    # If neither is current, rebuild is needed
+    assert d(app_built_ts=NOW - 10 * H, staged_built_ts=NOW - 10 * H, dashboard_commit_ts=NOW - 6 * H)[0] == "rebuild"
