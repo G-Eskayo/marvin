@@ -1,5 +1,7 @@
 # Changelog
 
+- Finish the local model investigation: can one model do every paper-dive job? (14b/7b removed 2026-10-21) ([#1408](https://github.com/G-Eskayo/marvin/pull/1408))
+
 - Mail sorter: retry loop on a refused command, & in folder names not encoded (part of #1357) ([#1410](https://github.com/G-Eskayo/marvin/pull/1410))
 
 - Mail sorter slice 1: Gmail IDLE, watch list alerts and rule sorting (part of #1357) ([#1407](https://github.com/G-Eskayo/marvin/pull/1407))
