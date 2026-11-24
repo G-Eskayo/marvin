@@ -1,5 +1,7 @@
 # Changelog
 
+- Mail sorter: retry loop on a refused command, & in folder names not encoded (part of #1357) ([#1410](https://github.com/G-Eskayo/marvin/pull/1410))
+
 - Mail sorter slice 1: Gmail IDLE, watch list alerts and rule sorting (part of #1357) ([#1407](https://github.com/G-Eskayo/marvin/pull/1407))
 
 - Review gate: real time and space complexity regressions are must-fix, not notes ([#1343](https://github.com/G-Eskayo/marvin/pull/1343))
