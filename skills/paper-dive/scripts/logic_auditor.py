@@ -30,6 +30,23 @@ import model_registry  # noqa: E402
 
 from ollama_chat import ollama_chat  # noqa: E402
 
+
+def _load_judgment_spec() -> dict:
+    """Load tuning parameters from judgment_spec.json if it exists (ticket 675).
+
+    Returns {} (use all defaults) if file is missing or invalid.
+    If present, may contain:
+      - judge_extraction_prompt_override: custom prompt template (overrides _JUDGMENT_PROMPTS)
+      - judge_extraction_params: Ollama engine params (temperature, num_ctx, etc.)
+    """
+    spec_path = Path(__file__).parent.parent / "config" / "judgment_spec.json"
+    if not spec_path.exists():
+        return {}
+    try:
+        return json.loads(spec_path.read_text())
+    except (OSError, json.JSONDecodeError):
+        return {}
+
 # Model selection via capability names (validated 2026-07-13):
 _classify_model_list = model_registry.resolve_capability("local-classify-medium")
 CLASSIFY_MODEL = _classify_model_list[0]  # Use first available model for the capability
@@ -347,7 +364,13 @@ def judge_extraction(extraction: dict[str, str], paper_type: str, chat_fn=None) 
         name.lower(): extraction.get(name.lower(), "(not extracted)")
         for name in EXTRACTION_FIELDS[paper_type]
     }
-    prompt = _JUDGMENT_PROMPTS[paper_type].format(fallacies=_GENERAL_FALLACY_CHECKLIST, **fields)
+    # Load any tuning overrides from spec search (ticket 675)
+    spec = _load_judgment_spec()
+    prompt_override = spec.get("judge_extraction_prompt_override")
+    if prompt_override:
+        prompt = prompt_override.format(fallacies=_GENERAL_FALLACY_CHECKLIST, **fields)
+    else:
+        prompt = _JUDGMENT_PROMPTS[paper_type].format(fallacies=_GENERAL_FALLACY_CHECKLIST, **fields)
     response = chat_fn([{"role": "user", "content": prompt}])
     return _parse_findings(response)
 

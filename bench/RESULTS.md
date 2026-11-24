@@ -1431,3 +1431,45 @@ line and re-run only that brief.
 prompt replaced. Five of the six settings pages put Gil's real email and a garbled form of his name on the account
 row. They were redacted before anything was shown or pinned. The base prompt now says to invent every name and
 contact detail, which applies to later runs; this run was generated without that line.
+
+---
+
+## Run 33 — 2026-11-23 (ticket #675): tune local paper-dive judgment with spec search
+
+**Question.** Can qwen2.5:3b be tuned to match Claude's judgment accuracy on paper-dive logic auditing? Use Claude
+as a teacher to spec-search optimize prompt wording + engine params (resident-only, no re-downloading models).
+
+**Setup** (spec_search, benchmark_from_chroma). Pull ~50 papers from paper-knowledge, classify/extract with
+qwen2.5:3b, label with Claude ($0.50 teacher cost, one-time). Frozen benchmark: 50 samples. Search: qwen2.5:3b on
+judgment, propose one edit per round (prompt tweaks, Ollama params), re-measure, keep only non-regressions. Max 10
+rounds, stop after 3 non-improving rounds.
+
+**To be filled in after manual run** (benchmark build ~10 min, search ~5 min):
+
+| Metric | Value |
+|--------|-------|
+| Baseline accuracy (qwen2.5:3b vanilla) | *pending* |
+| Best accuracy after search | *pending* |
+| Winning edit | *pending* |
+| Edits proposed / accepted | *pending* |
+| Local cost (ongoing) | $0.00 |
+| Teacher cost (one-time) | ~$0.50 |
+
+**Decisions locked:**
+- A: Resident-only on qwen2.5:3b (no 7b/14b re-download)
+- A: Reimplement spec search in-house (not vendored OpenJarvis)
+- A: Accuracy bar = within ~3.2 points of Claude baseline
+
+**Verdict** (placeholder, update after run):
+- If `best_accuracy >= 0.82`: SUCCESS. Recommend next jobs: triage classification + daily digest.
+- If `best_accuracy < 0.82`: Document gap plainly, no escalation.
+
+**Spent benchmarks:** paper-dive-judgment-*.json (do not reuse for tuning)
+
+**How to run** (manual, outside pytest):
+1. `python bench/benchmark_from_chroma.py --sample-count 50`
+2. `python bench/spec_search.py --benchmark benchmarks/*.json --max-rounds 10`
+3. Update this entry with results, fill in table above
+4. If successful, wire result to `judgment_spec.json` and re-test
+
+See `SPEC_SEARCH_MANUAL_RUN.md` for detailed instructions.

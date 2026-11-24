@@ -1,0 +1,5 @@
+{
+  "judge_extraction_prompt_override": null,
+  "judge_extraction_params": {},
+  "note": "If spec search (ticket 675) finds winning edits, populate this file with prompt tweaks and engine params. Existing hardcoded defaults in logic_auditor.py serve as fallback; this file is optional and only loaded if present."
+}
