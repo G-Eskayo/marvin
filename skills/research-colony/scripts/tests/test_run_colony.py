@@ -213,7 +213,7 @@ class TestResearchDigestErrorHandling:
         assert result is None
         assert len(notify_calls) == 1
         assert notify_calls[0][0] == "MARVIN research-colony failed"
-        assert "claude call failed" in notify_calls[0][1]
+        assert "synthesis call failed" in notify_calls[0][1]
         assert "Connection timeout" in notify_calls[0][1]
 
     def test_claude_bad_exit_code_notifies_and_returns_none(self, tmp_path, monkeypatch):
@@ -250,7 +250,7 @@ class TestResearchDigestErrorHandling:
         assert result is None
         assert len(notify_calls) == 1
         assert notify_calls[0][0] == "MARVIN research-colony failed"
-        assert "claude call failed" in notify_calls[0][1]
+        assert "synthesis call failed" in notify_calls[0][1]
 
     def test_claude_empty_text_notifies_and_returns_none(self, tmp_path, monkeypatch):
         """When claude call returns empty text, notify and return None."""
