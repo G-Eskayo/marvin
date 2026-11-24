@@ -1,5 +1,7 @@
 # Changelog
 
+- The two Macs look after each other: notice the other is down, fix it or call the owner, and a safe daily reset ([#1413](https://github.com/G-Eskayo/marvin/pull/1413))
+
 - Finish the local model investigation: can one model do every paper-dive job? (14b/7b removed 2026-10-21) ([#1408](https://github.com/G-Eskayo/marvin/pull/1408))
 
 - Mail sorter: retry loop on a refused command, & in folder names not encoded (part of #1357) ([#1410](https://github.com/G-Eskayo/marvin/pull/1410))
