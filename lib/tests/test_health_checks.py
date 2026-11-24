@@ -12,7 +12,6 @@ from pathlib import Path
 LIB = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(LIB))
 
-import cron_health as ch  # noqa: E402
 import health_checks as hc  # noqa: E402
 import model_registry as mr  # noqa: E402
 
@@ -92,68 +91,73 @@ def test_check_dispatch_lock_green_shortly_after_start():
     assert result["severity"] == "green"
 
 
-# ── coverage / auto-discovery ────────────────────────────────────────────
+# ── coverage / job catalog ────────────────────────────────────────────
 
-def test_coverage_flags_jobs_with_no_registered_check(monkeypatch):
-    monkeypatch.setattr(hc, "discover_launchd_jobs",
-                        lambda: ["daily-digest", "ticket-pipeline", "auto-fix"])
-    results = [{"id": "cron:daily-digest", "severity": "green"}]
-    cov = hc.coverage(results)
-    assert cov["total"] == 3
-    assert cov["covered"] == 1
-    assert set(cov["unmonitored_jobs"]) == {"ticket-pipeline", "auto-fix"}
-    assert cov["fraction"] == round(1 / 3, 2)
-
-
-def test_coverage_full_when_everything_discovered_has_a_check(monkeypatch):
-    monkeypatch.setattr(hc, "discover_launchd_jobs", lambda: ["daily-digest"])
-    cov = hc.coverage([{"id": "cron:daily-digest", "severity": "green"}])
-    assert cov["fraction"] == 1.0
-    assert cov["unmonitored_jobs"] == []
+def test_coverage_reports_catalogued_and_loaded_counts(monkeypatch):
+    # coverage() imports job_catalog locally, so we patch it in that module
+    import job_catalog as jc
+    real_jobs = list(hc.JOB_PLACEMENT.keys())[:2]
+    monkeypatch.setattr(jc, "loaded_here", lambda: {"test-host": real_jobs})
+    cov = hc.coverage()
+    assert cov["loaded"] == len(real_jobs)
+    assert cov["catalogued"] > 0  # depends on JOB_PLACEMENT
+    assert "fraction" in cov
+    assert 0 <= cov["fraction"] <= 1
 
 
-def test_plist_label_to_job_name_strips_known_prefixes():
-    assert hc._plist_label_to_job_name("com.marvin.ticket-pipeline") == "ticket-pipeline"
-    assert hc._plist_label_to_job_name("com.giles.tidy-agent") == "tidy-agent"
-    assert hc._plist_label_to_job_name("com.apple.something") == "com.apple.something"
+def test_coverage_excludes_uncatalogued_jobs(monkeypatch):
+    # Code review fix: uncatalogued jobs should not be counted in the loaded count
+    import job_catalog as jc
+    real_jobs = list(hc.JOB_PLACEMENT.keys())[:2]
+    uncatalogued_jobs = ["fake-job-1", "fake-job-2"]
+    all_jobs = real_jobs + uncatalogued_jobs
+    monkeypatch.setattr(jc, "loaded_here", lambda: {"test-host": all_jobs})
+    cov = hc.coverage()
+    assert cov["loaded"] == len(real_jobs), f"expected {len(real_jobs)} catalogued jobs, got {cov['loaded']}"
+    assert cov["fraction"] <= 1.0, "fraction should never exceed 1.0"
 
 
-# ── cron job log scan (wraps cron_health.check_job -- its own offset-
-# tracking behavior is already covered by exercising it through here) ───
+# ── verdict_severities: red from uncalibrated devices are downgraded to yellow ──
 
-def test_check_cron_job_log_establishes_baseline_on_first_run(tmp_path, monkeypatch):
-    # cron_health.check_job()'s own documented behavior: first-ever run for
-    # a log establishes a baseline offset and does NOT report pre-existing
-    # history as new -- exercised here since my earlier naive
-    # reimplementation regressed exactly this.
-    monkeypatch.setattr(ch, "HOME", tmp_path)
-    log_dir = tmp_path / ".claude" / "logs"
-    log_dir.mkdir(parents=True)
-    (log_dir / "daily-digest.log").write_text("old stuff")
-    (log_dir / "daily-digest-error.log").write_text("Traceback: old pre-existing failure\n")
-    state = {}
-    now = datetime(2026, 10, 1, 12, 0, tzinfo=timezone.utc)
-    result = hc.check_cron_job_log("daily-digest", state, now)
-    assert result["severity"] == "green"
-
-
-def test_check_cron_job_log_flags_genuinely_new_failures(tmp_path, monkeypatch):
-    monkeypatch.setattr(ch, "HOME", tmp_path)
-    log_dir = tmp_path / ".claude" / "logs"
-    log_dir.mkdir(parents=True)
-    err = log_dir / "daily-digest-error.log"
-    (log_dir / "daily-digest.log").write_text("")
-    err.write_text("")
-    state = {}
-    now = datetime(2026, 10, 1, 12, 0, tzinfo=timezone.utc)
-    hc.check_cron_job_log("daily-digest", state, now)  # baseline run
-    err.write_text("Traceback: a real new failure\n")
-    result = hc.check_cron_job_log("daily-digest", state, now)
-    assert result["severity"] == "red"
+def test_verdict_severities_downgrades_red_from_uncalibrated_devices():
+    """Code review fix: red results from uncalibrated devices should be downgraded to yellow."""
+    registry = {
+        "mac-mini-1": {"os": "macos", "calibrated": True},
+        "laptop-1": {"os": "linux", "calibrated": False},
+    }
+    results = [
+        hc._result("test:ok", "Test OK", "green", "fine"),
+        hc._result("sync:stuck@mac-mini-1", "Sync stuck", "red", "sync failed"),
+        hc._result("errors@laptop-1", "Errors", "red", "got errors"),
+        hc._result("test:unknown", "Unknown", hc.UNKNOWN, "couldn't measure"),
+    ]
+    severities = hc.verdict_severities(results, registry=registry)
+    assert severities[0] == "green", "green should stay green"
+    assert severities[1] == "red", "red from calibrated device should stay red"
+    assert severities[2] == "yellow", "red from uncalibrated device should be downgraded to yellow"
+    assert severities[3] == "yellow", "unknown should be yellow"
 
 
-def test_check_cron_job_log_returns_none_for_unmapped_job():
-    assert hc.check_cron_job_log("some-job-with-no-known-logs", {}, datetime.now(timezone.utc)) is None
+def test_verdict_severities_with_no_registry():
+    """When registry is None, devices without entries are treated as uncalibrated."""
+    results = [
+        hc._result("sync:stuck@laptop-1", "Sync stuck", "red", "sync failed"),
+        hc._result("test:ok", "OK", "green", "fine"),
+    ]
+    severities = hc.verdict_severities(results, registry=None)
+    assert severities[0] == "yellow", "red from device not in registry should be downgraded to yellow"
+    assert severities[1] == "green", "green should stay green"
+
+
+def test_overall_severity_uses_filtered_severities():
+    """overall_severity should correctly combine severities after filtering."""
+    registry = {"mac-mini-1": {"calibrated": False}}
+    results = [
+        hc._result("disk:space@mac-mini-1", "Disk", "red", "low disk"),
+    ]
+    filtered = hc.verdict_severities(results, registry=registry)
+    overall = hc.overall_severity(filtered)
+    assert overall == "yellow", "red from uncalibrated device should result in yellow overall"
 
 
 # ── machine reachability: a closed laptop is asleep, not broken ─────────────
@@ -1151,9 +1155,9 @@ def test_gh_gate_yellow_when_not_installed(tmp_path):
     assert r["severity"] == "yellow"
 
 
-def test_missed_purposes_are_red_and_an_unreadable_list_is_yellow():
-    red = hc.check_missed_purposes(lambda: [{"number": 277, "title": "Allow read-only tools", "state": "closed"}])
-    assert red[0]["severity"] == "red" and "#277 Allow read-only tools" in red[0]["detail"]
+def test_missed_purposes_are_yellow_and_an_unreadable_list_is_yellow():
+    yellow = hc.check_missed_purposes(lambda: [{"number": 277, "title": "Allow read-only tools", "state": "closed"}])
+    assert yellow[0]["severity"] == "yellow" and "#277 Allow read-only tools" in yellow[0]["detail"]
     assert hc.check_missed_purposes(lambda: [])[0]["severity"] == "green"
     assert hc.check_missed_purposes(lambda: (_ for _ in ()).throw(OSError("rate limited")))[0]["severity"] == "yellow"
 

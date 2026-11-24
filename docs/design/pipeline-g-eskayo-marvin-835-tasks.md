@@ -1,0 +1,12 @@
+1. `lib/job_catalog.py`: rename `_loaded_here` → `loaded_here` (public, now cross-module); update its one call site in `main()`.
+2. `lib/machine_profile.py`: add `calibrated(info: dict | None) -> bool`, mirroring `pull_only()`'s asymmetric-default pattern (explicit JSON `bool` wins; anything else, including a junk value, falls back to `info.get("os", "macos") == "macos"`).
+3. `lib/health_checks.py`: delete `check_cron_job_log`, `_cron_job_logs`, `discover_launchd_jobs`, `_plist_label_to_job_name`, the `import cron_health as ch` line, and the `("cron", "Cron job logs", _cron_job_logs, ...)` entry in `default_checks()`.
+4. `lib/health_checks.py`: rewrite `coverage()` to take no `results` argument, sourcing `loaded` from `job_catalog.loaded_here()` and the catalogued set from `JOB_PLACEMENT`; update `run_all()`'s one call site to `coverage()`.
+5. `lib/health_checks.py`: add `_device_of(result_id)` and `verdict_severities(results, registry=None)`; change `run_all()`'s overall line to `overall_severity(verdict_severities(results))`.
+6. `lib/health_checks.py`: in `check_machine_reachability()`, short-circuit before the SSH probe for any device where `machine_profile.calibrated(info)` is `False`, emitting one `"yellow"` / "not reporting yet (uncalibrated)" row that names neither hostname nor IP.
+7. `lib/output_contracts.py`: add `checked_at` to all four `evaluate()` return branches and the `health_findings()` exception fallback; change the CUT_AFTER_DAYS branch's severity from `"red"` to `"yellow"`.
+8. `lib/purpose_metrics.py`: add a `now` parameter to `health_findings()` (default `datetime.now(timezone.utc)`, matching `output_contracts.health_findings`'s existing pattern) and stamp `checked_at` on both returned shapes; change the per-ticket severity from `"red"` to `"yellow"`.
+9. `lib/job_catalog.py`: update the `"cron-health"` job entry's `"consumer"` field (currently `"Health cron:*"`, now stale) to name the real remaining consumer (the session-start report reading `cron-health.md`, per `cron_health.py`'s own docstring) — `cron_health.py` itself and its launchd job are untouched; only the dead `Health cron:*` reference is corrected.
+10. Write/update all tests listed above, confirming each one fails against the pre-change code and passes after.
+11. Run the full Python suite (`lib/tests`) and confirm no other test references the deleted functions or the old `"red"` severities.
+12. Resolve the two Decisions above (or note Gil's answer if he's already indicated one) before opening the PR.

@@ -81,9 +81,9 @@ def test_a_measurement_failure_is_reported_not_judged():
     assert result["met"] is None and posted == []  # retried tomorrow, nothing claimed
 
 
-def test_health_turns_red_for_each_missed_purpose():
+def test_health_turns_yellow_for_each_missed_purpose():
     found = pm.health_findings([{"number": 277, "title": "Allow read-only tools", "labels": [{"name": pm.MISSED_LABEL}]}])
-    assert found[0]["severity"] == "red" and "#277 Allow read-only tools" in found[0]["detail"]
+    assert found[0]["severity"] == "yellow" and "#277 Allow read-only tools" in found[0]["detail"]
     assert pm.health_findings([])[0]["severity"] == "green"
 
 

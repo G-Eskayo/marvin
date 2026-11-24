@@ -196,6 +196,18 @@ def pull_only() -> bool:
     return not isinstance(accepts, list) or "general" not in accepts
 
 
+def calibrated(info: dict | None) -> bool:
+    """True on a calibrated device (ready to report its state to Health). Explicit JSON bool wins; anything else,
+    including a junk value, falls back to whether the device runs macOS (registered devices tracking status are
+    always Macs by convention)."""
+    if info is None:
+        return False
+    cal = info.get("calibrated")
+    if isinstance(cal, bool):
+        return cal
+    return info.get("os", "macos") == "macos"
+
+
 def remote_devices() -> dict:
     """All registered devices that aren't this one, keyed by device id."""
     my_id = registry_id()

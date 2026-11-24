@@ -66,7 +66,7 @@ JOBS: dict[str, dict] = {
     "auto-fix": {"machine": "mini", "goal": "ns1", "reporter": "its daily PR (auto-fix/<date>), plus auto-fix-log.md",
                  "healthy": "last run exit 0", "consumer": "the owner, via MR Review"},
     "cron-health": {"machine": "mini", "goal": "project:marvin", "reporter": "cron-health log",
-                    "healthy": "last run exit 0", "consumer": "Health cron:*",
+                    "healthy": "last run exit 0", "consumer": "the session-start report (reading cron-health.md)",
                     "review": "purpose (nothing breaks silently) is falling short: Health missed a 2-day frozen laptop view too. Reached by the Vitals peer heartbeat (P2); this job folds in then"},
     "health-check": {"machine": "mini", "goal": "project:marvin", "reporter": "health-status.json",
                      "healthy": "a sweep in the last 30 min", "consumer": "Vitals on every machine (once peer push lands)"},
@@ -145,7 +145,7 @@ def report(rows: list[dict]) -> str:
     return "\n".join(lines)
 
 
-def _loaded_here() -> dict:
+def loaded_here() -> dict:
     out = subprocess.run(["/bin/launchctl", "list"], capture_output=True, text=True).stdout
     names = []
     for line in out.splitlines():
@@ -159,7 +159,7 @@ def _loaded_here() -> dict:
 
 def main(argv: list[str]) -> int:
     if argv[:1] == ["waste"]:
-        print(report(waste(loaded=_loaded_here())))
+        print(report(waste(loaded=loaded_here())))
         return 0
     print(__doc__.strip().splitlines()[-1].strip())
     return 2

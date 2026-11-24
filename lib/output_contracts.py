@@ -150,35 +150,37 @@ CONTRACTS: list[Contract] = [
 
 def evaluate(contract: Contract, now: datetime) -> dict:
     cid, label = f"contract:{contract.producer}", f"Output: {contract.producer}"
+    checked_at = now.isoformat()
     if contract.state is None:
-        return {"id": cid, "label": label, "severity": "yellow",
+        return {"id": cid, "label": label, "severity": "yellow", "checked_at": checked_at,
                 "detail": f"consumption not measured yet; its consumer will be {contract.consumer}"}
     pending, consumed = contract.state()
     last = max(consumed) if consumed else None
     overdue = [p for p in pending if (now - p).days > contract.within_days]
     if pending and (last is None or (now - last).days > CUT_AFTER_DAYS):
         since = "never consumed" if last is None else f"last consumed {(now - last).days} days ago"
-        return {"id": cid, "label": label, "severity": "red",
+        return {"id": cid, "label": label, "severity": "yellow", "checked_at": checked_at,
                 "detail": f"{len(pending)} item(s) waiting, {since}: removal candidate (30-day cut rule) unless "
                           f"{contract.consumer} starts acting on it"}
     if overdue:
         oldest = (now - min(overdue)).days
-        return {"id": cid, "label": label, "severity": "yellow",
+        return {"id": cid, "label": label, "severity": "yellow", "checked_at": checked_at,
                 "detail": f"{len(overdue)} item(s) past the {contract.within_days}-day deadline (oldest {oldest} days) "
                           f"in {contract.output}; consumer: {contract.consumer}"}
-    return {"id": cid, "label": label, "severity": "green",
+    return {"id": cid, "label": label, "severity": "green", "checked_at": checked_at,
             "detail": f"{len(pending)} waiting, all within {contract.within_days} days; consumer: {contract.consumer}"}
 
 
 def health_findings(now: datetime | None = None) -> list[dict]:
     now = now or datetime.now(timezone.utc)
     out = []
+    checked_at = now.isoformat()
     for c in CONTRACTS:
         try:
             out.append(evaluate(c, now))
         except Exception as exc:  # noqa: BLE001
             out.append({"id": f"contract:{c.producer}", "label": f"Output: {c.producer}", "severity": "yellow",
-                        "detail": f"couldn't read its state: {exc}"})
+                        "checked_at": checked_at, "detail": f"couldn't read its state: {exc}"})
     return out
 
 
