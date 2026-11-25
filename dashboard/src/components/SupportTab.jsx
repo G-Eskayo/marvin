@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react'
 import { useScrollArea } from './ScrollPlaces.jsx'
 import Markdown from './Markdown.jsx'
+import { readSaved, writeSaved } from '../lib/saved_state.js'
 
 // The Support tab (ADR 0073), on both sides of a support link, showing the same conversation:
 //   helper install: "Needs you" (the counter: what the helper's MARVIN couldn't solve) and "Handled by MARVIN", each
@@ -334,6 +335,15 @@ export default function SupportTab({ api = window.api.support, triggers = window
     })
   }, [selected])
 
+  // Persist draft and check for the current request.
+  useEffect(() => {
+    if (!selected) return
+    const draftKey = `${selected.repo}#${selected.number}:draft`
+    const checkKey = `${selected.repo}#${selected.number}:check`
+    writeSaved(sessionStorage, draftKey, draft)
+    writeSaved(sessionStorage, checkKey, check)
+  }, [draft, check, selected])
+
   // Opened from the IT button or a notice: go straight to that request's thread.
   useEffect(() => {
     if (nav?.repo && nav?.number) open({ repo: nav.repo, number: nav.number })
@@ -348,8 +358,13 @@ export default function SupportTab({ api = window.api.support, triggers = window
   function open(request) {
     setSelected(request)
     setThread(null)
-    setDraft('')
-    setCheck('')
+    // Restore saved draft and check for this request.
+    const draftKey = `${request.repo}#${request.number}:draft`
+    const checkKey = `${request.repo}#${request.number}:check`
+    const savedDraft = readSaved(sessionStorage, draftKey)
+    const savedCheck = readSaved(sessionStorage, checkKey)
+    setDraft(savedDraft?.value || '')
+    setCheck(savedCheck?.value || '')
     setOriginal(null)
     setMessage(null)
     loadThread(request)
@@ -419,14 +434,43 @@ export default function SupportTab({ api = window.api.support, triggers = window
             preview={original !== null}
             onPreview={() => act('adapt', { text: draft }, (r) => { setOriginal(draft); setDraft(r.text) })}
             onBack={() => { setDraft(original ?? draft); setOriginal(null) }}
-            onSendOriginal={() => act('reply', { text: original, check }, () => { setDraft(''); setCheck(''); setOriginal(null); setMessage({ text: 'Sent as you wrote it.' }); loadThread(selected) })}
-            onSend={() => act('reply', { text: draft, check }, () => { setDraft(''); setCheck(''); setOriginal(null); setMessage({ text: 'Sent.' }); loadThread(selected) })}
+            onSendOriginal={() => act('reply', { text: original, check }, () => {
+              setDraft('');
+              setCheck('');
+              setOriginal(null);
+              typeof sessionStorage !== 'undefined' && sessionStorage.removeItem(`${selected.repo}#${selected.number}:draft`);
+              typeof sessionStorage !== 'undefined' && sessionStorage.removeItem(`${selected.repo}#${selected.number}:check`);
+              setMessage({ text: 'Sent as you wrote it.' });
+              loadThread(selected)
+            })}
+            onSend={() => act('reply', { text: draft, check }, () => {
+              setDraft('');
+              setCheck('');
+              setOriginal(null);
+              typeof sessionStorage !== 'undefined' && sessionStorage.removeItem(`${selected.repo}#${selected.number}:draft`);
+              typeof sessionStorage !== 'undefined' && sessionStorage.removeItem(`${selected.repo}#${selected.number}:check`);
+              setMessage({ text: 'Sent.' });
+              loadThread(selected)
+            })}
             onResolve={() => act('resolve', {}, () => setMessage({ text: 'Resolved.' }))}
             onApply={() => act('open', {}, () => setMessage({ text: 'MARVIN is open in a new window. It will walk you through it, and the result shows up here.' }))}
             autoApply={!!config.autoApply}
             onGotIt={() => act('got-it', {}, () => setMessage({ text: 'Marked as answered.' }))}
-            onGuide={() => act('guide', { text: draft }, () => { setDraft(''); setCheck(''); setMessage({ text: 'Sent to your MARVIN. It will try again with your note.' }); loadThread(selected) })}
-            onFollowup={() => act('followup', { text: draft }, () => { setDraft(''); setMessage({ text: "Sent to your helper's MARVIN." }); loadThread(selected) })}
+            onGuide={() => act('guide', { text: draft }, () => {
+              setDraft('');
+              setCheck('');
+              typeof sessionStorage !== 'undefined' && sessionStorage.removeItem(`${selected.repo}#${selected.number}:draft`);
+              typeof sessionStorage !== 'undefined' && sessionStorage.removeItem(`${selected.repo}#${selected.number}:check`);
+              setMessage({ text: 'Sent to your MARVIN. It will try again with your note.' });
+              loadThread(selected)
+            })}
+            onFollowup={() => act('followup', { text: draft }, () => {
+              setDraft('');
+              typeof sessionStorage !== 'undefined' && sessionStorage.removeItem(`${selected.repo}#${selected.number}:draft`);
+              typeof sessionStorage !== 'undefined' && sessionStorage.removeItem(`${selected.repo}#${selected.number}:check`);
+              setMessage({ text: "Sent to your helper's MARVIN." });
+              loadThread(selected)
+            })}
           />
         )}
       </div>

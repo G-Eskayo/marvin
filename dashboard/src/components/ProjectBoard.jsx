@@ -13,6 +13,7 @@ import CompletedView from './CompletedView.jsx'
 import { useScrollPlace } from './ScrollPlaces.jsx'
 import StageStrip from './StageStrip.jsx'
 import { GoalHeader, useGoals } from './ProjectGoals.jsx'
+import { readSaved, writeSaved } from '../lib/saved_state.js'
 
 // Backstop only: triggers (window.api.triggers) drive refreshes; a poll that
 // finds a change no trigger announced is logged as a gap.
@@ -388,16 +389,26 @@ export function HumanTaskPanel({ body, ctx }) {
 }
 
 export function TicketReply({ repo, number, labels, state, sendBack, onSent }) {
-  const [text, setText] = useState('')
+  const textKey = `${repo}#${number}:reply`
+  const savedText = readSaved(sessionStorage, textKey)
+  const [text, setText] = useState(savedText?.value || '')
   const [busy, setBusy] = useState(false)
   const [result, setResult] = useState(null)
   const [error, setError] = useState(null)
   const plan = planInput(labels, state)
+
+  useEffect(() => {
+    writeSaved(sessionStorage, textKey, text)
+  }, [text, textKey])
+
   const send = async () => {
     setBusy(true); setError(null); setResult(null)
     try {
       const r = await window.api.boards.input(repo, number, text)
-      setResult(r); setText(''); onSent?.()
+      setResult(r)
+      setText('')
+      typeof sessionStorage !== 'undefined' && sessionStorage.removeItem(textKey)
+      onSent?.()
     } catch (e) {
       setError(cleanIpcError(e))
     } finally {

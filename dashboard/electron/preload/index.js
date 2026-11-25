@@ -277,5 +277,13 @@ contextBridge.exposeInMainWorld('api', {
     input: (repo, number, body) => ipcRenderer.invoke('boards:input', repo, number, body),
     summary: (repo) => ipcRenderer.invoke('boards:summary', repo),
     completed: (repo) => ipcRenderer.invoke('boards:completed', repo)
+  },
+  build: {
+    status: () => ipcRenderer.invoke('build:status'),
+    restartNow: () => ipcRenderer.invoke('build:restartNow'),
+    demoHold: {
+      get: () => ipcRenderer.invoke('build:demoHold:get'),
+      set: (enabled) => ipcRenderer.invoke('build:demoHold:set', enabled)
+    }
   }
 })

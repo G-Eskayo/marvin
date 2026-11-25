@@ -13,9 +13,11 @@ import ActivityHover from '@components/ActivityHover.jsx'
 import SupportTab from '@components/SupportTab.jsx'
 import ItButton from '@components/ItButton.jsx'
 import WorkshopTab, { useWorkshopNow } from '@components/WorkshopTab.jsx'
+import BuildUpdateBanner from '@components/BuildUpdateBanner.jsx'
 import { visibleTabs } from './lib/tabs.js'
 import { ScrollArea, useScrollArea } from '@components/ScrollPlaces.jsx'
 import { reviewDotStatus } from './lib/pr_fetch_status.js'
+import { readSaved, writeSaved } from './lib/saved_state.js'
 
 
 const DOT_COLOR = {
@@ -45,7 +47,8 @@ const HEALTH_DOT_COLOR = {
 }
 
 export default function App() {
-  const [activeTab, setActiveTab] = useState('metrics')
+  const savedTab = readSaved(sessionStorage, 'activeTab')
+  const [activeTab, setActiveTab] = useState(savedTab?.value || 'metrics')
   // Cross-tab links by project: { tab, ...target, at } -- the target tab reads what it needs
   // (prKey for MR Review, projectId for Docs, repo for Activity) and acts once per `at`.
   const [nav, setNav] = useState(null)
@@ -79,6 +82,11 @@ export default function App() {
     const offTrigger = window.api.triggers.on((t) => t.topic === 'support' && load())
     return () => { offFocus(); offShow(); offTrigger() }
   }, [])
+
+  // Persist active tab (#593).
+  useEffect(() => {
+    writeSaved(sessionStorage, 'activeTab', activeTab)
+  }, [activeTab])
 
   // Docs speed budget (#570): pdf.js and the markdown renderer are warmed once, when the app is idle after boot.
   useEffect(() => warmDocs(), [])
@@ -171,6 +179,7 @@ export default function App() {
           </ActivityHover>
         </div>
       </header>
+      <BuildUpdateBanner />
       <main ref={main.ref} className="flex-1 overflow-auto">
         <ScrollArea value={main.area}>
           {activeTab === 'metrics' ? (

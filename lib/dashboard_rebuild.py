@@ -26,6 +26,7 @@ APP_ASAR = Path("/Applications/MARVIN.app/Contents/Resources/app.asar")  # renam
 SCRIPT = HOME / ".agents" / "dashboard" / "scripts" / "rebuild_and_install.sh"
 FAILED_FILE = HOME / ".claude" / "logs" / "dashboard-rebuild-failed"  # written by the script on failure, cleared on success
 LOG_FILE = HOME / ".claude" / "logs" / "dashboard-rebuild.log"
+DEMO_HOLD_FILE = HOME / ".claude" / "logs" / "dashboard-demo-hold"  # flag file: set to skip rebuilds (demo mode)
 
 # Only these go into the installed app. webhook-server/ is a separate launchd node
 # process and test/ never ships, so changes there must not trigger a rebuild.
@@ -37,8 +38,10 @@ SETTLE_SECONDS = 2 * 60          # let a merge (and any follow-up push) finish l
 RETRY_FAILED_AFTER = 6 * 3600    # a failure on the same code is retried after this, in case it was transient
 
 
-def decide(*, app_built_ts, dashboard_commit_ts, rebuild_running, last_failure_ts, now) -> tuple[str, str]:
+def decide(*, app_built_ts, dashboard_commit_ts, rebuild_running, last_failure_ts, demo_hold, now) -> tuple[str, str]:
     """('rebuild' | 'skip', reason)."""
+    if demo_hold:
+        return "skip", "demo hold is active"
     if dashboard_commit_ts is None:
         return "skip", "no dashboard commit to compare against"
     if rebuild_running:
@@ -69,7 +72,7 @@ def _facts(now: int) -> dict:
                             capture_output=True, text=True).stdout.strip()
     running = subprocess.run(["pgrep", "-f", "rebuild_and_install.sh"], capture_output=True).returncode == 0
     return dict(app_built_ts=_mtime(APP_ASAR), dashboard_commit_ts=int(newest) if newest.isdigit() else None,
-                rebuild_running=running, last_failure_ts=_mtime(FAILED_FILE), now=now)
+                rebuild_running=running, last_failure_ts=_mtime(FAILED_FILE), demo_hold=DEMO_HOLD_FILE.exists(), now=now)
 
 
 def main() -> None:

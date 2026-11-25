@@ -3,7 +3,7 @@ import { pathToFileURL } from 'url'
 import { instrumentIpc } from './timing.js'
 import { installDevSiteCors } from './dev_site_cors.js'
 import { join, dirname } from 'path'
-import { existsSync, mkdirSync, appendFileSync, statSync, readFileSync, writeFileSync, renameSync } from 'fs'
+import { existsSync, mkdirSync, appendFileSync, statSync, readFileSync, writeFileSync, renameSync, unlinkSync } from 'fs'
 import { homedir } from 'os'
 import { execFile } from 'child_process'
 import { promisify } from 'util'
@@ -16,6 +16,7 @@ import { prsForOrderCheck, listPipelinePrs, denyMr, fetchTicketContext, sentBack
 import { approveMrStream } from './approve_stream.js'
 import { readSeenNumbers, markSeen, computeReviewStatus } from './mr_seen.js'
 import { readDispatchStatus } from './dispatch_status.js'
+import { readReady, readShown, writeShown, shouldNotify, shouldShowOnceToast, shouldAutoRestart } from './build_status.js'
 import { readHealthStatus, readHealthStatusFresh, runHealthCheckNow, rebuildCodeGraph } from './health.js'
 import { createPeerCopies } from './peer_copy.js'
 import { createSafetyReviews } from './safety_reviews.js'
@@ -460,6 +461,41 @@ function registerInstanceHandlers() {
   const handlers = createInstanceHandlers()
   ipcMain.handle('instance:features', handlers.features)
   ipcMain.handle('instance:setFeature', handlers.setFeature)
+}
+
+function registerBuildHandlers() {
+  const homeDir = homedir()
+  const readyFile = join(homeDir, '.claude', 'logs', 'dashboard-build-ready.json')
+  const shownFile = join(app.getPath('userData'), 'build-ready-shown.json')
+  const demoHoldFile = join(homeDir, '.claude', 'logs', 'dashboard-demo-hold')
+
+  ipcMain.handle('build:status', () => {
+    const ready = readReady(readyFile)
+    const shown = readShown(shownFile)
+    return {
+      ready,
+      shown,
+      shouldNotify: shouldNotify(ready, shown),
+      shouldShowOnceToast: shouldShowOnceToast(ready, shown)
+    }
+  })
+
+  ipcMain.handle('build:restartNow', () => {
+    app.relaunch()
+    app.exit()
+  })
+
+  ipcMain.handle('build:demoHold:get', () => existsSync(demoHoldFile))
+
+  ipcMain.handle('build:demoHold:set', (_event, enabled) => {
+    if (enabled) {
+      mkdirSync(dirname(demoHoldFile), { recursive: true })
+      writeFileSync(demoHoldFile, '')
+    } else {
+      try { unlinkSync(demoHoldFile) } catch {}
+    }
+    return true
+  })
 }
 
 // Boot sequence (#431): plays on the first window load of each app launch; reloads skip it.
@@ -1372,6 +1408,7 @@ app.whenReady().then(() => {
   registerHealthHandlers()
   registerSessionHandlers()
   registerInstanceHandlers()
+  registerBuildHandlers()
   registerDocsHandlers()
   registerActivityHandlers()
   const showWindows = registerShowHandlers()
@@ -1412,6 +1449,15 @@ app.whenReady().then(() => {
       .catch(() => '')
       .then((token) => startAppSupportWatch({ repos: () => instance.support().repos, token, startChangeWatch, createGithubProbe }))
   }
+  // Build status: when rebuild_and_install.sh writes the ready file, forward it to the renderer.
+  triggerHub.watchFiles('build', [{ dir: join(homedir(), '.claude', 'logs'), match: (n) => n === 'dashboard-build-ready.json' }])
+  triggerHub.onTrigger((t) => {
+    if (t.topic === 'build') {
+      const readyFile = join(homedir(), '.claude', 'logs', 'dashboard-build-ready.json')
+      const ready = readReady(readyFile)
+      if (ready) mainWindow?.webContents.send('build:ready', ready)
+    }
+  })
   triggerHub.watchFiles('agents', [{ dir: JOBS_DIR, match: (n) => n.endsWith('.json') && !n.startsWith('.') }])
   // Project goals: a profile edit re-reads them once. Registered before the renderer forward so its re-read is fresh.
   triggerHub.watchFiles('goals', [{ dir: PROFILES_DIR, match: (n) => n.endsWith('.json') }])

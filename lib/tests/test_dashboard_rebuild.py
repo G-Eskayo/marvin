@@ -18,7 +18,7 @@ NOW = 1_800_000_000
 
 def d(**kw):
     base = dict(app_built_ts=NOW - 10 * H, dashboard_commit_ts=NOW - 6 * H, rebuild_running=False,
-                last_failure_ts=None, now=NOW)
+                last_failure_ts=None, demo_hold=False, now=NOW)
     base.update(kw)
     return dr.decide(**base)
 

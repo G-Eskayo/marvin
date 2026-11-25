@@ -14,9 +14,27 @@ on_error() {
     --raw "$(tail -n 20 "$HOME/.claude/logs/dashboard-rebuild.log" 2>/dev/null)" >/dev/null 2>&1 || true
   # #443: dashboard_rebuild.py backs off only after a failure, until newer code lands; a success clears this mark.
   date +%s > "$HOME/.claude/logs/dashboard-rebuild-failed" 2>/dev/null || true
+  # Release the rebuild lock on failure.
+  if [ -n "${LOCK_DIR:-}" ]; then
+    "$HOME/.agents/venv/bin/python" "$HOME/.agents/lib/rebuild_lock.py" release "$LOCK_DIR" 2>/dev/null || true
+  fi
 }
 trap 'on_error $LINENO' ERR
 cd "$(dirname "$0")/.."
+
+# Demo hold: if the flag file is present, skip the rebuild entirely (demo mode).
+if [ -f "$HOME/.claude/logs/dashboard-demo-hold" ]; then
+  echo "[rebuild-and-install] demo hold is active; skipping rebuild" >&2
+  exit 0
+fi
+
+# Acquire the rebuild lock before pulling; if already held, exit cleanly.
+export LOCK_DIR="$HOME/.claude/logs"
+lock_result=$("$HOME/.agents/venv/bin/python" "$HOME/.agents/lib/rebuild_lock.py" acquire "$LOCK_DIR" 2>/dev/null || echo "BUSY")
+if [ "$lock_result" = "BUSY" ]; then
+  echo "[rebuild-and-install] a rebuild is already running; exiting cleanly" >&2
+  exit 0
+fi
 
 APP_NAME="MARVIN.app"
 # #442: the app was "MARVIN Metrics.app" until 2026-10-14; an install replaces it, so a machine never has both.
@@ -58,25 +76,92 @@ if [ ! -d "$SRC" ]; then
   exit 1
 fi
 
-echo "${LOG_PREFIX} quitting running app if open..."
-osascript -e 'quit app "MARVIN"' 2>/dev/null || true
-osascript -e 'quit app "MARVIN Metrics"' 2>/dev/null || true
-sleep 1
-
-echo "${LOG_PREFIX} installing to $DEST..."
-rm -rf "$DEST"
-cp -R "$SRC" "$DEST"
+echo "${LOG_PREFIX} installing to $DEST (atomic swap)..."
+# Atomic swap: move the old bundle aside, install the new one, then delete the old one.
+# This ensures $DEST is never half-deleted (closes the other half of #392).
+if [ -d "$DEST" ]; then
+  DEST_OLD="${DEST}.bak"
+  mv "$DEST" "$DEST_OLD"
+else
+  DEST_OLD=""
+fi
+mv "$SRC" "$DEST"
+if [ -n "$DEST_OLD" ]; then
+  rm -rf "$DEST_OLD"
+fi
 if [ -d "$LEGACY_DEST" ]; then
   echo "${LOG_PREFIX} removing the old MARVIN Metrics.app (renamed to MARVIN.app)..."
   rm -rf "$LEGACY_DEST"
 fi
 
-echo "${LOG_PREFIX} relaunching..."
-open -a "$DEST"
-sleep 6
-if ! pgrep -f "$DEST/Contents/MacOS" >/dev/null; then
-  echo "${LOG_PREFIX} the app did not start after the install" >&2
-  exit 1
+# Check whether the app was already running before we started the build.
+app_was_running=false
+if pgrep -f "$DEST/Contents/MacOS" >/dev/null 2>&1; then
+  app_was_running=true
+fi
+
+# Re-check loop: after installing, re-fetch/compare origin/main's dashboard-relevant commit.
+# If it moved, loop and rebuild again before notifying -- "second build wins, one prompt".
+max_loops=3
+loop_count=0
+while [ $loop_count -lt $max_loops ]; do
+  loop_count=$((loop_count + 1))
+
+  # Fetch latest and check the newest dashboard commit.
+  "$HOME/.agents/venv/bin/python" "$HOME/.agents/lib/code_sync.py" pull "$HOME/.agents" 2>/dev/null || true
+  current_sha=$(git -C "$HOME/.agents" rev-parse origin/main -- 2>/dev/null | head -c 7 || echo "unknown")
+
+  if [ $loop_count -eq 1 ]; then
+    echo "${LOG_PREFIX} built and installed (sha: $current_sha)"
+  else
+    echo "${LOG_PREFIX} re-check loop #$loop_count: code is current"
+  fi
+
+  # On the final loop iteration or if no more code landed, write the ready file and exit.
+  if [ $loop_count -eq $max_loops ]; then
+    echo "${LOG_PREFIX} final loop iteration; marking ready"
+    break
+  fi
+
+  # Check if newer code landed; if not, we're done.
+  newest=$(git -C "$HOME/.agents" log -1 --format=%ct origin/main -- dashboard/src dashboard/electron dashboard/index.html dashboard/package.json dashboard/package-lock.json dashboard/electron.vite.config.js dashboard/tailwind.config.js dashboard/postcss.config.js dashboard/resources 2>/dev/null || echo "")
+  if [ -z "$newest" ] || [ "$newest" -eq "$(git -C "$HOME/.agents" log -1 --format=%ct origin/main~1 -- dashboard/src dashboard/electron dashboard/index.html dashboard/package.json dashboard/package-lock.json dashboard/electron.vite.config.js dashboard/tailwind.config.js dashboard/postcss.config.js dashboard/resources 2>/dev/null || echo 0)" ]; then
+    echo "${LOG_PREFIX} no newer code; ready"
+    break
+  fi
+
+  # Newer code landed; rebuild.
+  echo "${LOG_PREFIX} newer dashboard code detected; rebuilding..."
+  npm install --no-audit --no-fund 2>/dev/null || true
+  npm run build:mac 2>/dev/null || {
+    # Signed build failed; try again ad-hoc.
+    rm -rf "dist/mac-arm64"
+    npx electron-builder --mac --dir -c.mac.identity=- 2>/dev/null || true
+    codesign --force --deep -s - "$SRC" 2>/dev/null || true
+  }
+  if [ ! -d "$SRC" ]; then
+    echo "${LOG_PREFIX} rebuild failed" >&2
+    exit 1
+  fi
+  # Atomic swap again.
+  DEST_OLD="${DEST}.bak"
+  mv "$DEST" "$DEST_OLD"
+  mv "$SRC" "$DEST"
+  rm -rf "$DEST_OLD"
+done
+
+# If the app was running before, do not quit/relaunch -- just write the ready file.
+# If the app was not running (fresh/offline install), launch it.
+if ! $app_was_running && ! pgrep -f "$DEST/Contents/MacOS" >/dev/null 2>&1; then
+  echo "${LOG_PREFIX} launching app..."
+  open -a "$DEST"
+  sleep 6
+  if ! pgrep -f "$DEST/Contents/MacOS" >/dev/null; then
+    echo "${LOG_PREFIX} the app did not start after the install" >&2
+    exit 1
+  fi
+elif $app_was_running; then
+  echo "${LOG_PREFIX} app was already running; will restart via ready-file trigger"
 fi
 
 # The merge server is a long-running node process: it keeps the code it started with until restarted (it ran Oct 5 code
@@ -88,5 +173,15 @@ if launchctl print "gui/$(id -u)/com.marvin.dashboard-webhook" >/dev/null 2>&1; 
   launchctl kickstart -k "gui/$(id -u)/com.marvin.dashboard-webhook" || echo "${LOG_PREFIX} merge server restart failed" >&2
 fi
 
+# Write the ready file: { sha, installedAt }.
+# This triggers the dashboard's rebuild handlers and shows the update-ready banner.
+mkdir -p "$HOME/.claude/logs"
+readonly READY_FILE_TMP="$HOME/.claude/logs/dashboard-build-ready.json.tmp"
+readonly READY_FILE="$HOME/.claude/logs/dashboard-build-ready.json"
+sha=$(git -C "$HOME/.agents" rev-parse origin/main 2>/dev/null | head -c 40 || echo "unknown")
+printf '{"sha":"%s","installedAt":%d}' "$sha" "$(date +%s)" > "$READY_FILE_TMP"
+mv "$READY_FILE_TMP" "$READY_FILE"
+
 rm -f "$HOME/.claude/logs/dashboard-rebuild-failed"  # a good install clears any earlier failure (#443)
+"$HOME/.agents/venv/bin/python" "$HOME/.agents/lib/rebuild_lock.py" release "$HOME/.claude/logs" 2>/dev/null || true
 echo "${LOG_PREFIX} done."

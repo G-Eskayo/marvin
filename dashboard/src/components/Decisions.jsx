@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react'
 import { createPortal } from 'react-dom'
+import { readSaved, writeSaved } from '../lib/saved_state.js'
 
 // The owner answers a PR's or ticket's Decisions section here (2026-10-09): big tappable options, a note per question,
 // and text boxes for written answers. Submitting writes the answers into the description on GitHub (decisions_submit.js)
@@ -139,7 +140,15 @@ export function followGithub({ questions, editing, status }) {
 // panel's foot. The same button and the same rules; only where it sits changes.
 export default function Decisions({ repo, number, decisions, onSubmitted, refsFor = () => [], onSeeImage, submitSlot = null, submit = (p) => window.api.decisions.submit(p), onRecorded = (cb) => window.api.decisions.onRecorded?.(cb) }) {
   const questions = decisions?.questions || []
-  const [draft, setDraft] = useState(() => initialDraft(questions))
+  const draftKey = `${repo}#${number}:decisions`
+  const [draft, setDraft] = useState(() => {
+    // Restore saved draft only if the question signature still matches.
+    const saved = readSaved(sessionStorage, draftKey)
+    if (saved?.value?.draft && saved.value.signature === answersSignature(questions)) {
+      return saved.value.draft
+    }
+    return initialDraft(questions)
+  })
   const [editing, setEditing] = useState(() => (decisions?.pending || []).length > 0)
   const [status, setStatus] = useState({ state: 'idle' }) // idle | saving | saved | error
   // Local-first: the answers show as soon as GitHub accepted the edit; the record comment lands a moment later.
@@ -150,6 +159,12 @@ export default function Decisions({ repo, number, decisions, onSubmitted, refsFo
     setDraft(next.draft)
     if (next.status !== status) setStatus(next.status)
   }, [sig])
+
+  // Persist draft only while editing, keyed by signature so we discard stale saves.
+  useEffect(() => {
+    if (!editing) return
+    writeSaved(sessionStorage, draftKey, { draft, signature: sig })
+  }, [draft, sig, editing, draftKey])
   useEffect(() => onRecorded((rec) => {
     if (rec?.repo !== repo || Number(rec?.number) !== Number(number)) return
     setStatus((s) => (s.state === 'saved' ? { ...s, result: { ...s.result, ...rec, recording: false } } : s))
@@ -168,6 +183,9 @@ export default function Decisions({ repo, number, decisions, onSubmitted, refsFo
       const out = submitOutcome(r)
       setStatus(out.status)
       setEditing(out.editing)
+      if (!out.editing) {
+        typeof sessionStorage !== 'undefined' && sessionStorage.removeItem(draftKey)
+      }
       onSubmitted?.(r)
     } catch (err) {
       setStatus({ state: 'error', message: String(err?.message || err).replace(/^Error invoking remote method '[^']+': (Error: )?/, '') })

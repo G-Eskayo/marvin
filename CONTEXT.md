@@ -861,9 +861,15 @@ its ticketing system creates shows up there with drill-down status. Boards live 
   Boards *appear* via `board_registry.discover()` (hourly, inside the `ticket-pipeline` run: any
   non-archived repo of the owner that has the `ready-for-agent` label gets a board) plus the claim and
   `to-issues` hooks. Board *contents* poll GitHub every 60s while the tab is open. The *app itself* is
-  rebuilt and relaunched by the 30-min code-sync cycle (`dashboard_rebuild.py`): a change settles for
-  15 min, and a running app is rebuilt once it is >=1h behind (was 2h / 24h, which made a new feature
-  take up to a day to show). Trade-off accepted: the relaunch drops unsaved in-tab edits (Portfolio).
+  rebuilt by the 30-min code-sync cycle (`dashboard_rebuild.py`, #392/#443): a change settles for
+  2 min, a rebuild never runs twice at once (PID-based lock), and a running app sees an "Update ready"
+  banner instead of a forced relaunch — restart is offered, not forced (a "Demo hold" toggle also
+  lets the user skip rebuilds while presenting). The rebuild script writes a ready-file once it
+  installs, re-checks for newer code (max 3 loops, "second build wins, one prompt"), and uses an
+  atomic swap (never a half-deleted `/Applications/MARVIN.app`). Unsaved in-tab edits now persist
+  across restarts: active tab, comment boxes (Support, Decisions, ProjectBoard), and draft persistence
+  keyed by `repo#number` with signature matching (Decisions only restores if the question set
+  unchanged). The banner itself is in the header, persistent while a build is ready.
 
 - **Names its ticket (2026-11-02, marvin#1004).** An open PR names its ticket as `Closes #n` (it finishes the ticket;
   GitHub closes it on merge) or `Part of #n` (a step: a mock-up, a stacked slice, a plan, docs; the ticket stays open).
