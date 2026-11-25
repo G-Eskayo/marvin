@@ -1670,6 +1670,13 @@ Added `config/onboarding/node-pnpm-turbo/` stack template for monorepos using pn
 - **MR Review:** each PR shows "GitHub checks passed / failed / still running"; Approve is disabled for failing and pending.
 - **Auto send-back:** the pipeline scan (`_requeue_conflicted_prs`) also sends back a PR whose checks genuinely FAILED, naming them. Cancelled / timed-out / still-running checks never trigger a rebuild (the runner's fault, not the code's). The 3-attempt cap still applies.
 
+## Post-rebase CI wait (2026-11-22)
+
+The merge gate's local retest only catches failures on the rebased commit within the gate's 40-minute window. GitHub's CI may have additional checks that run after the merge (jobs the gate itself does not run, like the secret scan) that finish later. After `rebaseAndRetest` pushes the rebased branch and before the final `gh pr merge`, `waitForRequiredChecks` (`webhook-server/merge.js`) polls until all required checks (from `.github/required-checks.json`) finish on the rebased commit.
+
+- **Codes:** `CI_FAILED` names the failing check and sends the PR back; `CI_TIMEOUT` (deadline reached) or `HEAD_MOVED` (commit changed while waiting) refuse without sending the PR back, so it can simply be approved again.
+- **Distinct from pre-gate checks:** `assertChecksGreen` (before the gate) ignores checks the merge gate itself runs (`gateCheckNames`); `requiredCheckState` (after rebase) ONLY watches those checks, since GitHub never runs them (marvin#1099). The two are complementary: together they ensure all required checks have passed before merging.
+
 ## Project onboarding (proposed, 2026-10-06)
 
 Design for turning a repo into a fully wired project from one command: **docs/adr/0036-project-onboarding.md** (status: proposed, awaiting Gil's decisions D1-D4). Not the portfolio "add-project pipeline" (ADR 0034).

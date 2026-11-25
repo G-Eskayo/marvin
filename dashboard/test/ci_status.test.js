@@ -1,5 +1,5 @@
 import { describe, it, expect, vi } from 'vitest'
-import { ciState, assertChecksGreen } from '../webhook-server/ci_status.js'
+import { ciState, assertChecksGreen, requiredCheckNames, requiredCheckState } from '../webhook-server/ci_status.js'
 import { MergeFailure } from '../webhook-server/failure.js'
 
 const run = (name, status, conclusion) => ({ __typename: 'CheckRun', name, status, conclusion })
@@ -94,6 +94,71 @@ describe('assertChecksGreen with checks the gate covers', () => {
   it('still sends back a PR whose GitHub-only check failed', async () => {
     await expect(assertChecksGreen('https://github.com/o/r/pull/1', answer([run('Secret and transcript scan', 'COMPLETED', 'FAILURE')]), { ignore: ['Python tests'] }))
       .rejects.toMatchObject({ payload: { code: 'CI_FAILED' } })
+  })
+})
+
+describe('requiredCheckNames and requiredCheckState (post-rebase CI wait)', () => {
+  const run = (name, status, conclusion) => ({ __typename: 'CheckRun', name, status, conclusion })
+  const ctx = (name, state) => ({ __typename: 'StatusContext', context: name, state })
+
+  it('requiredCheckNames: all checks, regardless of where they run', async () => {
+    const fs = await import('fs')
+    const os = await import('os')
+    const path = await import('path')
+    const dirWith = (text) => {
+      const d = fs.mkdtempSync(path.join(os.tmpdir(), 'gate-'))
+      fs.mkdirSync(path.join(d, '.github'))
+      if (text !== null) fs.writeFileSync(path.join(d, '.github', 'required-checks.json'), text)
+      return d
+    }
+    const d1 = dirWith(null)
+    const d2 = dirWith(JSON.stringify({ checks: [{ id: 'python', name: 'Python tests' }, { id: 'rules', name: 'Rules', where: 'both' },
+      { id: 'secret-scan', name: 'Secret and transcript scan', where: 'ci' }] }))
+    try {
+      expect(requiredCheckNames(d1)).toEqual([])
+      expect(requiredCheckNames(d2)).toEqual(['Python tests', 'Rules', 'Secret and transcript scan'])
+    } finally {
+      fs.rmSync(d1, { recursive: true, force: true })
+      fs.rmSync(d2, { recursive: true, force: true })
+    }
+  })
+
+  it('requiredCheckState: filters to named checks and treats missing ones as pending', () => {
+    const checks = [run('Python tests', 'COMPLETED', 'SUCCESS'), run('Other check', 'COMPLETED', 'SUCCESS'), run('Secret scan', 'QUEUED', null)]
+    expect(requiredCheckState(checks, ['Python tests', 'Secret scan'])).toEqual({ state: 'pending', failing: [], pending: ['Secret scan'] })
+    expect(requiredCheckState(checks, ['Python tests', 'Unknown check'])).toEqual({ state: 'pending', failing: [], pending: ['Unknown check'] })
+    expect(requiredCheckState(checks, ['Python tests', 'Other check'])).toEqual({ state: 'passing', failing: [], pending: [] })
+  })
+
+  it('requiredCheckState: a failing required check fails the state', () => {
+    const checks = [run('Python tests', 'COMPLETED', 'FAILURE'), run('Other check', 'COMPLETED', 'SUCCESS')]
+    expect(requiredCheckState(checks, ['Python tests'])).toMatchObject({ state: 'failing', failing: ['Python tests'] })
+  })
+
+  it('requiredCheckState: empty names list is "none"', () => {
+    const checks = [run('Python tests', 'COMPLETED', 'SUCCESS')]
+    expect(requiredCheckState(checks, [])).toEqual({ state: 'none', failing: [], pending: [] })
+  })
+
+  it('requiredCheckState: CANCELLED/TIMED_OUT checks are pending, not failing', () => {
+    const checks = [
+      run('Python tests', 'COMPLETED', 'CANCELLED'),
+      run('Other check', 'COMPLETED', 'SUCCESS'),
+      run('Rules', 'COMPLETED', 'TIMED_OUT')
+    ]
+    // Cancelled and timed out are infrastructure issues, not code failures
+    expect(requiredCheckState(checks, ['Python tests', 'Rules'])).toEqual({ state: 'pending', failing: [], pending: ['Python tests', 'Rules'] })
+  })
+
+  it('requiredCheckState: mixed failures and infrastructure issues', () => {
+    const checks = [
+      run('Python tests', 'COMPLETED', 'FAILURE'),
+      run('Rules', 'COMPLETED', 'TIMED_OUT'),
+      run('Other check', 'COMPLETED', 'SUCCESS')
+    ]
+    // Code failure stays in failing; infrastructure issue moves to pending
+    expect(requiredCheckState(checks, ['Python tests', 'Rules', 'Other check']))
+      .toEqual({ state: 'failing', failing: ['Python tests'], pending: ['Rules'] })
   })
 })
 

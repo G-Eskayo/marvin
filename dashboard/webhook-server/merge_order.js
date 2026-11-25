@@ -111,7 +111,7 @@ const short = (s, max = 80) => {
 //   checks: its checks (a check finishing changes the digest) · head: its head commit · main: main's commit
 //   later: nothing to watch (the machine, a blip): tried again on a later trigger, after a back-off
 export const HOLD_UNTIL = {
-  CI_PENDING: 'checks', MAIN_RED: 'main', NO_UI_EVIDENCE: 'head', IMAGES_STALE: 'head', IMAGES_UNPINNED: 'head',
+  CI_PENDING: 'checks', CI_TIMEOUT: 'later', HEAD_MOVED: 'head', MAIN_RED: 'main', NO_UI_EVIDENCE: 'head', IMAGES_STALE: 'head', IMAGES_UNPINNED: 'head',
   GATE_INFRA: 'later', UI_EVIDENCE_UNCHECKED: 'later', DECISIONS_UNCHECKED: 'later', OWNER_DECISIONS_UNCHECKED: 'later', OWNER_DECISIONS_UNBUILT: 'later',
   // marvin#1184: GitHub or the network failing for a while (failure.js's retryable codes): try again later, bounded
   RATE_LIMITED: 'later', GITHUB_OUTAGE: 'later', TRANSIENT_NETWORK: 'later', BASE_MOVED: 'later'

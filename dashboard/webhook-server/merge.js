@@ -14,7 +14,7 @@ import { sendFeedback } from './deny.js'
 import { parseTicketRef } from '../electron/main/mr_review.js'
 import { repoFromPrUrl, MARVIN_REPO } from '../electron/main/mr_repos.js'
 import { recordStage } from './ticket_stages.js'
-import { assertChecksGreen, gateCheckNames, postGateStatus } from './ci_status.js'
+import { assertChecksGreen, gateCheckNames, postGateStatus, requiredCheckNames, requiredCheckState } from './ci_status.js'
 import { checkOpenPrs } from './post_merge_rebase.js'
 import { applyVersionBump } from './changelog.js'
 import { createCountParser, gateExtension, machineLoad } from './merge_progress.js'
@@ -595,9 +595,49 @@ export async function rebaseAndRetest(headRef, exec = execFileAsync, repoPath = 
       classify: (e) => classifyFailure({ stage: 'gate', error: e }),
       ...(sleep ? { sleep } : {})
     })
-    return { ok: true, ...(flaky ? { flaky } : {}), ...(merged ? { merged: true } : {}) }
+    // Capture the HEAD commit SHA for post-rebase CI wait (item 4).
+    let sha = null
+    try { sha = (await exec('git', ['rev-parse', 'HEAD'], { cwd: scratchDir })).stdout.trim() } catch { /* unavailable, but not a blocker */ }
+    return { ok: true, ...(flaky ? { flaky } : {}), ...(merged ? { merged: true } : {}), ...(sha ? { sha } : {}) }
   } finally {
     await dropGateClone(scratchDir, exec, repoPath)
+  }
+}
+
+// After rebasing: wait for the required checks to finish on the rebased commit. Polls until checks are done or deadline,
+// returns a MergeFailure with CI_FAILED / CI_TIMEOUT / HEAD_MOVED.
+// names: the required check names; sha: the commit to watch; sleep/pollMs/timeoutMs/now/progress: test hooks.
+export async function waitForRequiredChecks(prUrl, exec, { names = [], sha = null, sleep = null, timeoutMs = 3900_000, pollMs = 30_000, now = Date.now, progress = noProgress } = {}) {
+  if (!Array.isArray(names) || !names.length || !sha) return // no-op when names is empty or no sha to track
+  const startMs = now()
+  const deadline = startMs + timeoutMs
+  const sleepFn = sleep ? (ms) => sleep(ms) : (ms) => new Promise((r) => setTimeout(r, ms))
+  for (let attempts = 0; ; attempts++) {
+    if (now() >= deadline) {
+      throw new MergeFailure(refusal('CI_TIMEOUT', 'gate', `checks did not finish within ${Math.round(timeoutMs / 60000)} min`,
+        'Approve again once they pass. The PR was not sent back.'))
+    }
+    let rollup, headOid
+    try {
+      const { stdout } = await exec('gh', ['pr', 'view', prUrl, '--json', 'statusCheckRollup,headRefOid'])
+      ;({ statusCheckRollup: rollup, headRefOid: headOid } = JSON.parse(stdout))
+    } catch (e) {
+      progress('tests', 'running', { detail: 'GitHub metadata check failed briefly, will retry' })
+      await sleepFn(pollMs)
+      continue
+    }
+    if (headOid !== sha) {
+      throw new MergeFailure(refusal('HEAD_MOVED', 'gate', `commit changed from ${sha.slice(0, 8)} to ${(headOid || '').slice(0, 8)} while checks were running`,
+        'Approve again once checks pass on the new commit. The PR was not sent back.'))
+    }
+    const { state, failing, pending } = requiredCheckState(rollup, names)
+    if (state === 'failing') {
+      throw new MergeFailure(refusal('CI_FAILED', 'gate', `required checks failed: ${failing.join(', ')}`,
+        'Fix what the failing checks report. The PR is sent back for rework.', 'reengage'))
+    }
+    if (state === 'passing') return
+    progress('tests', 'running', { detail: `waiting for required checks: ${pending.join(', ')}` })
+    await sleepFn(pollMs)
   }
 }
 
@@ -1011,6 +1051,27 @@ async function mergePrUnqueued(
       stage('gate', 'passed', 'rebased and retested clean')
     }
     await postGateStatus(prUrl, exec, gateCheckNames(ctx ? ctx.clone : REPO_PATH))   // marvin#1099: the gate is the check
+    // Post-rebase: wait for required checks to finish. Mirrors the pre-gate CI check (assertChecksGreen) but only
+    // waits for the gate's own checks, which GitHub does not run (marvin#1099).
+    const requiredNames = requiredCheckNames(ctx ? ctx.clone : REPO_PATH)
+    if (requiredNames.length && result.sha) {
+      try {
+        await waitForRequiredChecks(prUrl, exec, { names: requiredNames, sha: result.sha, sleep: sleep ?? null, progress })
+      } catch (e) {
+        if (e instanceof MergeFailure && e.payload.code === 'CI_FAILED' && ticketNumber !== null) {
+          stage('gate', 'failed', `CI_FAILED: ${e.payload.message}`)
+          recordFailureFn({ ticket: ticketNumber, code: 'CI_FAILED', message: e.payload.message, project: repo, prUrl, stage: 'gate' })
+          const comment = `**CI: failing checks (after rebase)**\n\n${e.payload.message}\n\nFix what these report, then the ticket will be rebuilt.`
+          await reengage({ prUrl, ticketNumber, reasons: ['Regression/quality'], comment }, exec)
+          return { merged: false, reengaged: true, code: 'CI_FAILED', stage: 'gate', action: 'reengage', reason: comment }
+        }
+        if (e instanceof MergeFailure && (e.payload.code === 'CI_TIMEOUT' || e.payload.code === 'HEAD_MOVED')) {
+          stage('gate', 'failed', `${e.payload.code}: ${e.payload.message}`)
+          throw e
+        }
+        throw e
+      }
+    }
   }
 
   // No code review here: it runs in the build loop before the PR opens (sandbox_orchestration.execute_ticket).

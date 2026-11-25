@@ -4,6 +4,7 @@ import path from 'path'
 import { MergeFailure, refusal } from './failure.js'
 
 const FAILED = new Set(['FAILURE', 'TIMED_OUT', 'CANCELLED', 'ACTION_REQUIRED', 'STARTUP_FAILURE'])
+const INFRA_FAILURE = new Set(['TIMED_OUT', 'CANCELLED']) // infrastructure issues, not code issues
 
 // What GitHub says about a PR's checks (`gh pr view --json statusCheckRollup`): none / passing / pending / failing.
 // Handles both kinds of entry: Actions check runs and the older commit statuses.
@@ -91,16 +92,65 @@ export async function assertChecksGreen(prUrl, exec, { ignore = null } = {}) {
   }
 }
 
+// Read all checks from a checkout's .github/required-checks.json. Returns [] on error.
+export function readChecks(dir = path.join(os.homedir(), '.agents')) {
+  try {
+    const checks = JSON.parse(readFileSync(path.join(dir, '.github', 'required-checks.json'), 'utf8')).checks
+    return Array.isArray(checks) ? checks.filter((c) => c && typeof c.name === 'string') : []
+  } catch {
+    return []
+  }
+}
+
 // marvin#1099: the names of the checks the merge gate runs itself, from a checkout's .github/required-checks.json
 // (the gate's own list: every check not marked CI-only). GitHub's copy of these never holds a PR. Unreadable or broken:
 // [] (nothing is ignored; the gate itself refuses a broken list when it runs).
 export function gateCheckNames(dir = path.join(os.homedir(), '.agents')) {
-  try {
-    const checks = JSON.parse(readFileSync(path.join(dir, '.github', 'required-checks.json'), 'utf8')).checks
-    return Array.isArray(checks) ? checks.filter((c) => c && (c.where || 'both') === 'both' && typeof c.name === 'string').map((c) => c.name) : []
-  } catch {
-    return []
+  return readChecks(dir).filter((c) => (c.where || 'both') === 'both').map((c) => c.name)
+}
+
+// All check names from required-checks.json, regardless of where they run.
+export function requiredCheckNames(dir = path.join(os.homedir(), '.agents')) {
+  return readChecks(dir).map((c) => c.name)
+}
+
+// State of a specific set of required checks: filters the rollup to only the named checks, runs through ciState,
+// and treats any name with zero matching entries as pending. Infrastructure failures (CANCELLED, TIMED_OUT) are
+// treated as pending (need a re-run), not as code failures (which would trigger a rebuild).
+export function requiredCheckState(rollup, names = []) {
+  if (!Array.isArray(names) || !names.length) return { state: 'none', failing: [], pending: [] }
+  const nameSet = new Set(names)
+  const { state, failing, pending } = ciState(rollup, { ignore: [] })
+  const failing2 = failing.filter((n) => nameSet.has(n))
+  const pending2 = pending.filter((n) => nameSet.has(n))
+  // Separate infrastructure failures from code failures: move CANCELLED/TIMED_OUT from failing to pending
+  const matched = new Map() // { name -> conclusion }
+  for (const c of rollup || []) {
+    if (c?.__typename === 'StatusContext') {
+      const name = c.context
+      if (name && nameSet.has(name)) matched.set(name, { state: c.state, type: 'status' })
+    } else {
+      const name = c?.name
+      if (name && nameSet.has(name)) matched.set(name, { conclusion: c?.conclusion, type: 'run' })
+    }
   }
+  // Move infrastructure failures from failing2 to pending2
+  const trueFailing = []
+  for (const name of failing2) {
+    const info = matched.get(name)
+    const isInfra = info?.type === 'run' && INFRA_FAILURE.has(info.conclusion)
+    if (isInfra) {
+      pending2.push(name)
+    } else {
+      trueFailing.push(name)
+    }
+  }
+  // Any required check not seen yet is pending
+  for (const name of names) {
+    if (!matched.has(name)) pending2.push(name)
+  }
+  const state2 = !names.length ? 'none' : trueFailing.length ? 'failing' : pending2.length ? 'pending' : 'passing'
+  return { state: state2, failing: trueFailing, pending: pending2 }
 }
 
 // After the gate's checks pass, say so on the commit it merges, so GitHub shows what was really checked. Best effort:

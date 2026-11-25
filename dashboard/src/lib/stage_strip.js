@@ -79,6 +79,8 @@ export const REMEDIATION_BY_CODE = {
   MEMORY_PRESSURE: 'The Mac\'s memory is under pressure, so the check waits. It starts by itself when pressure drops; nothing was stopped.',
   MAIN_RED: 'main branch is failing tests. Approve again once main is green.',
   GATE_TESTS_FAILED: 'Tests failed in the merge gate. Fix the failing tests and approve again.',
+  CI_TIMEOUT: 'Required checks did not finish within the timeout. Approve again once they pass.',
+  HEAD_MOVED: 'The PR\'s commit changed while checks were running. Approve again once checks pass on the new commit.',
   VERSION_BUMP_FAILED: 'Version bump failed. Check the CHANGELOG format and ticket metadata.',
   REBASE_CONFLICT: 'Needs a person to rebase by hand until #230 can resolve it automatically.',
   UNKNOWN: 'Unclassified failure. See the evidence; this needs triage.'

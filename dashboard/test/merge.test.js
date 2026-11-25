@@ -44,7 +44,8 @@ import {
   execWithGroupTimeout,
   assertTargetsBase,
   assertNotSentBack,
-  rerunFailingTests
+  rerunFailingTests,
+  waitForRequiredChecks
 } from '../webhook-server/merge.js'
 import { summarizeGateFailure } from '../webhook-server/failure.js'
 import { MergeFailure, refusal, summarizeGateFailure } from '../webhook-server/failure.js'
@@ -486,7 +487,8 @@ describe('rebaseAndRetest with generated-file conflict resolution', () => {
       })
       const runTests = vi.fn().mockResolvedValue(undefined)
       const result = await rebaseAndRetest('feature', realExec, repoDir, runTests, 'main', resolve, null, undefined, plentyOfDisk)
-      expect(result).toEqual({ ok: true })
+      expect(result.ok).toBe(true)
+      expect(typeof result.sha).toBe('string')
       expect(resolve).toHaveBeenCalledTimes(1)
       expect(runTests).toHaveBeenCalledTimes(1)
       expect(currentRemoteSha(repoDir, 'feature')).not.toBe(before)
@@ -545,7 +547,8 @@ describe('rebaseAndRetest when GitHub fails the push', () => {
       const before = currentRemoteSha(repoDir, 'feature')
       const runTests = vi.fn().mockResolvedValue(undefined)
       const result = await rebaseAndRetest('feature', flakyPush(2), repoDir, runTests, 'main', undefined, async () => {}, undefined, plentyOfDisk)
-      expect(result).toEqual({ ok: true })
+      expect(result.ok).toBe(true)
+      expect(typeof result.sha).toBe('string')
       expect(runTests).toHaveBeenCalledTimes(1)
       expect(currentRemoteSha(repoDir, 'feature')).not.toBe(before)
     } finally { rmSync(root, { recursive: true, force: true }) }
@@ -582,7 +585,9 @@ describe('rebaseAndRetest', () => {
 
       const result = await rebaseAndRetest('feature', realExec, repoDir, runTests, 'main', null, null, undefined, plentyOfDisk)
 
-      expect(result).toEqual({ ok: true })
+      expect(result.ok).toBe(true)
+      expect(typeof result.sha).toBe('string')
+      expect(result.sha.length).toBeGreaterThanOrEqual(40)
       expect(runTests).toHaveBeenCalledTimes(1)
       const afterSha = currentRemoteSha(repoDir, 'feature')
       expect(afterSha).not.toBe(beforeSha)
@@ -967,7 +972,8 @@ describe('base branches other than main', () => {
       sh('git', ['push', 'origin', 'trunk'], repoDir)
       const runTests = vi.fn().mockResolvedValue(undefined)
       const result = await rebaseAndRetest('feature', realExec, repoDir, runTests, 'trunk', null, null, undefined, plentyOfDisk)
-      expect(result).toEqual({ ok: true })
+      expect(result.ok).toBe(true)
+      expect(typeof result.sha).toBe('string')
       expect(runTests).toHaveBeenCalledTimes(1)
       sh('git', ['fetch', 'origin', 'feature'], repoDir)
       expect(sh('git', ['merge-base', '--is-ancestor', 'origin/trunk', 'origin/feature'], repoDir)).toBe('')
@@ -1141,6 +1147,84 @@ describe('merging waits for the repo\'s own CI', () => {
       expect(result.merged).toBe(true)
       expect(exec).toHaveBeenCalledWith('gh', ['pr', 'merge', PR, '--merge'])
     }
+  })
+})
+
+describe('waitForRequiredChecks: post-rebase CI wait', () => {
+  const PR = 'https://github.com/G-Eskayo/marvin/pull/8'
+  const names = ['Python tests', 'Secret scan']
+  const sha = 'a'.repeat(40)
+
+  it('passes when all required checks are passing', async () => {
+    const rollup = [
+      { __typename: 'CheckRun', name: 'Python tests', status: 'COMPLETED', conclusion: 'SUCCESS' },
+      { __typename: 'CheckRun', name: 'Secret scan', status: 'COMPLETED', conclusion: 'SUCCESS' }
+    ]
+    const exec = vi.fn(async () => ({ stdout: JSON.stringify({ statusCheckRollup: rollup, headRefOid: sha }) }))
+    const progress = vi.fn()
+    await expect(waitForRequiredChecks(PR, exec, { names, sha, progress })).resolves.toBeUndefined()
+  })
+
+  it('fails with CI_FAILED when a required check fails', async () => {
+    const rollup = [
+      { __typename: 'CheckRun', name: 'Python tests', status: 'COMPLETED', conclusion: 'FAILURE' },
+      { __typename: 'CheckRun', name: 'Secret scan', status: 'COMPLETED', conclusion: 'SUCCESS' }
+    ]
+    const exec = vi.fn(async () => ({ stdout: JSON.stringify({ statusCheckRollup: rollup, headRefOid: sha }) }))
+    await expect(waitForRequiredChecks(PR, exec, { names, sha })).rejects.toMatchObject({ payload: { code: 'CI_FAILED' } })
+  })
+
+  it('fails with HEAD_MOVED when the commit changes while waiting', async () => {
+    const newSha = 'b'.repeat(40)
+    const exec = vi.fn(async () => ({ stdout: JSON.stringify({ statusCheckRollup: [], headRefOid: newSha }) }))
+    await expect(waitForRequiredChecks(PR, exec, { names, sha })).rejects.toMatchObject({ payload: { code: 'HEAD_MOVED' } })
+  })
+
+  it('fails with CI_TIMEOUT when the deadline passes', async () => {
+    const pending = [{ __typename: 'CheckRun', name: 'Python tests', status: 'IN_PROGRESS', conclusion: null }]
+    let nowMs = 1000
+    const now = vi.fn(() => { const result = nowMs; nowMs += 60; return result })
+    const exec = vi.fn(async () => ({ stdout: JSON.stringify({ statusCheckRollup: pending, headRefOid: sha }) }))
+    const sleep = vi.fn().mockResolvedValue(undefined)
+    await expect(waitForRequiredChecks(PR, exec, { names: ['Python tests'], sha, pollMs: 1, timeoutMs: 100, now, sleep })).rejects.toMatchObject({ payload: { code: 'CI_TIMEOUT' } })
+  })
+
+  it('no-ops when names is empty', async () => {
+    const exec = vi.fn()
+    await expect(waitForRequiredChecks(PR, exec, { names: [], sha })).resolves.toBeUndefined()
+    expect(exec).not.toHaveBeenCalled()
+  })
+
+  it('no-ops when sha is null', async () => {
+    const exec = vi.fn()
+    await expect(waitForRequiredChecks(PR, exec, { names, sha: null })).resolves.toBeUndefined()
+    expect(exec).not.toHaveBeenCalled()
+  })
+
+  it('polls until checks finish', async () => {
+    const pending = [{ __typename: 'CheckRun', name: 'Python tests', status: 'IN_PROGRESS', conclusion: null }]
+    const passing = [{ __typename: 'CheckRun', name: 'Python tests', status: 'COMPLETED', conclusion: 'SUCCESS' }]
+    let calls = 0
+    const exec = vi.fn(async () => {
+      calls++
+      const rollup = calls <= 2 ? pending : passing
+      return { stdout: JSON.stringify({ statusCheckRollup: rollup, headRefOid: sha }) }
+    })
+    await expect(waitForRequiredChecks(PR, exec, { names: ['Python tests'], sha, pollMs: 1 })).resolves.toBeUndefined()
+    expect(calls).toBeGreaterThanOrEqual(2)
+  })
+
+  it('treats CANCELLED/TIMED_OUT checks as pending, retries them', async () => {
+    const cancelled = [{ __typename: 'CheckRun', name: 'Python tests', status: 'COMPLETED', conclusion: 'CANCELLED' }]
+    const passing = [{ __typename: 'CheckRun', name: 'Python tests', status: 'COMPLETED', conclusion: 'SUCCESS' }]
+    let calls = 0
+    const exec = vi.fn(async () => {
+      calls++
+      const rollup = calls <= 1 ? cancelled : passing
+      return { stdout: JSON.stringify({ statusCheckRollup: rollup, headRefOid: sha }) }
+    })
+    await expect(waitForRequiredChecks(PR, exec, { names: ['Python tests'], sha, pollMs: 1 })).resolves.toBeUndefined()
+    expect(calls).toBeGreaterThanOrEqual(2)
   })
 })
 
@@ -1388,7 +1472,10 @@ describe('rebaseAndRetest on a branch whose base PR was squash-merged (#1183)', 
       const before = currentRemoteSha(repoDir, 'top')
       const runTests = vi.fn().mockResolvedValue(undefined)
       const result = await rebaseAndRetest('top', realExec, repoDir, runTests, 'main', null, null, undefined, plentyOfDisk)
-      expect(result).toMatchObject({ ok: true, merged: true })
+      expect(result.ok).toBe(true)
+      expect(result.merged).toBe(true)
+      expect(typeof result.sha).toBe('string')
+      expect(result.sha.length).toBeGreaterThanOrEqual(40)
       expect(runTests).toHaveBeenCalledTimes(1)
       const after = currentRemoteSha(repoDir, 'top')
       sh('git', ['fetch', 'origin', 'main'], repoDir)
@@ -1450,7 +1537,9 @@ describe('rebaseAndRetest on a branch whose base PR was squash-merged (#1183)', 
       sh('git', ['merge', '-q', '--no-ff', '-m', 'Merge base', 'base'], repoDir)
       sh('git', ['push', 'origin', 'main'], repoDir)
       const result = await rebaseAndRetest('top', realExec, repoDir, vi.fn().mockResolvedValue(undefined), 'main', null, null, undefined, plentyOfDisk)
-      expect(result).toEqual({ ok: true })
+      expect(result.ok).toBe(true)
+      expect(typeof result.sha).toBe('string')
+      expect(result.sha.length).toBeGreaterThanOrEqual(40)
       const after = currentRemoteSha(repoDir, 'top')
       expect(sh('git', ['rev-list', '--merges', `origin/main..${after}`], repoDir).trim()).toBe('')
     } finally {

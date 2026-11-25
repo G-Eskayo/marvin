@@ -62,7 +62,8 @@ describe('rebaseAndRetest: one rerun of a failing test the PR did not touch', ()
     try {
       const rerun = vi.fn(async () => true)
       const r = await run(repo, failingWith(vitestFail('test/fits_window.test.jsx > fits > keeps the window')), rerun)
-      expect(r).toEqual({ ok: true, flaky: ['test/fits_window.test.jsx > fits > keeps the window'] })
+      expect(r).toMatchObject({ ok: true, flaky: ['test/fits_window.test.jsx > fits > keeps the window'] })
+      expect(r.sha).toBeTruthy()
       expect(rerun).toHaveBeenCalledTimes(1)
       expect(rerun.mock.calls[0][1]).toEqual(['test/fits_window.test.jsx > fits > keeps the window'])
     } finally { rmSync(root, { recursive: true, force: true }) }
