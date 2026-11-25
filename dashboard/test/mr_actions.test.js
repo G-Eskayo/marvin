@@ -29,7 +29,7 @@ function fakeGithub({ rejectPatch = false, storeOther = null, offline = false } 
     if (offline) throw Object.assign(new Error('Command failed'), { stderr: 'error connecting to api.github.com' })
     if (args[0] === 'pr' && args[1] === 'list') {
       const repo = args[args.indexOf('--repo') + 1]
-      const light = args[args.indexOf('--json') + 1] === 'number,title,url'
+      const light = args[args.indexOf('--json') + 1] === 'number,title,url,createdAt'
       const prs = repo === REPO ? [{ number: 569, title: 'P', url: URL, ...(light ? {} : { body: issues.get(569).body, files: [{ path: 'a.js' }], baseRefName: 'main', headRefName: 'f', headRefOid: 'sha1', mergeable: 'MERGEABLE', statusCheckRollup: [] }) }] : []
       return { stdout: JSON.stringify(prs) }
     }

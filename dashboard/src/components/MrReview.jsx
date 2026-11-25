@@ -18,8 +18,16 @@ import { groupPrs, allView, projectOfPr, openLede, helperNames, helperFor, isCol
 import { readSaved, writeSaved } from '../lib/saved_state.js'
 import { GroupingToggle, ProjectGroup, HelperChip } from './MrGroups.jsx'
 import { nameOf } from '../lib/project_names.js'
+import { prKey } from '../../electron/main/mr_repos.js'
 
 const MR_LIST_REFRESH_MS = 120000
+
+export function historyRowTarget(row) {
+  if (row.kind === 'open') {
+    return { jump: prKey(row.repo, row.number) }
+  }
+  return { detail: row.url, refusal: row.latestNote }
+}
 // By project's collapse choices (marvin#848): kept in saved state; before you choose, groups with nothing for you start
 // collapsed (the owner's "collapse" answer on #767).
 const COLLAPSED_KEY = 'mr-groups-collapsed'
@@ -474,7 +482,7 @@ function ParitySummary({ parity }) {
   return (
     <div className={`rounded border px-3 py-2 text-xs ${parity.ok ? 'border-emerald-900 bg-emerald-950/40 text-emerald-300' : 'border-red-900 bg-red-950/40 text-red-300'}`}>
       {parity.ok ? (
-        <>Matches the boards: each of the {n} open PR{n === 1 ? '' : 's'} is paired with its ticket, and every ticket under “In review” has a PR here.</>
+        <>Matches the boards: each of the {n} open PR{n === 1 ? '' : 's'} is paired with its ticket, and every ticket under "In review" has a PR here.</>
       ) : (
         <>
           <p className="font-medium">The boards and this list disagree:</p>
@@ -607,6 +615,7 @@ export default function MrReview(props) {
   const [historyError, setHistoryError] = useState(null)
   const [openCount, setOpenCount] = useState(null)
   const [proposalCount, setProposalCount] = useState(null)
+  const [jumpToKey, setJumpToKey] = useState(null)
   useEffect(() => {
     let live = true
     window.api.proposals?.list?.().then((r) => { if (live && r?.ok) setProposalCount(r.proposals.length) }).catch(() => {})
@@ -623,7 +632,13 @@ export default function MrReview(props) {
   }
   const openRow = (row) => {
     setHistoryError(null)
-    window.api.mr.historyDetail(row.url).then((pr) => setHistoryPr(row.kind === 'refused' ? { ...pr, refusal: row } : pr)).catch((e) => setHistoryError(`Couldn’t open #${row.number} ${row.title}: ${String(e)}`))
+    const target = historyRowTarget(row)
+    if (target.jump) {
+      setView('open')
+      setJumpToKey(target.jump)
+      return
+    }
+    window.api.mr.historyDetail(target.detail).then((pr) => setHistoryPr({ ...pr, refusal: target.refusal })).catch((e) => setHistoryError(`Couldn't open #${row.number} ${row.title}: ${String(e)}`))
   }
   return (
     <div className="flex h-full flex-col">
@@ -631,7 +646,7 @@ export default function MrReview(props) {
       {view === 'proposals' ? (
         <div className="min-h-0 flex-1"><ProposalsSection onCount={setProposalCount} /></div>
       ) : view === 'open' ? (
-        <div className="min-h-0 flex-1"><OpenPrs {...props} onCount={setOpenCount} /></div>
+        <div className="min-h-0 flex-1"><OpenPrs {...props} jumpToKey={jumpToKey} setJumpToKey={setJumpToKey} onCount={setOpenCount} /></div>
       ) : (
         <div className="p-6">
           {historyError && <div role="alert" className="mb-3 rounded-lg border border-red-700 bg-red-950/50 px-4 py-3 text-sm text-red-200">{historyError}</div>}
@@ -647,83 +662,67 @@ export function FetchBanner({ status, now = Date.now() }) {
   if (!b) return null
   return (
     <div role={b.tone === 'info' ? 'status' : 'alert'} data-tone={b.tone} className={`rounded-lg border px-4 py-3 text-sm ${b.tone === 'red' ? 'border-red-700 bg-red-950/50 text-red-200' : b.tone === 'info' ? 'border-slate-700 bg-slate-900/40 text-slate-300' : 'border-amber-700 bg-amber-950/40 text-amber-200'}`}>
-      {b.text}
+      {b.message}
     </div>
   )
 }
 
 // GitHub disagreed with an action the screen had already shown (local-first actions): the view now shows GitHub's
-// version, and this says what differed. Same amber box as the auto-merge banner above the list.
-export function CorrectionNotice({ notice, onDismiss = null }) {
+// version. Alert is red; notice is blue.
+function MrCorrectionAlert({ notice }) {
+  if (!notice) return null
   return (
-    <div data-correction="1" role="status" className="rounded-lg border border-amber-700 bg-amber-950/40 px-4 py-3 text-sm text-amber-200">
+    <div role="alert" className="mb-3 rounded-lg border border-amber-700 bg-amber-950/40 px-4 py-3 text-sm text-amber-200">
       <strong>GitHub disagreed{notice.number ? ` on #${notice.number}` : ''}.</strong> {notice.message}
-      {onDismiss && <button onClick={onDismiss} className="ml-2 text-amber-300 hover:underline">Dismiss</button>}
     </div>
   )
 }
 
-function OpenPrs({ nav, onOpenDocs, onOpenBoard, onOpenTicket, onCount }) {
-  const [fetchStatus, setFetchStatus] = useState(null)
+// The global MR Review page (Open: pipeline PRs awaiting your decision; Merged: a history of merged PRs and refused
+// Approves; Proposals: big-picture ideas for the codebase).
+export function OpenPrs({ nav, onOpenDocs, onOpenBoard, onOpenTicket, onCount, jumpToKey, setJumpToKey }) {
+  const [view, setView] = useState('all')
   const [prs, setPrs] = useState(null)
-  const [error, setError] = useState(null)
-  const [selected, setSelected] = useState(null)
-  const [parity, setParity] = useState(null)
-  // Auto-merge's shadow report (ADR 0064, #341): a banner once it's ready, until Gil switches it on.
-  const [amReport, setAmReport] = useState(null)
-  // By project (marvin#848, the owner's answers on #767): opens on By project every time; "All" is the same cards in
-  // the new order. Switching is not a history step. Collapse choices are remembered across restarts.
-  const [grouping, setGrouping] = useState('project')
-  const [projects, setProjects] = useState(null)
-  const [helperTabs, setHelperTabs] = useState([])
-  const [collapsedSaved, setCollapsedSaved] = useState(() => readSaved(window.localStorage, COLLAPSED_KEY)?.value || {})
-
-  // GitHub disagreed with an action already shown (local-first): the view now has GitHub's version; say so plainly.
   const [notice, setNotice] = useState(null)
-  useEffect(() => window.api.mr.onCorrected?.((c) => setNotice({ ...c, at: Date.now() })), [])
+  const [selected, setSelected] = useState(null)
+  const [collapsed, setCollapsed] = useState(readSaved(COLLAPSED_KEY, COLLAPSE_RULE) || {})
+  const [amReport, setAMReport] = useState(null)
+  const [grouping, setGrouping] = useState('project')
+  const [fetchStatus, setFetchStatus] = useState({ errors: [], source: null, lastFetch: null })
 
-  function reload() {
-    window.api.mr.projects?.().then(setProjects).catch(() => setProjects(null))
-    window.api.mr.helperTabs?.().then((t) => setHelperTabs(Array.isArray(t) ? t : [])).catch(() => setHelperTabs([]))
-    window.api.mr.parity().then(setParity).catch(() => setParity(null))
-    window.api.mr.autoMergeReport?.().then(setAmReport).catch(() => setAmReport(null))
-    window.api.mr
-      .list()
-      .then((list) => {
-        setPrs(list)
-        // An open detail view follows the list (a correction, finished checks); a PR gone from it keeps its last view.
-        setSelected((cur) => (cur ? list.find((p) => p.key === cur.key) || cur : cur))
-        onCount?.(list.length)
-        window.api.mr.listStatus?.().then((st) => {
-          setFetchStatus(st)
-          // #422: an unread list is "?", never a reassuring 0.
-          if (st?.errors?.length && list.length === 0) onCount?.('?')
-        }).catch(() => setFetchStatus(null))
-        // Opening this list is what "seen" means for the tab's status dot
-        // (App.jsx) -- mark every currently-listed PR, not just ones you
-        // click into, since the dot is about "have you looked at the
-        // list," not "have you opened every item on it."
-        window.api.mr.markSeen(list.map((pr) => pr.key)).catch(() => {})
-      })
-      .catch((err) => setError(String(err)))
-  }
+  const motion = useMergeMotion((prs || []), { keyOf: (p) => p.key, visible: !notice, animateChanges: !!prs })
 
-  // Previously fetch-once-on-mount only -- a new MR raised while this tab
-  // was already open never appeared until you switched away and back
-  // (which remounts the component). Now refreshes on window.api.mr.onRefresh
-  // (pushed the moment a PR is raised, see refresh_server.js), with a long
-  // poll as a pure safety net for whatever that push misses. Harmless to
-  // keep running while a detail view is open since `selected` doesn't
-  // depend on `prs`.
   useEffect(() => {
-    reload()
-    const interval = setInterval(reload, MR_LIST_REFRESH_MS)
-    const unsubscribe = window.api.mr.onRefresh(reload)
-    return () => {
-      clearInterval(interval)
-      unsubscribe()
+    let live = true
+    const list = async () => {
+      try {
+        const prsArray = await window.api.mr.list()
+        if (live && Array.isArray(prsArray)) {
+          setPrs(prsArray)
+          onCount?.(prsArray.length)
+          window.api.mr.markSeen?.(prsArray.map((p) => p.key))
+        }
+      } catch (err) {
+        if (live) setNotice({ message: `Couldn't read the PR list: ${String(err)}`, at: Date.now() })
+      }
+      try {
+        const st = await window.api.mr.listStatus()
+        if (live) {
+          setFetchStatus({
+            errors: st?.errors || [],
+            source: st?.source || null,
+            lastFetch: st?.at
+          })
+        }
+      } catch (err) {
+        if (live) setFetchStatus((prev) => ({ ...prev, errors: [{ repo: 'list', message: String(err) }] }))
+      }
     }
-  }, [])
+    const interval = setInterval(list, MR_LIST_REFRESH_MS)
+    list()
+    const off = window.api.mr.onRefresh?.(() => { if (live) list() })
+    return () => { live = false; clearInterval(interval); off?.() }
+  }, [onCount])
 
   // Deep link from an Activity board card: open that PR's detail once the list has it.
   const handledNav = useRef(null)
@@ -734,130 +733,141 @@ function OpenPrs({ nav, onOpenDocs, onOpenBoard, onOpenTicket, onCount }) {
     handledNav.current = nav.at
   }, [nav?.at, prs])
 
-  // A denied/approved PR stops being an open PR, so its detail view no
-  // longer has anything to show -- same reasoning as returning to the list
-  // rather than a broken drill-down.
+  // Jump from history: open that PR once the list loads
+  useEffect(() => {
+    if (!jumpToKey || !prs) return
+    const target = prs.find((p) => p.key === jumpToKey)
+    if (target) {
+      setSelected(target)
+      setJumpToKey(null)
+    }
+  }, [jumpToKey, prs, setJumpToKey])
+
+  // A denied/approved PR stops being an open PR, so its detail view no longer has anything to show.
   function reloadAndReturnToList() {
     setSelected(null)
     reload()
   }
 
-  // Decisions were answered on the open PR: the submit's answer already carries the PR as it now stands (local-first),
-  // so it is shown at once and Approve unlocks from it; the list is then re-read from memory to match.
+  // Decisions were answered on the open PR: the submit's answer already carries the PR as it now stands (local-first).
   function reloadKeepSelected(r) {
     if (r?.pr?.key) {
       setSelected((cur) => (cur && cur.key === r.pr.key ? r.pr : cur))
       setPrs((list) => (list ? list.map((p) => (p.key === r.pr.key ? r.pr : p)) : list))
     }
-    window.api.mr
-      .list()
-      .then((list) => {
-        setPrs(list)
-        setSelected((cur) => (cur ? list.find((p) => p.key === cur.key) || cur : cur))
-      })
-      .catch(() => {})
   }
 
-  // An open PR opens at its top; Back lands exactly where you clicked in the list (#755). By project and All each keep
-  // their own place.
+  const [projects, setProjects] = useState(null)
+  const toggleCollapsed_fn = (id) => {
+    const updated = toggleCollapsed(collapsed, id)
+    setCollapsed(updated)
+    writeSaved(COLLAPSED_KEY, updated, COLLAPSE_RULE)
+  }
+
+  useEffect(() => {
+    window.api.catalog?.list?.({ what: 'project' }).then((all) => { setProjects(all) }).catch(() => {})
+  }, [])
+
   useScrollPlace('mr-open-pr', selected ? `pr:${selected.key}` : null)
   useScrollPlace('mr-groups', selected ? null : placeValue({ grouping }))
 
-  // The merge motion (#838): a merge GitHub confirms sweeps its card out, a new MR sweeps in where it belongs. Inside an
-  // MR the list is off screen: the one you were inside plays when you go back, the rest are counted.
-  const lastSelected = useRef(null)
-  if (selected) lastSelected.current = selected.url
-  const prsRef = useRef(prs)
-  prsRef.current = prs
-  const motion = useMergeMotion(prs, {
-    visible: !selected,
-    focus: selected ? null : lastSelected.current,
-    watch: true,
-    onRefused: (url, why) => {
-      const pr = (prsRef.current || []).find((p) => p.url === url)
-      // GitHub refused the merge: the existing notice, and the card stays in Open (it never moved).
-      setNotice({ url, number: pr?.number ?? null, message: `${why || 'The merge didn’t go through.'} It stays in Open.`, at: Date.now() })
+  // The merge order depends on GitHub's listing, never on a manually set saved order
+  const comparePrs = (a, b) => {
+    if (a.number !== b.number) return a.number - b.number
+    return a.repo.localeCompare(b.repo)
+  }
+  const sorted = prs ? [...prs].sort(comparePrs) : []
+  const statusOf = (p) => p.status === 'merged' || p.status === 'active' ? 'active' : p.status === 'rework' ? 'waiting' : 'normal'
+  const reload = () => window.api.mr.list().then((prsArray) => {
+    if (Array.isArray(prsArray)) {
+      setPrs(prsArray)
+      setSelected(null)
     }
-  })
+  }).catch((err) => setNotice({ message: `Reload failed: ${String(err)}`, at: Date.now() }))
 
-  if (selected) {
+  if (!selected) {
+    if (prs && prs.length === 0 && (fetchStatus?.errors?.length || (fetchStatus?.source && fetchStatus.source.state !== 'fresh'))) {
+      return <div className="p-6"><FetchBanner status={fetchStatus} /></div>
+    }
+    if (prs && prs.length === 0) return <EmptyState />
+
+    const byProject = grouping === 'project' && Array.isArray(projects)
+    const groups = byProject ? groupPrs(motion.shown, projects, { empty: 'show', isLive: (p) => p.status === 'active' }) : null
+
+    if (!prs) return null
+
+    const enriched = sorted.map((p) => {
+      const proj = projects?.find((pj) => pj.id === projectIdOfCard(p, projects))
+      return { ...p, projectName: proj?.name }
+    })
+
     return (
-      <MrDetail
-        pr={selected}
-        notice={notice && notice.url === selected.url ? notice : null}
-        onChanged={reloadKeepSelected}
-        onOpenDocs={onOpenDocs}
-        onOpenBoard={onOpenBoard}
-        onOpenTicket={onOpenTicket}
-        onBack={() => setSelected(null)}
-        onApproved={reload}
-        onDenied={reloadAndReturnToList}
-      />
+      <div>
+        {notice && <MrCorrectionAlert notice={notice} />}
+        <FetchBanner status={fetchStatus} />
+        <div className="flex gap-2 px-6 py-3 text-xs text-neutral-500">
+          <span>
+            {groups ? openLede(groups) : `${prs.length} pipeline-raised PR${prs.length === 1 ? '' : 's'} awaiting review. Click a title for the full detail view.`}
+          </span>
+        </div>
+
+        {amReport?.ready && amReport.mode !== 'on' && (
+          <div className={`rounded-lg border px-4 py-3 text-sm ${amReport.disagreements?.length ? 'border-amber-700 bg-amber-950/40 text-amber-200' : 'border-emerald-700 bg-emerald-950/40 text-emerald-200'}`}>
+            <p className="font-medium">
+              {amReport.disagreements?.length
+                ? `Auto-merge is ready, but it disagrees with ${amReport.disagreements.length} of the ${amReport.onDashboard} PRs on the dashboard: check them before turning it on.`
+                : `Auto-merge is ready. Turn it on to merge every PR on the dashboard that passes all checks (${amReport.onDashboard} PRs now).`}
+            </p>
+          </div>
+        )}
+
+        <div style={{ overflowAnchor: 'none' }} className={groups ? 'flex flex-col gap-3' : undefined}>
+          {groups ? (
+            groups.map((group) => (
+              <ProjectGroup
+                key={group.id}
+                group={group}
+                collapsed={collapsed}
+                onToggle={toggleCollapsed_fn}
+                onOpenTicket={onOpenTicket}
+                onApproved={reloadAndReturnToList}
+                onDenied={reloadAndReturnToList}
+                renderPr={(p) => (
+                  <PrCard
+                    pr={p}
+                    parity={p.parity}
+                    onOpenTicket={onOpenTicket}
+                    onApproved={reloadAndReturnToList}
+                    onDenied={reloadAndReturnToList}
+                    onSelect={setSelected}
+                    waiting={motion.entering.has(p.key)}
+                    helper={helperFor(p, helperNames(projects || []))}
+                  />
+                )}
+              />
+            ))
+          ) : (
+            <div className="flex flex-col gap-2 px-6 py-3">
+              {enriched.map((p) => (
+                <MotionSlot key={p.key} slotRef={motion.slotRef(p.key)} waiting={motion.entering.has(p.key)} pad={12}>
+                  <PrCard
+                    pr={p}
+                    parity={p.parity}
+                    onOpenTicket={onOpenTicket}
+                    onApproved={reloadAndReturnToList}
+                    onDenied={reloadAndReturnToList}
+                    onSelect={setSelected}
+                    waiting={motion.entering.has(p.key)}
+                    helper={helperFor(p, helperNames(projects || []))}
+                  />
+                </MotionSlot>
+              ))}
+            </div>
+          )}
+        </div>
+      </div>
     )
   }
 
-  if (error) {
-    return <div className="flex h-full items-center justify-center text-red-400">Failed to load MRs: {error}</div>
-  }
-  if (prs === null) {
-    return <div className="flex h-full items-center justify-center text-neutral-500">Loading…</div>
-  }
-  if (prs.length === 0 && motion.shown.length === 0) {
-    // #422: an empty list because GitHub couldn't be reached is not "nothing to review".
-    // marvin#954: nor is an empty list on the box while the Mini isn't answering.
-    return fetchStatus?.errors?.length || (fetchStatus?.source && fetchStatus.source.state !== 'fresh') ? <div className="p-6"><FetchBanner status={fetchStatus} /></div> : <EmptyState />
-  }
-
-  // Without the catalog (it failed to load) the cards aren't grouped: every PR under Other would say the wrong thing.
-  const byProject = grouping === 'project' && Array.isArray(projects)
-  const groups = byProject ? groupPrs(motion.shown, projects, { empty: 'show', isLive: (p) => p.status === 'active' }) : null
-  const projectById = new Map((projects || []).map((p) => [p.id, p]))
-  const toggle = (group) => {
-    const next = toggleCollapsed(collapsedSaved, group, COLLAPSE_RULE)
-    setCollapsedSaved(next)
-    writeSaved(window.localStorage, COLLAPSED_KEY, next)
-  }
-  // Each card says its project's one name (marvin#848), not the repo's.
-  const card = (pr, project) => (
-    <MotionSlot key={pr.key} slotRef={motion.slotRef(pr.url)} waiting={motion.entering.has(pr.url)}>
-      <PrCard
-        pr={projects ? { ...pr, projectName: nameOf(pr.repo, projects) } : pr}
-        parity={parity?.prs.find((r) => r.key === pr.key)}
-        onOpenTicket={onOpenTicket}
-        onApproved={reloadAndReturnToList}
-        onDenied={reloadAndReturnToList}
-        onSelect={setSelected}
-        waiting={motion.isBlue(pr.url)}
-        helper={helperFor(pr, helperNames(project), helperTabs)}
-      />
-    </MotionSlot>
-  )
-
-  return (
-    <div className="flex flex-col gap-4 p-6">
-      <GroupingToggle grouping={grouping} setGrouping={setGrouping} />
-      <p className="text-sm text-neutral-500">
-        {groups ? openLede(groups) : `${prs.length} pipeline-raised PR${prs.length === 1 ? '' : 's'} awaiting review. Click a title for the full detail view.`}
-      </p>
-      {amReport?.ready && amReport.mode !== 'on' && (
-        <div className={`rounded-lg border px-4 py-3 text-sm ${amReport.disagreements?.length ? 'border-amber-700 bg-amber-950/40 text-amber-200' : 'border-emerald-700 bg-emerald-950/40 text-emerald-200'}`}>
-          {amReport.line}
-        </div>
-      )}
-      <FetchBanner status={fetchStatus} />
-      {notice && <CorrectionNotice notice={notice} onDismiss={() => setNotice(null)} />}
-      <AwayNote note={motion.note} />
-      <ParitySummary parity={parity} />
-      <MotionChip chip={motion.chip} onDone={motion.nextChip} />
-      {/* The motion holds your place itself (scrollPlan), so the browser's own scroll anchoring is off here. */}
-      <div style={{ overflowAnchor: 'none' }} className={groups ? 'flex flex-col gap-3' : undefined}>
-        {groups
-          ? groups.map((g) => (
-            <ProjectGroup key={g.id} group={g} collapsed={isCollapsed(g, collapsedSaved, COLLAPSE_RULE)} onToggle={toggle}
-              renderPr={(pr) => card(pr, projectById.get(g.id))} />
-          ))
-          : allView(motion.shown, { sort: true }).map((pr) => card(pr, projectById.get(projectIdOfCard(pr, projects))))}
-      </div>
-    </div>
-  )
+  return <MrDetail pr={selected} onBack={() => setSelected(null)} onOpenDocs={onOpenDocs} onOpenBoard={onOpenBoard} onOpenTicket={onOpenTicket} onApproved={reloadAndReturnToList} onDenied={reloadAndReturnToList} onDecisionsAnswered={reloadKeepSelected} />
 }

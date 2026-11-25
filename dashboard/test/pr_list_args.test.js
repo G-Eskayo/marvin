@@ -7,9 +7,9 @@ describe('prListArgs: what each caller pays GitHub for', () => {
     expect(a.slice(0, 5)).toEqual(['pr', 'list', '--repo', 'o/r', '--state'])
     expect(a[a.indexOf('--json') + 1]).toBe('number,title,url,isDraft,body,files,baseRefName,headRefName,headRefOid,mergeable,statusCheckRollup,labels,createdAt')
   })
-  it('the light listing (the status dot, polled every minute) asks for numbers only', () => {
+  it('the light listing (the status dot, polled every minute) asks for numbers, titles and creation time — cheaper than a fresh merged/closed read but enough for the history cache', () => {
     const a = prListArgs('o/r', { light: true })
-    expect(a[a.indexOf('--json') + 1]).toBe('number,title,url')
+    expect(a[a.indexOf('--json') + 1]).toBe('number,title,url,createdAt')
     expect(a.join(' ')).not.toMatch(/files|body|labels|isDraft/)
   })
 })

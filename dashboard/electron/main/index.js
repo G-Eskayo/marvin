@@ -122,7 +122,7 @@ import { createRelationsService } from './relations_service.js'
 import { machineNames } from './machine_names.js'
 import { summarizeBoard, buildCompleted } from './board.js'
 import { createTriggerHub, createReconciler, refetchesGithub } from './triggers.js'
-import { createMrHistory, mergedPrArgs, readSavedMerged } from './mr_history.js'
+import { createMrHistory, mergedPrArgs, closedPrArgs, readSavedMerged } from './mr_history.js'
 import { createProjectProgress } from './project_progress.js'
 import { appendError } from './error_log.js'
 import { listOpenPrsAcrossRepos, prListArgs, normalizeSeen, canMergeFromDashboard, repoFromPrUrl, MARVIN_REPO, pendingCheckHeads } from './mr_repos.js'
@@ -1016,6 +1016,7 @@ function registerMrReviewHandlers() {
   const mrHistory = createMrHistory({
     repos: () => readRegistry().map((b) => b.repo),
     ghList: async (repo, since) => JSON.parse((await ghOut(mergedPrArgs(repo, since))) || '[]'),
+    closedPrs: async (repo, since) => JSON.parse((await ghOut(closedPrArgs(repo, since))) || '[]'),
     webhookHistory: async () => {
       const res = await fetch(MR_WEBHOOK_URL.replace(/\/approve$/, '/merge-history'), { signal: AbortSignal.timeout(5000) })
       if (!res.ok) throw new Error(`merge server answered ${res.status}`)

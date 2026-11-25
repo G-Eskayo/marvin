@@ -1,0 +1,11 @@
+1. `mr_repos.js`: add `createdAt` to `prListArgs`'s light field list; update `pr_list_args.test.js` and the one `mr_actions.test.js` assertion that pins the light field string.
+2. `mr_history.js`: add `closedPrArgs(repo, since)` mirroring `mergedPrArgs`; factor the existing per-repo incremental-accumulate loop into a small shared helper, call it for both merged and closed.
+3. `mr_history.js`: rewrite `buildRows(merged, history, openPrs, closedPrs)` — build the four row kinds with the precedence rules (merged > open > dropped), title fallback `#<n> in <repo>`, notes capped-with-total, latest-note-first sorting, orphan-refusal dropping.
+4. `mr_history.js`: extend `createMrHistory`'s `refresh()` to accept and persist a `closedPrs` fetcher, add `cache.closed` alongside `cache.merged`, update `next.open`'s saved shape to carry `number`, `repo`, `createdAt` (not just `url`/`title`).
+5. `electron/main/index.js`: wire `closedPrs: async (repo, since) => JSON.parse((await ghOut(closedPrArgs(repo, since))) || '[]')` into the existing `createMrHistory({...})` call; filter out any entry with a non-null `mergedAt` defensively.
+6. `mr_history_view.js`: add `filterByKind(rows, kind)`.
+7. `MrHistory.jsx`: add filter chips (reusing `ViewToggle`'s button styling), local `age`-style "open for" helper, update `HistoryRow` for the three kinds and the notes line.
+8. `MrReview.jsx`: extract `historyRowTarget(row)`; rewire `openRow` to either jump into the Open tab via the existing `nav.prKey` deep-link (reusing `OpenPrs`'s effect untouched) or call `historyDetail` and attach only the latest note as `pr.refusal` (no `MrDetail.jsx` change).
+9. Update `mr_history_render.test.jsx` for the new row shapes/kinds; add the new unit tests from the list above to `mr_history.test.js`.
+10. Run the full dashboard test suite; launch the real app via the `run` skill, exercise all three outcomes and the filter chips in light and dark, capture screenshots, attach via `marvin-show`/PR images per the repo's PR-image rule.
+11. Open the PR against #423, naming it as the closing ticket.

@@ -50,7 +50,7 @@ export function repoFromPrUrl(url) {
 // (bodies for the evidence schema, files and branch names for merge order, labels and draft for grouping by project,
 // marvin#848) is for the list itself.
 export function prListArgs(repo, { light = false } = {}) {
-  const fields = light ? 'number,title,url' : 'number,title,url,isDraft,body,files,baseRefName,headRefName,headRefOid,mergeable,statusCheckRollup,labels,createdAt'
+  const fields = light ? 'number,title,url,createdAt' : 'number,title,url,isDraft,body,files,baseRefName,headRefName,headRefOid,mergeable,statusCheckRollup,labels,createdAt'
   return ['pr', 'list', '--repo', repo, '--state', 'open', '--limit', '200', '--json', fields]
 }
 

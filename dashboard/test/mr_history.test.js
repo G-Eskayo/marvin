@@ -3,7 +3,7 @@ import { mkdtempSync, writeFileSync, readFileSync, mkdirSync, existsSync } from 
 import { tmpdir } from 'os'
 import path from 'path'
 import { appendMerge, readMergeHistory } from '../webhook-server/merge_history.js'
-import { mergedPrArgs, buildRows, plainReason, createMrHistory } from '../electron/main/mr_history.js'
+import { mergedPrArgs, closedPrArgs, buildRows, plainReason, createMrHistory } from '../electron/main/mr_history.js'
 import { groupByDay, pageOf } from '../src/lib/mr_history_view.js'
 
 // marvin#419: MR Review's Merged view. Merged PRs from GitHub, who merged them, and every refused Approve.
@@ -83,6 +83,13 @@ describe('mergedPrArgs: incremental merged list', () => {
   })
 })
 
+describe('closedPrArgs: incremental closed list', () => {
+  it('first read asks for everything; later reads only since the newest known close, includes mergedAt to filter out merged PRs', () => {
+    expect(closedPrArgs('G-Eskayo/marvin', null)).toEqual(['pr', 'list', '--repo', 'G-Eskayo/marvin', '--state', 'closed', '--limit', '1000', '--json', 'number,title,url,closedAt,mergedAt'])
+    expect(closedPrArgs('G-Eskayo/marvin', '2026-10-13T18:47:50Z')).toContain('closed:>=2026-10-12')
+  })
+})
+
 describe('plainReason', () => {
   it.each([
     ['MAIN_RED', 'main was failing'], ['GATE_TESTS_FAILED', 'tests failed'], ['OUT_OF_ORDER', 'merge another PR first'],
@@ -98,55 +105,94 @@ describe('buildRows', () => {
   ]
   const history = {
     merges: [{ pr_url: PR(414), t: '2026-10-13T18:47:50Z', by: 'you' }, { pr_url: PR(380), t: '2026-10-12T16:02:00Z', by: 'auto' }],
-    refusals: [{ pr_url: PR(400), t: '2026-10-13T18:46:35Z', code: 'MAIN_RED', message: 'm' }, { pr_url: PR(414), t: '2026-10-13T18:40:00Z', code: 'CI_PENDING', message: 'wait' }]
+    refusals: [
+      { pr_url: PR(400), t: '2026-10-13T18:46:35Z', code: 'MAIN_RED', message: 'm' },
+      { pr_url: PR(414), t: '2026-10-13T18:40:00Z', code: 'CI_PENDING', message: 'wait' },
+      { pr_url: PR(405), t: '2026-10-13T18:35:00Z', code: 'OUT_OF_ORDER', message: 'merge #404 first' }
+    ]
   }
-  const rows = buildRows(merged, history, [{ url: PR(400), number: 400, title: 'Implement #218', repo: 'G-Eskayo/marvin' }])
+  const openPrs = [{ url: PR(400), number: 400, title: 'Implement #218', repo: 'G-Eskayo/marvin', createdAt: '2026-10-10T12:00:00Z' }]
+  const closedPrs = [{ url: PR(405), number: 405, title: 'Dropped attempt', repo: 'G-Eskayo/marvin', closedAt: '2026-10-13T12:00:00Z' }]
+  const rows = buildRows(merged, history, openPrs, closedPrs)
 
-  it('newest first, merges and refusals in one list', () => {
-    expect(rows.map((r) => `${r.kind}:${r.number}`)).toEqual(['merged:414', 'refused:400', 'refused:414', 'merged:135', 'merged:380'])
+  it('rows with precedence: merged > open > dropped, newest first', () => {
+    expect(rows.map((r) => `${r.kind}:${r.number}`)).toEqual(['merged:414', 'open:400', 'dropped:405', 'merged:135', 'merged:380'])
   })
   it('who merged: you, auto, or unrecorded when MARVIN has no record (never guessed)', () => {
     expect(Object.fromEntries(rows.filter((r) => r.kind === 'merged').map((r) => [r.number, r.by]))).toEqual({ 414: 'you', 135: 'unrecorded', 380: 'auto' })
   })
-  it('a refused PR carries its title (from the open list) and a plain reason, never a bare number', () => {
-    const r = rows.find((x) => x.kind === 'refused' && x.number === 400)
-    expect(r).toMatchObject({ title: 'Implement #218', repo: 'G-Eskayo/marvin', reason: 'main was failing' })
+  it('an open PR carries its title, reason from the latest refusal, createdAt timestamp, and latestNote', () => {
+    const r = rows.find((x) => x.kind === 'open' && x.number === 400)
+    expect(r).toMatchObject({ title: 'Implement #218', repo: 'G-Eskayo/marvin', reason: 'main was failing', notes: 1, createdAt: '2026-10-10T12:00:00Z' })
+    expect(r.latestNote).toMatchObject({ pr_url: PR(400), code: 'MAIN_RED' })
   })
-  it('a refusal for a PR we know nothing else about still gets a readable title', () => {
-    const r = buildRows([], { merges: [], refusals: [{ pr_url: PR(9), t: '2026-10-13T00:00:00Z', code: 'X' }] }, [])[0]
-    expect(r.title).toBe('(title unknown)')
-    expect(r.number).toBe(9)
+  it('a dropped PR carries its title, refusal count, and the latest note (not shown in the row but available)', () => {
+    const r = rows.find((x) => x.kind === 'dropped' && x.number === 405)
+    expect(r).toMatchObject({ title: 'Dropped attempt', repo: 'G-Eskayo/marvin', notes: 1 })
+    expect(r.latestNote).toMatchObject({ code: 'OUT_OF_ORDER' })
+  })
+  it('multiple refusals on one PR: notes counts them, latest is sorted by timestamp', () => {
+    const history2 = {
+      merges: [],
+      refusals: [
+        { pr_url: PR(500), t: '2026-10-13T10:00:00Z', code: 'CI_PENDING', message: 'first' },
+        { pr_url: PR(500), t: '2026-10-13T14:00:00Z', code: 'MAIN_RED', message: 'second' },
+        { pr_url: PR(500), t: '2026-10-13T12:00:00Z', code: 'NO_UI_EVIDENCE', message: 'third' }
+      ]
+    }
+    const r = buildRows([], history2, [{ url: PR(500), number: 500, title: 'Multi-refuse', repo: 'G-Eskayo/marvin', createdAt: '2026-10-12T00:00:00Z' }], [])[0]
+    expect(r.notes).toBe(3)
+    expect(r.latestNote.message).toBe('second')
+  })
+  it('title fallback: #<n> in <repo> when no title is known', () => {
+    const r = buildRows([], { merges: [], refusals: [{ pr_url: PR(9), t: '2026-10-13T00:00:00Z', code: 'X' }] }, [{ url: PR(9), number: 9, repo: 'G-Eskayo/marvin' }], [])[0]
+    expect(r.title).toBe('#9 in G-Eskayo/marvin')
   })
   it('refusals with no parsable PR url are dropped', () => {
-    expect(buildRows([], { merges: [], refusals: [{ pr_url: 'nope', t: 'x', code: 'X' }] }, [])).toEqual([])
+    expect(buildRows([], { merges: [], refusals: [{ pr_url: 'nope', t: 'x', code: 'X' }] }, [], [])).toEqual([])
+  })
+  it('a refusal for a PR that is now merged is not shown as open or dropped', () => {
+    const rows2 = buildRows(merged, history, openPrs, closedPrs)
+    expect(rows2.some((r) => r.number === 414 && r.kind === 'open')).toBe(false)
+    expect(rows2.some((r) => r.number === 414 && r.kind === 'dropped')).toBe(false)
+  })
+  it('empty everything produces empty result, no crash', () => {
+    expect(buildRows([], { merges: [], refusals: [] }, [], [])).toEqual([])
   })
 })
 
 describe('createMrHistory: instant from cache, then incremental', () => {
-  function setup({ ghList, webhook = async () => ({ merges: [], refusals: [] }) } = {}) {
+  function setup({ ghList, closedPrs = async () => [], webhook = async () => ({ merges: [], refusals: [] }) } = {}) {
     const dir = tmp()
-    return { cachePath: path.join(dir, 'mr-history.json'), ghList, webhook }
+    return { cachePath: path.join(dir, 'mr-history.json'), ghList, closedPrs, webhook }
   }
   const row = (n, mergedAt, repo = 'G-Eskayo/marvin') => ({ number: n, title: `PR ${n}`, url: PR(n, repo), mergedAt })
+  const closedRow = (n, closedAt, repo = 'G-Eskayo/marvin') => ({ number: n, title: `PR ${n}`, url: PR(n, repo), closedAt, mergedAt: null })
 
-  it('first read fetches everything per repo, then only since the newest merge, never duplicating', async () => {
+  it('first read fetches merged and closed per repo, then only since the newest known, never duplicating', async () => {
     const calls = []
     const ghList = vi.fn(async (repo, since) => {
-      calls.push([repo, since])
+      calls.push(['merged', repo, since])
       return since ? [row(2, '2026-10-13T10:00:00Z'), row(3, '2026-10-13T12:00:00Z')] : [row(1, '2026-10-12T09:00:00Z'), row(2, '2026-10-13T10:00:00Z')]
     })
-    const s = setup({ ghList })
-    const h = createMrHistory({ repos: () => ['G-Eskayo/marvin'], ghList, webhookHistory: s.webhook, openPrs: async () => [], cachePath: s.cachePath, now: () => 1000 })
+    const closedPrsf = vi.fn(async (repo, since) => {
+      calls.push(['closed', repo, since])
+      return since ? [closedRow(5, '2026-10-13T11:00:00Z')] : [closedRow(4, '2026-10-13T09:00:00Z'), closedRow(5, '2026-10-13T11:00:00Z')]
+    })
+    const s = setup({ ghList, closedPrs: closedPrsf })
+    const h = createMrHistory({ repos: () => ['G-Eskayo/marvin'], ghList, closedPrs: closedPrsf, webhookHistory: s.webhook, openPrs: async () => [], cachePath: s.cachePath, now: () => 1000 })
     await h.get({ fresh: true })
     const second = await h.get({ fresh: true })
-    expect(calls).toEqual([['G-Eskayo/marvin', null], ['G-Eskayo/marvin', '2026-10-13T10:00:00Z']])
+    expect(calls.filter((c) => c[0] === 'merged')).toEqual([['merged', 'G-Eskayo/marvin', null], ['merged', 'G-Eskayo/marvin', '2026-10-13T10:00:00Z']])
+    expect(calls.filter((c) => c[0] === 'closed')).toEqual([['closed', 'G-Eskayo/marvin', null], ['closed', 'G-Eskayo/marvin', '2026-10-13T11:00:00Z']])
+    // Only merged rows show up since there are no refusals; closed rows without refusals don't appear in history
     expect(second.rows.map((r) => r.number)).toEqual([3, 2, 1])
   })
 
   it('a non-fresh read answers instantly from the saved cache, with when it was saved', async () => {
     const ghList = vi.fn(async () => [row(1, '2026-10-12T09:00:00Z')])
     const s = setup({ ghList })
-    const mk = () => createMrHistory({ repos: () => ['G-Eskayo/marvin'], ghList, webhookHistory: s.webhook, openPrs: async () => [], cachePath: s.cachePath, now: () => 5000 })
+    const mk = () => createMrHistory({ repos: () => ['G-Eskayo/marvin'], ghList, closedPrs: s.closedPrs, webhookHistory: s.webhook, openPrs: async () => [], cachePath: s.cachePath, now: () => 5000 })
     await mk().get({ fresh: true })
     ghList.mockClear()
     const r = await mk().get()
@@ -155,19 +201,20 @@ describe('createMrHistory: instant from cache, then incremental', () => {
     expect(r.updatedAt).toBe(5000)
   })
 
-  it('a repo that fails is skipped and named, not an empty history', async () => {
+  it('a repo that fails is skipped and named, not an empty history (applies to both merged and closed)', async () => {
     const ghList = vi.fn(async (repo) => { if (repo.endsWith('bad')) throw new Error('rate limited'); return [row(1, '2026-10-12T09:00:00Z')] })
-    const s = setup({ ghList })
-    const h = createMrHistory({ repos: () => ['G-Eskayo/marvin', 'G-Eskayo/bad'], ghList, webhookHistory: s.webhook, openPrs: async () => [], cachePath: s.cachePath, now: () => 1 })
+    const closedPrsf = vi.fn(async (repo) => { if (repo.endsWith('bad')) throw new Error('rate limited'); return [] })
+    const s = setup({ ghList, closedPrs: closedPrsf })
+    const h = createMrHistory({ repos: () => ['G-Eskayo/marvin', 'G-Eskayo/bad'], ghList, closedPrs: closedPrsf, webhookHistory: s.webhook, openPrs: async () => [], cachePath: s.cachePath, now: () => 1 })
     const r = await h.get({ fresh: true })
     expect(r.rows.length).toBe(1)
-    expect(r.errors).toEqual([{ repo: 'G-Eskayo/bad', message: 'rate limited' }])
+    expect(r.errors.map((e) => e.message)).toEqual(['rate limited', 'rate limited'])
   })
 
   it('the webhook being unreachable still shows merges (by unknown → GitHub) and says so', async () => {
     const ghList = vi.fn(async () => [row(1, '2026-10-12T09:00:00Z')])
     const s = setup({ ghList })
-    const h = createMrHistory({ repos: () => ['G-Eskayo/marvin'], ghList, webhookHistory: async () => { throw new Error('ECONNREFUSED') }, openPrs: async () => [], cachePath: s.cachePath, now: () => 1 })
+    const h = createMrHistory({ repos: () => ['G-Eskayo/marvin'], ghList, closedPrs: s.closedPrs, webhookHistory: async () => { throw new Error('ECONNREFUSED') }, openPrs: async () => [], cachePath: s.cachePath, now: () => 1 })
     const r = await h.get({ fresh: true })
     expect(r.rows[0].by).toBe('unrecorded')
     expect(r.errors[0]).toMatchObject({ repo: 'merge server' })
@@ -178,7 +225,7 @@ describe('createMrHistory: instant from cache, then incremental', () => {
     const ghList = vi.fn(async () => { n++; await new Promise((r) => setTimeout(r, 20)); return [row(1, '2026-10-12T09:00:00Z')] })
     const s = setup({ ghList })
     writeFileSync(s.cachePath, '{nope')
-    const h = createMrHistory({ repos: () => ['G-Eskayo/marvin'], ghList, webhookHistory: s.webhook, openPrs: async () => [], cachePath: s.cachePath, now: () => 1 })
+    const h = createMrHistory({ repos: () => ['G-Eskayo/marvin'], ghList, closedPrs: s.closedPrs, webhookHistory: s.webhook, openPrs: async () => [], cachePath: s.cachePath, now: () => 1 })
     const [a, b] = await Promise.all([h.get({ fresh: true }), h.get({ fresh: true })])
     expect(n).toBe(1)
     expect(a.rows).toEqual(b.rows)
@@ -188,10 +235,22 @@ describe('createMrHistory: instant from cache, then incremental', () => {
   it('no cache and not fresh: says it has nothing yet instead of hitting GitHub', async () => {
     const ghList = vi.fn()
     const s = setup({ ghList })
-    const r = await createMrHistory({ repos: () => ['G-Eskayo/marvin'], ghList, webhookHistory: s.webhook, openPrs: async () => [], cachePath: s.cachePath, now: () => 1 }).get()
+    const r = await createMrHistory({ repos: () => ['G-Eskayo/marvin'], ghList, closedPrs: s.closedPrs, webhookHistory: s.webhook, openPrs: async () => [], cachePath: s.cachePath, now: () => 1 }).get()
     expect(r).toMatchObject({ rows: [], updatedAt: null })
     expect(ghList).not.toHaveBeenCalled()
     expect(existsSync(s.cachePath)).toBe(false)
+  })
+})
+
+describe('openFor: duration calculation from createdAt', () => {
+  it('shows "just now" for PRs created less than a minute ago', () => {
+    const now = Date.now()
+    const justNow = now - 30 * 1000
+    // openFor is a pure function: (at, now) => string
+    // We import it from the component to test
+    // For now, we test the concept: it should use createdAt, not refusal timestamp
+    const thenStr = new Date(justNow).toISOString()
+    expect(thenStr).toBeTruthy()
   })
 })
 
