@@ -300,6 +300,23 @@ def ui_files(files, extra_patterns=()) -> list[str]:
     return [f for f in (files or []) if isinstance(f, str) and f and any(r.match(f) for r in patterns)]
 
 
+DEFAULT_MOTION_PATTERNS = (
+    "dashboard/src/components/**/*.tsx",
+    "dashboard/src/components/**/*.jsx",
+    "**/*Animation*.swift",
+    "**/*Transition*.swift",
+    "**/*Animation*.css",
+    "**/*Transition*.css",
+)
+
+
+def motion_files(files, extra_patterns=()) -> list[str]:
+    """Check for files whose changes suggest motion/animation is involved."""
+    own = [p for p in (extra_patterns or []) if isinstance(p, str) and p]
+    patterns = [glob_to_regex(p) for p in (*DEFAULT_MOTION_PATTERNS, *own)]
+    return [f for f in (files or []) if isinstance(f, str) and f and any(r.match(f) for r in patterns)]
+
+
 def changed_files(worktree_path: Path, base_branch: str = "main") -> list[str]:
     result = subprocess.run(["git", "diff", "--name-only", f"{base_branch}...HEAD"], cwd=worktree_path,
                             capture_output=True, text=True)
@@ -327,10 +344,10 @@ def _with_build_folder(prefix: str, capture):
         shutil.rmtree(derived, ignore_errors=True)
 
 
-def capture_ios_simulator(worktree_path: Path, cfg: dict, run=subprocess.run, sleep=None) -> list[dict]:
+def capture_ios_simulator(worktree_path: Path, cfg: dict, run=subprocess.run, sleep=None, popen=None) -> dict:
     """Builds an iOS app for the simulator (signing off), launches each configured scene (launch arguments, e.g. a
     debug-only demo mode) in light and dark, and screenshots it into the worktree, so the images ride along in the
-    pipeline's commit. Proven by hand on the Mac Mini on 2026-10-09. Returns [{path (relative), caption}]. Raises
+    pipeline's commit. Proven by hand on the Mac Mini on 2026-10-09. Returns {"screenshots": [...], "recordings": [...]}. Raises
     ValueError for an incomplete config and RuntimeError (with the tool's own error line) when a step fails.
     simctl cannot tap or rotate, so scenes are reached through launch arguments only."""
     import time
@@ -341,10 +358,28 @@ def capture_ios_simulator(worktree_path: Path, cfg: dict, run=subprocess.run, sl
     project_dir = Path(worktree_path) / cfg["project_dir"]
     for cmd in cfg.get("prepare", []):
         _run_checked(run, list(cmd), cwd=project_dir)
-    return _with_build_folder("ios-evidence-", lambda derived: _capture_ios(worktree_path, cfg, project_dir, derived, run, sleep))
+    return _with_build_folder("ios-evidence-", lambda derived: _capture_ios(worktree_path, cfg, project_dir, derived, run, sleep, popen))
 
 
-def _capture_ios(worktree_path: Path, cfg: dict, project_dir: Path, derived: Path, run, sleep) -> list[dict]:
+def _capture_ios(worktree_path: Path, cfg: dict, project_dir: Path, derived: Path, run, sleep, popen=None) -> dict:
+    # Validate recordings config if present
+    recordings_cfg = cfg.get("recordings", [])
+    if recordings_cfg:
+        if not isinstance(recordings_cfg, list):
+            raise ValueError("evidence.dev.ios_simulator.recordings must be a list")
+        scene_names = {s.get("name") for s in cfg.get("scenes", [])}
+        for rec in recordings_cfg:
+            if not isinstance(rec, dict):
+                raise ValueError(f"each recording entry must be a dict: {rec!r}")
+            scene = rec.get("scene")
+            if scene not in scene_names:
+                raise ValueError(f"recording scene '{scene}' not declared in scenes")
+            seconds = rec.get("seconds")
+            if not isinstance(seconds, (int, float)) or seconds <= 0:
+                raise ValueError(f"recording seconds must be positive number: {seconds!r}")
+            if seconds > 3600:
+                raise ValueError(f"recording seconds must be <= 3600: {seconds!r}")
+
     configuration = cfg.get("configuration", "Debug")
     _run_checked(run, ["xcodebuild", "-project", cfg["project"], "-scheme", cfg["scheme"],
                        "-destination", f"platform=iOS Simulator,name={cfg['simulator']}", "-configuration", configuration,
@@ -361,7 +396,12 @@ def _capture_ios(worktree_path: Path, cfg: dict, project_dir: Path, derived: Pat
     _run_checked(run, ["xcrun", "simctl", "install", "booted", str(apps[0])])
     out_dir = Path("docs") / "evidence" / Path(worktree_path).name
     (Path(worktree_path) / out_dir).mkdir(parents=True, exist_ok=True)
+
+    recordings_cfg = cfg.get("recordings", [])
+    recording_map = {r.get("scene"): r.get("seconds") for r in recordings_cfg}
+
     shots = []
+    recordings = []
     for appearance in cfg.get("appearances", ["light", "dark"]):
         _run_checked(run, ["xcrun", "simctl", "ui", "booted", "appearance", appearance])
         for scene in cfg["scenes"]:
@@ -374,11 +414,132 @@ def _capture_ios(worktree_path: Path, cfg: dict, project_dir: Path, derived: Pat
             rel = out_dir / f"{scene['name']}-{appearance}.png"
             _run_checked(run, ["xcrun", "simctl", "io", "booted", "screenshot", str(Path(worktree_path) / rel)])
             shots.append({"path": str(rel), "caption": f"{scene['name']}, {appearance}"})
-    return shots
+
+            # Record video if configured for this scene
+            if scene["name"] in recording_map:
+                record_result = _record_ios_scene(worktree_path, out_dir, scene, appearance,
+                                                  recording_map[scene["name"]], run, sleep, popen)
+                if record_result:
+                    recordings.append(record_result)
+
+    return {"screenshots": shots, "recordings": recordings}
 
 
 _PNG_MAGIC = b"\x89PNG\r\n\x1a\n"
 _SCENE_NAME = re.compile(r"^[A-Za-z0-9_-]+$")
+
+GIF_MAX_BYTES = 8 * 1024 * 1024  # 8 MB
+MP4_MAX_BYTES = 50 * 1024 * 1024  # 50 MB
+
+
+def _mp4_to_gif(src: Path, dest: Path, width: int = 1200, run=subprocess.run) -> None:
+    """Convert MP4 to GIF using ffmpeg's two-pass palette generation (from docs/design/merge-animation-757/record.mjs).
+    Raises RuntimeError if ffmpeg fails."""
+    import shutil
+    if not shutil.which("ffmpeg"):
+        raise RuntimeError("ffmpeg not found")
+    work = dest.parent
+    pal = work / "palette.png"
+    # First pass: generate palette from input video
+    _run_checked(run, ["ffmpeg", "-i", str(src), "-vf", f"fps=25,scale={width}:-1:flags=lanczos,palettegen=stats_mode=diff",
+                       str(pal)], cwd=None)
+    # Second pass: apply palette to create GIF
+    _run_checked(run, ["ffmpeg", "-i", str(src), "-i", str(pal), "-lavfi",
+                       f"fps=25,scale={width}:-1:flags=lanczos[x];[x][1:v]paletteuse=dither=bayer:bayer_scale=4:diff_mode=rectangle",
+                       str(dest)], cwd=None)
+    pal.unlink(missing_ok=True)
+
+
+_MP4_MAGIC = b"ftyp"  # MP4 file type box signature at byte 4
+
+
+def _record_ios_scene(worktree_path: Path, out_dir: Path, scene: dict, appearance: str,
+                      seconds: float, run, sleep, popen=None) -> dict:
+    """Record a video of an iOS simulator scene, convert to MP4 and GIF, and return
+    {"path": relative_mp4, "gif_path": relative_gif, "caption": "..."} or None on failure."""
+    import shutil
+    import tempfile
+    popen = popen or subprocess.Popen
+
+    scene_name = scene["name"]
+    base_name = f"{scene_name}-{appearance}"
+    mp4_rel = out_dir / f"{base_name}.mp4"
+    gif_rel = out_dir / f"{base_name}.gif"
+    mp4_path = Path(worktree_path) / mp4_rel
+    gif_path = Path(worktree_path) / gif_rel
+
+    # Create a temp mp4 file for recording (recordVideo can fail if the target exists)
+    with tempfile.TemporaryDirectory() as tmpdir:
+        temp_mp4 = Path(tmpdir) / "recording.mp4"
+
+        # Start recording
+        try:
+            proc = popen(["xcrun", "simctl", "io", "booted", "recordVideo", str(temp_mp4)],
+                        stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+        except Exception as e:
+            return {"ok": False, "reason": f"failed to start recording: {e}"}
+
+        try:
+            # Wait for specified duration
+            sleep(seconds)
+
+            # Send SIGINT to stop gracefully
+            try:
+                proc.send_signal(signal.SIGINT)
+                proc.wait(timeout=5)  # Wait up to 5 seconds for graceful shutdown
+            except subprocess.TimeoutExpired:
+                # Fall back to SIGKILL
+                proc.kill()
+                try:
+                    proc.wait(timeout=2)
+                except subprocess.TimeoutExpired:
+                    return {"ok": False, "reason": "recording process did not stop"}
+
+            # Check if file exists and is non-trivial
+            if not temp_mp4.exists() or temp_mp4.stat().st_size < 100:
+                return {"ok": False, "reason": "recording produced no output"}
+
+            # Check MP4 magic bytes
+            header = temp_mp4.read_bytes(32)
+            if len(header) < 8 or _MP4_MAGIC not in header[:20]:
+                return {"ok": False, "reason": "recording is not a valid MP4"}
+
+            # Copy MP4 to output directory
+            shutil.copy2(temp_mp4, mp4_path)
+
+            # Convert to GIF
+            try:
+                _mp4_to_gif(mp4_path, gif_path, width=1200, run=run)
+            except Exception as e:
+                return {"ok": False, "reason": f"GIF conversion failed: {str(e)[:100]}"}
+
+            # Check size caps
+            mp4_size = mp4_path.stat().st_size
+            gif_size = gif_path.stat().st_size
+            if gif_size > GIF_MAX_BYTES:
+                gif_path.unlink(missing_ok=True)
+                return {"ok": False, "reason": f"GIF exceeds {GIF_MAX_BYTES // (1024*1024)} MB limit ({gif_size // (1024*1024)} MB)"}
+            if mp4_size > MP4_MAX_BYTES:
+                mp4_path.unlink(missing_ok=True)
+                gif_path.unlink(missing_ok=True)
+                return {"ok": False, "reason": f"MP4 exceeds {MP4_MAX_BYTES // (1024*1024)} MB limit ({mp4_size // (1024*1024)} MB)"}
+
+            return {
+                "ok": True,
+                "path": str(mp4_rel),
+                "gif_path": str(gif_rel),
+                "caption": f"{scene_name}, {appearance}"
+            }
+
+        except Exception as e:
+            # Catch any other errors and report them
+            return {"ok": False, "reason": f"recording failed: {str(e)[:100]}"}
+        finally:
+            # Ensure process is killed
+            try:
+                proc.kill()
+            except Exception:
+                pass
 
 
 def capture_macos_app(worktree_path: Path, cfg: dict, run=subprocess.run) -> list[dict]:

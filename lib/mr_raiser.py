@@ -35,7 +35,6 @@ import machine_profile  # noqa: E402
 AUTHOR = "Gil Eskayo <145878126+G-Eskayo@users.noreply.github.com>"
 CO_AUTHOR = "Co-Authored-By: MARVIN <marvin@marvin.dev>"
 
-
 def _current_branch(worktree_path: Path) -> str:
     result = subprocess.run(
         ["git", "branch", "--show-current"],
@@ -163,11 +162,43 @@ def _format_dev_evidence(dev_evidence: dict | None, repo: str | None = None, ref
         return f"⚠ **Screenshot missing: the UI change is not verified in a running app.** {dev_evidence['error']}"
     description = dev_evidence.get("description", "")
     shots = dev_evidence.get("screenshots")
+    recordings = dev_evidence.get("recordings", [])
+
+    parts = [description] if description else []
+
     if shots:
         images = "\n\n".join(f"![{s.get('caption', 'Screenshot')}]({_image_url(s['path'], repo, ref)})" for s in shots)
-        return f"{description}\n\n{images}".strip()
-    screenshot = _image_url(dev_evidence.get("screenshot_path", ""), repo, ref)
-    return f"![Screenshot]({screenshot})\n\n{description}".strip()
+        parts.append(images)
+
+    if recordings:
+        recording_parts = []
+        for rec in recordings:
+            if not rec.get("ok"):
+                continue
+            caption = rec.get("caption", "Recording")
+            gif_url = _image_url(rec["gif_path"], repo, ref)
+            mp4_url = _image_url(rec["path"], repo, ref)
+            # Render GIF as markdown image, MP4 as HTML5 video
+            recording_parts.append(f"![{caption}]({gif_url})")
+            recording_parts.append(f"<video src=\"{mp4_url}\" autoplay loop muted style=\"max-width: 100%;\"></video>")
+        if recording_parts:
+            parts.append("\n\n".join(recording_parts))
+
+    # Add non-blocking note if any recording failed
+    failed_recordings = [r for r in recordings if not r.get("ok")]
+    if failed_recordings:
+        reasons = "; ".join(f"{r.get('caption', 'Recording')}: {r.get('reason', 'failed')}" for r in failed_recordings)
+        parts.append(f"Note (not blocking): Could not capture videos for all scenes ({reasons})")
+
+    # Add motion-path note if animation files changed but no video captured
+    if dev_evidence.get("motion_note"):
+        parts.append(f"Note (not blocking): {dev_evidence['motion_note']}")
+
+    screenshot = dev_evidence.get("screenshot_path")
+    if screenshot:
+        parts.append(f"![Screenshot]({_image_url(screenshot, repo, ref)})")
+
+    return "\n\n".join(parts).strip() if parts else "Not available."
 
 
 def _format_code_review(review: dict | None) -> str:

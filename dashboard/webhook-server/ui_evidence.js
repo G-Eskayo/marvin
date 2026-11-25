@@ -54,17 +54,28 @@ export function uiFiles(files, extraPatterns = []) {
 
 export const touchesUi = (files, extraPatterns = []) => uiFiles(files, extraPatterns).length > 0
 
-// A markdown image with a target, or an HTML <img> with a src. A plain link to a .png is not an image on the page.
+const VIDEO_EXT = /\.(mp4|mov|m4v|webm)(?:[?#][^\s]*)?$/i
+
+// A markdown image/video with a target, or an HTML <img>/<video> with a src.
+// A plain link to a .png is not an image on the page, but a link to .mp4 is a video.
 export function hasImage(body) {
   if (typeof body !== 'string') return false
-  return /!\[[^\]]*\]\(\s*<?[^)\s>]+/.test(body) || /<img\b[^>]*\bsrc\s*=\s*["']?[^"'\s>]+/i.test(body)
+  return /!\[[^\]]*\]\(\s*<?[^)\s>]+/.test(body) || /<img\b[^>]*\bsrc\s*=\s*["']?[^"'\s>]+/i.test(body) ||
+         /<video\b[^>]*\bsrc\s*=\s*["']?[^"'\s>]+/i.test(body) || /https?:\/\/[^\s'")\]]+\.(mp4|mov|m4v|webm)(?=[\s'")\]?#]|$)/i.test(body)
 }
 
-// Image targets on the page: markdown images and HTML <img> sources, in order.
+// Image/video targets on the page: markdown images/videos, HTML <img>/<video> sources, and bare video links, in order.
 export function imageUrls(body) {
   if (typeof body !== 'string') return []
   const out = []
-  for (const m of body.matchAll(/!\[[^\]]*\]\(\s*<?([^)\s>]+)|<img\b[^>]*\bsrc\s*=\s*["']?([^"'\s>]+)/gi)) out.push(m[1] || m[2])
+  // Markdown images, HTML <img>, <video> tags
+  for (const m of body.matchAll(/!\[[^\]]*\]\(\s*<?([^)\s>]+)|<img\b[^>]*\bsrc\s*=\s*["']?([^"'\s>]+)|<video\b[^>]*\bsrc\s*=\s*["']?([^"'\s>]+)/gi)) {
+    out.push(m[1] || m[2] || m[3])
+  }
+  // Bare links to video files
+  for (const m of body.matchAll(/\bhttps?:\/\/[^\s'")\]]+\.(mp4|mov|m4v|webm)(?=[\s'")\]?#]|$)/gi)) {
+    out.push(m[0])
+  }
   return out
 }
 

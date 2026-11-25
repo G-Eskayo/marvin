@@ -78,6 +78,14 @@ describe('does the PR body show an image', () => {
     expect(hasImage("<IMG SRC='a.png'>")).toBe(true)
   })
 
+  it('counts videos: <video> tags and markdown/bare links to video files', () => {
+    expect(hasImage('<video src="https://example.com/vid.mp4"></video>')).toBe(true)
+    expect(hasImage('![Recording](https://example.com/vid.mov)')).toBe(true)
+    expect(hasImage('<video src="https://raw.githubusercontent.com/o/r/SHA/x.m4v"></video>')).toBe(true)
+    expect(hasImage('See https://example.com/recording.webm for the demo')).toBe(true)
+    expect(hasImage('Check out https://example.com/video.mp4 or https://example.com/screen.mov')).toBe(true)
+  })
+
   it('does not count links, words or empty images', () => {
     expect(hasImage('see [the screenshot](x.png)')).toBe(false)
     expect(hasImage('https://example.com/shot.png')).toBe(false)
@@ -86,6 +94,11 @@ describe('does the PR body show an image', () => {
     expect(hasImage('<img alt="nothing">')).toBe(false)
     expect(hasImage('`![code](x.png)` in backticks is still markdown')).toBe(true)
     expect(hasImage(null)).toBe(false)
+  })
+
+  it('video tags without src are not evidence', () => {
+    expect(hasImage('<video></video>')).toBe(false)
+    expect(hasImage('<video src=""></video>')).toBe(false)
   })
 })
 
@@ -124,6 +137,13 @@ describe('which images are pinned to a commit (marvin #733)', () => {
     expect(imageUrls('![a](https://x/a.png) <img src="https://x/b.png"> [link](https://x/c.png)')).toEqual(['https://x/a.png', 'https://x/b.png'])
   })
 
+  it('finds video targets: <video> tags and bare links to video files', () => {
+    expect(imageUrls('<video src="https://example.com/vid.mp4"></video>')).toContain('https://example.com/vid.mp4')
+    expect(imageUrls('Check https://example.com/recording.webm out')).toContain('https://example.com/recording.webm')
+    expect(imageUrls('![a](https://x/a.png) <video src="https://x/v.mp4">')).toEqual(['https://x/a.png', 'https://x/v.mp4'])
+    expect(imageUrls('https://raw.githubusercontent.com/o/r/SHA/rec.mov and https://example.com/vid.m4v')).toContain('https://raw.githubusercontent.com/o/r/SHA/rec.mov')
+  })
+
   it('a branch-name link is unpinned: GitHub and the dashboard keep serving the old image after a retake (#171)', () => {
     const body = '![a](https://github.com/G-Eskayo/clarity-captions/blob/feature/37-53/docs/a.png?raw=true) ![r](a.png)'
     expect(unpinnedImages(body)).toEqual(['https://github.com/G-Eskayo/clarity-captions/blob/feature/37-53/docs/a.png?raw=true', 'a.png'])
@@ -139,6 +159,18 @@ describe('which images are pinned to a commit (marvin #733)', () => {
   it('a short SHA or a 40-letter word that is not hex is not a pin', () => {
     expect(unpinnedImages('![a](https://raw.githubusercontent.com/o/r/1c7c6a7/a.png)')).toHaveLength(1)
     expect(imageShas('![a](https://raw.githubusercontent.com/o/r/' + 'z'.repeat(40) + '/a.png)')).toEqual([])
+  })
+
+  it('video pinning works the same as images: pinned to SHA or GitHub upload, not branch names', () => {
+    const videoSha = OLD
+    const pinnedVideo = `<video src="https://raw.githubusercontent.com/G-Eskayo/clarity-captions/${videoSha}/docs/rec.mp4"></video>`
+    const unpinnedVideo = `<video src="https://raw.githubusercontent.com/G-Eskayo/clarity-captions/main/docs/rec.mp4"></video>`
+    expect(imageShas(pinnedVideo)).toEqual([videoSha])
+    expect(unpinnedImages(unpinnedVideo)).toHaveLength(1)
+    expect(unpinnedImages(pinnedVideo)).toHaveLength(0)
+    // Video in GitHub uploads are pinned like image attachments
+    const uploadedVideo = '<video src="https://github.com/user-attachments/assets/abc-123"></video>'
+    expect(unpinnedImages(uploadedVideo)).toHaveLength(0)
   })
 })
 
@@ -264,6 +296,11 @@ describe('images kept in another repo, like MARVIN\'s instance repo (marvin #773
 describe('the approve gate refuses a UI change with no image', () => {
   it('UI change with an image: ok', async () => {
     await expect(assertUiEvidence(PR, ghView({ files: ['Apps/A/SettingsView.swift'], body: pinned(HEAD) }))).resolves.toBeUndefined()
+  })
+
+  it('UI change with a video instead of an image: also ok', async () => {
+    const videoBody = `<video src="https://raw.githubusercontent.com/G-Eskayo/clarity-captions/${HEAD}/docs/rec.mp4"></video>`
+    await expect(assertUiEvidence(PR, ghView({ files: ['Apps/A/SettingsView.swift'], body: videoBody }))).resolves.toBeUndefined()
   })
 
   it('UI change without an image: NO_UI_EVIDENCE, naming the files', async () => {

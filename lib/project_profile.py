@@ -549,14 +549,32 @@ class Measurer:
                 return test_results, {"na": True, "reason": "no UI change"}
             capture = ec.capture_ios_simulator if kind == "ios_simulator" else ec.capture_macos_app  # macOS: marvin #727
             try:
-                shots = capture(Path(worktree), dev_cfg[kind])
+                result = capture(Path(worktree), dev_cfg[kind])
             except (ValueError, RuntimeError, OSError, subprocess.SubprocessError) as e:
                 # Never fails the ticket (a broken driver stalled the pipeline on 2026-10-07); the PR says why, and the
                 # dashboard refuses Approve on a UI change with no image (NO_UI_EVIDENCE), so it can't slip through.
                 return test_results, {"na": False, "error": f"capture failed: {e}"[:400]}
             where = "iOS Simulator" if kind == "ios_simulator" else "macOS (drawn by the app itself)"
-            return test_results, {"na": False, "screenshots": shots,
-                                  "description": f"{where} screenshots of the changed app ({', '.join(changed[:3])}{'…' if len(changed) > 3 else ''})."}
+            # iOS Simulator returns {screenshots, recordings}; macOS app returns just list
+            if kind == "ios_simulator":
+                screenshots = result.get("screenshots", [])
+                recordings = result.get("recordings", [])
+            else:
+                screenshots = result
+                recordings = []
+
+            # Check for motion-path files that changed but have no recordings
+            all_changed = ec.changed_files(Path(worktree), self.profile.get("base_branch", "main"))
+            motion_changed = ec.motion_files(all_changed, evidence.get("motion_paths", []))
+            has_recording = any(r.get("ok") for r in recordings)
+
+            dev_evidence = {"na": False, "screenshots": screenshots,
+                           "description": f"{where} screenshots of the changed app ({', '.join(changed[:3])}{'…' if len(changed) > 3 else ''})."}
+            if recordings:
+                dev_evidence["recordings"] = recordings
+            if motion_changed and not has_recording:
+                dev_evidence["motion_note"] = f"Changed files suggest animation/motion ({', '.join(motion_changed[:3])}{'…' if len(motion_changed) > 3 else ''}) but no video was captured"
+            return test_results, dev_evidence
         reason = dev_cfg.get("na", "no dev-environment capture configured for this project")
         return test_results, {"na": True, "reason": reason}
 
