@@ -1,0 +1,9 @@
+{
+  "id": "task-021-paperdive-judge-sorry-bench",
+  "type": "qa",
+  "cwd": "/tmp",
+  "prompt_file": "prompt.md",
+  "timeout": 60,
+  "expect": ["construct validity"],
+  "note": "Paper-dive logic_auditor benchmark judgment: fairness benchmark paper. The extraction cites adversarial examples and known failure modes, but provides NO comparison to external criteria (human judgment, another benchmark, actual fairness metrics). This is a genuine construct-validity gap that should be flagged."
+}

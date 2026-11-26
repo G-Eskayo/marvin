@@ -761,6 +761,63 @@ def test_render_markdown_handles_no_findings_gracefully():
     assert "no findings" in md.lower() or "none" in md.lower()
 
 
+# ── ollama_chat options parameter ───────────────────────────────────────────
+
+def test_ollama_chat_accepts_options_parameter():
+    """Test that ollama_chat accepts and passes through optional options dict."""
+    import ollama_chat as om_module
+    import json
+    from unittest.mock import patch, MagicMock
+
+    captured_request = {}
+
+    def fake_urlopen(req, timeout=60):
+        captured_request["data"] = json.loads(req.data.decode())
+        resp = MagicMock()
+        resp.read.return_value = json.dumps({"message": {"content": "test response"}}).encode()
+        resp.__enter__ = lambda self: self
+        resp.__exit__ = lambda self, *args: None
+        return resp
+
+    with patch("urllib.request.urlopen", fake_urlopen):
+        response = om_module.ollama_chat(
+            "qwen2.5:7b",
+            [{"role": "user", "content": "test"}],
+            options={"temperature": 0.7, "num_predict": 100}
+        )
+
+    assert response == "test response"
+    assert "options" in captured_request["data"]
+    assert captured_request["data"]["options"]["temperature"] == 0.7
+    assert captured_request["data"]["options"]["num_predict"] == 100
+
+
+def test_ollama_chat_works_without_options_parameter():
+    """Test that ollama_chat still works when options is None (backward compat)."""
+    import ollama_chat as om_module
+    import json
+    from unittest.mock import patch, MagicMock
+
+    captured_request = {}
+
+    def fake_urlopen(req, timeout=60):
+        captured_request["data"] = json.loads(req.data.decode())
+        resp = MagicMock()
+        resp.read.return_value = json.dumps({"message": {"content": "test response"}}).encode()
+        resp.__enter__ = lambda self: self
+        resp.__exit__ = lambda self, *args: None
+        return resp
+
+    with patch("urllib.request.urlopen", fake_urlopen):
+        response = om_module.ollama_chat(
+            "qwen2.5:7b",
+            [{"role": "user", "content": "test"}]
+        )
+
+    assert response == "test response"
+    assert "options" not in captured_request["data"]  # options key should be absent
+
+
 # ── ollama_chat import ──────────────────────────────────────────────────────
 
 def test_ollama_chat_imported_from_shared_module():
@@ -783,3 +840,45 @@ def test_inference_model_uses_resolved_variable():
     assert INFERENCE_MODEL == _inference_model
     # And it should be the expected model
     assert INFERENCE_MODEL == "qwen2.5:14b"
+
+
+# ── Paper-dive bench fixtures ───────────────────────────────────────────────
+
+def test_paperdive_judge_strongreject_fixture_loads():
+    """Test that the StrongREJECT judgment fixture loads via bench.load_task."""
+    import sys
+    from pathlib import Path
+    bench_path = Path(__file__).resolve().parents[4] / "bench"
+    sys.path.insert(0, str(bench_path))
+    try:
+        from bench import load_task
+        fixture_path = bench_path / "tasks" / "task-020-paperdive-judge-strongreject"
+        assert fixture_path.exists(), f"Fixture path {fixture_path} does not exist"
+        task = load_task(fixture_path)
+        assert task["id"] == "task-020-paperdive-judge-strongreject"
+        assert task["type"] == "qa"
+        assert "prompt_file" in task
+        assert task.get("timeout", 60) >= 60
+    finally:
+        if str(bench_path) in sys.path:
+            sys.path.remove(str(bench_path))
+
+
+def test_paperdive_inference_strongreject_fixture_loads():
+    """Test that the StrongREJECT inference fixture loads via bench.load_task."""
+    import sys
+    from pathlib import Path
+    bench_path = Path(__file__).resolve().parents[4] / "bench"
+    sys.path.insert(0, str(bench_path))
+    try:
+        from bench import load_task
+        fixture_path = bench_path / "tasks" / "task-022-paperdive-inference-strongreject"
+        assert fixture_path.exists(), f"Fixture path {fixture_path} does not exist"
+        task = load_task(fixture_path)
+        assert task["id"] == "task-022-paperdive-inference-strongreject"
+        assert task["type"] == "qa"
+        assert "prompt_file" in task
+        assert task.get("timeout", 60) >= 60
+    finally:
+        if str(bench_path) in sys.path:
+            sys.path.remove(str(bench_path))

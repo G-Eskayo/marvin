@@ -1,0 +1,9 @@
+{
+  "id": "task-020-paperdive-judge-strongreject",
+  "type": "qa",
+  "cwd": "/tmp",
+  "prompt_file": "prompt.md",
+  "timeout": 60,
+  "expect": ["NONE"],
+  "note": "Paper-dive logic_auditor benchmark judgment: StrongREJECT paper fixture. Tests qwen2.5:14b vs 7b on a real benchmark paper. The extraction cites agreement-with-human-judgment (a valid comparison), so per the prompt instruction, construct validity should NOT be flagged. Expected output is NONE."
+}

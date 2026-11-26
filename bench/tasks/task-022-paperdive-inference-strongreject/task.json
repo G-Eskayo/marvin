@@ -1,0 +1,9 @@
+{
+  "id": "task-022-paperdive-inference-strongreject",
+  "type": "qa",
+  "cwd": "/tmp",
+  "prompt_file": "prompt.md",
+  "timeout": 60,
+  "expect": ["INDUCTIVE", "STRONG"],
+  "note": "Paper-dive logic_auditor inference-validity check: StrongREJECT paper. StrongREJECT uses empirical evidence (3000+ hours red-teaming, agreement with human judgment, comparative performance on safety benchmarks) to support its conclusion that constitutional principles improve safety. This is a strong inductive argument."
+}

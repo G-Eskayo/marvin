@@ -1,0 +1,11 @@
+1. Add optional `options` kwarg to `skills/paper-dive/scripts/ollama_chat.py` (temperature, `format`, `num_predict`), defaulting to today's exact request shape. Write tests 1–2 first.
+2. Build `bench/tasks/task-0XX-paperdive-judge-<slug>/` and `task-0XX-paperdive-inference-<slug>/` fixtures from the already-validated 2026-07-13 findings in `test_logic_auditor.py` (StrongREJECT/sorry-bench/jailbreakbench). Write tests 14–15 first.
+3. Add `bench/spec_search.py`: `evaluate_spec()` scoring a spec (prompt/model/options) against the fixtures via `model_registry.resolve_or_raise` + the extended `ollama_chat`. Write tests 3–6, 17 first.
+4. Add `propose_edit()`: builds the ground-truth-blind payload for an injected `propose_fn`, parses its proposed spec edit, validates it before adoption. Write tests 7–10 first.
+5. Add the bounded search-loop driver (max-iteration cap, regression-reject rule, result trace), writing to `bench/results/spec-search-<task>-<timestamp>.json` per `select_model.py`'s existing naming convention. Write tests 11–13, 16 first.
+6. Run the full new/changed test set with Ollama stopped — confirm it's green with zero live network calls, at or above the current baseline.
+7. Resolve the Decisions above with Gil before the live sweep runs; implement `propose_edit`'s payload construction to match the answer to `training-signal`.
+8. Run the live sweep on the Mac mini, as a separate non-gated step (not inside this PR's verification): pull/confirm the chosen candidate model(s) per `candidate-models`, run the Claude-baseline arm (reusing `bench.py`'s `run_once`/`parse_stream` for cost/time capture) and the untuned-local and spec-searched-local arms against the fixtures.
+9. Write up the comparison (accuracy/cost/time, all three arms) as a new dated entry in `bench/RESULTS.md`, plus the "next jobs to search" list the ticket asks for (triage classification, daily digest).
+10. If the spec-searched local setup clearly holds the benchmark, wire its winning spec into `logic_auditor.py`'s judgment call sites (and `config/models.json` if the winning model differs) in the same PR; if it doesn't, report that plainly rather than forcing a switch.
+11. Force-unload any Ollama models pulled only for this sweep once done; confirm `ollama ps` is empty.
