@@ -1,0 +1,34 @@
+{
+  "lead_html": "<p><strong>MARVIN keeps Claude Code working between sessions.</strong> I built it because Claude resets every time and forgets what you're doing. MARVIN remembers. It picks the cheapest model that passes, remembers what worked before, and submits its work for review before shipping.</p><p>In daily use on two Macs. Source is public on GitHub; architecture decisions are ADRs.</p>",
+  "sections": [
+    {
+      "heading": "What it does",
+      "body_html": "<p>Runs on a Mac Mini (the workhorse) and a MacBook (where you work). Syncs every 30 minutes so you can pick up from either machine.</p><dl><dt>Memory</dt><dd>Four kinds. Your profile. Lessons learned. Project context. Research references. Stored in ChromaDB, retrieved by meaning, not keyword search. A session loads only what matters, not everything.</dd><dt>34 skills</dt><dd>Debugging, test-first development, research, architecture review, portfolio management, resume tailoring. Each is a reusable playbook Claude loads on demand.</dd><dt>Ticket pipeline</dt><dd>Issues labelled ready-for-agent work in a sandbox, measured against tests, then raised as PRs with evidence. Nothing merges without review. Watches for patterns: if the same error happens three times, it pauses itself.</dd><dt>Dashboard</dt><dd>Electron app on both machines. Tabs for metrics (how well is it working), MR review (PRs waiting), health (what's broken), docs, activity, portfolio manager.</dd><dt>Background agents</dt><dd>launchd jobs: daily digest, research colony (new papers on tracked topics), health checks, code sync, auto-fixer (safe changes in its own worktree, one PR per day).</dd><dt>Bench</dt><dd>Runs three configurations head-to-head on token cost and correctness. Claims have numbers.</dd></dl>"
+    },
+    {
+      "heading": "What shipped recently",
+      "body_html": "<p><strong>Multi-Mac peer care</strong> (Nov 24). The two Macs notice when the other goes down. Restart what they can. Call the owner when it needs a person. Includes a safe daily reset that doesn't collide with active work. <a href=\"https://github.com/G-Eskayo/marvin/pull/1413\">PR #1413</a>.</p><p><strong>Mail sorting</strong> (Nov 7-24). Watches Gmail in real time (IDLE) and iCloud via IMAP. Rule sorting, alert lists, real retry logic on network errors. Each account is its own job. <a href=\"https://github.com/G-Eskayo/marvin/pull/1407\">PR #1407</a>, <a href=\"https://github.com/G-Eskayo/marvin/pull/1410\">PR #1410</a>, <a href=\"https://github.com/G-Eskayo/marvin/pull/1412\">PR #1412</a>.</p><p><strong>Local model consolidation</strong> (Nov 24). Paper analysis and code audits each get their own model. Optimized per job. <a href=\"https://github.com/G-Eskayo/marvin/pull/1408\">PR #1408</a>.</p><p><strong>Revamped merge gate</strong> (Nov 2026). Time and space complexity regressions are must-fix now, not \"nice to have.\"</p>"
+    },
+    {
+      "heading": "How the pipeline works",
+      "body_html": "<p>Mark an issue ready-for-agent. It spins up in an isolated git worktree. Planner writes a design. Executor edits files, writes tests, measures whether the change actually improves. If worse: parks the ticket with a reason. If better or equal: raises a PR with evidence. You review in the dashboard. Click approve; a webhook runs the merge gate (rebase, test suite, install, merge). Failures are logged by cause. Same failure three times and the pipeline pauses itself.</p><figure><img src=\"/assets/diagrams/life-of-a-ticket.svg\" alt=\"Diagram showing the life of a ticket: from ready-for-agent label through planner, executor, review, merge gate, and merge\"><figcaption>The ticket pipeline: from ready-for-agent to merged PR</figcaption></figure>"
+    },
+    {
+      "heading": "How memory works",
+      "body_html": "<p>Your requests hit tag index (which skills matter), then vector search (find by meaning, not keyword), then re-rank. Only the results load, not all memories at once. Fast recall of what matters.</p>"
+    },
+    {
+      "heading": "What's in design (not yet shipped)",
+      "body_html": "<p><strong>MARVIN Mobile</strong>. Native iPhone app. Three surfaces: Voice (speak), Chat (type), Dashboard (phone-shaped). Backend runs on the Mini over Tailscale, so it's real MARVIN with tools and memory, not a gimped cloud thing. Architecture is decided (ADRs 0039–0046). No code shipped yet.</p><p><strong>Voice</strong>. One endpoint, three ways in. \"Hey Siri, MARVIN\" on HomePods and iPhones. A Mac voice loop (\"Hey MARVIN,\" no Siri) with on-device speech recognition and local text-to-speech. iPhone Voice surface. Two-brain design: a local 3B model for fast small-talk, and the full MARVIN session for real work. Anything with a side effect gets confirmed on the phone behind Face ID.</p><p>Both offline-first (local models on phone, local speech on Mac) and online-capable (Claude for the deep brain). Building in that order next.</p>"
+    },
+    {
+      "heading": "What you get if you use it",
+      "body_html": "<p><strong>Your context doesn't blank between sessions.</strong> Claude resets. MARVIN remembers. Memory is vector-searchable. Skill-tagged (question about testing auto-loads TDD).</p><p><strong>Cheaper and faster.</strong> Routing picks the cheapest model that answers correctly. The bench keeps score.</p><p><strong>Work gets reviewed before merging.</strong> The pipeline raises real PRs, not prose. You review a diff with evidence (before/after metrics, test results, actual time), not a prompt asking \"does this sound good?\"</p><p><strong>Two machines, one system.</strong> Code syncs every 30 min. Data merges (findings from both add up, don't collide). Health checks run on both. Each machine notices when the other goes down.</p>"
+    },
+    {
+      "heading": "Open source & private",
+      "body_html": "<p>Engine is open source on GitHub. Skills, templates, infrastructure, decisions live there. Memory and secrets stay private: self-hosted git sync over Tailscale. No third-party credentials in the cloud.</p><p>Runs on macOS ARM in daily use. Intel Macs and Linux expected to work, untested. Dashboard and agents are macOS-only (launchd, Electron). Memory and skills work on Linux and WSL2 if you wire them up.</p>"
+    }
+  ],
+  "stack": "Claude Code, Python, Node, Electron, ChromaDB, launchd, git, Tailscale"
+}
