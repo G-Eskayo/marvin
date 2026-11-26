@@ -1,0 +1,9 @@
+{
+  "tickets": [
+    {"number": "980", "category": "docs", "note": "two docstrings named the owner"},
+    {"number": "973", "category": "bug", "note": "unlabelled-key health fix"},
+    {"number": "1023", "category": "bug", "note": "memory-search warning fix"},
+    {"number": "1147", "category": "test", "note": "job-hooks test timing fix"},
+    {"number": "1048", "category": "test", "note": "marvin-show test hardcode fix"}
+  ]
+}
