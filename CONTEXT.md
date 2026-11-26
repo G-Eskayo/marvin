@@ -905,6 +905,12 @@ unbounded: any chat, either machine, raw `gh`, the GitHub UI). Polling stays onl
   merge started elsewhere. The main process folds the events into the merge op (`src/lib/merge_progress.js`, the same
   reducer the webhook uses) and pushes `mr:mergeEvent`; a card reads once on mount. A PR merged by hand on GitHub mid-
   merge ends as "Merged on GitHub" on the next change trigger (one `gh pr view` per merging op, none otherwise).
+- **GitHub push notifications** (marvin#566, 2026-11-23): the primary Mac's webhook-server exposes `/github-webhook` via Tailscale Funnel on port 443,
+  receives GitHub events for registered board repos (pull_request, pull_request_review, issues, issue_comment, push), verifies the HMAC-SHA256 signature
+  (timing-safe, secrets in `~/.claude/.webhook-secret`), deduplicates replays (bounded cap-1000 delivery-ID cache; evicted IDs stay evicted until pushed out of the 2x-cap shadow),
+  checks the registry (repo must be known), triggers the same repo-change flow as polling, and relays to peers so their dashboards see changes immediately (they have ~20s polling backstop).
+  Funnel setup: `bash dashboard/webhook-server/scripts/setup_github_funnel.sh` (idempotent, generates secret, exposes only `/github-webhook` path, registers with GitHub App).
+  Relay endpoint `/github-relay` is guarded by loopback/Tailscale `allowedPeerAddress` checks and also validates the registry.
 - **Coverage guard**: the 60s backstop poll compares what it fetched with what it last showed; a change
   no trigger announced is appended to `~/.claude/logs/trigger-misses.jsonl` and surfaces as the
   `triggers:missed` Health check, so a gap identifies itself instead of waiting to be noticed.

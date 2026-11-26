@@ -39,11 +39,18 @@ import { resolveServiceDefaults } from '../electron/main/device_identity.js'
 import { createRebuildCheckTrigger } from './rebuild_check.js'
 import { supportRepos, createSupportSync } from './support_sync.js'
 import { handleSafetyRequest, SAFETY_MAX_BODY } from './safety_labels.js'
+import { verifySignature, parseDelivery, createDeliveryDedup, loadWebhookSecret, isForwardedEvent } from './github_webhook.js'
+import { relayGithubChange, receiveGithubRelay } from './github_relay.js'
 
 // Authenticate gh/git children from the pipeline's shared credential file (see gh_auth.js).
 const ghTokenSource = loadGhToken()
 // ...and through the GitHub gate (path.js), so dashboard clicks share the cooldown with every other caller.
 useGhGate()
+
+// GitHub webhook (marvin#566): signature verification and replay dedup.
+const webhookSecret = loadWebhookSecret()
+const deliveryDedup = createDeliveryDedup({ cap: 1000 })
+const WEBHOOK_MAX_BODY = 10 * 1024 * 1024
 
 const PORT = process.env.PORT || 7878
 
@@ -62,6 +69,23 @@ function readBody(req, limit) {
       }
     })
     req.on('end', () => resolve(body))
+    req.on('error', reject)
+  })
+}
+
+function readRawBody(req, limit) {
+  return new Promise((resolve, reject) => {
+    const chunks = []
+    let size = 0
+    req.on('data', (chunk) => {
+      chunks.push(chunk)
+      size += chunk.length
+      if (size > limit) {
+        reject(new Error('Body too large'))
+        req.destroy()
+      }
+    })
+    req.on('end', () => resolve(Buffer.concat(chunks)))
     req.on('error', reject)
   })
 }
@@ -255,6 +279,83 @@ const server = createServer(async (req, res) => {
     return
   }
 
+  // marvin#566: GitHub webhook (signature verified, replay-deduplicated, relayed to peers).
+  if (req.method === 'POST' && req.url === '/github-webhook') {
+    if (!webhookSecret) {
+      res.writeHead(400, { 'Content-Type': 'application/json' }).end(JSON.stringify({ ok: false, error: 'webhook secret not configured' }))
+      return
+    }
+    let rawBody
+    try {
+      rawBody = await readRawBody(req, WEBHOOK_MAX_BODY)
+    } catch (err) {
+      res.writeHead(413, { 'Content-Type': 'application/json' }).end(JSON.stringify({ ok: false, error: 'body too large' }))
+      return
+    }
+    const bodyStr = rawBody.toString('utf8')
+    const signature = req.headers['x-hub-signature-256']
+    if (!verifySignature(webhookSecret, bodyStr, signature)) {
+      res.writeHead(401, { 'Content-Type': 'application/json' }).end(JSON.stringify({ ok: false, error: 'invalid signature' }))
+      return
+    }
+    const delivery = parseDelivery(req.headers, bodyStr)
+    if (!delivery || !isForwardedEvent(delivery.event)) {
+      res.writeHead(200, { 'Content-Type': 'application/json' }).end(JSON.stringify({ ok: true }))
+      return
+    }
+    // Registry check: verify the repo is registered or in support repos.
+    const supportedRepos = new Set([...readRegistry().map((b) => b.repo), ...supportRepos()])
+    if (!supportedRepos.has(delivery.repo)) {
+      res.writeHead(400, { 'Content-Type': 'application/json' }).end(JSON.stringify({ ok: false, error: 'repo not registered' }))
+      return
+    }
+    if (deliveryDedup.seen(delivery.deliveryId)) {
+      res.writeHead(200, { 'Content-Type': 'application/json' }).end(JSON.stringify({ ok: true, duplicate: true }))
+      return
+    }
+    // Respond before the relay settles.
+    res.writeHead(200, { 'Content-Type': 'application/json' }).end(JSON.stringify({ ok: true }))
+    // Trigger the same repo-changed flow as polling does.
+    onRepoChanged(delivery.repo, 'github-webhook')
+    // Relay to peers so their dashboards see this change immediately (they have ~20s polling backstop).
+    relayGithubChange({
+      peers: peerHosts(),
+      repo: delivery.repo,
+      event: delivery.event,
+      post: (url, body) => fetch(url, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body), signal: AbortSignal.timeout(5000) })
+    }).catch(() => {})
+    return
+  }
+
+  // marvin#566: receive relayed GitHub changes from peers (same repo-changed flow, no re-relay).
+  if (req.method === 'POST' && req.url === '/github-relay') {
+    if (!allowedPeerAddress(req.socket?.remoteAddress)) {
+      res.writeHead(403, { 'Content-Type': 'application/json' }).end(JSON.stringify({ ok: false }))
+      return
+    }
+    let body
+    try {
+      body = JSON.parse(await readBody(req, 10 * 1024))
+    } catch {
+      res.writeHead(400, { 'Content-Type': 'application/json' }).end(JSON.stringify({ ok: false }))
+      return
+    }
+    const relayed = receiveGithubRelay(body)
+    if (!relayed) {
+      res.writeHead(400, { 'Content-Type': 'application/json' }).end(JSON.stringify({ ok: false }))
+      return
+    }
+    // Registry check: verify the repo is registered or in support repos.
+    const supportedRepos = new Set([...readRegistry().map((b) => b.repo), ...supportRepos()])
+    if (!supportedRepos.has(relayed.repo)) {
+      res.writeHead(400, { 'Content-Type': 'application/json' }).end(JSON.stringify({ ok: false, error: 'repo not registered' }))
+      return
+    }
+    res.writeHead(200, { 'Content-Type': 'application/json' }).end(JSON.stringify({ ok: true }))
+    onRepoChanged(relayed.repo, 'github-relay')
+    return
+  }
+
   if (req.method !== 'POST' || (req.url !== '/approve' && req.url !== '/deny')) {
     res.writeHead(404).end()
     return
@@ -335,6 +436,10 @@ function announceThisMac(why) {
 }
 
 const rebuildCheck = createRebuildCheckTrigger()
+
+// marvin#566: on any GitHub change (from polling or webhook), trigger the same actions.
+// Assigned in server.listen when supportSync is created.
+let onRepoChanged = () => {}
 
 // marvin#568: which Mac runs the merges (shown on the card), and the in-flight record a restart reads.
 const machineId = resolveDeviceId()
@@ -532,24 +637,26 @@ server.listen(PORT, () => {
       skip: () => Date.now() < gateCooldownUntil()
     })
   }
+
+  // marvin#566: assign the shared handler (used by polling and webhook).
+  onRepoChanged = (repo, source) => {
+    if (supportRepos().includes(repo)) {
+      console.log(`[repo-change] support change on ${repo} from ${source} at ${new Date().toISOString()}`)
+      supportSync(repo)
+      return
+    }
+    console.log(`[repo-change] change on ${repo} from ${source} at ${new Date().toISOString()}`)
+    githubFeed?.refresh(repo)
+    if (rebuildCheck(repo)) console.log(`[rebuild-check] started for ${repo}`)
+    refreshFacts().finally(() => mergeQueue.kick(repo).catch(() => {}))
+    forwardRefreshPing(DASHBOARD_REFRESH_URL, (url) => postJson(url, { topics: ['activity', 'mr'], source: `${source}:${repo}` }))
+    forwardRefreshPing(MOBILE_REFRESH_URL, postJson)
+  }
+
   startChangeWatch({
     onTick: (answered) => githubFeed?.alive(answered),
     getRepos: () => [...new Set([...readRegistry().map((b) => b.repo), ...supportRepos()])],
     probe: createGithubProbe(),
-    ping: (repo) => {
-      if (supportRepos().includes(repo)) {
-        console.log(`[gh-watch] support change on ${repo} at ${new Date().toISOString()}`)
-        supportSync(repo)
-        return
-      }
-      console.log(`[gh-watch] change detected on ${repo} at ${new Date().toISOString()}`)
-      githubFeed?.refresh(repo)
-      if (rebuildCheck(repo)) console.log(`[rebuild-check] started for ${repo}`) // #443: any merge path updates the app
-      // marvin#231: a PR updated, a ticket labelled, main's CI opening or closing its main-red ticket: the queue looks
-      // again (answers first, so a just-built PR is seen built).
-      refreshFacts().finally(() => mergeQueue.kick(repo).catch(() => {}))
-      forwardRefreshPing(DASHBOARD_REFRESH_URL, (url) => postJson(url, { topics: ['activity', 'mr'], source: `github:${repo}` }))
-      forwardRefreshPing(MOBILE_REFRESH_URL, postJson)
-    }
+    ping: (repo) => onRepoChanged(repo, 'polling')
   })
 })

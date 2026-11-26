@@ -57,6 +57,52 @@ ADR 0025's Deny action — one endpoint, two terminal actions carried in `action
 - `400 { "done": false, "error": "<message>" }` on a malformed request (bad JSON, unknown `action`)
 - `500 { "done": false, "error": "<message>" }` on failure (bad URL, `gh` call failed, etc.)
 
+## Contract: `POST /github-webhook`
+
+**marvin#566**: GitHub push notifications, Tailscale Funnel exposed, HMAC-verified, replay-deduplicated.
+
+**Request**: JSON body with GitHub webhook payload (any of: `pull_request`, `pull_request_review`, `issues`, `issue_comment`, `push`).
+- Header: `X-Hub-Signature-256: sha256=<hmac-sha256(secret, raw-body)>`
+- Header: `X-GitHub-Delivery: <UUID>`
+- Header: `X-GitHub-Event: <event-type>`
+
+**Secret**: stored in `~/.claude/.webhook-secret` (see setup below).
+
+**Response**:
+- `200 { "ok": true }` on success (processed or duplicate)
+- `200 { "ok": true, "duplicate": true }` on replay (same delivery ID seen recently)
+- `400 / 401 / 413` on error (bad JSON, invalid signature, body too large)
+
+**Setup**:
+
+```bash
+# Generate the secret and expose via Tailscale Funnel (one time, idempotent):
+bash webhook-server/scripts/setup_github_funnel.sh
+
+# Register in GitHub (GitHub App / Webhook):
+# 1. Set Payload URL to: https://<your-tailscale-domain>.ts.net/github-webhook
+# 2. Set Secret to: (output from setup script above, stored in ~/.claude/.webhook-secret)
+# 3. Select events: pull_request, pull_request_review, issues, issue_comment, push
+# 4. Delivery method: application/json
+# 5. Active: on
+
+# To rotate the secret:
+openssl rand -hex 32 > ~/.claude/.webhook-secret
+# Update the secret in GitHub, restart the webhook server.
+```
+
+**Funnel configuration**: The setup script uses `tailscale serve --set-path=/github-webhook` to expose 
+only the webhook endpoint (not the entire server), and `tailscale funnel on 443` to make it public. 
+This prevents `/github-relay` or other paths from being exposed unintentionally. The relay endpoint 
+(`/github-relay`) remains protected by loopback/Tailscale `allowedPeerAddress` checks.
+
+**Behavior**: parses the delivery, verifies signature (timing-safe), checks replay dedup, then:
+1. Calls the same repo-change handler as polling (refreshFacts, mergeQueue.kick, etc.)
+2. Relays to peers so their dashboards see the change immediately (they have ~20s polling backstop)
+3. Responds 200 before relay settles (fire-and-forget)
+
+Allowed event types are the five in the allowlist (line 571); others are accepted (200) but ignored.
+
 ## Running it
 
 ```
@@ -70,7 +116,8 @@ The dashboard defaults to `http://localhost:7878/approve` and
 
 ## Deliberately out of scope here
 
-No auth, no queueing, no retry. This is the same "dashboard is a trigger,
+No auth on `/approve` or `/deny`, no queueing, no retry. This is the same "dashboard is a trigger,
 not a queue" scope line #11 itself draws — a real production n8n workflow
 should add whatever's appropriate (auth on the webhook, at minimum) before
-this is exposed beyond localhost.
+this is exposed beyond localhost. The `/github-webhook` endpoint is signature-verified
+and should be safe to expose via Tailscale Funnel to your GitHub instance.
