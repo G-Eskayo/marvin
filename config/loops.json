@@ -27,9 +27,10 @@
    "cycle_days": 1,
    "owner": "marvin",
    "fix": {
-    "level": "one_tap",
+    "level": "auto",
     "kind": "rerun",
-    "arg": "health-check"
+    "arg": "health-check",
+    "undo": "none: health-check is read-only; it only logs and reports status"
    },
    "wired": true,
    "ticket": 1123
@@ -252,9 +253,10 @@
    "cycle_days": 1,
    "owner": "marvin",
    "fix": {
-    "level": "one_tap",
+    "level": "auto",
     "kind": "rerun",
-    "arg": "cleanup-sweep"
+    "arg": "cleanup-sweep",
+    "undo": "disposable: cleanup-sweep only removes cache and working dirs with no data loss (replacement cost: re-download/re-sync)"
    },
    "wired": true,
    "ticket": 1123
@@ -563,8 +565,9 @@
    "cycle_days": 1,
    "owner": "marvin",
    "fix": {
-    "level": "one_tap",
-    "kind": "ticket"
+    "level": "auto",
+    "kind": "rebuild_graph",
+    "undo": "none: graphify-out/ is a derived cache rebuilt from source"
    },
    "wired": true,
    "ticket": 1123

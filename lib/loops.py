@@ -40,13 +40,16 @@ SIGNAL_RE = re.compile(r"^(none|(job|check|contract):[A-Za-z0-9][A-Za-z0-9:@._~/
 BROKEN_RE = re.compile(r"^(red|failed_runs:([1-9]|1\d|20))$")
 OWNERS = ("marvin", "gil")
 LEVELS = ("auto", "one_tap", "decision")
-FIX_KINDS = ("rerun", "relogin", "install_job", "rollback", "ticket", "decision")
+FIX_KINDS = ("rerun", "relogin", "install_job", "rollback", "ticket", "decision", "rebuild_graph", "refresh_catalog")
 ARG_RE = {"rerun": ID_RE, "install_job": ID_RE, "relogin": re.compile(r"^[a-z][a-z-]{1,40}$"),
-          "rollback": re.compile(r"^[1-9]\d{0,6}$"), "decision": re.compile(r"^[1-9]\d{0,6}$"), "ticket": None}
+          "rollback": re.compile(r"^[1-9]\d{0,6}$"), "decision": re.compile(r"^[1-9]\d{0,6}$"), "ticket": None,
+          "rebuild_graph": None, "refresh_catalog": None}
 TEXT_MAX = 300
 KEYS = {"id", "name", "watches", "broken_when", "action", "verify", "cycle_days", "owner", "fix", "wired", "ticket", "why"}
 STATUS_ORDER = ("broken", "stalled", "not_wired", "closed")
 SEVERITY_RANK = {"red": 3, "yellow": 2, "unmonitored": 1, "green": 0}
+AUTO_SAFE_KINDS = {"rerun", "rebuild_graph", "refresh_catalog"}
+AUTO_SAFE_JOBS = {"cleanup-sweep", "health-check", "project-catalog"}
 
 
 class LoopError(ValueError):
@@ -96,19 +99,29 @@ def validate(entry: object) -> dict:
         raise LoopError(f"{lid}: ticket must be an issue number")
     out["ticket"] = t
     fix = entry.get("fix")
-    if not isinstance(fix, dict) or set(fix) - {"level", "kind", "arg"}:
-        raise LoopError(f"{lid}: fix must be {{level, kind, arg}}")
+    if not isinstance(fix, dict) or set(fix) - {"level", "kind", "arg", "undo", "reasons"}:
+        raise LoopError(f"{lid}: fix must be {{level, kind, arg, undo (optional), reasons (optional)}}")
     if fix.get("level") not in LEVELS:
         raise LoopError(f"{lid}: fix level must be one of {', '.join(LEVELS)}")
     if fix.get("kind") not in FIX_KINDS:
         raise LoopError(f"{lid}: fix kind must be one of {', '.join(FIX_KINDS)}")
+    if fix.get("level") == "auto" and fix.get("kind") not in AUTO_SAFE_KINDS:
+        raise LoopError(f"{lid}: auto-level fixes must have kind in {sorted(AUTO_SAFE_KINDS)}, got {fix.get('kind')!r}")
     pattern, arg = ARG_RE[fix["kind"]], fix.get("arg")
     if pattern is None:
         if arg is not None:
             raise LoopError(f"{lid}: a {fix['kind']} fix takes no arg")
     elif not isinstance(arg, (str, int)) or isinstance(arg, bool) or not pattern.match(str(arg)):
         raise LoopError(f"{lid}: {fix['kind']} fix needs a valid arg, got {str(arg)[:40]!r}")
-    out["fix"] = {"level": fix["level"], "kind": fix["kind"], "arg": None if arg is None else str(arg)}
+    if fix.get("kind") == "rerun" and fix.get("level") == "auto":
+        if str(arg) not in AUTO_SAFE_JOBS:
+            raise LoopError(f"{lid}: auto rerun must specify arg in {sorted(AUTO_SAFE_JOBS)}, got {str(arg)[:40]!r}")
+    out_fix = {"level": fix["level"], "kind": fix["kind"], "arg": None if arg is None else str(arg)}
+    if "undo" in fix:
+        out_fix["undo"] = _text(fix, "undo", required=False)
+    if "reasons" in fix and isinstance(fix.get("reasons"), list):
+        out_fix["reasons"] = fix["reasons"][:2]
+    out["fix"] = out_fix
     return out
 
 
@@ -205,6 +218,20 @@ def evaluate(loop: dict, checks: list[dict], jobs_dir: Path, now: datetime) -> d
         last_cycle = max(passed) if passed else None
 
     out = {**loop, "watched": watched, "verified": verify, "last_cycle": last_cycle.isoformat() if last_cycle else None}
+
+    if loop["fix"].get("level") == "auto":
+        fix_job = f"loopfix-{loop['id']}"
+        fix_runs = read_runs(fix_job, jobs_dir)
+        if fix_runs:
+            bad = failed_in_a_row(fix_runs)
+            if bad >= 2:
+                streak_start = len(fix_runs) - bad
+                reasons = []
+                for i in range(streak_start, len(fix_runs)):
+                    if fix_runs[i].get("status") in ("failed", "crashed") and len(reasons) < 2:
+                        reasons.append(fix_runs[i].get("error", ""))
+                out["fix"] = {**loop["fix"], "level": "one_tap", "reasons": reasons}
+
     if not loop["wired"]:
         return {**out, "status": "not_wired", "reason": loop.get("why") or "not plugged into the loop kernel yet"}
     if job and runs is None:
@@ -261,6 +288,12 @@ def fix_plan(loop: dict, home: str | None = None) -> dict:
     if kind == "install_job":
         return {"how": "run", "argv": [f"{home}/.agents/venv/bin/python", f"{home}/.agents/lib/job_units.py", "install", arg],
                 "says": f"Installed {arg}"}
+    if kind == "rebuild_graph":
+        return {"how": "run", "argv": [f"{home}/.agents/venv/bin/python", f"{home}/.agents/lib/graphify_freshness.py", "refresh", str(REPO)],
+                "says": "Rebuilding code graph"}
+    if kind == "refresh_catalog":
+        return {"how": "run", "argv": [f"{home}/.agents/venv/bin/python", f"{home}/.agents/lib/project_catalog.py", "refresh"],
+                "says": "Refreshing project catalog"}
     if kind == "relogin":
         return {"how": "renew", "account": arg}
     if kind in ("rollback", "decision"):
@@ -272,33 +305,111 @@ def fix_plan(loop: dict, home: str | None = None) -> dict:
     return {"how": "ticket", "title": title, "body": body}
 
 
-def run_fix(loop_id: str, registry: Path | None = None, runner=None, gh=None) -> dict:
+def run_fix(loop_id: str, registry: Path | None = None, jobs_dir: Path | None = None, runner=None, gh=None, job_events_module=None) -> dict:
+    import job_events as _job_events
+    job_events_module = job_events_module or _job_events
+
     loops, _ = load(registry)
     loop = next((lp for lp in loops if lp["id"] == loop_id), None) if isinstance(loop_id, str) else None
     if loop is None:
         return {"ok": False, "error": f"no loop {str(loop_id)[:48]!r}"}
     plan = fix_plan(loop)
-    if plan["how"] == "run":
-        runner = runner or (lambda argv: subprocess.run(argv, capture_output=True, text=True, timeout=120))
-        try:
-            r = runner(plan["argv"])
-        except (OSError, subprocess.TimeoutExpired) as exc:
-            return {"ok": False, "error": f"{type(exc).__name__}: {exc}"[:200], **plan}
-        ok = r.returncode == 0
-        return {"ok": ok, **plan, **({} if ok else {"error": (r.stderr or r.stdout or "").strip()[-200:]})}
-    if plan["how"] == "ticket":
-        if gh is None:
-            import proposals
-            gh = proposals.run_gh
-        import instance
-        args = ["issue", "create", "-R", instance.tickets_repo(), "--title", plan["title"], "--label", "needs-triage",
-                "--label", "project:marvin"]
-        rc, out, err = gh(args, plan["body"])
-        m = re.search(r"/issues/(\d+)\s*$", (out or "").strip())
-        if rc != 0 or not m:
-            return {"ok": False, "how": "ticket", "error": (err or out or "gh failed").strip()[:200]}
-        return {"ok": True, **_open(int(m.group(1))), "says": f"Filed #{m.group(1)}"}
-    return {"ok": True, **plan}
+
+    try:
+        with job_events_module.job_run(f"loopfix-{loop_id}", label=f"Loop fix: {loop['name']}", directory=jobs_dir) as run:
+            if loop["fix"].get("undo"):
+                run.step("Undo", loop["fix"]["undo"])
+
+            if plan["how"] == "run":
+                runner = runner or (lambda argv: subprocess.run(argv, capture_output=True, text=True, timeout=120))
+                try:
+                    run.step("Action", plan.get("says", "Running..."))
+                    r = runner(plan["argv"])
+                except (OSError, subprocess.TimeoutExpired) as exc:
+                    run.step("Error", f"{type(exc).__name__}: {exc}"[:120])
+                    raise
+                ok = r.returncode == 0
+                if not ok:
+                    run.step("Error", (r.stderr or r.stdout or "").strip()[-120:] or f"exit {r.returncode}")
+                    raise RuntimeError(f"fix failed: {(r.stderr or r.stdout or '').strip()[-200:]}")
+                else:
+                    run.summary(plan.get("says", "Done"))
+                return {"ok": ok, **plan, **({} if ok else {"error": (r.stderr or r.stdout or "").strip()[-200:]})}
+            if plan["how"] == "ticket":
+                if gh is None:
+                    import proposals
+                    gh = proposals.run_gh
+                import instance
+                args = ["issue", "create", "-R", instance.tickets_repo(), "--title", plan["title"], "--label", "needs-triage",
+                        "--label", "project:marvin"]
+                try:
+                    run.step("Filing ticket", plan.get("says", "Creating..."))
+                    rc, out, err = gh(args, plan["body"])
+                except Exception as exc:
+                    run.step("Error", f"{type(exc).__name__}"[:120])
+                    raise
+                m = re.search(r"/issues/(\d+)\s*$", (out or "").strip())
+                if rc != 0 or not m:
+                    run.step("Error", (err or out or "gh failed").strip()[:120])
+                    raise RuntimeError(f"gh failed: {(err or out or 'gh failed').strip()[:200]}")
+                run.summary(f"Filed #{m.group(1)}")
+                return {"ok": True, **_open(int(m.group(1))), "says": f"Filed #{m.group(1)}"}
+            return {"ok": True, **plan}
+    except Exception as exc:
+        # Extract the original error message from the RuntimeError wrapper if present
+        error_msg = str(exc)
+        if error_msg.startswith("gh failed: "):
+            error_msg = error_msg[11:]
+        elif error_msg.startswith("fix failed: "):
+            error_msg = error_msg[12:]
+        # Include plan fields for "run" fixes, but not for "ticket" or others
+        result = {"ok": False, "error": error_msg[:200]}
+        if plan.get("how") == "run":
+            result.update(plan)
+        elif plan.get("how") == "ticket":
+            result["how"] = "ticket"
+        return result
+
+
+def run_auto_fixes(checks: list[dict], registry: Path | None = None, jobs_dir: Path | None = None, now: datetime | None = None,
+                   runner=None, gh=None) -> list[tuple[str, dict]]:
+    """Auto-remediate every broken loop with a safe auto fix. Returns [(loop_id, fix_result), ...].
+
+    Skips loops whose loopfix-<id> job is running (and not stale) or has failed >=2 times in a row (demoted to one_tap).
+    """
+    import job_events
+    now = now or datetime.now(timezone.utc)
+    jobs_dir = jobs_dir or job_events.JOBS_DIR
+    loops, _ = load(registry)
+    results = []
+
+    for loop in loops:
+        if loop["fix"].get("level") != "auto" or loop["fix"].get("kind") not in AUTO_SAFE_KINDS:
+            continue
+
+        status = evaluate(loop, checks, jobs_dir, now)
+        if status.get("status") != "broken":
+            continue
+
+        loop_id = loop["id"]
+        job_name = f"loopfix-{loop_id}"
+        runs = read_runs(job_name, jobs_dir)
+
+        if runs:
+            # Check only the latest run for "running" status, and expire it if it's older than CRASHED_AFTER_S
+            latest = runs[-1]
+            if latest.get("status") == "running":
+                started = _parse(latest.get("started_at"))
+                if started and now - started <= timedelta(seconds=job_events.CRASHED_AFTER_S):
+                    continue
+            # Skip if already demoted to one_tap due to 2+ failures
+            if failed_in_a_row(runs) >= 2:
+                continue
+
+        result = run_fix(loop_id, registry=registry, jobs_dir=jobs_dir, runner=runner, gh=gh)
+        results.append((loop_id, result))
+
+    return results
 
 
 def main(argv: list[str]) -> int:

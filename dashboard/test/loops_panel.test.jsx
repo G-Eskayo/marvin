@@ -37,7 +37,7 @@ describe('the Loops view', () => {
     expect(renderToStaticMarkup(<LoopsView view={view} filter="all" />)).toContain('data-loop="ok"')
   })
   it('every fix kind in the registry has a label, and an unknown kind gets no button', () => {
-    for (const k of ['rerun', 'relogin', 'install_job', 'rollback', 'ticket', 'decision']) expect(FIX_LABEL[k]).toBeTruthy()
+    for (const k of ['rerun', 'relogin', 'install_job', 'rollback', 'ticket', 'decision', 'rebuild_graph', 'refresh_catalog']) expect(FIX_LABEL[k]).toBeTruthy()
     expect(fixFor(row('x', 'broken', 'shell'))).toBeNull()
     expect(fixFor(row('x', 'closed'))).toBeNull()
   })
@@ -55,6 +55,20 @@ describe('the Loops view', () => {
     expect(renderToStaticMarkup(<LoopsView view={null} />)).toContain('No loops yet')
     expect(renderToStaticMarkup(<LoopsPanel api={null} />)).toBe('')
     expect(cycleText('garbage', NOW)).toBe('no full cycle seen')
+  })
+  it('shows both failure reasons when an auto-level loop is demoted to one_tap', () => {
+    const demoted = row('b', 'broken', 'rerun', {
+      fix: { level: 'one_tap', kind: 'rerun', arg: 'x', reasons: ['first error', 'second error'] }
+    })
+    const html = renderToStaticMarkup(<LoopsView view={{ loops: [demoted] }} />)
+    expect(html).toContain('first error')
+    expect(html).toContain('second error')
+  })
+  it('still shows the fix button for an auto-level loop, allowing manual override', () => {
+    const autoLoop = row('b', 'broken', 'rerun', { fix: { level: 'auto', kind: 'rerun', arg: 'health-check' } })
+    const html = renderToStaticMarkup(<LoopsView view={{ loops: [autoLoop] }} />)
+    expect(html).toContain('Re-run')
+    expect(html).toContain('data-fix="rerun"')
   })
 })
 

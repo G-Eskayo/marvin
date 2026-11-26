@@ -26,6 +26,11 @@ function LoopRow({ row, onFix, busy, now }) {
           <span className="text-xs text-neutral-600">· {row.owner === 'gil' ? 'your move' : "MARVIN's move"}</span>
         </div>
         <p className="text-xs text-neutral-400 [overflow-wrap:anywhere]">{String(row.reason || '')}</p>
+        {row.fix?.reasons && Array.isArray(row.fix.reasons) && (
+          <ul className="mt-1 text-[11px] text-neutral-500 [overflow-wrap:anywhere]">
+            {row.fix.reasons.filter(Boolean).map((reason, i) => <li key={i}>— {reason}</li>)}
+          </ul>
+        )}
         {row.ticket && <p className="text-[11px] text-neutral-600">#{row.ticket}</p>}
       </div>
       {fix && (

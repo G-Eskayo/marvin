@@ -12,7 +12,9 @@ export const FIX_LABEL = {
   install_job: 'Install job',
   rollback: 'Roll back',
   ticket: 'File ticket',
-  decision: 'Answer Decision'
+  decision: 'Answer Decision',
+  rebuild_graph: 'Rebuild graph',
+  refresh_catalog: 'Refresh catalog'
 }
 const ORDER = ['broken', 'stalled', 'not_wired', 'closed']
 

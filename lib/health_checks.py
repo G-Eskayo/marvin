@@ -2093,8 +2093,21 @@ def _cli() -> None:
     # It replaced the disk forecast's own three-channel notifier: disk:headroom is one of these checks.
     job_events.step("Alerts", alert_red_checks(out.get("checks", [])))
 
-    for aid in react_to_low_disk(out.get("checks", [])):
-        job_events.step("Disk first aid", f"{aid['device']}: {'ok' if aid['ok'] else 'failed'}, {aid['detail']}")
+    # Run disk first aid on each Mac whose disk is yellow or red, hourly throttled.
+    try:
+        disk_aid = react_to_low_disk(out.get("checks", []))
+        if disk_aid:
+            job_events.step("Disk first aid", "; ".join(f"{d['device']}: {d['detail']}" for d in disk_aid))
+    except Exception as exc:  # noqa: BLE001
+        job_events.step("Disk first aid", f"error: {type(exc).__name__}: {str(exc)[:160]}")
+
+    try:
+        import loops
+        loops.run_auto_fixes(out.get("checks", []))
+    except Exception as exc:  # noqa: BLE001
+        job_events.step("Auto fixes", f"error: {type(exc).__name__}: {str(exc)[:160]}")
+    else:
+        job_events.step("Auto fixes", "checked")
 
     job_events.step("Accounts", react_to_accounts())
 
