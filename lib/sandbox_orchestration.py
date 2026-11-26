@@ -42,8 +42,10 @@ import test_change_rule  # noqa: E402
 import code_review_gate  # noqa: E402
 import project_profile as pp
 import ticket_stages as ts
+import worktree_lock
 
 WORKTREES_ROOT = Path.home() / ".agents-pipeline-worktrees"
+_ACTIVE_LOCKS = []  # Keeps lock handles alive for process lifetime
 
 
 class TaskListTooVague(RuntimeError):
@@ -69,6 +71,9 @@ class ModelRunFailed(RuntimeError):
                                           self.detail, re.I))
         super().__init__(f"the {kind} model run failed (exit {exit_code}"
                          f"{', usage limit' if self.usage_limit else ''}): {self.detail[:200] or 'no output'}")
+
+
+WorktreeBusy = worktree_lock.WorktreeBusy
 
 
 FLAGSHIP_MODEL = "claude-sonnet-5"
@@ -463,6 +468,9 @@ def _create_worktree(repo_path: Path, ticket_ref: str, base_branch: str = "main"
     locally and pushed to origin), and only then is the old state discarded."""
     WORKTREES_ROOT.mkdir(parents=True, exist_ok=True)
     branch = branch or _branch_for(ticket_ref)
+    # Acquire worktree lock before any git operations to prevent concurrent _create_worktree on the same branch
+    lock_handle = worktree_lock.acquire(repo_path, branch, ticket_ref)
+    _ACTIVE_LOCKS.append(lock_handle)  # Keep alive until process exit
     # No '#' in the DIRECTORY name (the branch keeps it, cleanup_sweep reads the
     # branch): vite/vitest read '#' in a path as a URL fragment and crash, which
     # silently zeroed every pipeline ticket's vitest count. Worktrees created

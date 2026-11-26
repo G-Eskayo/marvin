@@ -29,6 +29,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 import code_sync  # noqa: E402
 import cron_health as ch  # noqa: E402
 import machine_profile  # noqa: E402
+import tool_requirements  # noqa: E402
 from machine_profile import machine_label  # noqa: E402
 from task_dispatch import TAILSCALE_BIN, TAILSCALE_ENV  # noqa: E402  (absolute path -- launchd's PATH omits the shell's additions)
 
@@ -1894,6 +1895,65 @@ def check_merge_service() -> dict:
     return merge_service_result(merge_machines(), waiting_approvals())
 
 
+def _local_tool_health() -> dict:
+    """Check tool requirements on this machine."""
+    result = tool_requirements.health()
+    if result.unavailable:
+        return _result("tools@local", "Required tools and paths", "yellow",
+                      f"Missing: {', '.join(result.unavailable)}")
+    return _result("tools@local", "Required tools and paths", "green", "All declared tools and paths are available")
+
+
+def _run_tool_health_remote(host: str) -> str:
+    """Run tool_requirements.py health check on a remote machine via ssh."""
+    cmd = ["ssh"] + SSH_OPTS + [host, "cd ~/.agents && ~/.agents/venv/bin/python lib/tool_requirements.py health"]
+    result = subprocess.run(cmd, capture_output=True, text=True, timeout=30)
+    return result.stdout if result.returncode == 0 else result.stderr
+
+
+def check_tool_requirements_everywhere(reachability: dict[str, str]) -> list[dict]:
+    """Check that all required tools and paths are available on each machine."""
+    results = []
+    me = machine_profile.registry_id()
+    devices = [(me, None, "local")] + [
+        (dev, info.get("tailscale_hostname"), reachability.get(f"machine:{dev}", "yellow"))
+        for dev, info in machine_profile.remote_macs().items()
+    ]
+
+    for dev, host, reach in devices:
+        if reach == "asleep":
+            results.append(_result(f"tools@{dev}", f"Required tools and paths -- {dev}", "asleep",
+                                  "cannot check while the machine is asleep"))
+            continue
+        if reach not in ("local", "green"):
+            results.append(_result(f"tools@{dev}", f"Required tools and paths -- {dev}", "yellow",
+                                  f"machine unreachable ({reach}) -- unverifiable"))
+            continue
+
+        try:
+            if reach == "local":
+                health_result = _local_tool_health()
+            else:
+                json_out = _run_tool_health_remote(host)
+                data = json.loads(json_out)
+                unavailable = data.get("unavailable", [])
+                if unavailable:
+                    health_result = _result(f"tools@{dev}", f"Required tools and paths -- {dev}", "yellow",
+                                           f"Missing: {', '.join(unavailable)}")
+                else:
+                    health_result = _result(f"tools@{dev}", f"Required tools and paths -- {dev}", "green",
+                                           "All declared tools and paths are available")
+            # Ensure the result has the correct device id
+            health_result["id"] = f"tools@{dev}"
+            health_result["label"] = f"{health_result.get('label', 'Tools')} -- {dev}"
+            results.append(health_result)
+        except Exception as exc:
+            results.append(_result(f"tools@{dev}", f"Required tools and paths -- {dev}", "yellow",
+                                  f"could not check: {str(exc)[:100]}"))
+
+    return results
+
+
 def _mirror_health():
     import mirror_health  # lib/mirror_health.py: the pull-only node's mirror, read from this Mac (marvin#910)
     return mirror_health
@@ -1938,6 +1998,7 @@ def default_checks(reach: dict[str, str] | None = None, reach_results: list[dict
         ("repo:sync", "Repo sync", lambda: check_repo_sync_everywhere(reach), CROSS_MACHINE_BUDGET_S),
         ("mirror:sync", "Mirror sync on pull-only nodes", lambda: _mirror_health().check_mirror_sync_everywhere(reach),
          CROSS_MACHINE_BUDGET_S),
+        ("tools", "Required tools and paths", lambda: check_tool_requirements_everywhere(reach), CROSS_MACHINE_BUDGET_S),
         ("machine-state", "Machine state", lambda: check_machine_state_everywhere(reach), CROSS_MACHINE_BUDGET_S),
     ]
 

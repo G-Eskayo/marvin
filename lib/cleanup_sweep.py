@@ -60,6 +60,7 @@ import gh_env  # noqa: E402
 import host_os  # noqa: E402
 import machine_profile  # noqa: E402
 import ticket_claim  # noqa: E402
+import worktree_lock  # noqa: E402
 from sandbox_orchestration import WORKTREES_ROOT  # noqa: E402
 
 OUTPUT_PATH = Path.home() / ".claude" / "logs" / "mr-pipeline-sweep.md"
@@ -165,15 +166,17 @@ def _list_root(root: Path, cwds: set[str]) -> list[dict]:
         url = _git(clone, "remote", "get-url", "origin").stdout.strip()
         match = GITHUB_REPO_RE.search(url)
         ahead = _git(entry, "rev-list", "--count", "origin/main..HEAD").stdout.strip()
+        branch_str = branch.stdout.strip()
         out.append({
             "path": entry,
-            "branch": branch.stdout.strip(),
+            "branch": branch_str,
             "clone": clone,
             "repo": match.group(1) if match else None,
             "ahead": int(ahead) if ahead.isdigit() else None,
             "dirty": bool(_git(entry, "status", "--porcelain").stdout.strip()),
             "age_hours": (time.time() - entry.stat().st_mtime) / 3600,
             "in_use": _in_use(entry, cwds),
+            "locked": worktree_lock.is_locked(clone, branch_str),
         })
     return out
 
@@ -198,6 +201,9 @@ def _default_is_claimed(repo: str, number: int) -> bool:
 
 def _default_remove_worktree(wt: dict) -> bool:
     """Lossless removal; False when git refuses (something uncommitted or untracked is there)."""
+    # Re-check lock just before the destructive operation (TOCTOU guard)
+    if worktree_lock.is_locked(Path(wt["clone"]), wt["branch"]):
+        return False
     return _git(Path(wt["clone"]), "worktree", "remove", str(wt["path"])).returncode == 0
 
 
@@ -219,6 +225,9 @@ def backup_worktree(wt: dict, today: str | None = None,
     so the caller keeps the folder. The push guard runs first (it is the check that matters here); git hooks
     are then skipped (--no-verify), since the guard already ran and the commit hooks are for shipping, not saving."""
     path = Path(wt["path"])
+    # Re-check lock just before modifying the worktree (TOCTOU guard)
+    if worktree_lock.is_locked(Path(wt["clone"]), wt["branch"]):
+        return None
     today = today or datetime.now(timezone.utc).strftime("%Y%m%d")
     ref = f"backup/{wt['branch']}-{today}"
     if _git(path, "add", "-A").returncode != 0:
@@ -481,6 +490,8 @@ def decide_worktree(wt: dict, pr_state: str | None, claimed: bool) -> tuple[str,
         return "keep", "not a GitHub clone the sweep knows how to check"
     if wt.get("in_use"):
         return "keep", "a process is working inside it"
+    if wt.get("locked"):
+        return "keep", "its worktree lock is held by another process"
     if claimed:
         return "keep", "its ticket is claimed (running)"
     if wt.get("dirty"):

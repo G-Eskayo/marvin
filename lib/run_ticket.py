@@ -23,7 +23,7 @@ import project_profile as pp  # noqa: E402
 from build_type_measure import PairedMeasure, test_command_for  # noqa: E402
 from evidence_capture import capture_dev_evidence, capture_test_results, ticket_touches_ui, TestTimedOut  # noqa: E402
 from mr_raiser import raise_mr  # noqa: E402
-from sandbox_orchestration import execute_ticket, _default_executor, TaskListTooVague, ModelRunFailed  # noqa: E402
+from sandbox_orchestration import execute_ticket, _default_executor, TaskListTooVague, ModelRunFailed, WorktreeBusy  # noqa: E402
 from cleanup_sweep import drop_build_output  # noqa: E402
 from ticket_pipeline import _label_for_device, _release  # noqa: E402
 import failure_breaker  # noqa: E402
@@ -322,6 +322,10 @@ def build(issue_number: int, repo: str = REPO) -> tuple[dict, list[str]]:
                         test_results["notes"] = measurer.pr_note()
 
             outcome = raise_mr(ticket_ref, result, test_results=test_results, dev_evidence=dev_evidence)
+    except WorktreeBusy as exc:
+        # Another process is working on this branch's worktree concurrently. This is not the ticket's fault: release
+        # the claim and redispatch to another machine (or wait for the lock holder to finish).
+        outcome = {"raised": False, "pr_url": None, "reason": str(exc), "worktree_busy": True}
     except pp.EnvMissing as exc:
         # This machine lacks a tool the project's required check needs. That is about the machine, not the
         # ticket: no comment, no strike, no breaker entry; the claim goes back so a capable machine can take it.
@@ -366,6 +370,11 @@ def settle(issue_number: int, outcome: dict, findings: list[str] | tuple = (), r
     findings = list(findings or [])
 
     if not outcome["raised"]:
+        if outcome.get("worktree_busy"):
+            _release_claim(issue_number, **kw, **lab, run_id=run_id)
+            ts.record_stage(issue_number, "done", "failed", outcome["reason"][:300], **kw)
+            _trigger_redispatch()
+            return outcome
         if outcome.get("env_missing"):
             _release_claim(issue_number, **kw, **lab, run_id=run_id)
             ts.record_stage(issue_number, "done", "failed", outcome["reason"][:300], **kw)

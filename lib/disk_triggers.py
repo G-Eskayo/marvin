@@ -246,6 +246,9 @@ def decide_merged(wt: dict, merged_heads: list[str], clone: Path, cwds: set[str]
     path = Path(wt["path"])
     if cs._in_use(path, cwds):
         return "keep", "a process is working inside it"
+    import worktree_lock
+    if worktree_lock.is_locked(clone, wt["branch"]):
+        return "keep", "its worktree lock is held by another process"
     status = cs._git(path, "status", "--porcelain")
     if status.returncode != 0:
         return "keep", "git could not read it"
