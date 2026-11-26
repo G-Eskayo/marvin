@@ -647,19 +647,30 @@ def _release(issue_number: int, label: str, repo: str = REPO, run_id: str | None
     )
 
 
-def _build_wrapper_command(issue_number: int, repo: str = REPO, run_id: str = "") -> str:
+def _build_wrapper_command(issue_number: int, repo: str = REPO, run_id: str = "", evidence_only_branch: str | None = None) -> str:
     """run_ticket.py handles worktree creation (from origin/main, not
     whatever ~/.agents happens to be checked out to) internally via
     execute_ticket -- no git checkout/branch dance needed here, unlike
     the pre-#95 raw-prompt dispatch this replaced. Another project's ticket is named
     `owner/repo#n` and gets its own log file. run_id is threaded through
-    the environment so run_ticket.py can check it on release."""
+    the environment so run_ticket.py can check it on release. If evidence_only_branch
+    is provided, dispatch the evidence_only() retry instead of full build()."""
     if repo == REPO:
+        if evidence_only_branch:
+            return (
+                f"MARVIN_RUN_ID={run_id} {VENV_PYTHON} {RUN_TICKET_SCRIPT} --evidence-only {issue_number} {evidence_only_branch} "
+                f"> ~/dispatch_issue{issue_number}_evidence.log 2>&1"
+            )
         return (
             f"MARVIN_RUN_ID={run_id} {VENV_PYTHON} {RUN_TICKET_SCRIPT} {issue_number} "
             f"> ~/dispatch_issue{issue_number}.log 2>&1"
         )
     slug = repo.split("/")[-1].lower()
+    if evidence_only_branch:
+        return (
+            f"MARVIN_RUN_ID={run_id} {VENV_PYTHON} {RUN_TICKET_SCRIPT} --evidence-only {repo}#{issue_number} {evidence_only_branch} "
+            f"> ~/dispatch_{slug}_issue{issue_number}_evidence.log 2>&1"
+        )
     return (
         f"MARVIN_RUN_ID={run_id} {VENV_PYTHON} {RUN_TICKET_SCRIPT} {repo}#{issue_number} "
         f"> ~/dispatch_{slug}_issue{issue_number}.log 2>&1"
@@ -724,6 +735,23 @@ def _retry_not_before(repo: str, ticket: dict, now: datetime | None = None) -> d
     except Exception:  # noqa: BLE001
         return None
     return nb if nb is not None and nb > now else None
+
+
+def _evidence_pending_branch(repo: str, ticket: dict, now: datetime | None = None) -> str | None:
+    """If this ticket has evidence capture pending retry, return the branch name. None otherwise."""
+    now = now or datetime.now(timezone.utc)
+    updated = ticket_policy._parse(ticket.get("updatedAt"))
+    if updated is not None and (now - updated).total_seconds() > ticket_policy.RETRY_HORIZON_S:
+        return None
+    try:
+        proc = subprocess.run(["gh", "issue", "view", str(ticket["number"]), "--repo", repo, "--json", "comments"],
+                              capture_output=True, text=True, timeout=30)
+        if proc.returncode != 0:
+            return None
+        result = ticket_policy.evidence_pending(json.loads(proc.stdout).get("comments"), now)
+        return result[0] if result else None
+    except Exception:  # noqa: BLE001
+        return None
 
 
 def _flag_busy() -> bool:
@@ -1056,7 +1084,12 @@ def _dispatch_one(repo, ticket, ready_total, step, summary, fail, dry_run, setti
     if not_before is not None:
         step("Scanning tickets", f"{where}#{issue_number} waits until {not_before.strftime('%H:%M UTC')} after a failed run")
         return "backoff"
-    step("Scanning tickets", f"{ready_total} ready; next is {where}#{issue_number} {ticket['title']}")
+
+    evidence_branch = _evidence_pending_branch(repo, ticket)
+    if evidence_branch is not None:
+        step("Scanning tickets", f"{ready_total} ready; next is {where}#{issue_number} (evidence retry on {evidence_branch})")
+    else:
+        step("Scanning tickets", f"{ready_total} ready; next is {where}#{issue_number} {ticket['title']}")
 
     box_ok, box_why = _box_route(repo, ticket, settings)
     if box_ok:
@@ -1125,7 +1158,7 @@ def _dispatch_one(repo, ticket, ready_total, step, summary, fail, dry_run, setti
         fail(f"could not claim {where}#{issue_number}")
         return "failed"
 
-    command = _build_wrapper_command(issue_number, repo, run_id) if other else _build_wrapper_command(issue_number, repo=REPO, run_id=run_id)
+    command = _build_wrapper_command(issue_number, repo, run_id, evidence_only_branch=evidence_branch) if other else _build_wrapper_command(issue_number, repo=REPO, run_id=run_id, evidence_only_branch=evidence_branch)
 
     step("Dispatching", f"to {device_id}")
     label = f"ticket {repo}#{issue_number}: {ticket['title'][:40]}" if other else f"ticket #{issue_number}: {ticket['title'][:40]}"

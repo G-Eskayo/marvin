@@ -190,10 +190,32 @@ def _default_pr_state(repo: str, branch: str) -> str | None:
 
 def _default_is_claimed(repo: str, number: int) -> bool:
     result = gh_env.run(
-        ["gh", "issue", "view", str(number), "--repo", repo, "--json", "labels,state"],
+        ["gh", "issue", "view", str(number), "--repo", repo, "--json", "labels,state,comments"],
     )
     issue = json.loads(result.stdout)
     return issue.get("state") == "OPEN" and any(l["name"].startswith("claimed:") for l in issue.get("labels", []))
+
+
+def _default_evidence_pending(repo: str, number: int, comments: list | None = None) -> bool:
+    """Check if a ticket has an evidence_pending marker in its comments (ANY pending, not just ready to retry).
+    Keep the worktree during the entire pending window so evidence-only retry can proceed.
+    If comments are already fetched (from is_claimed), pass them here to avoid a duplicate gh call."""
+    try:
+        import ticket_policy
+        import re
+        if comments is None:
+            result = gh_env.run(
+                ["gh", "issue", "view", str(number), "--repo", repo, "--json", "comments"],
+            )
+            comments = json.loads(result.stdout).get("comments", [])
+        # Check for ANY evidence-pending marker, not just those ready to retry
+        for c in comments if isinstance(comments, list) else []:
+            body = c.get("body") if isinstance(c, dict) else None
+            if isinstance(body, str) and re.search(r"<!--\s*" + re.escape(ticket_policy.EVIDENCE_PENDING_MARKER), body):
+                return True
+        return False
+    except Exception:
+        return False
 
 
 def _default_remove_worktree(wt: dict) -> bool:
@@ -473,7 +495,7 @@ def sweep_stale_claims(
     return stale
 
 
-def decide_worktree(wt: dict, pr_state: str | None, claimed: bool) -> tuple[str, str]:
+def decide_worktree(wt: dict, pr_state: str | None, claimed: bool, evidence_pending: bool = False) -> tuple[str, str]:
     """("remove" | "backup" | "keep" | "review", reason). "backup" = push its
     leftover work to a backup branch, then remove (#629). "review" = kept for
     now and listed in the log (recent leftover work, or an open PR's)."""
@@ -483,6 +505,8 @@ def decide_worktree(wt: dict, pr_state: str | None, claimed: bool) -> tuple[str,
         return "keep", "a process is working inside it"
     if claimed:
         return "keep", "its ticket is claimed (running)"
+    if evidence_pending:
+        return "keep", "its ticket is pending evidence capture retry"
     if wt.get("dirty"):
         if pr_state == "OPEN" or wt.get("age_hours", 0) < BACKUP_MIN_AGE_HOURS:
             return "review", "has uncommitted work"
@@ -507,12 +531,14 @@ def sweep_worktrees(
     remove_worktree: Callable[[dict], bool] | None = None,
     backup: Callable[[dict], str | None] | None = None,
     can_push: bool = True,
+    evidence_pending: Callable[[str, int], bool] | None = None,
 ) -> dict:
     """can_push=False (a pull-only node, ADR 0069): a worktree that would be backed up is kept instead, since the
     backup is a push."""
     list_worktrees = list_worktrees or _default_list_worktrees
     pr_state = pr_state or _default_pr_state
     is_claimed = is_claimed or _default_is_claimed
+    evidence_pending = evidence_pending or _default_evidence_pending
     remove_worktree = remove_worktree or _default_remove_worktree
     backup = backup or backup_worktree
 
@@ -525,10 +551,13 @@ def sweep_worktrees(
         try:
             state = pr_state(repo, wt["branch"]) if repo else None
             claimed = bool(repo and number is not None and is_claimed(repo, number))
+            # For efficiency, fetch issue once if we need to check both claimed and evidence_pending
+            # But respect the callback interface so tests can mock it
+            pending = bool(repo and number is not None and evidence_pending(repo, number))
         except Exception as exc:  # a GitHub failure must never read as "no PR"
             review.append({**wt, "reason": f"could not check GitHub: {str(exc)[:120]}"})
             continue
-        action, reason = decide_worktree(wt, state, claimed)
+        action, reason = decide_worktree(wt, state, claimed, pending)
         if action == "backup" and not can_push:
             review.append({**wt, "reason": f"{reason}; not backed up: this is a pull-only node (ADR 0069), kept"})
         elif action == "backup":

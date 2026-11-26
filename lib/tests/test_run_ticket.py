@@ -1001,11 +1001,11 @@ def test_repeated_usage_limit_releases_wait_longer_each_time(monkeypatch):
 def test_model_releases_neither_count_nor_reset_the_failure_streak(monkeypatch):
     f, m, t = rt.FAILURE_MARKER, rt.MODEL_MARKER, rt.TIMEOUT_MARKER
     monkeypatch.setattr(rt.subprocess, "run", _Thread([f, m, f, m, t]))
-    assert rt._trailing_streaks(9) == (2, 1)
+    assert rt._trailing_streaks(9) == (2, 1)  # 2 failures, 1 timeout
     monkeypatch.setattr(rt.subprocess, "run", _Thread([f, "a person: try the other API", m, f]))
-    assert rt._trailing_streaks(9) == (1, 0)
+    assert rt._trailing_streaks(9) == (1, 0)  # 1 failure, 0 timeouts (person comment stops the streak)
     monkeypatch.setattr(rt.subprocess, "run", _Thread([]))
-    assert rt._trailing_streaks(9) == (0, 0)
+    assert rt._trailing_streaks(9) == (0, 0)  # no comments
 
 
 def test_garbage_comment_history_counts_as_nothing(monkeypatch):
@@ -1248,7 +1248,7 @@ def _quiet_run(monkeypatch, execute, streak=0):
     monkeypatch.setattr(rt, "_park_stuck_ticket", lambda *a, **k: None)
     monkeypatch.setattr(rt, "_trigger_redispatch", lambda: None)
     monkeypatch.setattr(rt, "_consecutive_failure_streak", lambda *a, **k: streak)
-    monkeypatch.setattr(rt, "_trailing_streaks", lambda *a, **k: [streak])
+    monkeypatch.setattr(rt, "_trailing_streaks", lambda *a, **k: (streak, 0))
     monkeypatch.setattr(rt, "_trailing_model_failures", lambda *a, **k: 0)
     monkeypatch.setattr(rt.subprocess, "run", lambda *a, **k: None)
     monkeypatch.setattr(rt, "drop_build_output", lambda *a, **k: [])
@@ -1313,3 +1313,32 @@ def test_a_profile_projects_verify_is_untouched_by_the_paired_measure(monkeypatc
     assert not hasattr(pp.Measurer, "paired_baseline")
     monkeypatch.delenv("MARVIN_BASE", raising=False)
     assert "MARVIN_BASE" not in pp.build_env({"verify": []})
+
+
+def test_evidence_timeout_counts_as_timeout_in_trailing_streaks(monkeypatch, tmp_path):
+    """Evidence timeouts and verify timeouts are both counted as timeouts in _trailing_streaks (combined counter)."""
+    monkeypatch.setattr(ts, "STAGES_DIR", tmp_path / "ticket-stages")
+
+    def fake_comments():
+        return [
+            {"body": f"{rt.FAILURE_MARKER}: build failed"},
+            {"body": f"{rt.TIMEOUT_MARKER}: verify timed out"},
+            {"body": f"{rt.EVIDENCE_TIMEOUT_MARKER}: evidence capture timed out"},
+        ]
+
+    monkeypatch.setattr(rt, "_issue_comments", lambda *a, **k: fake_comments())
+    failures, timeouts = rt._trailing_streaks(123)
+    assert failures == 1
+    assert timeouts == 2  # both verify timeout and evidence timeout counted together
+
+
+def test_trailing_streaks_returns_two_values(monkeypatch, tmp_path):
+    """_trailing_streaks returns a 2-tuple (failures, timeouts)."""
+    monkeypatch.setattr(ts, "STAGES_DIR", tmp_path / "ticket-stages")
+    monkeypatch.setattr(rt, "_issue_comments", lambda *a, **k: [])
+
+    result = rt._trailing_streaks(123)
+
+    assert isinstance(result, tuple)
+    assert len(result) == 2
+    assert result == (0, 0)

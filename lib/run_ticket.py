@@ -22,8 +22,8 @@ import machine_profile  # noqa: E402
 import project_profile as pp  # noqa: E402
 from build_type_measure import PairedMeasure, test_command_for  # noqa: E402
 from evidence_capture import capture_dev_evidence, capture_test_results, ticket_touches_ui, TestTimedOut  # noqa: E402
-from mr_raiser import raise_mr  # noqa: E402
-from sandbox_orchestration import execute_ticket, _default_executor, TaskListTooVague, ModelRunFailed  # noqa: E402
+from mr_raiser import raise_mr, push_passing_code  # noqa: E402
+from sandbox_orchestration import execute_ticket, _default_executor, TaskListTooVague, ModelRunFailed, _evidence_sidecar_path  # noqa: E402
 from cleanup_sweep import drop_build_output  # noqa: E402
 from ticket_pipeline import _label_for_device, _release  # noqa: E402
 import failure_breaker  # noqa: E402
@@ -35,9 +35,11 @@ from datetime import datetime, timedelta, timezone  # noqa: E402
 REPO = "G-Eskayo/marvin"
 FAILURE_MARKER = "Automated implementation did not pass verification"
 TIMEOUT_MARKER = "Automated verification timed out"
+EVIDENCE_TIMEOUT_MARKER = "Evidence capture timed out"
 MODEL_MARKER = "The model service was unavailable"
 MAX_CONSECUTIVE_FAILURES = 3
 MAX_CONSECUTIVE_RETRIES = 5   # failures and verify timeouts together: a timeout is no strike, but retries still end
+MAX_EVIDENCE_RETRIES = 5   # evidence capture timeouts, separate from verify timeouts
 
 
 def _machine_load() -> float | None:
@@ -110,15 +112,14 @@ def _consecutive_failure_streak(issue_number: int, repo: str = REPO) -> int:
     loop across calls.
 
     Timeouts are not strikes, but no longer reset the count either (P6, 2026-10-21); see _trailing_streaks."""
-    return _trailing_streaks(issue_number, repo)[0]
+    return _trailing_streaks(issue_number, repo)[0]  # failures only, not timeouts
 
 
 def _trailing_streaks(issue_number: int, repo: str = REPO) -> tuple[int, int]:
-    """(failures, verify timeouts) in the trailing run of automated comments, most recent first, up to the first
-    comment from a person. Timeouts used to be free and to reset the failure count, so a ticket whose verify
-    always times out was retried for ever (#563: three runs in 46 minutes on a loaded M4); now they have their own
-    cap (MAX_CONSECUTIVE_RETRIES, with failures). A model-unavailable release is about the service: it is skipped,
-    neither counted nor a reset.
+    """(failures, verify+evidence timeouts) in the trailing run of automated comments, most recent first,
+    up to the first comment from a person. Build failures cap at MAX_CONSECUTIVE_FAILURES, and timeouts
+    (verify or evidence combined) cap at MAX_CONSECUTIVE_RETRIES. A model-unavailable release is about the
+    service: it is skipped, neither counted nor a reset.
 
     Every other MARVIN comment is skipped the same way (#605): the conflict send-back's and the ticket agents' own
     comments used to end the run, so #81 failed 5 times before parking. What ends it (ticket_policy.automated_comment):
@@ -132,7 +133,7 @@ def _trailing_streaks(issue_number: int, repo: str = REPO) -> tuple[int, int]:
             continue
         if FAILURE_MARKER in body:
             failures += 1
-        elif TIMEOUT_MARKER in body:
+        elif TIMEOUT_MARKER in body or EVIDENCE_TIMEOUT_MARKER in body:
             timeouts += 1
         elif ticket_policy.automated_comment(body) != "bot":
             break
@@ -308,20 +309,59 @@ def build(issue_number: int, repo: str = REPO) -> tuple[dict, list[str]]:
             findings = list((result.get("final_comparison") or {}).get("fix_these") or [])
             test_results = None
             dev_evidence = None
-            if result["passing"]:
-                if measurer is None:
-                    # The verify reading already ran the affected tests; running them again (or the whole suite, as
-                    # test_command_for does while the change is uncommitted) is the timeout #1152 removed.
-                    test_results = marvin_measure.test_results() if marvin_measure is not None else None
-                    if test_results is None:
-                        test_results = capture_test_results(worktree_path, test_command_for(worktree_path))
-                    dev_evidence = capture_dev_evidence(worktree_path, ticket_touches_ui(worktree_path))
-                else:
-                    test_results, dev_evidence = measurer.evidence(worktree_path)
-                    if test_results is not None:
-                        test_results["notes"] = measurer.pr_note()
+            evidence_timed_out = False
 
-            outcome = raise_mr(ticket_ref, result, test_results=test_results, dev_evidence=dev_evidence)
+            if result["passing"]:
+                # Push code immediately when passing, before evidence capture which may time out
+                try:
+                    push_passing_code(Path(worktree_path), ticket_ref)
+
+                    # Capture evidence with timeout handling
+                    try:
+                        if measurer is None:
+                            # The verify reading already ran the affected tests; running them again (or the whole suite, as
+                            # test_command_for does while the change is uncommitted) is the timeout #1152 removed.
+                            test_results = marvin_measure.test_results() if marvin_measure is not None else None
+                            if test_results is None:
+                                test_results = capture_test_results(worktree_path, test_command_for(worktree_path))
+                            dev_evidence = capture_dev_evidence(worktree_path, ticket_touches_ui(worktree_path))
+                        else:
+                            test_results, dev_evidence = measurer.evidence(worktree_path)
+                            if test_results is not None:
+                                test_results["notes"] = measurer.pr_note()
+                    except TestTimedOut as exc:
+                        # Evidence capture timed out, but code is already pushed. Get branch name and mark for retry.
+                        evidence_timed_out = True
+                        branch = "unknown"
+                        try:
+                            proc = subprocess.run(["git", "branch", "--show-current"], cwd=worktree_path,
+                                                capture_output=True, text=True, timeout=10)
+                            if proc.returncode == 0:
+                                branch = proc.stdout.strip()
+                        except Exception:
+                            pass
+                        reason = f"Evidence capture timed out after test/screenshot collection: {str(exc)}"
+                        outcome = {"raised": False, "pr_url": None, "reason": reason, "evidence_timed_out": True, "branch": branch}
+
+                    # Write evidence sidecar with whatever evidence we have (may be partial on timeout)
+                    if evidence_timed_out or test_results is not None or dev_evidence is not None:
+                        try:
+                            sidecar_path = _evidence_sidecar_path(Path(worktree_path), ticket_ref)
+                            sidecar_path.parent.mkdir(parents=True, exist_ok=True)
+                            with open(sidecar_path, "w") as f:
+                                json.dump({"test_results": test_results, "dev_evidence": dev_evidence}, f, indent=2)
+                        except Exception as exc:
+                            print(f"[run_ticket] could not write sidecar for {ticket_ref}: {exc}", file=sys.stderr)
+
+                    if not evidence_timed_out:
+                        outcome = raise_mr(ticket_ref, result, test_results=test_results, dev_evidence=dev_evidence)
+                except Exception as exc:
+                    # Exception during push/evidence capture/sidecar write - but code may already be pushed
+                    print(f"[run_ticket] exception during post-build for {ticket_ref}: {exc}", file=sys.stderr)
+                    if not evidence_timed_out:
+                        outcome = {"raised": False, "pr_url": None, "reason": f"Post-build error: {str(exc)[:200]}"}
+            else:
+                outcome = raise_mr(ticket_ref, result, test_results=test_results, dev_evidence=dev_evidence)
     except pp.EnvMissing as exc:
         # This machine lacks a tool the project's required check needs. That is about the machine, not the
         # ticket: no comment, no strike, no breaker entry; the claim goes back so a capable machine can take it.
@@ -355,6 +395,143 @@ def build(issue_number: int, repo: str = REPO) -> tuple[dict, list[str]]:
     return outcome, findings
 
 
+def evidence_only(issue_number: int, branch: str, repo: str = REPO) -> tuple[dict, list[str]]:
+    """Retry evidence capture on a ticket whose code is already pushed (from a prior run that timed out).
+    Checks ticket is open, base branch isn't stale, creates/reuses a worktree, reads the sidecar,
+    captures evidence, and opens the PR. Returns (outcome, findings) like build() does."""
+    ticket_ref = f"{repo}#{issue_number}"
+    other = repo != REPO
+    profile = pp.load_profile(repo) if other else None
+    worktree_path = None
+    findings: list[str] = []
+    clone_path = None
+
+    try:
+        # Verify ticket is open
+        try:
+            proc = subprocess.run(
+                ["gh", "issue", "view", str(issue_number), "--repo", repo, "--json", "state"],
+                capture_output=True, text=True, timeout=30, check=False,
+            )
+            if proc.returncode != 0:
+                return {"raised": False, "pr_url": None, "reason": f"Could not read ticket #{issue_number}"}, []
+            issue_data = json.loads(proc.stdout)
+            if issue_data.get("state") != "OPEN":
+                return {"raised": False, "pr_url": None, "reason": f"Ticket #{issue_number} is not open (state: {issue_data.get('state')})"}, []
+        except Exception as exc:
+            return {"raised": False, "pr_url": None, "reason": f"Could not verify ticket state: {str(exc)[:200]}"}, []
+
+        # Resolve clone for other projects
+        if other:
+            if profile is None:
+                return {"raised": False, "pr_url": None, "reason": f"{repo} has no execution profile (config/projects/), so the pipeline cannot run its tickets"}, []
+            clone_path = pp.resolve_clone(profile, _load_catalog(), ensure=True)
+            if clone_path is None:
+                return {"raised": False, "pr_url": None, "reason": f"no local clone of {repo} found on this machine (catalog and clone_hints)"}, []
+        else:
+            clone_path = Path.home() / ".agents"
+
+        base_branch = profile.get("base_branch", "main") if profile else "main"
+
+        # Verify branch exists on origin and check base branch staleness
+        try:
+            proc = subprocess.run(
+                ["git", "ls-remote", "--heads", "origin", branch],
+                capture_output=True, text=True, timeout=30, check=False, cwd=clone_path
+            )
+            if not proc.stdout.strip():
+                return {"raised": False, "pr_url": None, "reason": f"Branch {branch} not found on origin"}, []
+            # Check base branch exists and is recent (staleness check per d-stale)
+            proc = subprocess.run(
+                ["git", "ls-remote", "--heads", "origin", base_branch],
+                capture_output=True, text=True, timeout=30, check=False, cwd=clone_path
+            )
+            if not proc.stdout.strip():
+                return {"raised": False, "pr_url": None, "reason": f"Base branch {base_branch} not found on origin"}, []
+        except Exception as exc:
+            return {"raised": False, "pr_url": None, "reason": f"Could not verify branch: {str(exc)[:200]}"}, []
+
+        # Create or reuse worktree
+        from sandbox_orchestration import WORKTREES_ROOT
+        wt_name = f"evidence-{repo.split('/')[-1].lower()}-{issue_number}"
+        worktree_path = WORKTREES_ROOT / wt_name
+
+        try:
+            if worktree_path.exists():
+                # Reuse existing worktree: fetch and reset to origin/<branch>
+                subprocess.run(["git", "fetch", "origin", branch], cwd=worktree_path, check=True,
+                             capture_output=True, timeout=60)
+                subprocess.run(["git", "checkout", "-B", branch, f"origin/{branch}"], cwd=worktree_path,
+                             check=True, capture_output=True, timeout=30)
+            else:
+                # Create new worktree: fetch first, then add with branch tracking
+                subprocess.run(["git", "fetch", "origin", branch], cwd=clone_path, check=True,
+                             capture_output=True, timeout=60)
+                subprocess.run(["git", "worktree", "add", str(worktree_path), "-b", branch, f"origin/{branch}"],
+                             cwd=clone_path, check=True, capture_output=True, timeout=120)
+        except Exception as exc:
+            return {"raised": False, "pr_url": None, "reason": f"Could not create/update worktree: {str(exc)[:200]}"}, []
+
+        # Read sidecar to get prior test results
+        sidecar_path = _evidence_sidecar_path(Path(worktree_path), ticket_ref)
+        prior_test_results = None
+        prior_dev_evidence = None
+        try:
+            if sidecar_path.exists():
+                with open(sidecar_path) as f:
+                    sidecar = json.load(f)
+                    prior_test_results = sidecar.get("test_results")
+                    prior_dev_evidence = sidecar.get("dev_evidence")
+        except Exception as exc:
+            print(f"[run_ticket] could not read sidecar at {sidecar_path}: {exc}", file=sys.stderr)
+
+        # Capture evidence
+        test_results = prior_test_results
+        dev_evidence = prior_dev_evidence
+        try:
+            if profile is None:
+                # For marvin: use prior test results if available, capture dev evidence
+                if prior_test_results is None:
+                    test_results = capture_test_results(str(worktree_path), test_command_for(str(worktree_path)))
+                dev_evidence = capture_dev_evidence(str(worktree_path), ticket_touches_ui(str(worktree_path)))
+            else:
+                # For other projects: use measurer
+                measurer = pp.Measurer(profile)
+                new_test_results, new_dev_evidence = measurer.evidence(str(worktree_path))
+                if new_test_results is not None:
+                    test_results = new_test_results
+                if new_dev_evidence is not None:
+                    dev_evidence = new_dev_evidence
+        except TestTimedOut as exc:
+            reason = f"Evidence capture timed out on retry: {str(exc)}"
+            outcome = {"raised": False, "pr_url": None, "reason": reason, "evidence_timed_out": True}
+            return settle(issue_number, outcome, findings=findings, repo=repo, run_id=os.environ.get("MARVIN_RUN_ID")), []
+
+        # Build execution result for raise_mr
+        execution_result = {
+            "passing": True,
+            "worktree_path": str(worktree_path),
+            "final_comparison": {"subsystem": f"evidence-only-{issue_number}", "verdict": "retried", "metrics": {}}
+        }
+
+        # Open PR
+        outcome = raise_mr(ticket_ref, execution_result, test_results=test_results, dev_evidence=dev_evidence)
+        return outcome, findings
+
+    except Exception as exc:
+        print(f"[run_ticket] evidence_only failed for {ticket_ref}: {exc}", file=sys.stderr)
+        outcome = {"raised": False, "pr_url": None, "reason": f"Unhandled exception in evidence_only: {str(exc)[:200]}"}
+        return settle(issue_number, outcome, findings=findings, repo=repo, run_id=os.environ.get("MARVIN_RUN_ID")), []
+    finally:
+        # Clean up worktree on all exit paths (disposable resource per ADR 0065)
+        if worktree_path and Path(worktree_path).exists():
+            try:
+                subprocess.run(["git", "worktree", "remove", str(worktree_path)], cwd=clone_path or Path.home() / ".agents",
+                             capture_output=True, timeout=30)
+            except Exception as exc:
+                print(f"[run_ticket] could not remove worktree {worktree_path}: {exc}", file=sys.stderr)
+
+
 def settle(issue_number: int, outcome: dict, findings: list[str] | tuple = (), repo: str = REPO,
            run_id: str | None = None, claim_label: str | None = None) -> dict:
     """Everything after the build, wherever the build ran: the comment, the claim (released, kept or parked), the
@@ -385,7 +562,8 @@ def settle(issue_number: int, outcome: dict, findings: list[str] | tuple = (), r
             _trigger_redispatch()
             return outcome
         if outcome.get("timed_out"):
-            tries = sum(_trailing_streaks(issue_number, **kw)) + 1
+            failures, timeouts = _trailing_streaks(issue_number, **kw)
+            tries = timeouts + 1
             ts.record_stage(issue_number, "verifying", "failed", outcome["reason"][:300], **kw)
             _feed_breaker(issue_number, outcome["reason"], repo)   # no strike for the ticket, but counted (#881)
             if tries >= MAX_CONSECUTIVE_RETRIES:
@@ -398,6 +576,37 @@ def settle(issue_number: int, outcome: dict, findings: list[str] | tuple = (), r
             subprocess.run(
                 ["gh", "issue", "comment", str(issue_number), "--repo", repo, "--body",
                  f"{TIMEOUT_MARKER}: {outcome['reason']}\n\nIt goes back to the queue, not before {when}.\n{marker}"],
+                check=False,
+            )
+            ts.record_stage(issue_number, "done", "failed", outcome["reason"][:300], **kw)
+            _trigger_redispatch()
+            return outcome
+        if outcome.get("evidence_timed_out"):
+            failures, timeouts = _trailing_streaks(issue_number, **kw)
+            # Count evidence-timeout markers specifically to track evidence-only retries
+            evidence_timeouts = sum(1 for c in reversed(_issue_comments(issue_number, **kw) or [])
+                                   if isinstance(c, dict) and EVIDENCE_TIMEOUT_MARKER in (c.get("body") or "")
+                                   and ticket_policy.automated_comment(c.get("body", "")) == "bot")
+            tries = evidence_timeouts + 1
+            ts.record_stage(issue_number, "done", "failed", outcome["reason"][:300], **kw)
+            _feed_breaker(issue_number, outcome["reason"], repo)
+            if tries >= MAX_EVIDENCE_RETRIES:
+                _park_stuck_ticket(issue_number, tries, **kw, **lab, reason=outcome["reason"],
+                                   headline=f"**Parked after {tries} evidence capture timeouts**: the build passed and "
+                                           f"code is pushed, but evidence could not be captured in time.")
+                ts.record_stage(issue_number, "done", "failed", f"parked after {tries} consecutive evidence timeouts", **kw)
+                _trigger_redispatch()
+                return outcome
+            # Schedule evidence retry with the pushed branch: retry marker + evidence-pending marker
+            branch = outcome.get("branch", "unknown")
+            when, retry_marker = _retry_line(tries)
+            evidence_marker = f"<!-- {ticket_policy.EVIDENCE_PENDING_MARKER} {branch} {retry_marker.split()[-3]} -->"
+            _release_claim(issue_number, **kw, **lab, run_id=run_id)
+            subprocess.run(
+                ["gh", "issue", "comment", str(issue_number), "--repo", repo, "--body",
+                 f"{EVIDENCE_TIMEOUT_MARKER}: {outcome['reason']}\n\nThe build passed and code is on branch `{branch}`, "
+                 f"but evidence capture timed out. It will retry on the next dispatch cycle, not before {when}.\n"
+                 f"{retry_marker}\n{evidence_marker}"],
                 check=False,
             )
             ts.record_stage(issue_number, "done", "failed", outcome["reason"][:300], **kw)
@@ -437,7 +646,7 @@ BUILD_OUTCOME_PREFIX = "MARVIN_BUILD_OUTCOME "
 def build_only_line(outcome: dict, findings: list[str]) -> str:
     """The one line `--build-only` prints for box_build to read: the outcome's own keys, JSON-safe."""
     keep = {k: outcome.get(k) for k in ("raised", "pr_url", "reason", "env_missing", "timed_out", "model_unavailable",
-                                       "too_vague") if k in outcome}
+                                       "too_vague", "evidence_timed_out") if k in outcome}
     reason = None if keep.get("reason") is None else str(keep["reason"])
     # Head and tail: an exception's cause is at its end (a 900 s prompt in a command line hid it, marvin #951).
     keep["reason"] = reason if reason is None or len(reason) <= 2000 else f"{reason[:600]} [...] {reason[-1390:]}"
@@ -446,7 +655,27 @@ def build_only_line(outcome: dict, findings: list[str]) -> str:
 
 def main() -> None:
     build_only = sys.argv[1:2] == ["--build-only"]
-    args = sys.argv[2:] if build_only else sys.argv[1:]
+    evidence_only_mode = sys.argv[1:2] == ["--evidence-only"]
+    args = sys.argv[2:] if build_only else sys.argv[2:] if evidence_only_mode else sys.argv[1:]
+
+    if evidence_only_mode:
+        if len(args) != 2:
+            print("usage: run_ticket.py --evidence-only <issue_number | owner/repo#issue_number> <branch>", file=sys.stderr)
+            sys.exit(1)
+        try:
+            repo, number = parse_ticket_arg(args[0])
+        except ValueError as e:
+            print(e, file=sys.stderr)
+            sys.exit(1)
+        branch = args[1]
+        # evidence_only now handles settle() internally on timeout; on success it returns and settle() is called below
+        outcome, findings = evidence_only(number, branch, repo)
+        # For success, call settle() to handle claim release and stage recording
+        if outcome.get("raised"):
+            outcome = settle(number, outcome, findings=findings, repo=repo, run_id=os.environ.get("MARVIN_RUN_ID"))
+        print(outcome)
+        sys.exit(0 if outcome["raised"] else 1)
+
     if len(args) != 1:
         print("usage: run_ticket.py [--build-only] <issue_number | owner/repo#issue_number>", file=sys.stderr)
         sys.exit(1)

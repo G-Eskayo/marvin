@@ -367,3 +367,17 @@ def _no_real_alerts(tmp_path_factory, monkeypatch):
     monkeypatch.setattr(mr_notification, "desktop_notify", lambda *a, **k: None)
     monkeypatch.setattr(mr_notification, "dashboard_refresh_ping", lambda: None)
     monkeypatch.setattr(mr_notification, "phone_notify", None)
+
+
+@pytest.fixture(autouse=True)
+def _no_real_git_push_or_evidence_sidecar(tmp_path_factory, monkeypatch):
+    # run_ticket.build() calls push_passing_code() and writes evidence sidecars; these should never happen in tests.
+    # Mock them to be no-ops so tests can verify the rest of the flow.
+    import run_ticket
+    import cleanup_sweep
+    mock_sidecar_dir = tmp_path_factory.mktemp("evidence-sidecars")
+    monkeypatch.setattr(run_ticket, "push_passing_code", lambda *a, **k: "mock-branch")
+    monkeypatch.setattr(run_ticket, "_evidence_sidecar_path",
+                        lambda wt, ref: mock_sidecar_dir / f"{ref.split('#')[1]}-evidence.json")
+    # cleanup_sweep also needs to know evidence_pending tickets; in tests, nothing is pending
+    monkeypatch.setattr(cleanup_sweep, "_default_evidence_pending", lambda *a, **k: False)

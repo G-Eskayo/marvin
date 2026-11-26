@@ -477,3 +477,40 @@ def test_automated_comment_kinds():
     assert pol.automated_comment(f"anything\n{pol.HANDOFF_MARKER}") == "handoff"
     for person in ("try again", "", None, 7, f"I disagree with: {pol.SENT_BACK_MARKER}", "PR #3 looks fine to me"):
         assert pol.automated_comment(person) is None, person
+
+
+def test_evidence_pending_detects_marker_and_returns_branch_and_time():
+    import ticket_policy as pol
+    now = datetime(2026, 10, 21, 20, 0, tzinfo=timezone.utc)
+    past = now - _td(minutes=5)
+    future = now + _td(minutes=30)
+
+    comments = [
+        {"body": f"<!-- {pol.EVIDENCE_PENDING_MARKER} pipeline/ticket-123 {past.isoformat()} -->"},
+    ]
+    result = pol.evidence_pending(comments, now)
+    assert result == ("pipeline/ticket-123", past.isoformat())
+
+    # Future time: not ready yet
+    comments = [
+        {"body": f"<!-- {pol.EVIDENCE_PENDING_MARKER} pipeline/ticket-456 {future.isoformat()} -->"},
+    ]
+    result = pol.evidence_pending(comments, now)
+    assert result is None
+
+    # No marker: returns None
+    result = pol.evidence_pending([{"body": "just a comment"}], now)
+    assert result is None
+
+
+def test_evidence_pending_ignores_garbage():
+    import ticket_policy as pol
+    now = datetime(2026, 10, 21, 20, 0, tzinfo=timezone.utc)
+
+    comments = [
+        None, "text", 5, {"body": None}, {"body": 7}, {},
+        {"body": f"<!-- {pol.EVIDENCE_PENDING_MARKER} --> (incomplete)"},
+        {"body": f"<!-- {pol.EVIDENCE_PENDING_MARKER} branch not-a-date -->"},
+    ]
+    assert pol.evidence_pending(comments, now) is None
+    assert pol.evidence_pending(None, now) is None

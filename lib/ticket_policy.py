@@ -58,6 +58,8 @@ def automated_comment(body) -> str | None:
         return "bot"
     if lead.startswith("PR #") and (SENT_BACK_MARKER in text or REPAIRED_MARKER in text):
         return "bot"
+    if f"<!--" in text and (RETRY_MARKER in text or EVIDENCE_PENDING_MARKER in text):
+        return "bot"
     return None
 
 
@@ -112,11 +114,13 @@ def stale_claim(issue: dict, now: datetime, hours: int = STALE_CLAIM_HOURS) -> d
 # machine's load (1-minute load average per core, counted from 1x, capped at LOAD_FACTOR_CAP).
 
 RETRY_MARKER = "marvin:retry-after"
+EVIDENCE_PENDING_MARKER = "marvin:evidence-pending"
 RETRY_BASE_S = 15 * 60
 RETRY_CAP_S = 4 * 3600
 LOAD_FACTOR_CAP = 4.0
 RETRY_HORIZON_S = int(RETRY_CAP_S * LOAD_FACTOR_CAP)   # no marker can point further ahead than this
 _RETRY_RE = re.compile(r"<!--\s*" + re.escape(RETRY_MARKER) + r"\s+(\S+)\s*-->")
+_EVIDENCE_PENDING_RE = re.compile(r"<!--\s*" + re.escape(EVIDENCE_PENDING_MARKER) + r"\s+(\S+)\s+(\S+)\s*-->")
 
 
 def retry_backoff_s(attempt, load_ratio=None) -> int:
@@ -154,6 +158,32 @@ def retry_not_before(comments, now: datetime | None = None) -> datetime | None:
             if t is not None and t.timestamp() <= horizon and (latest is None or t > latest):
                 latest = t
     return latest
+
+
+def evidence_pending(comments, now: datetime | None = None) -> tuple[str, str] | None:
+    """Check if a ticket is pending evidence capture retry: returns (branch, retry_datetime_iso) or None.
+    Stops at the first (latest) evidence-pending marker that is ready for retry, or at any person's
+    comment, passing run, or hand-off to a person. Format: <!-- marvin:evidence-pending <branch> <ISO-8601-datetime> -->
+    """
+    current = (now or datetime.now(timezone.utc))
+    for c in reversed(comments if isinstance(comments, list) else []):
+        body = c.get("body") if isinstance(c, dict) else None
+        if not isinstance(body, str):
+            continue
+        # Check if this comment stops the search (person's comment, passing run, or hand-off)
+        if automated_comment(body) != "bot":
+            break
+        # Check for evidence-pending marker
+        m = _EVIDENCE_PENDING_RE.search(body)
+        if m:
+            branch = m.group(1)
+            t = _parse(m.group(2))
+            if t is not None and t <= current:
+                return (branch, m.group(2))
+            # Marker found but retry time not ready yet; keep looking backwards for earlier markers
+            # or stop at next person comment
+            continue
+    return None
 
 
 # ── priority ────────────────────────────────────────────────────────────────

@@ -107,6 +107,11 @@ def _commit_and_push(worktree_path: Path, ticket_ref: str) -> str:
     return branch
 
 
+def push_passing_code(worktree_path: Path, ticket_ref: str) -> str:
+    """Public wrapper around _commit_and_push for use from run_ticket when evidence capture may time out."""
+    return _commit_and_push(worktree_path, ticket_ref)
+
+
 def _format_comparison(comparison: dict) -> str:
     lines = [f"**Subsystem**: {comparison['subsystem']}", f"**Verdict**: {comparison['verdict']}", ""]
     lines.append("| Metric | Baseline | Current | Delta | Direction |")

@@ -409,6 +409,12 @@ def _task_list_path(worktree_path: Path, ticket_ref: str) -> Path:
     return worktree_path / "docs" / "design" / f"{slug}-tasks.md"
 
 
+def _evidence_sidecar_path(worktree_path: Path, ticket_ref: str) -> Path:
+    """Return the path to the evidence sidecar JSON file for this ticket in the worktree."""
+    slug = _doc_slug(ticket_ref)
+    return worktree_path / "docs" / "design" / f"{slug}-evidence.json"
+
+
 def _preflight_worktree(worktree_path: Path, ticket_ref: str) -> None:
     """Prove, without any model, that the agent is about to start in this ticket's own worktree. The prompt
     tells the agent where its shell is (Gil, 2026-10-08: "does that mean that they are?"), so the claim must
