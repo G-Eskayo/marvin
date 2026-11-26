@@ -18,6 +18,7 @@ has no reason to know about.
 independently testable without a real subprocess run.
 """
 from __future__ import annotations
+import json
 import os
 import re
 import resource
@@ -473,3 +474,40 @@ def capture_dev_evidence(
         "screenshot_path": screenshot_path,
         "description": "Live screenshot captured from the running app.",
     }
+
+
+def pending_evidence_path(worktree_path: Path) -> Path:
+    """Path to the pending-evidence marker file for this worktree."""
+    return worktree_path / "docs" / "evidence" / ".pending.json"
+
+
+def read_pending_evidence(worktree_path: Path) -> dict | None:
+    """Read pending evidence marker or None if missing/corrupt/unreadable. Tolerates corruption gracefully."""
+    path = pending_evidence_path(worktree_path)
+    if not path.is_file():
+        return None
+    try:
+        return json.loads(path.read_text())
+    except (OSError, ValueError, UnicodeDecodeError):
+        return None
+
+
+def write_pending_evidence(worktree_path: Path, evidence: dict) -> bool:
+    """Write pending evidence marker. Returns True on success, False if the write fails (the worktree stays)."""
+    path = pending_evidence_path(worktree_path)
+    try:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(json.dumps(evidence, default=str))
+        return True
+    except (OSError, ValueError):
+        return False
+
+
+def clear_pending_evidence(worktree_path: Path) -> bool:
+    """Remove the pending evidence marker. Returns True when removed or never existed, False on write error."""
+    path = pending_evidence_path(worktree_path)
+    try:
+        path.unlink(missing_ok=True)
+        return True
+    except OSError:
+        return False

@@ -2,9 +2,11 @@
     ~/.agents/venv/bin/python -m pytest lib/tests/test_evidence_capture.py -v
 """
 from __future__ import annotations
+import json
 import subprocess
 import sys
 from pathlib import Path
+from unittest import mock
 
 import pytest
 
@@ -320,3 +322,77 @@ def test_an_uncommitted_change_outside_the_ui_paths_is_not_ui(tmp_path):
     (tmp_path / "lib" / "x.py").write_text("b\n")
     (tmp_path / "lib" / "y.py").write_text("n\n")
     assert _touches(tmp_path) is False
+
+
+# ── pending evidence marker API (ADR 0086, evidence-only retries) ───────────────────────────────────────────────
+
+def test_pending_evidence_path_is_in_docs_evidence(tmp_path):
+    path = ec.pending_evidence_path(tmp_path)
+    assert path == tmp_path / "docs" / "evidence" / ".pending.json"
+
+
+def test_read_pending_evidence_returns_none_when_missing(tmp_path):
+    assert ec.read_pending_evidence(tmp_path) is None
+
+
+def test_read_pending_evidence_returns_none_when_corrupt(tmp_path):
+    path = ec.pending_evidence_path(tmp_path)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text("not valid json {")
+    assert ec.read_pending_evidence(tmp_path) is None
+
+
+def test_read_pending_evidence_returns_none_on_unreadable_path(tmp_path):
+    path = ec.pending_evidence_path(tmp_path)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text("{}")
+    with mock.patch.object(Path, "read_text", side_effect=OSError("permission denied")):
+        assert ec.read_pending_evidence(tmp_path) is None
+
+
+def test_write_pending_evidence_creates_path_and_returns_true(tmp_path):
+    result = ec.write_pending_evidence(tmp_path, {"test_results": {"passed": 5, "failed": 0}})
+    assert result is True
+    path = ec.pending_evidence_path(tmp_path)
+    assert path.exists()
+    data = json.loads(path.read_text())
+    assert data == {"test_results": {"passed": 5, "failed": 0}}
+
+
+def test_write_pending_evidence_handles_non_serializable_values(tmp_path):
+    from datetime import datetime, timezone
+    now = datetime.now(timezone.utc)
+    result = ec.write_pending_evidence(tmp_path, {"timestamp": now})
+    assert result is True
+    data = json.loads(ec.pending_evidence_path(tmp_path).read_text())
+    assert "timestamp" in data
+
+
+def test_write_pending_evidence_returns_false_on_write_error(tmp_path):
+    def fail_mkdir(*a, **k):
+        raise OSError("disk full")
+    with mock.patch.object(Path, "mkdir", fail_mkdir):
+        result = ec.write_pending_evidence(tmp_path, {})
+        assert result is False
+
+
+def test_clear_pending_evidence_removes_the_marker(tmp_path):
+    ec.write_pending_evidence(tmp_path, {"data": "here"})
+    assert ec.pending_evidence_path(tmp_path).exists()
+    result = ec.clear_pending_evidence(tmp_path)
+    assert result is True
+    assert not ec.pending_evidence_path(tmp_path).exists()
+
+
+def test_clear_pending_evidence_returns_true_when_missing(tmp_path):
+    result = ec.clear_pending_evidence(tmp_path)
+    assert result is True
+
+
+def test_clear_pending_evidence_returns_false_on_error(tmp_path):
+    ec.write_pending_evidence(tmp_path, {"data": "here"})
+    def fail_unlink(*a, **k):
+        raise OSError("permission denied")
+    with mock.patch.object(Path, "unlink", fail_unlink):
+        result = ec.clear_pending_evidence(tmp_path)
+        assert result is False

@@ -195,6 +195,23 @@ def test_unknown_repo_is_kept(tmp_path):
     assert action == "keep"
 
 
+def test_worktree_with_pending_evidence_is_kept_for_retry(tmp_path):
+    """Test 4: A worktree with pending evidence (from a timeout) is kept for the evidence-only retry."""
+    from evidence_capture import write_pending_evidence
+
+    # Create a worktree dict
+    wt = _wt(tmp_path, ahead=5, age_hours=100, dirty=True)
+
+    # Write pending evidence to the worktree path (which is wt["path"])
+    write_pending_evidence(Path(wt["path"]), {"result": {"passing": True}})
+
+    # Even if it would normally be backed up, pending evidence keeps it
+    action, reason = cs.decide_worktree(wt, pr_state=None, claimed=False)
+
+    assert action == "keep"
+    assert "pending evidence" in reason
+
+
 def test_issue_number_comes_from_the_branch():
     assert cs._extract_issue_number("pipeline/g-eskayo/marvin#7") == 7
     assert cs._extract_issue_number("pipeline/g-eskayo/clarity-captions#123") == 123

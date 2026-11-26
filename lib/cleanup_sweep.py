@@ -431,6 +431,31 @@ def drop_build_output(worktree: Path, rel_paths: list[str]) -> list[str]:
     return removed
 
 
+def _has_pending_evidence_and_fresh(path: Path | str | None, age_hours: float, max_age_hours: float = 48) -> bool:
+    """Check if a worktree has a pending evidence marker AND it's not too old (ADR 0086).
+
+    age_hours: the worktree's age in hours (passed from wt dict) — currently unused, marker's own age is checked.
+    max_age_hours: max age for a pending marker to be considered valid (default 48h per design).
+    Returns True only if marker exists and is fresh enough to retry."""
+    if not path:
+        return False
+    try:
+        import evidence_capture
+        import time
+        marker = evidence_capture.read_pending_evidence(Path(path))
+        if marker is None:
+            return False
+        # Check the marker file's age, not the worktree's age
+        marker_path = Path(path) / "docs" / "evidence" / ".pending.json"
+        if not marker_path.is_file():
+            return False
+        marker_age_s = time.time() - marker_path.stat().st_mtime
+        marker_age_h = marker_age_s / 3600
+        return marker_age_h <= max_age_hours
+    except Exception:
+        return False
+
+
 def _extract_issue_number(branch: str) -> int | None:
     match = ISSUE_NUMBER_RE.search(branch)
     return int(match.group(1) or match.group(2)) if match else None
@@ -483,6 +508,13 @@ def decide_worktree(wt: dict, pr_state: str | None, claimed: bool) -> tuple[str,
         return "keep", "a process is working inside it"
     if claimed:
         return "keep", "its ticket is claimed (running)"
+    # ADR 0086: a worktree with fresh pending evidence is kept (the next attempt will use it)
+    # Check early so pending evidence takes priority over dirty/commit/PR state checks
+    # (but not for merged/closed PRs, which don't retry and don't need evidence)
+    if _has_pending_evidence_and_fresh(wt.get("path"), wt.get("age_hours", 0)):
+        if pr_state not in ("MERGED", "CLOSED"):
+            return "keep", "has pending evidence from a timeout (evidence-only retry waiting)"
+    # Backup dirty worktrees (preserve uncommitted work, even if PR is merged)
     if wt.get("dirty"):
         if pr_state == "OPEN" or wt.get("age_hours", 0) < BACKUP_MIN_AGE_HOURS:
             return "review", "has uncommitted work"

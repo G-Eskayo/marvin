@@ -272,10 +272,111 @@ def run(issue_number: int, repo: str = REPO) -> dict:
     return settle(issue_number, outcome, findings, repo=repo, run_id=os.environ.get("MARVIN_RUN_ID"))
 
 
+def _is_evidence_complete(pending: dict) -> bool:
+    """Check if pending evidence has complete (non-None) test_results and dev_evidence."""
+    test_results = pending.get("test_results")
+    dev_evidence = pending.get("dev_evidence")
+    return test_results is not None and dev_evidence is not None
+
+
+def _resume_pending_evidence(worktree_path: Path, result: dict) -> dict | None:
+    """Read pending evidence from a worktree, returning the evidence dict or None if missing/stale.
+    Returns None if:
+    - marker doesn't exist
+    - worktree no longer exists
+    - marker is too old (>48h, Decision B1 stale -> full rebuild)
+    - pending marker's result differs from current result (stale attempt)
+
+    Tolerates Path serialization differences (Path objects become strings in JSON).
+    Returns pending even if evidence is incomplete (None values), but caller should check with _is_evidence_complete.
+    Does NOT clear the marker here — that happens only after raise_mr succeeds (see build() flow)."""
+    from evidence_capture import read_pending_evidence
+    import time
+
+    pending = read_pending_evidence(worktree_path)
+    if pending is None:
+        return None
+
+    # Worktree still exists and is usable
+    if not worktree_path.is_dir():
+        return None
+
+    # Check marker age: older than 48h means stale (Decision B1)
+    try:
+        marker_path = worktree_path / "docs" / "evidence" / ".pending.json"
+        marker_age_s = time.time() - marker_path.stat().st_mtime
+        marker_age_h = marker_age_s / 3600
+        if marker_age_h > 48:
+            return None
+    except (OSError, AttributeError):
+        return None
+
+    # If result is provided (non-empty), verify it matches the pending marker's result
+    pending_result = pending.get("result", {})
+    if result and not _results_match(result, pending_result):
+        return None
+
+    return pending
+
+
+def _results_match(result1: dict, result2: dict) -> bool:
+    """Check if two result dicts match, tolerating Path/string serialization."""
+    # Same keys required
+    if set(result1.keys()) != set(result2.keys()):
+        return False
+    # For each key, check equality, converting Path to string for comparison
+    for key in result1.keys():
+        v1, v2 = result1[key], result2[key]
+        if key == "worktree_path":
+            # Convert both to string for comparison
+            v1_str = str(v1) if v1 else None
+            v2_str = str(v2) if v2 else None
+            if v1_str != v2_str:
+                return False
+        elif v1 != v2:
+            return False
+    return True
+
+
+def _raise_with_evidence(ticket_ref: str, result: dict, worktree_path: Path, measurer, marvin_measure,
+                          profile: dict | None = None) -> dict:
+    """Capture evidence and raise an MR for a passing result. On TestTimedOut,
+    writes pending evidence and raises the exception (the caller decides retry).
+    Returns the outcome from raise_mr (or a failure outcome on non-timeout errors)."""
+    test_results = None
+    dev_evidence = None
+    try:
+        if measurer is None:
+            test_results = marvin_measure.test_results() if marvin_measure is not None else None
+            if test_results is None:
+                test_results = capture_test_results(worktree_path, test_command_for(worktree_path))
+            dev_evidence = capture_dev_evidence(worktree_path, ticket_touches_ui(worktree_path))
+        else:
+            test_results, dev_evidence = measurer.evidence(worktree_path)
+            if test_results is not None:
+                test_results["notes"] = measurer.pr_note()
+    except TestTimedOut:
+        # Evidence capture timed out: save what we have and re-raise so the caller can decide retry
+        from evidence_capture import write_pending_evidence
+        import sandbox_orchestration
+        evidence = {
+            "result": result,
+            "test_results": test_results,
+            "dev_evidence": dev_evidence,
+        }
+        write_pending_evidence(worktree_path, evidence)
+        raise
+
+    return raise_mr(ticket_ref, result, test_results=test_results, dev_evidence=dev_evidence)
+
+
 def build(issue_number: int, repo: str = REPO) -> tuple[dict, list[str]]:
     """execute_ticket -> raise_mr, never raising: (outcome, the last must-fix findings). The outcome is
-    {raised, pr_url, reason} plus at most one kind flag (env_missing, timed_out, model_unavailable, too_vague) that
+    {raised, pr_url, reason} plus at most one kind flag (env_missing, timed_out, model_unavailable, too_vague, evidence_timed_out) that
     settle() reads. A box build (lib/box_build.py, marvin #951) runs only this half, inside its VM."""
+    from sandbox_orchestration import worktree_path_for
+    from evidence_capture import clear_pending_evidence
+
     ticket_ref = f"{repo}#{issue_number}"
     other = repo != REPO
     profile = pp.load_profile(repo) if other else None
@@ -284,54 +385,82 @@ def build(issue_number: int, repo: str = REPO) -> tuple[dict, list[str]]:
     marvin_measure = None
     worktree_path = None
     findings: list[str] = []  # the last must-fix review findings, for the park comment
+    pending = None
+    used_pending_evidence = False
 
     try:
         if other and profile is None:
             outcome = {"raised": False, "pr_url": None, "reason": f"{repo} has no execution profile (config/projects/), so the pipeline cannot run its tickets"}
         else:
-            if profile is None:
-                # marvin#1152: the tests the change can affect, the same set on the base and on the change
-                marvin_measure = PairedMeasure()
-                result = execute_ticket(ticket_ref, subsystem, marvin_measure)
-            else:
-                clone = pp.resolve_clone(profile, _load_catalog(), ensure=True)
-                if clone is None:
-                    raise RuntimeError(f"no local clone of {repo} found on this machine (catalog and clone_hints)")
-                measurer = pp.Measurer(profile)
-                result = execute_ticket(
-                    ticket_ref, subsystem, measurer,
-                    executor=functools.partial(_default_executor, profile=profile, clone=clone, env=measurer.env),
-                    repo_path=clone, base_branch=profile["base_branch"],
-                )
+            # ADR 0086: Check for pending evidence BEFORE execute_ticket, which recreates the worktree
+            expected_worktree_path = worktree_path_for(ticket_ref)
+            pending = _resume_pending_evidence(expected_worktree_path, {}) if expected_worktree_path else None
 
-            worktree_path = result.get("worktree_path")
-            findings = list((result.get("final_comparison") or {}).get("fix_these") or [])
-            test_results = None
-            dev_evidence = None
-            if result["passing"]:
-                if measurer is None:
-                    # The verify reading already ran the affected tests; running them again (or the whole suite, as
-                    # test_command_for does while the change is uncommitted) is the timeout #1152 removed.
-                    test_results = marvin_measure.test_results() if marvin_measure is not None else None
-                    if test_results is None:
-                        test_results = capture_test_results(worktree_path, test_command_for(worktree_path))
-                    dev_evidence = capture_dev_evidence(worktree_path, ticket_touches_ui(worktree_path))
+            if pending:
+                # Reuse the worktree from a prior timeout; skip execute_ticket
+                # The pending marker contains the result, so reconstruct it
+                result = pending.get("result", {})
+                # Convert worktree_path from string (JSON deserialized) to Path if needed
+                result_wt_path = result.get("worktree_path")
+                if isinstance(result_wt_path, str):
+                    result["worktree_path"] = Path(result_wt_path)
+                worktree_path = Path(result_wt_path) if result_wt_path else expected_worktree_path
+
+                # Set measurer/marvin_measure for the resume path so _raise_with_evidence uses the right branch
+                if other:
+                    measurer = pp.Measurer(profile)
                 else:
-                    test_results, dev_evidence = measurer.evidence(worktree_path)
-                    if test_results is not None:
-                        test_results["notes"] = measurer.pr_note()
+                    marvin_measure = PairedMeasure()
+            else:
+                # Normal path: execute the ticket
+                if profile is None:
+                    # marvin#1152: the tests the change can affect, the same set on the base and on the change
+                    marvin_measure = PairedMeasure()
+                    result = execute_ticket(ticket_ref, subsystem, marvin_measure)
+                else:
+                    clone = pp.resolve_clone(profile, _load_catalog(), ensure=True)
+                    if clone is None:
+                        raise RuntimeError(f"no local clone of {repo} found on this machine (catalog and clone_hints)")
+                    measurer = pp.Measurer(profile)
+                    result = execute_ticket(
+                        ticket_ref, subsystem, measurer,
+                        executor=functools.partial(_default_executor, profile=profile, clone=clone, env=measurer.env),
+                        repo_path=clone, base_branch=profile["base_branch"],
+                    )
+                worktree_path = result.get("worktree_path")
 
-            outcome = raise_mr(ticket_ref, result, test_results=test_results, dev_evidence=dev_evidence)
+            findings = list((result.get("final_comparison") or {}).get("fix_these") or [])
+            if result["passing"]:
+                if pending and _is_evidence_complete(pending):
+                    # Use cached complete evidence from prior timeout
+                    outcome = raise_mr(ticket_ref, result, test_results=pending.get("test_results"),
+                                     dev_evidence=pending.get("dev_evidence"))
+                    used_pending_evidence = outcome.get("raised", False)
+                else:
+                    # Capture evidence now (or retry if incomplete cache)
+                    outcome = _raise_with_evidence(ticket_ref, result, worktree_path, measurer, marvin_measure, profile)
+                    used_pending_evidence = outcome.get("raised", False)
+
+                # Clear the pending marker only if raise_mr succeeded and we used the cached evidence
+                if used_pending_evidence and pending:
+                    clear_pending_evidence(worktree_path)
+            else:
+                outcome = raise_mr(ticket_ref, result, test_results=None, dev_evidence=None)
     except pp.EnvMissing as exc:
         # This machine lacks a tool the project's required check needs. That is about the machine, not the
         # ticket: no comment, no strike, no breaker entry; the claim goes back so a capable machine can take it.
         outcome = {"raised": False, "pr_url": None, "reason": str(exc), "env_missing": True}
     except TestTimedOut as exc:
-        # A test or setup step exceeded its timeout: the BUILD MACHINE ran out of time, not the PR's code.
-        # Like env_missing, this is not a ticket failure: release the claim, post a timeout comment (for
-        # visibility), and redispatch so another machine can try.
+        # Could be from execute_ticket or from _raise_with_evidence (evidence capture).
+        # _raise_with_evidence writes a pending marker before re-raising, so check if it exists.
+        from evidence_capture import read_pending_evidence
         reason = str(exc)
-        outcome = {"raised": False, "pr_url": None, "reason": reason, "timed_out": True}
+        if worktree_path and read_pending_evidence(worktree_path) is not None:
+            # Timeout was during evidence capture (pending marker exists)
+            outcome = {"raised": False, "pr_url": None, "reason": reason, "evidence_timed_out": True}
+        else:
+            # Timeout was during execute_ticket or its setup
+            outcome = {"raised": False, "pr_url": None, "reason": reason, "timed_out": True}
     except ModelRunFailed as exc:
         # The model service failed (a usage limit, an outage): not the ticket's fault, so no strike. Release the
         # claim with a backoff; the breaker still counts it, so a window that fails every ticket pauses dispatch.
@@ -403,6 +532,26 @@ def settle(issue_number: int, outcome: dict, findings: list[str] | tuple = (), r
             ts.record_stage(issue_number, "done", "failed", outcome["reason"][:300], **kw)
             _trigger_redispatch()
             return outcome
+        if outcome.get("evidence_timed_out"):
+            # Like timed_out, but with pending evidence cached for the next attempt: treat as a timeout
+            tries = sum(_trailing_streaks(issue_number, **kw)) + 1
+            ts.record_stage(issue_number, "verifying", "failed", outcome["reason"][:300], **kw)
+            _feed_breaker(issue_number, outcome["reason"], repo)
+            if tries >= MAX_CONSECUTIVE_RETRIES:
+                _park_stuck_ticket(issue_number, tries, **kw, **lab, reason=outcome["reason"])
+                ts.record_stage(issue_number, "done", "failed", f"parked after {tries} consecutive failed or timed-out runs", **kw)
+                _trigger_redispatch()
+                return outcome
+            when, marker = _retry_line(tries)
+            _release_claim(issue_number, **kw, **lab, run_id=run_id)
+            subprocess.run(
+                ["gh", "issue", "comment", str(issue_number), "--repo", repo, "--body",
+                 f"{TIMEOUT_MARKER}: {outcome['reason']}\n\nIt goes back to the queue with cached evidence, not before {when}.\n{marker}"],
+                check=False,
+            )
+            ts.record_stage(issue_number, "done", "failed", outcome["reason"][:300], **kw)
+            _trigger_redispatch()
+            return outcome
         if outcome.get("too_vague"):
             _park_stuck_ticket(issue_number, 1, **kw, **lab, reason=outcome["reason"],
                                headline="**The planner says this ticket is too vague to build**, so it is handed to a person "
@@ -436,8 +585,8 @@ BUILD_OUTCOME_PREFIX = "MARVIN_BUILD_OUTCOME "
 
 def build_only_line(outcome: dict, findings: list[str]) -> str:
     """The one line `--build-only` prints for box_build to read: the outcome's own keys, JSON-safe."""
-    keep = {k: outcome.get(k) for k in ("raised", "pr_url", "reason", "env_missing", "timed_out", "model_unavailable",
-                                       "too_vague") if k in outcome}
+    keep = {k: outcome.get(k) for k in ("raised", "pr_url", "reason", "env_missing", "timed_out", "evidence_timed_out",
+                                       "model_unavailable", "too_vague") if k in outcome}
     reason = None if keep.get("reason") is None else str(keep["reason"])
     # Head and tail: an exception's cause is at its end (a 900 s prompt in a command line hid it, marvin #951).
     keep["reason"] = reason if reason is None or len(reason) <= 2000 else f"{reason[:600]} [...] {reason[-1390:]}"

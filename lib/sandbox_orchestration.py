@@ -397,6 +397,12 @@ def _doc_slug(ticket_ref: str) -> str:
     return _branch_for(ticket_ref).replace("/", "-").replace("#", "-")
 
 
+def worktree_path_for(ticket_ref: str) -> Path:
+    """Return the worktree directory path for a ticket, without creating it."""
+    branch = _branch_for(ticket_ref)
+    return WORKTREES_ROOT / branch.replace("/", "-").replace("#", "-")
+
+
 def _design_doc_path(worktree_path: Path, ticket_ref: str) -> Path:
     """Return the path to the design doc for this ticket in the worktree."""
     slug = _doc_slug(ticket_ref)

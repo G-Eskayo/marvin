@@ -117,7 +117,11 @@ def _format_comparison(comparison: dict) -> str:
 
 
 def _format_test_results(test_results: dict | None) -> str:
-    if not test_results or test_results.get("total") is None:
+    if not test_results:
+        return "Not available."
+    if test_results.get("total") is None:
+        if test_results.get("couldn_capture"):
+            return f"⚠ **Could not capture test results**: {test_results['couldn_capture'][:300]}"
         return "Not available."
     text = (
         f"**Suite**: {test_results['suite']}\n"

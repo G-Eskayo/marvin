@@ -1313,3 +1313,175 @@ def test_a_profile_projects_verify_is_untouched_by_the_paired_measure(monkeypatc
     assert not hasattr(pp.Measurer, "paired_baseline")
     monkeypatch.delenv("MARVIN_BASE", raising=False)
     assert "MARVIN_BASE" not in pp.build_env({"verify": []})
+
+
+# ── _raise_with_evidence tests (ADR 0086, evidence-only retries) ──────────────────────────────────────
+
+def test_raise_with_evidence_captures_and_raises_mr_on_success(monkeypatch, tmp_path):
+    """Test 1: _raise_with_evidence captures test results and dev evidence, calls raise_mr, and returns outcome."""
+    test_results = {"suite": "pytest", "passed": 10, "failed": 0, "total": 10}
+    dev_evidence = {"na": True, "reason": "no UI"}
+
+    captured = {}
+    monkeypatch.setattr(rt, "capture_test_results", lambda wt, cmd: test_results)
+    monkeypatch.setattr(rt, "ticket_touches_ui", lambda wt: False)
+    monkeypatch.setattr(rt, "capture_dev_evidence", lambda wt, touches_ui: dev_evidence)
+    monkeypatch.setattr(rt, "raise_mr", lambda ref, res, test_results=None, dev_evidence=None:
+                        captured.update(ref=ref, test_results=test_results, dev_evidence=dev_evidence) or
+                        {"raised": True, "pr_url": "http://pr", "reason": None})
+
+    result = rt._raise_with_evidence("G-Eskayo/marvin#20", _passing_result(), tmp_path, None, rt.PairedMeasure())
+
+    assert result == {"raised": True, "pr_url": "http://pr", "reason": None}
+    assert captured["ref"] == "G-Eskayo/marvin#20"
+    assert captured["test_results"] == test_results
+    assert captured["dev_evidence"] == dev_evidence
+
+
+def test_raise_with_evidence_saves_pending_evidence_on_timeout(tmp_path):
+    """Test 2: _raise_with_evidence catches TestTimedOut, writes pending evidence, and re-raises."""
+    from unittest import mock
+    from evidence_capture import read_pending_evidence
+
+    def raise_timeout(*a, **k):
+        raise rt.TestTimedOut(["pytest"], 1200, "output")
+
+    with mock.patch.object(rt, "capture_test_results", side_effect=raise_timeout):
+        with pytest.raises(rt.TestTimedOut):
+            rt._raise_with_evidence("G-Eskayo/marvin#20", _passing_result(), tmp_path, None, rt.PairedMeasure())
+
+    pending = read_pending_evidence(tmp_path)
+    assert pending is not None
+    assert "result" in pending
+    assert pending["result"]["passing"] is True
+
+
+def test_resume_pending_evidence_returns_none_when_missing(tmp_path):
+    """Test 3: _resume_pending_evidence returns None when marker is missing."""
+    result = rt._resume_pending_evidence(tmp_path, _passing_result())
+    assert result is None
+
+
+def test_resume_pending_evidence_returns_none_when_stale(tmp_path):
+    """Test 5: _resume_pending_evidence returns None when marker result differs (stale attempt)."""
+    from evidence_capture import write_pending_evidence
+
+    result1 = _passing_result()
+    result2 = _passing_result()
+    result2["iterations"] = 2
+
+    write_pending_evidence(tmp_path, {"result": result1, "test_results": {"passed": 10}})
+    resumed = rt._resume_pending_evidence(tmp_path, result2)
+    assert resumed is None
+
+
+def test_resume_pending_evidence_returns_evidence_on_match(tmp_path):
+    """Test 6: _resume_pending_evidence returns evidence when result matches."""
+    from evidence_capture import write_pending_evidence
+
+    result = _passing_result()
+    test_results = {"suite": "pytest", "passed": 10, "failed": 0, "total": 10}
+    dev_evidence = {"na": True, "reason": "no UI"}
+
+    write_pending_evidence(tmp_path, {
+        "result": result,
+        "test_results": test_results,
+        "dev_evidence": dev_evidence,
+    })
+    resumed = rt._resume_pending_evidence(tmp_path, result)
+    assert resumed is not None
+    assert resumed["test_results"] == test_results
+    assert resumed["dev_evidence"] == dev_evidence
+
+
+def test_resume_pending_evidence_validates_marker_age(tmp_path):
+    """Test 9: _resume_pending_evidence validates marker age and returns None if too old (ADR 0086 B1)."""
+    from evidence_capture import write_pending_evidence, read_pending_evidence
+    import time
+    import os
+
+    result = _passing_result()
+    write_pending_evidence(tmp_path, {"result": result, "test_results": {}})
+    assert read_pending_evidence(tmp_path) is not None
+
+    # Mark the pending evidence file as 49 hours old
+    marker_path = tmp_path / "docs" / "evidence" / ".pending.json"
+    old_mtime = time.time() - (49 * 3600)
+    os.utime(marker_path, (old_mtime, old_mtime))
+
+    # _resume_pending_evidence should return None for stale markers (> 48h)
+    assert rt._resume_pending_evidence(tmp_path, result) is None
+    # Marker is NOT cleared by _resume_pending_evidence
+    assert read_pending_evidence(tmp_path) is not None
+
+
+def test_build_uses_cached_evidence_when_available(monkeypatch, tmp_path):
+    """Test 10: build() uses cached evidence from pending marker when resume succeeds."""
+    from evidence_capture import write_pending_evidence
+    from pathlib import Path as PathlibPath
+    import shutil
+
+    # Create a fake worktree with the marker
+    worktree_path = tmp_path / "ticket-20-worktree"
+    worktree_path.mkdir(parents=True, exist_ok=True)
+
+    result = _passing_result(worktree_path)
+    test_results = {"suite": "pytest", "passed": 15, "failed": 0, "total": 15}
+    dev_evidence = {"na": True, "reason": "no UI"}
+
+    # Set up pending evidence marker in the fake worktree
+    write_pending_evidence(worktree_path, {
+        "result": result,
+        "test_results": test_results,
+        "dev_evidence": dev_evidence,
+    })
+
+    # Mock worktree_path_for to return our test worktree
+    import sandbox_orchestration
+    monkeypatch.setattr(sandbox_orchestration, "worktree_path_for",
+                       lambda ref: worktree_path if "#20" in ref else None)
+
+    captured = {}
+    def mock_raise_mr(ref, res, test_results=None, dev_evidence=None):
+        captured.update(tr=test_results, dev=dev_evidence)
+        return {"raised": True, "pr_url": "http://pr", "reason": None}
+
+    monkeypatch.setattr(rt, "raise_mr", mock_raise_mr)
+    monkeypatch.setattr(rt, "_drop_build_output", lambda *a, **k: None)
+
+    outcome, findings = rt.build(20)
+
+    assert captured["tr"] == test_results
+    assert captured["dev"] == dev_evidence
+    assert outcome["raised"] is True
+
+    # Clean up
+    shutil.rmtree(worktree_path, ignore_errors=True)
+
+
+def test_settle_handles_evidence_timed_out_outcome(monkeypatch, tmp_path):
+    """Test 11: settle() handles evidence_timed_out like timed_out, with a pending evidence note."""
+    import ticket_stages as ts
+
+    monkeypatch.setattr(rt, "_release_claim", lambda *a, **k: None)
+    monkeypatch.setattr(rt, "_feed_breaker", lambda *a, **k: None)
+    monkeypatch.setattr(rt, "_trigger_redispatch", lambda: None)
+    monkeypatch.setattr(rt, "_trailing_streaks", lambda *a, **k: (0, 1))  # 0 failures, 1 timeout
+    monkeypatch.setattr(ts, "record_stage", lambda *a, **k: None)
+
+    # Capture subprocess.run calls to verify the comment is posted
+    subprocess_calls = []
+    def capture_subprocess(cmd, **k):
+        subprocess_calls.append(cmd)
+        from subprocess import CompletedProcess
+        return CompletedProcess(cmd, 0)
+    monkeypatch.setattr(rt.subprocess, "run", capture_subprocess)
+
+    outcome = {"raised": False, "pr_url": None, "reason": "test timeout", "evidence_timed_out": True}
+    result = rt.settle(20, outcome)
+
+    # Verify outcome is returned unchanged
+    assert result["raised"] is False
+    assert result["evidence_timed_out"] is True
+    # Verify subprocess.run was called to post a comment with the right message
+    assert any("cached evidence" in str(cmd) for cmd in subprocess_calls)
