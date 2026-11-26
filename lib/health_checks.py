@@ -2098,6 +2098,22 @@ def _cli() -> None:
 
     job_events.step("Accounts", react_to_accounts())
 
+    try:
+        import loops
+        lock_path = Path.home() / ".claude" / "auto-fix.lock"
+        auto_fix_result = loops.run_due_auto_fixes(lock_path=lock_path, health_writer=write_status)
+        if auto_fix_result["fixed"] or auto_fix_result["downgraded"] or auto_fix_result["failed"]:
+            summary = []
+            if auto_fix_result["fixed"]:
+                summary.append(f"fixed {len(auto_fix_result['fixed'])}")
+            if auto_fix_result["downgraded"]:
+                summary.append(f"downgraded {len(auto_fix_result['downgraded'])}")
+            if auto_fix_result["failed"]:
+                summary.append(f"failed {len(auto_fix_result['failed'])}")
+            job_events.step("Auto-fix", ", ".join(summary))
+    except Exception as exc:
+        job_events.step("Auto-fix", f"error: {str(exc)[:100]}")
+
     if "--json" in sys.argv:
         print(json.dumps(out, indent=2))
     else:

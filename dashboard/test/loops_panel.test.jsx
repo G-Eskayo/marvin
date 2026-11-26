@@ -56,6 +56,12 @@ describe('the Loops view', () => {
     expect(renderToStaticMarkup(<LoopsPanel api={null} />)).toBe('')
     expect(cycleText('garbage', NOW)).toBe('no full cycle seen')
   })
+  it('downgraded auto-level loops show their failure reasons', () => {
+    const downgraded = row('g', 'broken', 'rebuild_graph',
+      { fix: { level: 'one_tap', kind: 'rebuild_graph' }, fix_level_downgraded: true, fix_failure_reasons: ['timeout after 1200s', 'timeout after 1200s'] })
+    const html = renderToStaticMarkup(<LoopsView view={{ loops: [downgraded] }} now={NOW} />)
+    expect(html).toContain('Auto-fix failed: timeout after 1200s; timeout after 1200s')
+  })
 })
 
 describe('the loops IPC', () => {

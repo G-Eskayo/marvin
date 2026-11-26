@@ -23,11 +23,19 @@ export function cycleText(iso, now = Date.now()) {
   return `last full cycle ${h < 1 ? 'under an hour ago' : h < 48 ? `${h} h ago` : `${Math.round(h / 24)} days ago`}`
 }
 
-// The fix button shows for every loop that isn't closed. A loop whose fix is a ticket and that already has one says so.
+// The fix button shows for every loop that isn't closed. Auto-level loops with no downgrade show no button (they run automatically).
+// Once downgraded after two failures, they show as one_tap with the failure reasons.
 export function fixFor(row) {
   if (!row || row.status === 'closed') return null
   const kind = row.fix?.kind
-  return FIX_LABEL[kind] ? { kind, label: FIX_LABEL[kind], level: row.fix.level } : null
+  if (!FIX_LABEL[kind]) return null
+  const level = row.fix.level
+  if (level === 'auto' && !row.fix_level_downgraded) return null
+  const result = { kind, label: FIX_LABEL[kind], level }
+  if (row.fix_level_downgraded && row.fix_failure_reasons?.length > 0) {
+    result.failureReasons = row.fix_failure_reasons
+  }
+  return result
 }
 
 export function loopsSummary(view) {

@@ -563,8 +563,9 @@
    "cycle_days": 1,
    "owner": "marvin",
    "fix": {
-    "level": "one_tap",
-    "kind": "ticket"
+    "level": "auto",
+    "kind": "rebuild_graph",
+    "undo": "Graph rebuild timed out or failed; needs manual investigation"
    },
    "wired": true,
    "ticket": 1123

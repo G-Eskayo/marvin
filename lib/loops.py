@@ -21,6 +21,7 @@ Complexity: O(L x r + C) for L loops, r <= 20 runs kept per job, C health checks
 """
 from __future__ import annotations
 
+import fcntl
 import json
 import os
 import re
@@ -40,12 +41,16 @@ SIGNAL_RE = re.compile(r"^(none|(job|check|contract):[A-Za-z0-9][A-Za-z0-9:@._~/
 BROKEN_RE = re.compile(r"^(red|failed_runs:([1-9]|1\d|20))$")
 OWNERS = ("marvin", "gil")
 LEVELS = ("auto", "one_tap", "decision")
-FIX_KINDS = ("rerun", "relogin", "install_job", "rollback", "ticket", "decision")
+FIX_KINDS = ("rerun", "relogin", "install_job", "rollback", "ticket", "decision", "rebuild_graph", "refresh_catalog")
 ARG_RE = {"rerun": ID_RE, "install_job": ID_RE, "relogin": re.compile(r"^[a-z][a-z-]{1,40}$"),
-          "rollback": re.compile(r"^[1-9]\d{0,6}$"), "decision": re.compile(r"^[1-9]\d{0,6}$"), "ticket": None}
+          "rollback": re.compile(r"^[1-9]\d{0,6}$"), "decision": re.compile(r"^[1-9]\d{0,6}$"), "ticket": None,
+          "rebuild_graph": None, "refresh_catalog": None}
+AUTO_SAFE = {("rebuild_graph", None), ("refresh_catalog", None)}
+FIX_KIND_TIMEOUTS = {"rerun": 60, "relogin": 10, "install_job": 120, "rollback": 10, "ticket": 10, "decision": 10, "rebuild_graph": 1200, "refresh_catalog": 300}
 TEXT_MAX = 300
 KEYS = {"id", "name", "watches", "broken_when", "action", "verify", "cycle_days", "owner", "fix", "wired", "ticket", "why"}
 STATUS_ORDER = ("broken", "stalled", "not_wired", "closed")
+FIX_SCHEMA_KEYS = {"level", "kind", "arg", "undo"}
 SEVERITY_RANK = {"red": 3, "yellow": 2, "unmonitored": 1, "green": 0}
 
 
@@ -96,19 +101,31 @@ def validate(entry: object) -> dict:
         raise LoopError(f"{lid}: ticket must be an issue number")
     out["ticket"] = t
     fix = entry.get("fix")
-    if not isinstance(fix, dict) or set(fix) - {"level", "kind", "arg"}:
-        raise LoopError(f"{lid}: fix must be {{level, kind, arg}}")
-    if fix.get("level") not in LEVELS:
+    if not isinstance(fix, dict) or set(fix) - FIX_SCHEMA_KEYS:
+        raise LoopError(f"{lid}: fix must have keys {FIX_SCHEMA_KEYS}")
+    level, kind = fix.get("level"), fix.get("kind")
+    if level not in LEVELS:
         raise LoopError(f"{lid}: fix level must be one of {', '.join(LEVELS)}")
-    if fix.get("kind") not in FIX_KINDS:
+    if kind not in FIX_KINDS:
         raise LoopError(f"{lid}: fix kind must be one of {', '.join(FIX_KINDS)}")
-    pattern, arg = ARG_RE[fix["kind"]], fix.get("arg")
+    if level == "auto" and (kind, None) not in AUTO_SAFE:
+        raise LoopError(f"{lid}: fix kind {kind} is not in the auto-safe allowlist")
+    undo = fix.get("undo")
+    if level == "auto":
+        if not isinstance(undo, str) or not undo.strip():
+            raise LoopError(f"{lid}: auto-level fixes require a non-empty undo reason")
+    elif undo is not None:
+        raise LoopError(f"{lid}: only auto-level fixes may have an undo reason")
+    pattern, arg = ARG_RE[kind], fix.get("arg")
     if pattern is None:
         if arg is not None:
-            raise LoopError(f"{lid}: a {fix['kind']} fix takes no arg")
+            raise LoopError(f"{lid}: a {kind} fix takes no arg")
     elif not isinstance(arg, (str, int)) or isinstance(arg, bool) or not pattern.match(str(arg)):
-        raise LoopError(f"{lid}: {fix['kind']} fix needs a valid arg, got {str(arg)[:40]!r}")
-    out["fix"] = {"level": fix["level"], "kind": fix["kind"], "arg": None if arg is None else str(arg)}
+        raise LoopError(f"{lid}: {kind} fix needs a valid arg, got {str(arg)[:40]!r}")
+    out_fix = {"level": level, "kind": kind, "arg": None if arg is None else str(arg)}
+    if undo:
+        out_fix["undo"] = undo.strip()
+    out["fix"] = out_fix
     return out
 
 
@@ -224,7 +241,7 @@ def evaluate(loop: dict, checks: list[dict], jobs_dir: Path, now: datetime) -> d
 
 
 def status(registry: Path | None = None, health: Path | None = None, jobs_dir: Path | None = None,
-           now: datetime | None = None) -> dict:
+           now: datetime | None = None, state_path: Path | None = None, write_state: bool = False) -> dict:
     import job_events
     now = now or datetime.now(timezone.utc)
     loops, problems = load(registry)
@@ -232,6 +249,34 @@ def status(registry: Path | None = None, health: Path | None = None, jobs_dir: P
     hs = stamped.read(health or HEALTH_STATUS).value or {}
     checks = hs.get("checks") if isinstance(hs.get("checks"), list) else []
     rows = [evaluate(lp, checks, jobs_dir or job_events.JOBS_DIR, now) for lp in loops]
+
+    attempt_state = {}
+    if isinstance(state_path, dict):
+        attempt_state = state_path
+    elif isinstance(state_path, Path):
+        try:
+            attempt_state = json.loads(state_path.read_text())
+        except (OSError, ValueError):
+            pass
+    elif state_path is None:
+        try:
+            attempt_state = json.loads(ATTEMPT_STATE_PATH.read_text())
+        except (OSError, ValueError):
+            pass
+
+    for row in rows:
+        attempt = attempt_state.get(row["id"], {})
+        if "downgraded_at" in attempt:
+            if row["status"] == "closed":
+                del attempt_state[row["id"]]
+            else:
+                row["fix"] = {**row["fix"], "level": "one_tap"}
+                row["fix_level_downgraded"] = True
+                row["fix_failure_reasons"] = attempt.get("reasons", [])
+
+    if write_state and (isinstance(state_path, Path) or state_path is None):
+        _write_attempt_state(attempt_state, state_path if isinstance(state_path, Path) else None)
+
     rows.sort(key=lambda r: (STATUS_ORDER.index(r["status"]), r["name"].lower()))
     counts = {s: sum(r["status"] == s for r in rows) for s in STATUS_ORDER}
     return {"generated_at": now.isoformat(), "health_at": (hs or {}).get("generated_at"), "counts": counts,
@@ -261,6 +306,12 @@ def fix_plan(loop: dict, home: str | None = None) -> dict:
     if kind == "install_job":
         return {"how": "run", "argv": [f"{home}/.agents/venv/bin/python", f"{home}/.agents/lib/job_units.py", "install", arg],
                 "says": f"Installed {arg}"}
+    if kind == "rebuild_graph":
+        return {"how": "run", "argv": [f"{home}/.agents/venv/bin/python", f"{home}/.agents/lib/graphify_freshness.py", "refresh", f"{home}/.agents"],
+                "says": "Rebuilding code graph"}
+    if kind == "refresh_catalog":
+        return {"how": "run", "argv": [f"{home}/.agents/venv/bin/python", f"{home}/.agents/lib/project_catalog.py", "refresh"],
+                "says": "Refreshing project catalog"}
     if kind == "relogin":
         return {"how": "renew", "account": arg}
     if kind in ("rollback", "decision"):
@@ -272,14 +323,15 @@ def fix_plan(loop: dict, home: str | None = None) -> dict:
     return {"how": "ticket", "title": title, "body": body}
 
 
-def run_fix(loop_id: str, registry: Path | None = None, runner=None, gh=None) -> dict:
+def run_fix(loop_id: str, registry: Path | None = None, runner=None, gh=None, timeout_map: dict | None = None, home: str | None = None) -> dict:
     loops, _ = load(registry)
     loop = next((lp for lp in loops if lp["id"] == loop_id), None) if isinstance(loop_id, str) else None
     if loop is None:
         return {"ok": False, "error": f"no loop {str(loop_id)[:48]!r}"}
-    plan = fix_plan(loop)
+    plan = fix_plan(loop, home=home)
     if plan["how"] == "run":
-        runner = runner or (lambda argv: subprocess.run(argv, capture_output=True, text=True, timeout=120))
+        timeout = (timeout_map or FIX_KIND_TIMEOUTS).get(loop["fix"]["kind"], 120)
+        runner = runner or (lambda argv: subprocess.run(argv, capture_output=True, text=True, timeout=timeout))
         try:
             r = runner(plan["argv"])
         except (OSError, subprocess.TimeoutExpired) as exc:
@@ -299,6 +351,126 @@ def run_fix(loop_id: str, registry: Path | None = None, runner=None, gh=None) ->
             return {"ok": False, "how": "ticket", "error": (err or out or "gh failed").strip()[:200]}
         return {"ok": True, **_open(int(m.group(1))), "says": f"Filed #{m.group(1)}"}
     return {"ok": True, **plan}
+
+
+# ── auto-fix runner (ADR 0086) ──────────────────────────────────────────────────────────────────────────────────
+
+ATTEMPT_STATE_PATH = Path.home() / ".claude" / "auto-fix-state.json"
+
+
+def _read_attempt_state(path: Path | None = None) -> dict:
+    """Per-machine attempt-state tracking: {loop_id: {attempts: int, reasons: [str, str]}}"""
+    path = path or ATTEMPT_STATE_PATH
+    try:
+        return json.loads(path.read_text())
+    except (OSError, ValueError):
+        return {}
+
+
+def _write_attempt_state(state: dict, path: Path | None = None) -> None:
+    path = path or ATTEMPT_STATE_PATH
+    path.parent.mkdir(parents=True, exist_ok=True)
+    tmp = path.with_suffix(".tmp")
+    tmp.write_text(json.dumps(state, indent=2))
+    os.replace(tmp, path)
+
+
+def run_due_auto_fixes(registry: Path | None = None, health: Path | None = None, jobs_dir: Path | None = None,
+                       state_path: Path | None = None, lock_path: Path | None = None, runner=None, gh=None,
+                       now: datetime | None = None, health_writer=None) -> dict:
+    """Evaluates every loop; for each auto-level loop that is broken, runs its fix and re-measures.
+    Returns {fixed: [loop_id], downgraded: [loop_id], failed: [(loop_id, error)]} summary.
+    Uses lock_path for busy-lock to prevent concurrent runs. Calls health_writer() after each fix
+    to re-evaluate health checks before re-measuring loop status."""
+    import job_events
+    import stamped
+
+    now = now or datetime.now(timezone.utc)
+    timeout_map = FIX_KIND_TIMEOUTS
+
+    # Acquire busy-lock if lock_path provided
+    lock_file = None
+    if isinstance(lock_path, Path):
+        lock_path.parent.mkdir(parents=True, exist_ok=True)
+        lock_file = lock_path.open('w')
+        try:
+            fcntl.flock(lock_file.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+        except (OSError, IOError):
+            lock_file.close()
+            return {"fixed": [], "downgraded": [], "failed": []}
+
+    try:
+        # Call status() first (write_state=True) to clean up resolved loops and get fresh state
+        out_status = status(registry, health, jobs_dir, now, state_path=state_path, write_state=True)
+
+        # Read the cleaned state from disk (status() just wrote it)
+        state = _read_attempt_state(state_path if isinstance(state_path, Path) else None)
+        fixed, downgraded, failed = [], [], []
+
+        for row in out_status.get("loops", []):
+            if row["fix"].get("level") != "auto" or row["status"] != "broken":
+                continue
+            loop_id = row["id"]
+            attempt = state.get(loop_id, {})
+
+            try:
+                result = run_fix(loop_id, registry, runner=runner, gh=gh, timeout_map=timeout_map)
+                if not result.get("ok"):
+                    attempt["attempts"] = attempt.get("attempts", 0) + 1
+                    if "reasons" not in attempt:
+                        attempt["reasons"] = []
+                    reason = result.get("error", "unknown error")
+                    attempt["reasons"].append(reason)
+                    attempt["reasons"] = attempt["reasons"][-2:]
+                    if attempt["attempts"] >= 2:
+                        attempt["downgraded_at"] = now.isoformat()
+                        downgraded.append(loop_id)
+                    state[loop_id] = attempt
+                    failed.append((loop_id, reason))
+                else:
+                    # Fix succeeded; re-measure health before checking status again
+                    if health_writer is not None:
+                        health_writer()
+
+                    re_measured = status(registry, health, jobs_dir, now, state_path=state, write_state=False)
+                    re_row = next((r for r in re_measured.get("loops", []) if r["id"] == loop_id), None)
+                    if re_row and re_row["status"] == "broken":
+                        attempt["attempts"] = attempt.get("attempts", 0) + 1
+                        if "reasons" not in attempt:
+                            attempt["reasons"] = []
+                        reason = "fix succeeded but check still red"
+                        attempt["reasons"].append(reason)
+                        attempt["reasons"] = attempt["reasons"][-2:]
+                        if attempt["attempts"] >= 2:
+                            attempt["downgraded_at"] = now.isoformat()
+                            downgraded.append(loop_id)
+                        state[loop_id] = attempt
+                        failed.append((loop_id, reason))
+                    else:
+                        if loop_id in state:
+                            del state[loop_id]
+                        fixed.append(loop_id)
+            except Exception as exc:
+                attempt["attempts"] = attempt.get("attempts", 0) + 1
+                if "reasons" not in attempt:
+                    attempt["reasons"] = []
+                reason = str(exc)[:100]
+                attempt["reasons"].append(reason)
+                attempt["reasons"] = attempt["reasons"][-2:]
+                if attempt["attempts"] >= 2:
+                    attempt["downgraded_at"] = now.isoformat()
+                    downgraded.append(loop_id)
+                state[loop_id] = attempt
+                failed.append((loop_id, reason))
+
+        # Write final state once at the end
+        _write_attempt_state(state, state_path if isinstance(state_path, Path) else None)
+    finally:
+        if lock_file:
+            fcntl.flock(lock_file.fileno(), fcntl.LOCK_UN)
+            lock_file.close()
+
+    return {"fixed": fixed, "downgraded": downgraded, "failed": failed}
 
 
 def main(argv: list[str]) -> int:

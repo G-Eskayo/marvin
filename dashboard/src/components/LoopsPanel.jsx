@@ -26,6 +26,11 @@ function LoopRow({ row, onFix, busy, now }) {
           <span className="text-xs text-neutral-600">· {row.owner === 'gil' ? 'your move' : "MARVIN's move"}</span>
         </div>
         <p className="text-xs text-neutral-400 [overflow-wrap:anywhere]">{String(row.reason || '')}</p>
+        {fix?.failureReasons && fix.failureReasons.length > 0 && (
+          <p className="text-xs text-amber-500 [overflow-wrap:anywhere]">
+            Auto-fix failed: {fix.failureReasons.join('; ')}
+          </p>
+        )}
         {row.ticket && <p className="text-[11px] text-neutral-600">#{row.ticket}</p>}
       </div>
       {fix && (

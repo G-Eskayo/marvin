@@ -228,3 +228,265 @@ def test_relogin_and_decision_hand_back_to_existing_flows(tmp_path):
 
 def test_the_cli_refuses_anything_but_status_and_fix_one_id():
     assert lp.main([]) == 2 and lp.main(["fix"]) == 2 and lp.main(["rm", "-rf", "/"]) == 2
+
+
+# ── auto-fix levels ──────────────────────────────────────────────────────────────────────────────────────────
+
+def test_rebuild_graph_and_refresh_catalog_are_valid_kinds(tmp_path):
+    out = _world(tmp_path, [_loop(id="g", fix={"level": "auto", "kind": "rebuild_graph", "undo": "Graph rebuild timed out"}),
+                            _loop(id="c", fix={"level": "auto", "kind": "refresh_catalog", "undo": "Catalog refresh failed"})])
+    assert len(out["loops"]) == 2 and [r["id"] for r in out["loops"]] == ["g", "c"]
+
+
+def test_auto_level_requires_a_non_empty_undo_string(tmp_path):
+    out = _world(tmp_path, [
+        _loop(fix={"level": "auto", "kind": "rebuild_graph"}),  # missing undo
+        _loop(id="ok", fix={"level": "auto", "kind": "rebuild_graph", "undo": "reason"})
+    ])
+    assert [r["id"] for r in out["loops"]] == ["ok"] and len(out["problems"]) == 1
+
+
+def test_non_auto_level_rejects_undo_key(tmp_path):
+    out = _world(tmp_path, [
+        _loop(fix={"level": "one_tap", "kind": "rerun", "arg": "x", "undo": "bad"}),
+        _loop(id="ok", fix={"level": "one_tap", "kind": "rerun", "arg": "x"})
+    ])
+    assert [r["id"] for r in out["loops"]] == ["ok"] and len(out["problems"]) == 1
+
+
+def test_only_safe_kinds_allow_auto_level(tmp_path):
+    out = _world(tmp_path, [
+        _loop(fix={"level": "auto", "kind": "rerun", "arg": "x", "undo": "bad"}),
+        _loop(id="ok", fix={"level": "auto", "kind": "rebuild_graph", "undo": "ok"})
+    ])
+    assert [r["id"] for r in out["loops"]] == ["ok"] and len(out["problems"]) == 1
+
+
+def test_rebuild_graph_fix_uses_graphify_freshness(tmp_path):
+    _world(tmp_path, [_loop(id="g", fix={"level": "auto", "kind": "rebuild_graph", "undo": "timeout"})])
+    seen = []
+    lp.run_fix("g", tmp_path / "loops.json", runner=lambda argv: seen.append(argv) or SimpleNamespace(returncode=0, stdout="", stderr=""))
+    assert len(seen) == 1 and "graphify_freshness.py" in seen[0][1] and "refresh" in seen[0]
+
+
+def test_refresh_catalog_fix_uses_project_catalog(tmp_path):
+    _world(tmp_path, [_loop(id="c", fix={"level": "auto", "kind": "refresh_catalog", "undo": "failed"})])
+    seen = []
+    lp.run_fix("c", tmp_path / "loops.json", runner=lambda argv: seen.append(argv) or SimpleNamespace(returncode=0, stdout="", stderr=""))
+    assert len(seen) == 1 and "project_catalog.py" in seen[0][1] and "refresh" in seen[0]
+
+
+def test_timeout_map_is_applied_to_run_fix(tmp_path):
+    """Verify that timeout from timeout_map is passed to subprocess.run"""
+    import subprocess
+    import unittest.mock as mock
+
+    _world(tmp_path, [_loop(id="g", fix={"level": "auto", "kind": "rebuild_graph", "undo": "timeout"})])
+
+    with mock.patch("subprocess.run") as mock_run:
+        mock_run.return_value = SimpleNamespace(returncode=0, stdout="", stderr="")
+        result = lp.run_fix("g", tmp_path / "loops.json", timeout_map={"rebuild_graph": 999})
+
+        assert result["ok"]
+        assert mock_run.called
+        # Verify that subprocess.run was called with the custom timeout (999)
+        call_kwargs = mock_run.call_args[1]
+        assert call_kwargs.get("timeout") == 999
+
+
+def test_status_overlays_attempt_state_showing_downgrade_and_reasons(tmp_path):
+    _world(tmp_path, [_loop(id="g", watches="check:graphify:fresh", verify="none", action="auto", broken_when="red",
+                            fix={"level": "auto", "kind": "rebuild_graph", "undo": "timeout"})],
+           checks=[{"id": "graphify:fresh", "severity": "red"}], jobs={})
+    state = {"g": {"attempts": 2, "reasons": ["error 1", "error 2"], "downgraded_at": NOW.isoformat()}}
+    out = lp.status(tmp_path / "loops.json", tmp_path / "health.json", tmp_path / "jobs", NOW, state_path=state)
+    row = out["loops"][0]
+    assert row["fix"]["level"] == "one_tap" and row["fix_level_downgraded"] is True
+    assert row["fix_failure_reasons"] == ["error 1", "error 2"]
+
+
+def test_run_due_auto_fixes_fixes_broken_auto_level_loops(tmp_path):
+    # Setup: broken loop
+    _world(tmp_path, [_loop(id="g", watches="check:graphify:fresh", verify="none", action="auto", broken_when="red",
+                            fix={"level": "auto", "kind": "rebuild_graph", "undo": "timeout"})],
+                      checks=[{"id": "graphify:fresh", "severity": "red"}], jobs={})
+    seen = []
+
+    def runner(argv):
+        seen.append(argv)
+        # Simulate that the fix actually fixes the check
+        (tmp_path / "health.json").write_text(json.dumps({"generated_at": "t", "checks": [{"id": "graphify:fresh", "severity": "green"}]}))
+        return SimpleNamespace(returncode=0, stdout="", stderr="")
+
+    state_path = tmp_path / "state.json"
+    result = lp.run_due_auto_fixes(tmp_path / "loops.json", tmp_path / "health.json", tmp_path / "jobs",
+                                   state_path=state_path, runner=runner)
+    assert "g" in result["fixed"] and seen  # the loop was run and check turned green
+
+
+def test_run_due_auto_fixes_tracks_failures_and_downgrades_after_two(tmp_path):
+    _world(tmp_path, [_loop(id="g", watches="check:graphify:fresh", verify="none", action="auto", broken_when="red",
+                            fix={"level": "auto", "kind": "rebuild_graph", "undo": "timeout"})],
+                      checks=[{"id": "graphify:fresh", "severity": "red"}], jobs={})
+    runner = lambda argv: SimpleNamespace(returncode=1, stdout="", stderr="failure")
+
+    # First failure
+    result1 = lp.run_due_auto_fixes(tmp_path / "loops.json", tmp_path / "health.json", tmp_path / "jobs",
+                                   runner=runner, state_path=tmp_path / "state.json")
+    assert ("g", "failure") in result1["failed"]
+
+    # Second failure (should downgrade)
+    result2 = lp.run_due_auto_fixes(tmp_path / "loops.json", tmp_path / "health.json", tmp_path / "jobs",
+                                   runner=runner, state_path=tmp_path / "state.json")
+    assert "g" in result2["downgraded"]
+
+    # Verify the state was persisted and shows downgrade
+    out = lp.status(tmp_path / "loops.json", tmp_path / "health.json", tmp_path / "jobs", state_path=tmp_path / "state.json")
+    row = out["loops"][0]
+    assert row["fix"]["level"] == "one_tap" and row["fix_level_downgraded"]
+
+
+def test_run_due_auto_fixes_clears_state_on_success(tmp_path):
+    _world(tmp_path, [_loop(id="g", watches="check:graphify:fresh", verify="none", action="auto", broken_when="red",
+                            fix={"level": "auto", "kind": "rebuild_graph", "undo": "timeout"})],
+                      checks=[{"id": "graphify:fresh", "severity": "red"}], jobs={})
+    state_path = tmp_path / "state.json"
+
+    # First attempt succeeds and check turns green
+    def runner_success(argv):
+        (tmp_path / "health.json").write_text(json.dumps({"generated_at": "t", "checks": [{"id": "graphify:fresh", "severity": "green"}]}))
+        return SimpleNamespace(returncode=0, stdout="", stderr="")
+
+    result = lp.run_due_auto_fixes(tmp_path / "loops.json", tmp_path / "health.json", tmp_path / "jobs", runner=runner_success, state_path=state_path)
+    assert "g" in result["fixed"]
+
+    # State should be cleared (since fix succeeded and check turned green)
+    state = json.loads(state_path.read_text())
+    assert "g" not in state
+
+
+def test_run_due_auto_fixes_uses_passed_state_path_not_real_home(tmp_path):
+    """Defect: run_due_auto_fixes called status() without state_path, always reading real ~/.claude/auto-fix-state.json"""
+    _world(tmp_path, [_loop(id="g", watches="check:graphify:fresh", verify="none", action="auto", broken_when="red",
+                            fix={"level": "auto", "kind": "rebuild_graph", "undo": "timeout"})],
+                      checks=[{"id": "graphify:fresh", "severity": "red"}], jobs={})
+    state_path = tmp_path / "state.json"
+
+    # Fail twice to downgrade
+    runner_fail = lambda argv: SimpleNamespace(returncode=1, stdout="", stderr="failure")
+    for _ in range(2):
+        lp.run_due_auto_fixes(tmp_path / "loops.json", tmp_path / "health.json", tmp_path / "jobs",
+                             state_path=state_path, runner=runner_fail)
+
+    # Verify state was written to passed state_path, not real home
+    state = json.loads(state_path.read_text())
+    assert "g" in state and "downgraded_at" in state["g"]
+
+
+def test_run_due_auto_fixes_re_measures_after_fix(tmp_path):
+    """Defect: nothing re-measures after the fix. A zero exit code counts as fixed without checking."""
+    _world(tmp_path, [_loop(id="g", watches="check:graphify:fresh", verify="none", action="auto", broken_when="red",
+                            fix={"level": "auto", "kind": "rebuild_graph", "undo": "timeout"})],
+                      checks=[{"id": "graphify:fresh", "severity": "red"}], jobs={})
+    state_path = tmp_path / "state.json"
+
+    # First run: fix exits 0 but check is still red -> should increment attempts
+    runner_ok_but_check_red = lambda argv: SimpleNamespace(returncode=0, stdout="", stderr="")
+    result1 = lp.run_due_auto_fixes(tmp_path / "loops.json", tmp_path / "health.json", tmp_path / "jobs",
+                                   state_path=state_path, runner=runner_ok_but_check_red)
+    assert ("g", "fix succeeded but check still red") in result1["failed"]
+    state = json.loads(state_path.read_text())
+    assert state["g"]["attempts"] == 1
+
+
+def test_run_due_auto_fixes_downgrades_then_recovers_on_check_green(tmp_path):
+    """Defect: downgraded loops can never recover; status() now reports as one_tap so runner skips it."""
+    _world(tmp_path, [_loop(id="g", watches="check:graphify:fresh", verify="none", action="auto", broken_when="red",
+                            fix={"level": "auto", "kind": "rebuild_graph", "undo": "timeout"})],
+                      checks=[{"id": "graphify:fresh", "severity": "red"}], jobs={})
+    state_path = tmp_path / "state.json"
+
+    # Fail twice to downgrade
+    runner_fail = lambda argv: SimpleNamespace(returncode=1, stdout="", stderr="failure")
+    for _ in range(2):
+        lp.run_due_auto_fixes(tmp_path / "loops.json", tmp_path / "health.json", tmp_path / "jobs",
+                             state_path=state_path, runner=runner_fail)
+
+    # Check is downgraded
+    out = lp.status(tmp_path / "loops.json", tmp_path / "health.json", tmp_path / "jobs", state_path=state_path, write_state=True)
+    row = out["loops"][0]
+    assert row["fix"]["level"] == "one_tap" and row["fix_level_downgraded"]
+
+    # Now check turns green (simulate the fix actually working)
+    health = tmp_path / "health.json"
+    health.write_text(json.dumps({"generated_at": "t", "checks": [{"id": "graphify:fresh", "severity": "green"}]}))
+
+    # Next call to status() with write_state=True should detect the check is green and clear downgrade
+    out2 = lp.status(tmp_path / "loops.json", health, tmp_path / "jobs", state_path=state_path, write_state=True)
+    row2 = out2["loops"][0]
+    assert row2["status"] == "closed" and not row2.get("fix_level_downgraded")
+
+    # Verify state was cleared
+    state = json.loads(state_path.read_text())
+    assert "g" not in state
+
+
+def test_run_due_auto_fixes_increments_attempts_on_exception(tmp_path):
+    """Defect: except Exception never increments attempts or records a reason."""
+    _world(tmp_path, [_loop(id="g", watches="check:graphify:fresh", verify="none", action="auto", broken_when="red",
+                            fix={"level": "auto", "kind": "rebuild_graph", "undo": "timeout"})],
+                      checks=[{"id": "graphify:fresh", "severity": "red"}], jobs={})
+    state_path = tmp_path / "state.json"
+
+    def runner_raises(argv):
+        raise RuntimeError("simulated import error")
+
+    # First raise
+    result1 = lp.run_due_auto_fixes(tmp_path / "loops.json", tmp_path / "health.json", tmp_path / "jobs",
+                                   state_path=state_path, runner=runner_raises)
+    assert any("simulated import error" in str(r) for r in result1["failed"])
+
+    # Second raise should downgrade
+    result2 = lp.run_due_auto_fixes(tmp_path / "loops.json", tmp_path / "health.json", tmp_path / "jobs",
+                                   state_path=state_path, runner=runner_raises)
+    assert "g" in result2["downgraded"]
+
+
+def test_status_does_not_write_state_by_default(tmp_path):
+    """Defect: status() wrote state on every call, causing concurrent write issues."""
+    _world(tmp_path, [_loop(id="g", watches="check:graphify:fresh", verify="none", action="auto", broken_when="red",
+                            fix={"level": "auto", "kind": "rebuild_graph", "undo": "timeout"})],
+                      checks=[{"id": "graphify:fresh", "severity": "red"}], jobs={})
+    state_path = tmp_path / "state.json"
+
+    # Simulate that the loop was previously downgraded
+    initial_state = {"g": {"attempts": 2, "reasons": ["error 1", "error 2"], "downgraded_at": NOW.isoformat()}}
+    state_path.write_text(json.dumps(initial_state))
+
+    # Mark the check as green (so the loop will be closed on next status() call)
+    health = tmp_path / "health.json"
+    health.write_text(json.dumps({"generated_at": "t", "checks": [{"id": "graphify:fresh", "severity": "green"}]}))
+
+    # Call status() without write_state - should NOT modify the state file
+    lp.status(tmp_path / "loops.json", health, tmp_path / "jobs", state_path=state_path, write_state=False)
+
+    # State file should still have the original content (loop still marked as downgraded)
+    state = json.loads(state_path.read_text())
+    assert state == initial_state
+
+    # Now call status() WITH write_state=True - should clean up the state
+    lp.status(tmp_path / "loops.json", health, tmp_path / "jobs", state_path=state_path, write_state=True)
+
+    # State file should now be empty (closed loop entry removed)
+    state = json.loads(state_path.read_text())
+    assert "g" not in state
+
+
+def test_rebuild_graph_passes_agents_repo_not_home(tmp_path):
+    """Defect: rebuild_graph argv passes home as the repo. Should pass ~/.agents"""
+    _world(tmp_path, [_loop(id="g", fix={"level": "auto", "kind": "rebuild_graph", "undo": "timeout"})])
+    seen = []
+    runner = lambda argv: (seen.append(argv), SimpleNamespace(returncode=0, stdout="", stderr=""))[1]
+    lp.run_fix("g", tmp_path / "loops.json", runner=runner, home="/Users/test")
+    argv = seen[0]
+    assert argv[-1] == "/Users/test/.agents"  # should end with .agents, not /Users/test
