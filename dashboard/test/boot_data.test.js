@@ -51,7 +51,7 @@ describe('the verdict: ALL SYSTEMS NOMINAL only when it is true', () => {
   it('is nominal when health says green, every check is green, and the snapshot is fresh', () => {
     const t = tree({ health: GREEN() })
     const d = buildBootData(t)
-    expect(d.verdict).toEqual({ nominal: true, tone: 'nominal', text: 'ALL SYSTEMS NOMINAL' })
+    expect(d.verdict).toEqual({ nominal: true, tone: 'nominal', text: expect.stringMatching(/ALL SYSTEMS NOMINAL.*5 MIN AGO/) })
     t.done()
   })
 
@@ -59,7 +59,8 @@ describe('the verdict: ALL SYSTEMS NOMINAL only when it is true', () => {
     const t = tree({ health: { ...GREEN(), generated_at: minutesAgo(STALE_MINUTES + 1) } })
     const d = buildBootData(t)
     expect(d.verdict.nominal).toBe(false)
-    expect(d.verdict.text).not.toMatch(/NOMINAL/)
+    expect(d.verdict.tone).toBe('stale')
+    expect(d.verdict.text).toMatch(/VERDICT IS.*OLD.*SWEEP HASN'T RUN/i)
     expect(line(d, 'STALE').text).toMatch(new RegExp(`${STALE_MINUTES + 1} MIN OLD`))
     t.done()
   })
@@ -105,6 +106,47 @@ describe('the verdict: ALL SYSTEMS NOMINAL only when it is true', () => {
     expect(d.verdict.nominal).toBe(false)
     expect(d.counts.yellow).toBe(2)
     expect(d.feed.filter((f) => f.level === 'yellow').map((f) => f.label)).toEqual(['Weird', 'None'])
+    t.done()
+  })
+
+  it('clock moves forward past stale limit: verdict flips from nominal to stale', () => {
+    const h = GREEN()
+    const t = tree({ health: h })
+    const nominalData = buildBootData({ ...t, now: NOW })
+    expect(nominalData.verdict.nominal).toBe(true)
+
+    const staleData = buildBootData({ ...t, now: new Date(NOW.getTime() + (STALE_MINUTES + 1) * 60_000) })
+    expect(staleData.verdict.nominal).toBe(false)
+    expect(staleData.verdict.tone).toBe('stale')
+    t.done()
+  })
+
+  it('clock moves back under tolerance: verdict returns to nominal without being sticky', () => {
+    const h = GREEN()
+    const t = tree({ health: h })
+    const farFuture = new Date(NOW.getTime() + (STALE_MINUTES + 1) * 60_000)
+    const staleData = buildBootData({ ...t, now: farFuture })
+    expect(staleData.verdict.nominal).toBe(false)
+
+    const backNow = new Date(NOW.getTime() + 5 * 60_000)
+    const freshAgain = buildBootData({ ...t, now: backNow })
+    expect(freshAgain.verdict.nominal).toBe(true)
+    expect(freshAgain.verdict.text).toMatch(/10 MIN AGO/)
+    t.done()
+  })
+
+  it('missing generated_at: health file is unknown, never crashes', () => {
+    const t = tree({ health: { overall: 'green', checks: GREEN().checks } })
+    const d = buildBootData(t)
+    expect(d.verdict.nominal).toBe(false)
+    expect(d.verdict.tone).not.toBe('first-run')
+    t.done()
+  })
+
+  it('empty checks array: verdict stays non-nominal', () => {
+    const t = tree({ health: { generated_at: minutesAgo(5), overall: 'green', checks: [] } })
+    const d = buildBootData(t)
+    expect(d.verdict.nominal).toBe(false)
     t.done()
   })
 })

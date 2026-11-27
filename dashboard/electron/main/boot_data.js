@@ -17,6 +17,22 @@ const RANK = { green: 0, yellow: 1, red: 2 }
 const level = (s) => (LEVELS.has(s) ? s : 'yellow') // unknown severity is a warning, never green
 const worst = (levels) => (levels.length ? levels.reduce((a, b) => (RANK[b] > RANK[a] ? b : a)) : 'yellow')
 const up = (s) => String(s ?? '').toUpperCase()
+
+function ageWords(ageMin) {
+  if (ageMin == null || !Number.isFinite(ageMin)) return 'AGE UNKNOWN'
+  const m = Math.max(0, ageMin)
+  if (m < 60) return `${m} MIN AGO`
+  if (m < 1440) return `${Math.floor(m / 60)} H AGO`
+  return `${Math.floor(m / 1440)} DAYS AGO`
+}
+
+function ageDuration(ageMin) {
+  if (ageMin == null || !Number.isFinite(ageMin)) return 'age unknown'
+  const m = Math.max(0, ageMin)
+  if (m < 60) return `${m} min`
+  if (m < 1440) return `${Math.floor(m / 60)} h`
+  return `${Math.floor(m / 1440)} days`
+}
 // Where a summary line leads when clicked in the boot (#433): the exact Health check behind it, or Health itself.
 const HEALTH = { tab: 'health' }
 const onCheck = (c) => (c?.id ? { tab: 'health', check: c.id } : HEALTH)
@@ -143,8 +159,11 @@ function verdictOf(health, counts, ageMin, freshInstall) {
   const parts = [counts.red && `${counts.red} CRITICAL`, counts.yellow && `${counts.yellow} WARNING${counts.yellow > 1 ? 'S' : ''}`].filter(Boolean)
   if (parts.length) return { nominal: false, tone: 'issues', text: parts.join(' · ') + ' · OPEN HEALTH' }
   const fresh = ageMin !== null && ageMin <= STALE_MINUTES
-  if (health.overall !== 'green' || !fresh) return { nominal: false, tone: 'unknown', text: (fresh ? 'HEALTH UNCONFIRMED' : 'HEALTH STALE') + ' · OPEN HEALTH' }
-  return { nominal: true, tone: 'nominal', text: 'ALL SYSTEMS NOMINAL' }
+  if (!fresh) {
+    return { nominal: false, tone: 'stale', text: `VERDICT IS ${ageDuration(ageMin)} old · sweep hasn't run` }
+  }
+  if (health.overall !== 'green') return { nominal: false, tone: 'unknown', text: 'HEALTH UNCONFIRMED · OPEN HEALTH' }
+  return { nominal: true, tone: 'nominal', text: 'ALL SYSTEMS NOMINAL · ' + ageWords(ageMin) }
 }
 
 export function buildBootData(opts = {}) {
