@@ -298,9 +298,9 @@ def test_went_offline_is_an_up_to_down_edge_only():
 
 
 def test_watched_by_reads_the_config():
-    assert pc.watched_by("mac-mini-2012", CFG) == ["mac-mini-1"]
-    assert pc.watched_by("mac-mini-1", CFG) == ["mac-mini-2012"]
-    assert pc.watched_by("macbook-pro-1", CFG) == []        # the laptop isn't a watcher
+    assert pc.watched_by("mac-mini-2012", CFG) == ["mac-mini-1", "macbook-pro-1"]
+    assert pc.watched_by("mac-mini-1", CFG) == ["mac-mini-2012", "macbook-pro-1"]
+    assert pc.watched_by("macbook-pro-1", CFG) == ["mac-mini-1", "mac-mini-2012"]
 
 
 # ── parsers over real command output ────────────────────────────────────────────────────────────────────────────
@@ -439,3 +439,88 @@ def test_expect_back_skips_the_probe_when_im_back_already_arrived(tmp_path):
 def test_command_output_that_isnt_utf8_never_crashes_a_probe():
     r = pc._run(["/bin/sh", "-c", r"printf 'x\325y'"])
     assert r is not None and r.stdout.startswith("x")
+
+
+# ── word (asleep/off signal) ────────────────────────────────────────────────────────────────────────────────────
+
+def test_save_and_load_word(tmp_path):
+    """Word file I/O mirrors incident file I/O."""
+    pc._save_word(tmp_path, "mac-mini-1", {"word": "asleep", "at": T0.isoformat()})
+    w = pc.load_word(tmp_path, "mac-mini-1")
+    assert w["word"] == "asleep" and w["at"] == T0.isoformat()
+    pc._save_word(tmp_path, "mac-mini-1", {})
+    assert pc.load_word(tmp_path, "mac-mini-1") == {}
+
+
+def test_mac_state_awake(tmp_path):
+    """mac_state reads the last probe and returns 'awake' for healthy."""
+    (tmp_path / "mac-mini-1.last.json").write_text(json.dumps({"state": "healthy", "at": T0.isoformat()}))
+    state = pc.mac_state("mac-mini-1", CFG, state_dir=tmp_path, now=lambda: T0)
+    assert state["state"] == "awake"
+
+
+def test_mac_state_asleep(tmp_path):
+    """mac_state returns 'asleep' for asleep probe."""
+    (tmp_path / "mac-mini-1.last.json").write_text(json.dumps({"state": "asleep", "at": T0.isoformat()}))
+    state = pc.mac_state("mac-mini-1", CFG, state_dir=tmp_path, now=lambda: T0)
+    assert state["state"] == "asleep"
+
+
+def test_mac_state_off_from_hung(tmp_path):
+    """mac_state returns 'off' for hung probe."""
+    (tmp_path / "mac-mini-1.last.json").write_text(json.dumps({"state": "hung", "at": T0.isoformat()}))
+    state = pc.mac_state("mac-mini-1", CFG, state_dir=tmp_path, now=lambda: T0)
+    assert state["state"] == "off"
+
+
+def test_mac_state_off_from_word(tmp_path):
+    """mac_state returns 'off' when a fresh word says 'off', even if probe says asleep."""
+    (tmp_path / "mac-mini-1.last.json").write_text(json.dumps({"state": "asleep", "at": T0.isoformat()}))
+    pc._save_word(tmp_path, "mac-mini-1", {"word": "off", "at": T0.isoformat()})
+    state = pc.mac_state("mac-mini-1", CFG, state_dir=tmp_path, now=lambda: T0)
+    assert state["state"] == "off"
+
+
+def test_mac_state_gone_quiet(tmp_path):
+    """mac_state returns 'gone quiet' when probe is older than 1 hour."""
+    old = T0 - timedelta(hours=2)
+    (tmp_path / "mac-mini-1.last.json").write_text(json.dumps({"state": "healthy", "at": old.isoformat()}))
+    state = pc.mac_state("mac-mini-1", CFG, state_dir=tmp_path, now=lambda: T0)
+    assert state["state"] == "gone quiet"
+
+
+def test_handle_probes_despite_fresh_asleep_word(tmp_path):
+    """handle() always probes even with a fresh asleep/off word, then clears the word if probe shows healthy."""
+    w = World(tmp_path, [UP])
+    pc._save_word(w.dir, "mac-mini-1", {"word": "asleep", "at": T0.isoformat()})
+    r = w.handle(trigger="tailscale-offline", peer="mac-mini-1")
+    assert r["action"] == "none" and r["state"] == "healthy"
+    assert pc.load_word(w.dir, "mac-mini-1") == {}  # word was cleared
+
+
+def test_handle_probes_despite_fresh_off_word(tmp_path):
+    """handle() always probes even with a fresh off word, then clears the word if probe shows healthy."""
+    w = World(tmp_path, [UP])
+    pc._save_word(w.dir, "mac-mini-1", {"word": "off", "at": T0.isoformat()})
+    r = w.handle(trigger="tailscale-offline", peer="mac-mini-1")
+    assert r["action"] == "none" and r["state"] == "healthy"
+    assert pc.load_word(w.dir, "mac-mini-1") == {}  # word was cleared
+
+
+def test_handle_ignores_stale_word_and_probes(tmp_path):
+    """handle() ignores word older than 5 minutes and probes normally."""
+    w = World(tmp_path, [DOWN])
+    old_word = T0 - timedelta(minutes=10)
+    pc._save_word(w.dir, "mac-mini-1", {"word": "asleep", "at": old_word.isoformat()})
+    r = w.handle(trigger="tailscale-offline", peer="mac-mini-1")
+    assert r["action"] == "failed" and r["state"] == "network"
+    assert len(w.fixes) > 0  # probed and tried a fix
+
+
+def test_handle_clears_word_on_healthy_probe(tmp_path):
+    """handle() with healthy probe clears any word file."""
+    w = World(tmp_path, [UP])
+    pc._save_word(w.dir, "mac-mini-1", {"word": "asleep", "at": T0.isoformat()})
+    r = w.handle()
+    assert r["action"] == "none" and r["state"] == "healthy"
+    assert pc.load_word(w.dir, "mac-mini-1") == {}

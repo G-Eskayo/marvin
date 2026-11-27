@@ -2,7 +2,7 @@
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <!-- Peer care's one blocked reader on tailscaled's IPN bus (lib/peer_care.py watch-ipn, marvin#847, ADR 0081). It
      wakes only when the tailnet changes; a watched peer going offline (or coming back with an incident open) is
-     handled once. For the watchers only: the Mac mini (the 2012 runs config/mac-mini-2012/marvin-peer-care-ipn.service).
+     handled once. Runs on the Mac mini and the MacBook Pro; the 2012 runs config/mac-mini-2012/marvin-peer-care-ipn.service.
      Install: cp this to ~/Library/LaunchAgents/ and `launchctl bootstrap gui/$(id -u) <that file>`. -->
 <plist version="1.0">
 <dict>

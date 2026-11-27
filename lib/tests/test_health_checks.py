@@ -1891,3 +1891,53 @@ def test_check_model_availability_untagged_model_match(tmp_path, monkeypatch):
     result = hc.check_model_availability()
     assert result["severity"] == "green"
     assert "all 1 ollama models present" in result["detail"]
+
+
+# ── peer care watch ─────────────────────────────────────────────────────
+
+def test_check_peer_watch_awake(tmp_path, monkeypatch):
+    """Peer watch returns green when a watched peer is awake."""
+    import peer_care as pc
+    state_dir = tmp_path / "peer-care"
+    cfg = {"watch": {"macbook-pro-1": ["mac-mini-1", "mac-mini-2012"]}}
+    now = datetime(2026, 10, 31, 3, 0, tzinfo=timezone.utc)
+    (state_dir / "mac-mini-1.last.json").parent.mkdir(parents=True, exist_ok=True)
+    (state_dir / "mac-mini-1.last.json").write_text(json.dumps({"state": "healthy", "at": now.isoformat()}))
+    (state_dir / "mac-mini-2012.last.json").write_text(json.dumps({"state": "healthy", "at": now.isoformat()}))
+
+    results = hc.check_peer_watch(cfg=cfg, me="macbook-pro-1", state_dir=state_dir, now=lambda: now)
+    assert len(results) == 2  # two watched peers
+    peer1 = [r for r in results if r["id"] == "care:mac-mini-1"][0]
+    assert peer1["severity"] == "green"
+    assert "awake" in peer1["detail"]
+
+
+def test_check_peer_watch_asleep(tmp_path, monkeypatch):
+    """Peer watch returns yellow when a watched peer is asleep."""
+    import peer_care as pc
+    state_dir = tmp_path / "peer-care"
+    cfg = {"watch": {"macbook-pro-1": ["mac-mini-1"]}}
+    now = datetime(2026, 10, 31, 3, 0, tzinfo=timezone.utc)
+    (state_dir / "mac-mini-1.last.json").parent.mkdir(parents=True, exist_ok=True)
+    (state_dir / "mac-mini-1.last.json").write_text(json.dumps({"state": "asleep", "at": now.isoformat()}))
+
+    results = hc.check_peer_watch(cfg=cfg, me="macbook-pro-1", state_dir=state_dir, now=lambda: now)
+    assert len(results) == 1
+    assert results[0]["severity"] == "yellow"
+    assert "asleep" in results[0]["detail"]
+
+
+def test_check_peer_watch_gone_quiet(tmp_path, monkeypatch):
+    """Peer watch returns yellow when a watched peer has gone quiet (no probe in 1+ hour)."""
+    import peer_care as pc
+    state_dir = tmp_path / "peer-care"
+    cfg = {"watch": {"macbook-pro-1": ["mac-mini-1"]}}
+    old = datetime(2026, 10, 31, 1, 0, tzinfo=timezone.utc)
+    now = datetime(2026, 10, 31, 3, 0, tzinfo=timezone.utc)
+    (state_dir / "mac-mini-1.last.json").parent.mkdir(parents=True, exist_ok=True)
+    (state_dir / "mac-mini-1.last.json").write_text(json.dumps({"state": "healthy", "at": old.isoformat()}))
+
+    results = hc.check_peer_watch(cfg=cfg, me="macbook-pro-1", state_dir=state_dir, now=lambda: now)
+    assert len(results) == 1
+    assert results[0]["severity"] == "yellow"
+    assert "gone quiet" in results[0]["detail"]

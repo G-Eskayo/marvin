@@ -24,6 +24,7 @@ import sys
 import threading
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
+from typing import Callable
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import code_sync  # noqa: E402
@@ -729,6 +730,31 @@ def check_memory_claims() -> dict:
     and its MEMORY.md line gains "(closed <date>)". Never edits a note."""
     import memory_lint
     return memory_lint.check_claims()
+
+
+def check_peer_watch(cfg: dict | None = None, me: str | None = None, state_dir: Path | None = None, now: Callable | None = None) -> list[dict]:
+    """Peer care watch health (marvin#847, design #769): watch each peer the local machine is responsible for,
+    report their state (awake/asleep/off/gone quiet/unknown). Local check only, no network calls."""
+    import peer_care
+    cfg = cfg or peer_care.load_config()
+    me = me or machine_profile.registry_id()
+    state_dir = state_dir or peer_care.STATE_DIR
+    now = now or (lambda: datetime.now(timezone.utc))
+    results = []
+    for peer in cfg.get("watch", {}).get(me, []):
+        state_info = peer_care.mac_state(peer, cfg, state_dir=state_dir, now=now)
+        severity_map = {
+            "awake": "green",
+            "asleep": "yellow",
+            "off": "yellow",
+            "gone quiet": "yellow",
+            "unknown": "yellow",
+        }
+        severity = severity_map.get(state_info["state"], "yellow")
+        last_seen = state_info.get("last_seen") or "never"
+        results.append(_result(f"care:{peer}", f"Peer care: {peer_care.device_name(peer)}", severity,
+                              f"{state_info['state']} (last seen {last_seen})"))
+    return results
 
 
 def check_profile_parity() -> dict | None:
@@ -1938,6 +1964,7 @@ def default_checks(reach: dict[str, str] | None = None, reach_results: list[dict
         ("repo:sync", "Repo sync", lambda: check_repo_sync_everywhere(reach), CROSS_MACHINE_BUDGET_S),
         ("mirror:sync", "Mirror sync on pull-only nodes", lambda: _mirror_health().check_mirror_sync_everywhere(reach),
          CROSS_MACHINE_BUDGET_S),
+        ("care:peers", "Peer care watch", check_peer_watch, CHECK_BUDGET_S),
         ("machine-state", "Machine state", lambda: check_machine_state_everywhere(reach), CROSS_MACHINE_BUDGET_S),
     ]
 

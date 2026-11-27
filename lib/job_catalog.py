@@ -111,6 +111,10 @@ JOBS: dict[str, dict] = {
     "tidy-agent": {"machine": "mini", "goal": "ns3",   # config/jobs/tidy-agent.json (was com.giles.tidy-agent); Mini only: one iCloud Desktop, PR #1129
                    "reporter": "~/.claude/logs/tidy-agent-error.log", "healthy": "last run exit 0",
                    "consumer": "the owner's Downloads and Desktop"},
+    "peer-care-ipn": {"machine": "both", "goal": "ns3", "reporter": "job_events peer-care-<peer>",
+                      "healthy": "last run exit 0", "consumer": "Vitals and the owner"},
+    "peer-care-im-back": {"machine": "both", "goal": "ns3", "reporter": "job_events peer-care-<peer>",
+                          "healthy": "last run exit 0", "consumer": "Vitals and the owner"},
 }
 
 

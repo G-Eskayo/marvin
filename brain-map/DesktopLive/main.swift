@@ -106,6 +106,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate {
     // so only changes get logged, not 24 lines a second.
     var drawState: [UInt32: String] = [:]
     var sigtermSource: DispatchSourceSignal?
+    var lastPeerWordEvent: String? = nil
+    var lastPeerWordEventTime: Date? = nil
+    var peerWordWork: DispatchWorkItem?
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         NSApp.setActivationPolicy(.accessory) // no Dock icon, no menu bar
@@ -221,6 +224,23 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate {
         DispatchQueue.main.asyncAfter(deadline: .now() + 1.0, execute: work)
     }
 
+    // Before sleep/shutdown: tell watchers (same cancel-and-reschedule debounce as reconcile).
+    func schedulePeerWord(_ event: String) {
+        guard let args = eventToArgs(event) else { return }
+        if !shouldDebounce(lastPeerWordEvent, Date(), lastPeerWordEventTime) { return }
+        lastPeerWordEvent = event
+        lastPeerWordEventTime = Date()
+        peerWordWork?.cancel()
+        let work = DispatchWorkItem { [weak self] in
+            let process = Process()
+            process.executableURL = URL(fileURLWithPath: NSHomeDirectory() + "/.agents/venv/bin/python")
+            process.arguments = [NSHomeDirectory() + "/.agents/lib/peer_care.py"] + args
+            try? process.run()  // fire-and-forget
+        }
+        peerWordWork = work
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.5, execute: work)
+    }
+
     func applyReconcile(reason: String? = nil) {
         let screens = NSScreen.screens
         let plan = reconcile(screens: screens.map(screenInfo), windows: windows.mapValues { $0.frame })
@@ -291,6 +311,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate {
             (NSWorkspace.screensDidWakeNotification, "screens-wake"),
             (NSWorkspace.sessionDidResignActiveNotification, "session-inactive"),
             (NSWorkspace.sessionDidBecomeActiveNotification, "session-active"),
+            (NSWorkspace.willPowerOffNotification, "poweroff"),
         ]
         for (name, label) in events {
             ws.addObserver(forName: name, object: nil, queue: .main) { [weak self] _ in
@@ -299,6 +320,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate {
                 switch label {
                 case "sleep", "screens-sleep", "session-inactive":
                     self.liveness.pause()
+                    if label == "sleep" {
+                        self.schedulePeerWord(label)
+                    }
+                case "poweroff":
+                    self.schedulePeerWord(label)
                 case "wake", "screens-wake", "session-active":
                     self.liveness.resume(at: Date())
                     self.scheduleReconcile(label)

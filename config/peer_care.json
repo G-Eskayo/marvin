@@ -10,7 +10,7 @@
     "needs_up": {"mac-mini-1": ["mac-mini-2012"], "macbook-pro-1": ["mac-mini-1"]}
   },
   "home_anchor": "mac-mini-1",
-  "watch": {"mac-mini-1": ["mac-mini-2012"], "mac-mini-2012": ["mac-mini-1"]},
+  "watch": {"mac-mini-1": ["mac-mini-2012", "macbook-pro-1"], "mac-mini-2012": ["mac-mini-1", "macbook-pro-1"], "macbook-pro-1": ["mac-mini-1", "mac-mini-2012"]},
   "attempts_per_incident": 3,
   "back_within_minutes": 10,
   "wake_wait_seconds": 120,

@@ -7,6 +7,7 @@ act only on a trigger, never a timer:
   tailscale    `watch-ipn`: one blocked reader on tailscaled's IPN bus; a watched peer going offline wakes it
   code-sync    the end of each existing code-sync run probes the watched peers (no new clock)
   back         the restarted machine's boot says "I'm back"; `expect-back` waits once, bounded, for it
+  asleep       before sleep/shutdown, the sender tells all watchers via `expect-asleep`
   manual       `check <peer>`
 
 On a trigger: one probe, a pure `classify` naming the state, and one rung of that state's fix ladder. Each incident
@@ -18,12 +19,13 @@ Fixes switch on as the owner's pieces arrive, with no code change: Wake-on-LAN o
 use, the FileVault unlock once `marvin-peer-unlock` is installed (owner's one-line setup), a power cycle once a smart
 plug is listed in config/peer_care.json `smart_plugs`.
 
-    peer_care.py check <peer> [--trigger NAME]     probe and maybe fix one peer
-    peer_care.py check-all --trigger code-sync      every peer this machine watches
-    peer_care.py watch-ipn                          the long-running IPN reader (launchd KeepAlive / systemd)
-    peer_care.py im-back                            at boot: tell the watchers this machine is up
-    peer_care.py expect-back <peer> [--minutes N]   after a planned restart: wait once for "I'm back"
-    peer_care.py status [--json]                    incidents and last probes, for the Health card
+    peer_care.py check <peer> [--trigger NAME]              probe and maybe fix one peer
+    peer_care.py check-all --trigger code-sync              every peer this machine watches
+    peer_care.py watch-ipn                                  the long-running IPN reader (launchd KeepAlive / systemd)
+    peer_care.py im-back                                    at boot: tell the watchers this machine is up
+    peer_care.py expect-back <peer> [--minutes N]           after a planned restart: wait once for "I'm back"
+    peer_care.py expect-asleep <peer> [--word asleep|off]   receiver: write word, no probe
+    peer_care.py status [--json]                            incidents and last probes, for the Health card
 """
 from __future__ import annotations
 
@@ -36,9 +38,10 @@ import shutil
 import socket
 import subprocess
 import sys
+import threading
 import time
 from dataclasses import asdict, dataclass, field
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Callable
 
@@ -423,6 +426,31 @@ def _save_incident(state_dir: Path, peer: str, inc: dict) -> None:
     os.replace(tmp, p)
 
 
+def _word_path(state_dir: Path, peer: str) -> Path:
+    """Path to the asleep/off word file sent by another machine."""
+    return state_dir / f"{peer}.word"
+
+
+def load_word(state_dir: Path, peer: str) -> dict:
+    """Load the word file ({"word": "asleep"|"off", "at": ISO timestamp}) or empty dict if not present."""
+    try:
+        return json.loads(_word_path(state_dir, peer).read_text())
+    except (OSError, ValueError):
+        return {}
+
+
+def _save_word(state_dir: Path, peer: str, word_dict: dict) -> None:
+    """Save the word file, or delete it if empty."""
+    state_dir.mkdir(parents=True, exist_ok=True)
+    p = _word_path(state_dir, peer)
+    if not word_dict:
+        p.unlink(missing_ok=True)
+        return
+    tmp = p.with_suffix(".tmp")
+    tmp.write_text(json.dumps(word_dict))
+    os.replace(tmp, p)
+
+
 def _record_probe(state_dir: Path, peer: str, state: str, p: Probe, at: datetime) -> None:
     last = state_dir / f"{peer}.last.json"
     tmp = last.with_suffix(".tmp")
@@ -454,6 +482,7 @@ def handle(peer: str, trigger: str, cfg: dict, *, probe: Callable = probe, run_f
             _record_probe(state_dir, peer, state, p, now())
             inc = load_incident(state_dir, peer)
             if state == "healthy":
+                _save_word(state_dir, peer, {})  # clear the word on healthy
                 if not inc:
                     run.step("result", "healthy")
                     return {"peer": peer, "action": "none", "state": state, "fix": None}
@@ -558,6 +587,19 @@ def im_back(me: str, cfg: dict) -> None:
         _ssh(ts_host(w), f"~/.agents/venv/bin/python ~/.agents/lib/peer_care.py check {me} --trigger back", 60)
 
 
+def expect_asleep(cfg: dict, word: str = "asleep", push: Callable | None = None,
+                  state_dir: Path = STATE_DIR) -> None:
+    """Before sleep/shutdown: tell each watcher that this machine is going down (word='asleep') or off (word='off').
+    Concurrent fire-and-forget SSH calls to all watchers, bounded 10s per call."""
+    if push is None:
+        push = _ssh
+    import machine_profile
+    me = machine_profile.registry_id()
+    for watcher in watched_by(me, cfg):
+        cmd = f"~/.agents/venv/bin/python ~/.agents/lib/peer_care.py expect-asleep {me} --word {word}"
+        threading.Thread(target=lambda w=watcher, c=cmd: push(ts_host(w), c, timeout=10), daemon=True).start()
+
+
 def expect_back(peer: str, cfg: dict, minutes: float | None = None, *, sleep: Callable = time.sleep,
                 handle: Callable | None = None, state_dir: Path = STATE_DIR, now: Callable = _now) -> dict:
     """After a planned restart: one bounded wait, then one check (design #769 section 6, no re-check loop). The peer's
@@ -575,6 +617,46 @@ def expect_back(peer: str, cfg: dict, minutes: float | None = None, *, sleep: Ca
     return handle(peer, "expected-back")
 
 
+def mac_state(peer: str, cfg: dict, state_dir: Path = STATE_DIR, now: Callable = _now) -> dict:
+    """Pure function: Vitals-facing state of a peer. Returns {state, last_seen} where state is one of:
+    'awake' (probe showed healthy), 'asleep' (probe showed asleep), 'off' (probe showed hung, or word says "off"),
+    'gone quiet' (no probe in a long while), 'unknown' (couldn't probe or state unknown)."""
+    try:
+        last = json.loads((state_dir / f"{peer}.last.json").read_text())
+        seen_at = datetime.fromisoformat(last.get("at", ""))
+        state_name = last.get("state")
+    except (OSError, ValueError, TypeError):
+        last, seen_at, state_name = None, None, None
+
+    # Check if a fresh word (asleep/off) covers the current trigger
+    word = load_word(state_dir, peer)
+    word_time = None
+    if word.get("word") in ("asleep", "off"):
+        try:
+            word_time = datetime.fromisoformat(word.get("at", ""))
+        except (ValueError, TypeError):
+            pass
+
+    # Determine the state string
+    if word.get("word") == "off" and word_time:
+        return {"state": "off", "last_seen": word.get("at")}
+
+    # Check if gone quiet FIRST, before checking state_name
+    if seen_at and seen_at < now() - timedelta(hours=1):
+        return {"state": "gone quiet", "last_seen": last["at"] if last else None}
+
+    if state_name == "healthy":
+        return {"state": "awake", "last_seen": last["at"] if last else None}
+    elif state_name == "asleep":
+        return {"state": "asleep", "last_seen": last["at"] if last else None}
+    elif state_name == "hung":
+        return {"state": "off", "last_seen": last["at"] if last else None}
+    elif state_name:
+        return {"state": "unknown", "last_seen": last["at"] if last else None}
+
+    return {"state": "unknown", "last_seen": None}
+
+
 def status(cfg: dict, state_dir: Path = STATE_DIR) -> dict:
     import machine_profile
     me = machine_profile.registry_id()
@@ -590,6 +672,7 @@ def status(cfg: dict, state_dir: Path = STATE_DIR) -> dict:
 
 
 def main(argv: list[str] | None = None) -> int:
+    import job_events
     import machine_profile
     ap = argparse.ArgumentParser(description=__doc__.split("\n\n")[0])
     sub = ap.add_subparsers(dest="cmd", required=True)
@@ -603,6 +686,9 @@ def main(argv: list[str] | None = None) -> int:
     e = sub.add_parser("expect-back")
     e.add_argument("peer")
     e.add_argument("--minutes", type=float, default=None)
+    ea = sub.add_parser("expect-asleep")
+    ea.add_argument("peer")
+    ea.add_argument("--word", choices=["asleep", "off"], default="asleep")
     s = sub.add_parser("status")
     s.add_argument("--json", action="store_true")
     a = ap.parse_args(argv)
@@ -619,6 +705,14 @@ def main(argv: list[str] | None = None) -> int:
         im_back(me, cfg)
     elif a.cmd == "expect-back":
         print(json.dumps(expect_back(a.peer, cfg, a.minutes)))
+    elif a.cmd == "expect-asleep":
+        # Receiver: validate peer/word, write word, light job_events step, no probe
+        STATE_DIR.mkdir(parents=True, exist_ok=True)
+        peer_name = device_name(a.peer)
+        with job_events.job_run(f"peer-care-{a.peer}", f"Peer care: {peer_name}", None) as run:
+            run.step("word", f"{a.word}: received from {a.peer}")
+            _save_word(STATE_DIR, a.peer, {"word": a.word, "at": _now().isoformat()})
+            run.step("result", f"word written: {a.word}")
     elif a.cmd == "status":
         print(json.dumps(status(cfg), indent=None if a.json else 1))
     return 0
