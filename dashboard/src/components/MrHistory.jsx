@@ -2,11 +2,12 @@ import { useEffect, useMemo, useState } from 'react'
 import { groupByDay, pageOf } from '../lib/mr_history_view.js'
 import { revertedBy } from '../lib/merge_motion.js'
 import { useMergeMotion, MotionSlot } from './MergeMotion.jsx'
+import { foldCommonCause } from '../lib/common_cause.js'
 
 // MR Review's Merged view (marvin#419): every merged PR across projects and every refused Approve, newest first,
 // grouped by day, 5 days per page. Draws the saved history at once, then a fresh read replaces it.
 const BY_LABEL = { you: 'you', auto: 'auto-merge', unrecorded: 'not recorded' }
-const rowKey = (r) => `${r.kind}|${r.url}|${r.at}`
+const rowKey = (r) => r.kind === 'folded' ? `${r.kind}|${r.root}|${r.at}` : `${r.kind}|${r.url}|${r.at}`
 
 function age(at, now = Date.now()) {
   if (!at) return ''
@@ -32,11 +33,36 @@ export function HistoryRow({ row, onOpen, reverted = null }) {
   )
 }
 
+export function FoldedHistoryRow({ row, onOpen }) {
+  const [expanded, setExpanded] = useState(false)
+  const time = Number.isNaN(Date.parse(row.at)) ? '' : new Date(row.at).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' })
+  return (
+    <div data-kind="folded">
+      <button onClick={() => setExpanded(!expanded)} data-kind="folded"
+        className="grid w-full grid-cols-[1.25rem_1fr_auto_auto_auto] items-baseline gap-3 rounded px-2 py-1.5 text-left text-sm hover:bg-neutral-800/60">
+        <span className="text-red-400">✗</span>
+        <span className="truncate text-neutral-200"><span className="font-mono text-neutral-400">{expanded ? '▾' : '▸'}</span> {row.label} · {row.count} builds blocked</span>
+        <span className="text-xs text-neutral-500" />
+        <span className="text-xs tabular-nums text-neutral-500">{time}</span>
+        <span className="text-xs text-red-300">incident</span>
+      </button>
+      {expanded && (
+        <div className="ml-4 border-l border-neutral-700 py-1">
+          {row.items.map((item) => (
+            <HistoryRow key={rowKey(item)} row={item} onOpen={onOpen} reverted={null} />
+          ))}
+        </div>
+      )}
+    </div>
+  )
+}
+
 // `motion` (the Merged view's useMergeMotion): a merge arriving while you look sweeps its row in, left to right.
 export function HistoryList({ data, page, setPage, onOpen, now, motion = null }) {
   const rows = motion ? motion.shown : data.rows
-  const reverts = useMemo(() => revertedBy(rows), [rows])
-  const days = groupByDay(rows, now)
+  const foldedRows = useMemo(() => foldCommonCause(rows), [rows])
+  const reverts = useMemo(() => revertedBy(foldedRows), [foldedRows])
+  const days = groupByDay(foldedRows, now)
   const view = pageOf(days, page)
   if (!rows.length) return <p className="text-sm text-neutral-500">{data.updatedAt ? 'Nothing merged or refused yet.' : 'Reading merge history…'}</p>
   return (
@@ -45,7 +71,9 @@ export function HistoryList({ data, page, setPage, onOpen, now, motion = null })
         <section key={d.key} className="mb-4">
           <h3 className="mb-1 text-xs font-medium uppercase tracking-wide text-neutral-500">{d.label}</h3>
           {d.rows.map((r) => {
-            const row = <HistoryRow key={rowKey(r)} row={r} onOpen={onOpen} reverted={reverts[r.url] ?? null} />
+            const row = r.kind === 'folded'
+              ? <FoldedHistoryRow key={rowKey(r)} row={r} onOpen={onOpen} />
+              : <HistoryRow key={rowKey(r)} row={r} onOpen={onOpen} reverted={reverts[r.url] ?? null} />
             return motion ? <MotionSlot key={rowKey(r)} slotRef={motion.slotRef(rowKey(r))} waiting={motion.entering.has(rowKey(r))} pad={0}>{row}</MotionSlot> : row
           })}
         </section>
