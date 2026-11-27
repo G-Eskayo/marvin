@@ -1,0 +1,11 @@
+1. `config/peer_care.json`: add `macbook-pro-1` to `"watch"` per Decision `mesh-scope`; update its `"_doc"` comment.
+2. `lib/peer_care.py`: add `load_word`/`_save_word`/`word_path` (mirrors `load_facts`/`load_incident`), `announce(me, state, cfg)`, `record-word` handling, and wire both into `main()`'s subparsers.
+3. `lib/peer_care.py`: make `handle()` consult `load_word(peer)` before probing and short-circuit on a current `sleep`/`shutdown` word (no probe, no incident, one `job_events` step at most for visibility).
+4. `lib/peer_care.py`: add `PowerSource` (ctypes/IOKit) and `watch_power(me, cfg)`; wire `sleep`/`shutdown` → `announce(...)`, `wake` → `im_back(...)` + `announce("wake")`. Add `watch-power` to `main()`.
+5. `config/launchd/com.marvin.peer-care-power.plist`: new file, copied from `com.marvin.peer-care-ipn.plist`'s shape.
+6. `lib/health_checks.py`: add `word` parameter to `classify_unreachable`; replace the laptop duration-guess branch with the word-based branch; delete `ASLEEP_MAX_HOURS` once superseded (or keep behind Decision `word-ttl` option B); wire `check_machine_reachability()` to pass `peer_care.load_word(device_id)`.
+7. `lib/device_status.py`: add a `word_lookup` parameter to `device_statuses`, wire it in `main()` via `peer_care.load_word`.
+8. `dashboard/src/components/DeviceColumns.jsx`: add `"off"`/`"gone-quiet"` label/tone/detail handling in `describeDevice` and the `DOT` map, per Decision `gone-quiet-tone`.
+9. Write all tests listed above in `lib/tests/test_peer_care.py`, `lib/tests/test_health_checks.py`, `lib/tests/test_device_status.py`, and `dashboard/test/devices.test.jsx`, before the corresponding implementation step (TDD order: 2→tests for word storage; 3→tests for the short-circuit; 4→tests for the power source; 6→tests for classify; 7/8→tests for the display wiring).
+10. Update `docs/adr/0081-macs-look-after-each-other.md`'s Context/Decision section with a short addendum note (the laptop is now a watcher; the word mechanism), and `CONTEXT.md`'s "Peer watch" bullet if its wording needs tightening after the owner answers the Decisions above.
+11. Run the full Python test suite (`lib/tests/`) and the dashboard suite (`dashboard/test/`) before opening the PR, per the merge-gate rule.

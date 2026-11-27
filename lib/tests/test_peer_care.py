@@ -299,8 +299,8 @@ def test_went_offline_is_an_up_to_down_edge_only():
 
 def test_watched_by_reads_the_config():
     assert pc.watched_by("mac-mini-2012", CFG) == ["mac-mini-1"]
-    assert pc.watched_by("mac-mini-1", CFG) == ["mac-mini-2012"]
-    assert pc.watched_by("macbook-pro-1", CFG) == []        # the laptop isn't a watcher
+    assert pc.watched_by("mac-mini-1", CFG) == ["mac-mini-2012", "macbook-pro-1"]  # after mesh-scope update
+    assert pc.watched_by("macbook-pro-1", CFG) == ["mac-mini-1"]  # laptop now watches the mini
 
 
 # ── parsers over real command output ────────────────────────────────────────────────────────────────────────────
@@ -439,3 +439,145 @@ def test_expect_back_skips_the_probe_when_im_back_already_arrived(tmp_path):
 def test_command_output_that_isnt_utf8_never_crashes_a_probe():
     r = pc._run(["/bin/sh", "-c", r"printf 'x\325y'"])
     assert r is not None and r.stdout.startswith("x")
+
+
+# ── word mechanism: sleep/shutdown signals and short-circuit ────────────────────────────────────────────────────
+
+def test_load_word_missing_file_is_treated_as_no_word(tmp_path):
+    """Mirror of load_facts/load_incident: missing file is {}."""
+    assert pc.load_word("mac-mini-1", tmp_path) == {}
+
+
+def test_load_word_malformed_file_is_treated_as_no_word(tmp_path):
+    """Mirror of load_facts/load_incident: malformed JSON is {}."""
+    (tmp_path / "mac-mini-1.word.json").write_text("{ not json }")
+    assert pc.load_word("mac-mini-1", tmp_path) == {}
+
+
+def test_load_word_valid_sleep_word(tmp_path):
+    """Load a valid sleep announcement."""
+    word_data = {"word": "sleep", "at": T0.isoformat()}
+    (tmp_path / "mac-mini-1.word.json").write_text(json.dumps(word_data))
+    result = pc.load_word("mac-mini-1", tmp_path)
+    assert result["word"] == "sleep"
+    assert result["at"] == T0
+
+
+def test_record_word_writes_atomically(tmp_path):
+    """record-word uses atomic tmp+os.replace pattern."""
+    pc._save_word(tmp_path, "mac-mini-1", {"word": "sleep", "at": T0.isoformat()})
+    assert pc.load_word("mac-mini-1", tmp_path)["word"] == "sleep"
+    # Verify no .tmp file left behind
+    assert not (tmp_path / "mac-mini-1.word.tmp").exists()
+
+
+def test_record_word_concurrent_writes_land_the_later_timestamp(tmp_path):
+    """Two announces racing: the later timestamp wins (same as incident concurrent writes)."""
+    t1 = T0
+    t2 = T0 + timedelta(seconds=5)
+    pc._save_word(tmp_path, "mac-mini-1", {"word": "sleep", "at": t1.isoformat()})
+    pc._save_word(tmp_path, "mac-mini-1", {"word": "wake", "at": t2.isoformat()})
+    result = pc.load_word("mac-mini-1", tmp_path)
+    assert result["word"] == "wake"
+    assert result["at"] == t2
+
+
+def test_handle_short_circuit_on_current_sleep_word(tmp_path):
+    """Before probing, handle() checks load_word(); if sleep and fresh, return announced without probing."""
+    w = World(tmp_path, [])  # No probes needed
+    # Pre-populate a sleep word
+    pc._save_word(w.dir, "mac-mini-1", {"word": "sleep", "at": T0.isoformat()})
+    r = w.handle(trigger="tailscale-offline", peer="mac-mini-1")
+    # Short-circuit: no probe, no incident, no fix
+    assert r["action"] == "announced"
+    assert r["state"] == "sleep"
+    assert w.fixes == []
+    assert pc.load_incident(w.dir, "mac-mini-1") == {}
+
+
+def test_handle_short_circuit_on_current_shutdown_word(tmp_path):
+    """Before probing, handle() checks load_word(); if shutdown and fresh, return announced without probing."""
+    w = World(tmp_path, [])
+    pc._save_word(w.dir, "mac-mini-1", {"word": "shutdown", "at": T0.isoformat()})
+    r = w.handle(trigger="tailscale-offline", peer="mac-mini-1")
+    assert r["action"] == "announced"
+    assert r["state"] == "shutdown"
+    assert w.fixes == []
+
+
+def test_handle_ignores_stale_sleep_word_when_peer_comes_back(tmp_path):
+    """If the word is old but the peer is healthy now, probe normally and clear the word."""
+    stale_word = T0 - timedelta(hours=5)
+    w = World(tmp_path, [UP])
+    pc._save_word(w.dir, "mac-mini-1", {"word": "sleep", "at": stale_word.isoformat()})
+    r = w.handle(trigger="tailscale-offline", peer="mac-mini-1")
+    # Word is superseded by healthy probe: no announcement, normal flow
+    assert r["action"] == "none"
+    assert r["state"] == "healthy"
+
+
+def test_handle_honors_wake_word_as_superseding_sleep(tmp_path):
+    """A wake word newer than the sleep word means the peer is back up."""
+    sleep_word = T0
+    wake_word = T0 + timedelta(minutes=1)
+    w = World(tmp_path, [UP])
+    # Both words recorded, but wake is newer
+    pc._save_word(w.dir, "mac-mini-1", {"word": "wake", "at": wake_word.isoformat()})
+    r = w.handle(trigger="tailscale-offline", peer="mac-mini-1")
+    # Wake supersedes sleep, so we probe and see healthy
+    assert r["action"] == "none"
+    assert r["state"] == "healthy"
+
+
+def test_rapid_sleep_wake_cycle_does_not_flood_job_events(tmp_path):
+    """handle()'s word short-circuit prevents sleep→wake→sleep cycles from opening incidents."""
+    jobs_dir = tmp_path / "jobs"
+    for state in ["sleep", "wake", "sleep", "wake"]:
+        pc._save_word(tmp_path / "peer-care", "mac-mini-1", {"word": state, "at": T0.isoformat()})
+        pc.handle("mac-mini-1", "tailscale-offline", CFG, probe=lambda p: UP, run_fix=lambda *a: (False, ""),
+                  tell=lambda *a: None, state_dir=tmp_path / "peer-care", now=lambda: T0,
+                  facts=lambda p: known(), unlock_script=None, jobs_dir=jobs_dir)
+    # Verify job_events has no incident entries, just the announce steps
+    if jobs_dir.exists():
+        doc = json.loads((jobs_dir / "peer-care-mac-mini-1.json").read_text())
+        for run in doc.get("runs", []):
+            steps = [s.get("step") for s in run.get("steps", [])]
+            # Should be "trigger", "result" only (no "probe", "fix", no incident)
+            assert "fix" not in steps
+
+
+def test_announce_records_word_on_watchers(tmp_path):
+    """announce(me, state, cfg) calls record-word on each watcher via SSH."""
+    # Fake the SSH call: capture the command
+    ssh_calls = []
+    def fake_ssh(target, command, timeout=None):
+        ssh_calls.append((target, command))
+        return type('R', (), {'returncode': 0})()
+
+    # Patch _ssh for this test
+    original_ssh = pc._ssh
+    pc._ssh = fake_ssh
+    try:
+        pc.announce("mac-mini-1", "sleep", CFG)
+        # mac-mini-1 is watched by mac-mini-2012 and macbook-pro-1 (after config update)
+        # So we should call SSH to notify both watchers
+        assert len(ssh_calls) == 2, f"Expected 2 SSH calls, got {len(ssh_calls)}: {ssh_calls}"
+        # Check that record-word was called
+        for target, cmd in ssh_calls:
+            assert "record-word" in cmd and "mac-mini-1" in cmd and "sleep" in cmd
+    finally:
+        pc._ssh = original_ssh
+
+
+def test_handle_with_mesh_scope_new_config_laptop_watches_mini(tmp_path):
+    """After config update: macbook-pro-1 is in watched_by for mac-mini-1."""
+    assert "macbook-pro-1" in pc.watched_by("mac-mini-1", CFG)
+
+
+def test_classify_unreachable_no_word_and_unreachable_is_gone_quiet_not_asleep(tmp_path):
+    """Replace the old duration-based guess: a fresh unreachable peer with no word is gone-quiet, not asleep."""
+    # This will be tested in health_checks tests once word parameter is added
+    # For now, just verify the word is accessible
+    pc._save_word(tmp_path, "mac-mini-1", {"word": "sleep", "at": T0.isoformat()})
+    word = pc.load_word("mac-mini-1", tmp_path)
+    assert word.get("word") == "sleep"

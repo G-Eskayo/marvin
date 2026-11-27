@@ -2166,8 +2166,10 @@ runs no merge or test of its own and its memory is normal).
 
 ## Peer care: machine watchdog (designed #768/#769, built 2026-10-21 marvin#847, closes #763)
 
-The two always-home machines watch each other over Tailscale. No polling: four **no-polling triggers**
-wake the watcher on demand.
+The always-home machines watch each other over Tailscale. The 2012 mini and MacBook Pro watch the Mac mini;
+the Mini watches both. No polling: four **no-polling triggers** wake the watcher on demand. Each machine
+announces its sleep/shutdown/wake state to its watchers (via SSH `record-word` calls), so watchers don't confuse
+a lid-close for a crash.
 
 - **tailscale-offline** (`watch-ipn`): the IPN bus reader sees a watched peer go offline.
 - **code-sync**: the end of each existing code-sync run probes watched peers (no new clock).

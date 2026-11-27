@@ -44,6 +44,16 @@ describe('describeDevice', () => {
     expect(d).toMatchObject({ label: 'Unreachable', tone: 'down' })
     expect(d.detail).toBe('ssh timeout')
   })
+  it('unreachable off shows moon icon and sky tone', () => {
+    const d = describeDevice({ state: 'unreachable', severity: 'off', lastSeen: '2026-10-05T10:00:00Z' }, NOW)
+    expect(d).toMatchObject({ label: 'Off', tone: 'off', icon: 'moon' })
+    expect(d.detail).toContain('last seen')
+  })
+  it('unreachable gone-quiet shows amber tone', () => {
+    const d = describeDevice({ state: 'unreachable', severity: 'gone-quiet', lastSeen: '2026-10-05T09:00:00Z' }, NOW)
+    expect(d).toMatchObject({ label: 'Gone quiet', tone: 'gone-quiet' })
+    expect(d.detail).toContain('last seen')
+  })
 })
 
 describe('slotsLabel', () => {

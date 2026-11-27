@@ -7,10 +7,23 @@ const POLL_MS = 15000 // backstop only: a remote machine has no push channel
 export function describeDevice(d, now) {
   if (d.state === 'busy') return { label: d.task || 'Busy', tone: 'busy', detail: d.startedAt ? formatElapsed(d.startedAt, now) : null, icon: null }
   if (d.state === 'unreachable') {
-    const tone = d.severity === 'asleep' ? 'asleep' : d.severity === 'yellow' ? 'yellow' : 'down'
-    const icon = d.severity === 'asleep' ? 'moon' : null
+    let tone = 'down', label = 'Unreachable', icon = null
+    if (d.severity === 'asleep') {
+      tone = 'asleep'
+      label = 'Asleep'
+      icon = 'moon'
+    } else if (d.severity === 'off') {
+      tone = 'off'
+      label = 'Off'
+      icon = 'moon'
+    } else if (d.severity === 'gone-quiet') {
+      tone = 'gone-quiet'
+      label = 'Gone quiet'
+    } else if (d.severity === 'yellow') {
+      tone = 'yellow'
+    }
     const detail = d.lastSeen ? `last seen ${agoShort(d.lastSeen, now)}` : (d.why || null)
-    return { label: d.severity === 'asleep' ? 'Asleep' : 'Unreachable', tone, detail, icon }
+    return { label, tone, detail, icon }
   }
   return { label: 'Idle', tone: 'idle', detail: null, icon: null }
 }
@@ -20,7 +33,7 @@ export function slotsLabel(d) {
   return `${d.slotsUsed} of ${d.slotsTotal} slots`
 }
 
-const DOT = { busy: 'bg-blue-500 animate-pulse', down: 'bg-red-500', idle: 'bg-neutral-600', asleep: 'bg-sky-400', yellow: 'bg-amber-500' }
+const DOT = { busy: 'bg-blue-500 animate-pulse', down: 'bg-red-500', idle: 'bg-neutral-600', asleep: 'bg-sky-400', off: 'bg-sky-400', yellow: 'bg-amber-500', 'gone-quiet': 'bg-amber-500' }
 
 // One column per device in marvin-network.json. This machine's column is the same DispatchStatusBadge
 // that sits in the header (its richer view: every running agent, last finished); the others come from

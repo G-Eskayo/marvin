@@ -1,5 +1,5 @@
 {
-  "_doc": "Peer care and the nightly reset (marvin#847, owner answers on #769, ADR 0081). lib/nightly_reset.py and lib/peer_care.py read this.",
+  "_doc": "Peer care and the nightly reset (marvin#847, owner answers on #769, ADR 0081). The laptop watches the Mini; the 2012 watches the Mini only (Decision mesh-scope: option A). lib/nightly_reset.py and lib/peer_care.py read this.",
   "reset": {
     "slots": {"mac-mini-1": "00:30", "macbook-pro-1": "02:30"},
     "limit": "05:00",
@@ -10,7 +10,7 @@
     "needs_up": {"mac-mini-1": ["mac-mini-2012"], "macbook-pro-1": ["mac-mini-1"]}
   },
   "home_anchor": "mac-mini-1",
-  "watch": {"mac-mini-1": ["mac-mini-2012"], "mac-mini-2012": ["mac-mini-1"]},
+  "watch": {"mac-mini-1": ["mac-mini-2012", "macbook-pro-1"], "mac-mini-2012": ["mac-mini-1"], "macbook-pro-1": ["mac-mini-1"]},
   "attempts_per_incident": 3,
   "back_within_minutes": 10,
   "wake_wait_seconds": 120,

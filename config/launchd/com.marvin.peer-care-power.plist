@@ -1,0 +1,37 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!-- Peer care's power state monitor (lib/peer_care.py watch-power, marvin#898). It wakes only when power state
+     changes (sleep, wake, shutdown); announces the state to watchers so they don't mistake a lid-close for a crash.
+     macOS only. Install: cp this to ~/Library/LaunchAgents/ and `launchctl bootstrap gui/$(id -u) <that file>`. -->
+<plist version="1.0">
+<dict>
+    <key>Label</key>
+    <string>com.marvin.peer-care-power</string>
+    <key>ProgramArguments</key>
+    <array>
+        <string>/Users/gileskayo/.agents/venv/bin/python</string>
+        <string>/Users/gileskayo/.agents/lib/peer_care.py</string>
+        <string>watch-power</string>
+    </array>
+    <key>EnvironmentVariables</key>
+    <dict>
+        <key>HOME</key>
+        <string>/Users/gileskayo</string>
+        <key>PATH</key>
+        <string>/Users/gileskayo/.local/bin:/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin:/Users/gileskayo/.agents/venv/bin</string>
+    </dict>
+    <key>RunAtLoad</key>
+    <true/>
+    <key>KeepAlive</key>
+    <true/>
+    <!-- if the IOKit reader fails, don't respawn faster than once a minute -->
+    <key>ThrottleInterval</key>
+    <integer>60</integer>
+    <key>ProcessType</key>
+    <string>Background</string>
+    <key>StandardOutPath</key>
+    <string>/Users/gileskayo/.claude/logs/peer-care-power.log</string>
+    <key>StandardErrorPath</key>
+    <string>/Users/gileskayo/.claude/logs/peer-care-power-error.log</string>
+</dict>
+</plist>

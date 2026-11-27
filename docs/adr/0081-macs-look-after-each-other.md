@@ -48,6 +48,15 @@ the ticket assumed.
 - Remote unlock and WoL may depend on Ethernet; Apple doesn't document either over Wi-Fi.
 - The reset does not prevent a mid-day memory hang like today's. That is the memory guard's job (separate ticket).
 
+### Addendum: laptop as watcher, with announced state (marvin#898)
+
+The laptop (macbook-pro-1) joins the watch mesh per Decision `mesh-scope` option A: the laptop watches the Mini, and the
+Mini watches the laptop and the 2012. Each machine announces its sleep/shutdown/wake state to its watchers (via SSH 
+`record-word` calls) so that watchers don't confuse a lid-close for a crash. The announcement short-circuits `handle()`'s
+probe ladder for recent words, preventing rapid sleep/wake cycles from opening incidents or flooding `job_events`.
+Display (`health_checks.classify_unreachable`, dashboard `DeviceColumns.jsx`) uses the announced word when available,
+replacing the laptop-only 72-hour guesswork (`ASLEEP_MAX_HOURS`) for sleep detection.
+
 ## Alternatives considered
 
 - **A polling health loop**: rejected by the owner's no-polling rule (2026-10-26). It wakes when nothing changed and

@@ -29,6 +29,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 import code_sync  # noqa: E402
 import cron_health as ch  # noqa: E402
 import machine_profile  # noqa: E402
+import peer_care  # noqa: E402
 from machine_profile import machine_label  # noqa: E402
 from task_dispatch import TAILSCALE_BIN, TAILSCALE_ENV  # noqa: E402  (absolute path -- launchd's PATH omits the shell's additions)
 
@@ -1648,17 +1649,31 @@ def _tailscale_peer(host: str) -> dict | None:
     return None
 
 
-def classify_unreachable(kind: str, peer: dict | None, now: datetime, grace_hours: float = 0.0) -> tuple[str, str]:
+def classify_unreachable(kind: str, peer: dict | None, now: datetime, grace_hours: float = 0.0, word: dict | None = None) -> tuple[str, str]:
     """Severity for a device we could not reach over ssh. 'red' is reserved for
     "needs your immediate attention", so a normal lid-close must not be red.
-    A laptop that Tailscale reports OFFLINE recently is `asleep` (neutral);
-    online-but-unreachable is a real fault; an always-on desktop being down is
-    red; and when Tailscale can't say, a laptop is `yellow` (unknown), never
-    silently asleep. Remotely, sleep and a crash look the same -- this is a
-    heuristic keyed on device kind + how long it has been gone.
 
-    grace_hours allows always-on devices a grace period: within grace, yellow;
-    past grace, red. Clamped to >= 0 to guard against clock skew."""
+    With word parameter (marvin#898): announced sleep/shutdown states are trusted over probes.
+    Without word: a laptop that Tailscale reports OFFLINE recently is `asleep` (neutral);
+    online-but-unreachable is a real fault; an always-on desktop being down is red; and when
+    Tailscale can't say, a laptop is `yellow` (unknown), never silently asleep. Remotely, sleep
+    and a crash look the same -- without a word, this is a heuristic keyed on device kind.
+
+    grace_hours allows always-on devices a grace period: within grace, yellow; past grace, red.
+    Clamped to >= 0 to guard against clock skew."""
+    # Trust announced sleep/shutdown words for any device kind (never red)
+    if word and word.get("word") in ("sleep", "shutdown"):
+        word_at = word.get("at")
+        if isinstance(word_at, str):
+            word_at = datetime.fromisoformat(word_at)
+        state = "asleep" if word["word"] == "sleep" else "off"
+        if word_at:
+            hours = max(0, (now - word_at).total_seconds() / 3600)
+            detail = f"{state} · {hours:.0f}h" if hours > 0 else state
+            return state, detail
+        return state, state
+
+    # No word: use probe-based heuristics (preserve backward compatibility)
     if kind != "laptop":
         if grace_hours > 0 and peer is not None:
             last = peer.get("last_seen")
@@ -1704,7 +1719,9 @@ def check_machine_reachability() -> list[dict]:
             why = proc.stderr.strip()[:200]
         except subprocess.TimeoutExpired:
             why = "timed out"
-        severity, detail = classify_unreachable(info.get("kind", "desktop"), _tailscale_peer(host), _now())
+        # Load the word to check for announced sleep/shutdown states
+        word = peer_care.load_word(device_id)
+        severity, detail = classify_unreachable(info.get("kind", "desktop"), _tailscale_peer(host), _now(), word=word)
         results.append(_result(cid, label, severity, f"{detail} ({host}: {why})"))
     return results
 

@@ -46,11 +46,12 @@ def _row(device_id, device_entry, is_self, state, why=None, slotsUsed=None, slot
 _CANT_CHECK = object()  # online() answered None: Tailscale itself couldn't be asked (marvin#889)
 
 
-def device_statuses(devices: dict, self_id: str, local, online, probe, local_slots=None, remote_slots=None, peer_lookup=None, now=None, grace_hours=0.0) -> list[dict]:
+def device_statuses(devices: dict, self_id: str, local, online, probe, local_slots=None, remote_slots=None, peer_lookup=None, word_lookup=None, now=None, grace_hours=0.0) -> list[dict]:
     from datetime import datetime, timezone
     local_slots = local_slots or (lambda m: None)
     remote_slots = remote_slots or (lambda h, m: None)
     peer_lookup = peer_lookup or (lambda h: None)
+    word_lookup = word_lookup or (lambda d: None)
     now = now or datetime.now(timezone.utc)
 
     def add_slot_info(row, device_id, is_self):
@@ -92,7 +93,8 @@ def device_statuses(devices: dict, self_id: str, local, online, probe, local_slo
             continue
         if host not in online_hosts:
             peer = peer_lookup(host) if host else None
-            severity, why = hc.classify_unreachable(kind, peer, now, grace_hours=grace_hours)
+            word = word_lookup(device_id)
+            severity, why = hc.classify_unreachable(kind, peer, now, grace_hours=grace_hours, word=word)
             row = {**_row(device_id, info, False, None), "state": "unreachable", "why": why, "severity": severity}
             if peer and peer.get("last_seen"):
                 last_seen = min(now, peer["last_seen"])
@@ -113,6 +115,7 @@ def main() -> None:
     from machine_profile import registry_id, _load_registry
     import dispatch_concurrency as dc
     import health_checks as hc
+    import peer_care
 
     def local():
         s = td._read_local_dispatch_state()
@@ -137,7 +140,8 @@ def main() -> None:
 
     print(json.dumps(device_statuses(_load_registry(), registry_id(), local, td.tailscale_online_hosts_or_none, probe_remote,
                                     local_slots=local_slots_reader, remote_slots=remote_slots_reader,
-                                    peer_lookup=hc._tailscale_peer, now=datetime.now(timezone.utc))))
+                                    peer_lookup=hc._tailscale_peer, word_lookup=peer_care.load_word,
+                                    now=datetime.now(timezone.utc))))
 
 
 if __name__ == "__main__":

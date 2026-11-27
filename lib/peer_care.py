@@ -412,6 +412,20 @@ def load_incident(state_dir: Path, peer: str) -> dict:
         return {}
 
 
+def word_path(state_dir: Path, peer: str) -> Path:
+    return state_dir / f"{peer}.word.json"
+
+
+def load_word(peer: str, state_dir: Path = STATE_DIR) -> dict:
+    try:
+        data = json.loads(word_path(state_dir, peer).read_text())
+        if "at" in data:
+            data["at"] = datetime.fromisoformat(data["at"])
+        return data
+    except (OSError, ValueError):
+        return {}
+
+
 def _save_incident(state_dir: Path, peer: str, inc: dict) -> None:
     state_dir.mkdir(parents=True, exist_ok=True)
     p = _incident_path(state_dir, peer)
@@ -420,6 +434,18 @@ def _save_incident(state_dir: Path, peer: str, inc: dict) -> None:
         return
     tmp = p.with_suffix(".tmp")
     tmp.write_text(json.dumps(inc))
+    os.replace(tmp, p)
+
+
+def _save_word(state_dir: Path, peer: str, word: dict) -> None:
+    state_dir.mkdir(parents=True, exist_ok=True)
+    p = word_path(state_dir, peer)
+    tmp = p.with_suffix(".tmp")
+    # Normalize datetime to ISO string for JSON serialization
+    data = dict(word)
+    if isinstance(data.get("at"), datetime):
+        data["at"] = data["at"].isoformat()
+    tmp.write_text(json.dumps(data))
     os.replace(tmp, p)
 
 
@@ -448,6 +474,14 @@ def handle(peer: str, trigger: str, cfg: dict, *, probe: Callable = probe, run_f
             return {"peer": peer, "action": "busy", "state": None, "fix": None}
         with job_events.job_run(f"peer-care-{peer}", f"Peer care: {name}", jobs_dir) as run:
             run.step("trigger", trigger)
+            # Check for a fresh sleep/shutdown word before probing
+            word = load_word(peer, state_dir)
+            if word.get("word") in ("sleep", "shutdown"):
+                # Short-circuit only for recent words (within ~10 minutes to catch rapid cycles)
+                word_age_seconds = (now() - word.get("at", now())).total_seconds() if isinstance(word.get("at"), datetime) else 0
+                if word_age_seconds < 600:  # 10 minutes
+                    run.step("result", f"{word['word']} announced")
+                    return {"peer": peer, "action": "announced", "state": word["word"], "fix": None}
             p = probe(peer)
             state = classify(p)
             run.step("probe", f"{state}: {p.summary()}")
@@ -552,6 +586,54 @@ def watch_ipn(me: str, cfg: dict) -> int:
     return proc.wait()
 
 
+# ── power monitoring (macOS only) ───────────────────────────────────────────────────────────────────────────
+
+class PowerSource:
+    """Block on IOKit power state changes (kIOMessageSystemWillSleep, kIOMessageSystemHasPoweredOn, etc.)
+    using ctypes, with no polling. Mirrors memory_guard.PressureSource's approach."""
+
+    def __init__(self):
+        if sys.platform != "darwin":
+            raise OSError("PowerSource only works on macOS")
+        # Placeholder: real implementation needs ctypes bindings to IOKit
+        # This requires IORegisterForSystemPower and event loop integration
+        pass
+
+    def wait_for_event(self) -> str | None:
+        """Block until a power event (sleep, wake, shutdown). Returns 'sleep', 'shutdown', 'wake' or None."""
+        # Placeholder: real implementation returns the event type
+        raise NotImplementedError("PowerSource requires IOKit ctypes bindings")
+
+
+def watch_power(me: str, cfg: dict) -> int:
+    """Block on power source events; on sleep/shutdown announce, on wake im_back and announce."""
+    if sys.platform != "darwin":
+        return 0  # Not applicable on Linux
+    try:
+        source = PowerSource()
+    except (OSError, NotImplementedError) as e:
+        print(f"PowerSource not available: {e}", file=sys.stderr)
+        return 1
+    while True:
+        event = source.wait_for_event()
+        if event == "sleep":
+            announce(me, "sleep", cfg)
+        elif event == "shutdown":
+            announce(me, "shutdown", cfg)
+        elif event == "wake":
+            im_back(me, cfg)
+            announce(me, "wake", cfg)
+
+
+def announce(me: str, state: str, cfg: dict) -> None:
+    """Record a local sleep/shutdown/wake state on each watcher (SSH remote record-word calls).
+    Mirrors im_back's pattern: push to watchers, they record the word."""
+    if state not in ("sleep", "shutdown", "wake"):
+        return
+    for w in watched_by(me, cfg):
+        _ssh(ts_host(w), f"~/.agents/venv/bin/python ~/.agents/lib/peer_care.py record-word {me} {state}", 10)
+
+
 def im_back(me: str, cfg: dict) -> None:
     """At boot: tell each watcher. It closes any open incident by probing (a healthy probe closes it)."""
     for w in watched_by(me, cfg):
@@ -599,10 +681,14 @@ def main(argv: list[str] | None = None) -> int:
     a_ = sub.add_parser("check-all")
     a_.add_argument("--trigger", default="manual")
     sub.add_parser("watch-ipn")
+    sub.add_parser("watch-power")
     sub.add_parser("im-back")
     e = sub.add_parser("expect-back")
     e.add_argument("peer")
     e.add_argument("--minutes", type=float, default=None)
+    r = sub.add_parser("record-word")
+    r.add_argument("peer")
+    r.add_argument("state")
     s = sub.add_parser("status")
     s.add_argument("--json", action="store_true")
     a = ap.parse_args(argv)
@@ -615,8 +701,12 @@ def main(argv: list[str] | None = None) -> int:
             print(json.dumps(handle(p, a.trigger, cfg)))
     elif a.cmd == "watch-ipn":
         return watch_ipn(me, cfg)
+    elif a.cmd == "watch-power":
+        return watch_power(me, cfg)
     elif a.cmd == "im-back":
         im_back(me, cfg)
+    elif a.cmd == "record-word":
+        _save_word(STATE_DIR, a.peer, {"word": a.state, "at": _now().isoformat()})
     elif a.cmd == "expect-back":
         print(json.dumps(expect_back(a.peer, cfg, a.minutes)))
     elif a.cmd == "status":
