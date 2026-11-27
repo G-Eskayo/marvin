@@ -30,3 +30,11 @@ def nudge(repo: Path = REPO, home: Path | None = None, popen=subprocess.Popen) -
         return True
     except Exception:  # noqa: BLE001 -- a worker's own hook must never fail because the map couldn't be told
         return False
+
+
+def quietly(repo: Path = REPO, home: Path | None = None, popen=subprocess.Popen) -> None:
+    """Call nudge() but never raise or fail: used by job hooks where failure must not break the job."""
+    try:
+        nudge(repo, home, popen)
+    except Exception:  # noqa: BLE001 -- the map being behind must never break a job
+        pass

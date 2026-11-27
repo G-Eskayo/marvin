@@ -116,16 +116,11 @@ def record_stage(
     path.write_text(json.dumps(events, indent=2))
     if STAGES_DIR == DEFAULT_STAGES_DIR:
         try:
-            _nudge_work()
+            import work_nudge  # noqa: PLC0415
+            work_nudge.quietly()
         except Exception:  # noqa: BLE001 -- the map being behind must never fail a pipeline stage
             pass
     return event
-
-
-def _nudge_work() -> None:
-    """A builder started, moved or finished: tell the map's Work half (#854, lib/work_nudge.py)."""
-    import work_nudge  # noqa: PLC0415
-    work_nudge.nudge()
 
 
 def read_stages(ticket_number: int, repo: str | None = None) -> list[dict]:

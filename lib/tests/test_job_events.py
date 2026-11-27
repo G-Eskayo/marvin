@@ -207,3 +207,48 @@ def test_a_clean_exit_after_a_recorded_failure_is_still_a_failure(tmp_path, monk
 
 def test_step_outside_any_run_is_a_harmless_no_op():
     je.step("nothing is running")  # must not raise
+
+
+def test_job_run_calls_nudge_functions_on_start_and_finish(tmp_path, monkeypatch):
+    """job_run() calls _nudge_work_started and _nudge_work_finished when a run starts and finishes (#1251)."""
+    nudge_started_called = []
+    nudge_finished_called = []
+
+    def mock_started():
+        nudge_started_called.append(True)
+
+    def mock_finished():
+        nudge_finished_called.append(True)
+
+    monkeypatch.setattr(je, "_nudge_work_started", mock_started)
+    monkeypatch.setattr(je, "_nudge_work_finished", mock_finished)
+
+    with je.job_run("demo", directory=tmp_path) as run:
+        pass
+
+    # Should NOT have called nudge functions when using tmp_path (not the real JOBS_DIR)
+    assert not nudge_started_called, "nudge_started should NOT have been called with tmp_path directory"
+    assert not nudge_finished_called, "nudge_finished should NOT have been called with tmp_path directory"
+
+
+def test_job_run_nudges_only_when_using_real_jobs_dir(monkeypatch):
+    """job_run() only nudges when directory is the real JOBS_DIR, not when using a test directory."""
+    nudge_started_called = []
+    nudge_finished_called = []
+
+    def mock_started():
+        nudge_started_called.append(True)
+
+    def mock_finished():
+        nudge_finished_called.append(True)
+
+    monkeypatch.setattr(je, "_nudge_work_started", mock_started)
+    monkeypatch.setattr(je, "_nudge_work_finished", mock_finished)
+
+    # When using the real JOBS_DIR (default), nudges should be called
+    monkeypatch.setattr(je, "JOBS_DIR", Path("/tmp/real-jobs-dir"))
+    with je.job_run("demo") as run:
+        pass
+
+    assert nudge_started_called, "nudge_started should have been called with real JOBS_DIR"
+    assert nudge_finished_called, "nudge_finished should have been called with real JOBS_DIR"

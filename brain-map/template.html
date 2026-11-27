@@ -588,12 +588,14 @@
   var PULSE_TRAVEL_MS = 1600, PULSE_GAP_MS = 800;
   var TRAY_WINDOW_MS = 60000, TRAY_SHOWN = 12, FOCUS_MS = 1200;
   var FAIL_RGB = "248,81,73"; // the palette's existing red (--cat-project)
+  var GREY_RGB = "160,163,166"; // grey for stale/overdue workers (#1251)
   // Which end of each thread kind depends on the other, for "a red node lights the links to what depends on it".
   // Kinds not listed light from a failure at either end.
   var DEPENDENT_END = { calls: "a", undeclared: "a", "runs-on": "a", feeds: "b", builds: "b" };
 
   var levels = {};          // "n:"/"r:"/"l:"/"c:" + id -> {v, at}
   var failedIds = {};       // node id -> true while its last result was a failure
+  var greyIds = {};         // node id -> true while a job is idle but overdue (stale)
   var sessions = {}, sessionOrder = []; // session id -> the skill call that can cause the next event
   var linkState = {};       // thread key -> {pending, lastLaunch, from, to, s}
   var pulses = [], pulseSeq = 0;
@@ -742,12 +744,14 @@
     if (!n.parent) return;
     n.parent.children = n.parent.children.filter(function (c) { return c !== n; });
     delete failedIds[n.id];
+    delete greyIds[n.id];
   }
-  // Generated workers that are red when the page loads, and dismissed ones that a regeneration brings back.
+  // Generated workers that are red/grey when the page loads, and dismissed ones that a regeneration brings back.
   function dropDismissed() {
     var gone = false;
     workerNodes().forEach(function (n) {
       if (n.worker.state === "failed") failedIds[n.id] = true;
+      else if (n.worker.state === "grey") greyIds[n.id] = true;
       if (dismissed[dismissKey(n.id, n.worker.ended)]) { detach(n); gone = true; }
     });
     if (gone) indexAll();
@@ -770,9 +774,9 @@
     var seen = {}, added = [], lit = [], removed = false;
     doc.workers.forEach(function (w) {
       if (!w || typeof w !== "object" || typeof w.id !== "string" || !w.id || seen[w.id]) return;
-      var state = w.state === "failed" ? "failed" : "running"; // work.json lists only running and dead workers
+      var state = w.state === "failed" ? "failed" : w.state === "grey" ? "grey" : "running"; // work.json lists running, grey (overdue), and dead workers
       var ended = typeof w.ended === "number" ? w.ended : null;
-      if (state === "failed" && dismissed[dismissKey(w.id, ended)]) return;
+      if ((state === "failed" || state === "grey") && dismissed[dismissKey(w.id, ended)]) return;
       seen[w.id] = true;
       var node = byId[w.id];
       if (node && !node.worker) return; // an id that is already some other part: never overwrite it
@@ -790,6 +794,7 @@
         if (typeof w.desc === "string") node.desc = w.desc;
       }
       if (state === "failed") failedIds[w.id] = true; else delete failedIds[w.id];
+      if (state === "grey") greyIds[w.id] = true; else delete greyIds[w.id];
     });
     // Anything work.json no longer lists has finished cleanly (or its retry passed): it leaves now.
     workerNodes().forEach(function (n) { if (!seen[n.id]) { detach(n); removed = true; } });
@@ -1776,7 +1781,8 @@
 
       ctx.beginPath();
       traceShape(shape, p.sx, p.sy, r + pulse * 2);
-      ctx.fillStyle = dim ? "rgba(110,118,129,0.25)" : (failed ? "rgb(" + FAIL_RGB + ")" : (pulse > 0 ? "rgba(" + litRGB + ",1)" : color));
+      var grey = !!greyIds[nd.id];
+      ctx.fillStyle = dim ? "rgba(110,118,129,0.25)" : (failed ? "rgb(" + FAIL_RGB + ")" : (grey ? "rgb(" + GREY_RGB + ")" : (pulse > 0 ? "rgba(" + litRGB + ",1)" : color)));
       ctx.globalAlpha = bf * (dim ? 0.4 : Math.min(1, 0.6 + depthT * 0.4 + pulse * 0.4));
       ctx.save();
       var hubGlow = nd.depth <= 1 ? 6 : 0;

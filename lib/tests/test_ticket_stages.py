@@ -10,6 +10,7 @@ LIB = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(LIB))
 
 import ticket_stages as ts  # noqa: E402
+import work_nudge  # noqa: E402
 
 
 def test_record_stage_appends_and_returns_the_event(tmp_path, monkeypatch):
@@ -209,7 +210,7 @@ def test_claim_owner_is_per_project(tmp_path, monkeypatch):
 def test_a_stage_written_to_the_real_folder_tells_the_maps_work_half(tmp_path, monkeypatch):
     # #854: a pipeline builder reaches the map within one poll. Only the real stages folder does (a test's never).
     nudges = []
-    monkeypatch.setattr(ts, "_nudge_work", lambda: nudges.append(1))
+    monkeypatch.setattr(work_nudge, "quietly", lambda: nudges.append(1))
     monkeypatch.setattr(ts, "STAGES_DIR", tmp_path)
     ts.record_stage(42, "planning", "started")
     assert nudges == []
@@ -224,6 +225,6 @@ def test_a_map_nudge_that_blows_up_never_fails_the_stage(tmp_path, monkeypatch):
 
     def boom():
         raise RuntimeError("no")
-    monkeypatch.setattr(ts, "_nudge_work", boom)
+    monkeypatch.setattr(work_nudge, "quietly", boom)
     assert ts.record_stage(42, "planning", "started")["status"] == "started"
     assert len(ts.read_stages(42)) == 1

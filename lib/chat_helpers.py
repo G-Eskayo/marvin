@@ -248,7 +248,11 @@ def handle(event: str, raw: str, *, jobs_dir: Path | None = None, sessions_path:
             _update(aid, payload, lambda d, r: None, **kw)
             prune(jobs_dir, now=now.timestamp() if now else None)
             if real:
-                _nudge_quietly()
+                try:
+                    import work_nudge  # noqa: PLC0415  (standard library only, beside this file)
+                    work_nudge.quietly()
+                except Exception:  # noqa: BLE001 -- the map being behind must never break a chat
+                    pass
         elif event == "launched":
             resp = payload.get("tool_response")
             resp = resp if isinstance(resp, dict) else {}
@@ -280,22 +284,13 @@ def handle(event: str, raw: str, *, jobs_dir: Path | None = None, sessions_path:
                          error="" if summary else "ended without a result")
             _update(aid, payload, finish, **kw)
             if real:
-                _nudge_quietly()
+                try:
+                    import work_nudge  # noqa: PLC0415  (standard library only, beside this file)
+                    work_nudge.quietly()
+                except Exception:  # noqa: BLE001 -- the map being behind must never break a chat
+                    pass
     except Exception:  # noqa: BLE001 -- observing a chat must never break it
         return
-
-
-def _nudge_work() -> None:
-    """Tell the map's Work half a helper started or stopped (#854). Detached; see lib/work_nudge.py."""
-    import work_nudge  # noqa: PLC0415  (standard library only, beside this file)
-    work_nudge.nudge()
-
-
-def _nudge_quietly() -> None:
-    try:
-        _nudge_work()
-    except Exception:  # noqa: BLE001 -- the map being behind must never break a chat
-        pass
 
 
 def _bail(*_):

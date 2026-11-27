@@ -246,26 +246,32 @@ def builder_workers(stages: dict, projects: list[dict], now: float, settled=None
     return out
 
 
-def _job_state(log: dict | None, now: float) -> tuple[str, float | None]:
-    """(running | failed | idle, when the failure happened)."""
+def _job_state(log: dict | None, now: float, max_quiet_s: int | None = None) -> tuple[str, float | None, float | None]:
+    """(running | failed | grey | idle, when the failure happened, last_seen timestamp).
+    Grey means idle but overdue (hasn't been heard from in longer than max_quiet_s)."""
     runs = [r for r in (log or {}).get("runs") or [] if isinstance(r, dict) and r.get("started_at")]
     if not runs:
-        return "idle", None
+        return "idle", None, None
     last = runs[-1]
     started = _ts(last.get("started_at"))
     if last.get("status") == "running":
         if started is not None and now - started <= JOB_CRASHED_S:
-            return "running", None
-        return "failed", (started or 0.0) + JOB_CRASHED_S
+            return "running", None, started
+        return "failed", (started or 0.0) + JOB_CRASHED_S, started
     if last.get("status") == "failed":
-        return "failed", _ts(last.get("finished_at")) or started
-    return "idle", None
+        end_time = _ts(last.get("finished_at")) or started
+        return "failed", end_time, end_time
+    # idle: check if overdue
+    last_seen = _ts(last.get("finished_at")) or started
+    if max_quiet_s is not None and last_seen is not None and now - last_seen > max_quiet_s:
+        return "grey", None, last_seen
+    return "idle", None, last_seen
 
 
 def job_workers(jobs: dict, logs: dict, loaded: list[str], projects: list[dict], now: float,
                 goals: dict | None = None, paths: dict | None = None) -> list[dict]:
-    """Every job that is running or whose last run failed (catalogued, or loaded here and not catalogued), under the
-    project it serves. Idle and switched-off jobs aren't drawn."""
+    """Every job that is running, failed, or grey (idle but overdue) (catalogued, or loaded here and not catalogued),
+    under the project it serves. Idle and switched-off jobs aren't drawn."""
     ids = {p["id"] for p in projects}
     marvin = next((p["id"] for p in projects if p["id"] == "marvin"), None)
     goals, paths = goals or {}, paths or {}
@@ -283,7 +289,8 @@ def job_workers(jobs: dict, logs: dict, loaded: list[str], projects: list[dict],
             pid = None
         if j and j.get("machine") == "none":
             continue
-        state, ended = _job_state(logs.get(name), now)
+        max_quiet_s = j.get("max_quiet_s") if j else None
+        state, ended, last_seen = _job_state(logs.get(name), now, max_quiet_s)
         if state == "idle":
             continue
         if j is None:
@@ -292,6 +299,9 @@ def job_workers(jobs: dict, logs: dict, loaded: list[str], projects: list[dict],
             desc = "Scheduled job with no declared goal"
         else:
             desc = f"Scheduled job ({j.get('machine')}); serves: {goals.get(goal, goal)}"
+        if state == "grey" and last_seen is not None:
+            quiet_m = int((now - last_seen) / 60)
+            desc = f"not hearing from it · {quiet_m} min"
         w = {"id": f"job:{name}", "name": name, "kind": "job", "state": state, "project": pid, "ended": ended,
              "desc": desc}
         if paths.get(name):

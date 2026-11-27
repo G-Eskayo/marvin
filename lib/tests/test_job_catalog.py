@@ -101,3 +101,31 @@ def test_auto_fix_reports_through_its_pr_and_the_owner_reads_it_in_mr_review():
     """2026-10-26: auto-fix opens one gated PR a day instead of editing the shared checkout, so its output is that PR."""
     job = jc.JOBS["auto-fix"]
     assert "PR" in job["reporter"] and "MR Review" in job["consumer"] and "review" not in job
+
+
+def test_every_job_declares_max_quiet_s():
+    """max_quiet_s is seconds since last activity before a job is considered stale/overdue (None for continuous-service jobs)."""
+    for name, job in jc.JOBS.items():
+        assert "max_quiet_s" in job, f"{name} is missing max_quiet_s"
+        mq = job["max_quiet_s"]
+        if mq is not None:
+            assert isinstance(mq, int) and mq > 0, f"{name}: max_quiet_s must be a positive int or None, got {mq!r}"
+
+
+def test_continuous_service_jobs_have_none_max_quiet_s():
+    """Jobs that always run (dashboard-webhook, desktoplive, machine-resources) shouldn't go grey."""
+    continuous_jobs = ("desktoplive", "dashboard-webhook", "machine-resources", "dashboard-launch", "portfolio-dev-tunnel")
+    for name in continuous_jobs:
+        if name in jc.JOBS:
+            assert jc.JOBS[name].get("max_quiet_s") is None, f"{name} should have max_quiet_s=None"
+
+
+def test_event_triggered_and_reactive_jobs_have_none_max_quiet_s():
+    """Event-triggered/reactive jobs (triggered by events, not scheduled) should have max_quiet_s=None.
+    These jobs are triggered by external events (file changes, updates) rather than scheduled via launchd."""
+    # Jobs known to be event-triggered or reactive (no corresponding config/jobs/<name>.json)
+    reactive_jobs = ("snapshot-deploy-reactive", "claude-update-watch")
+    for name in reactive_jobs:
+        if name in jc.JOBS:
+            assert jc.JOBS[name].get("max_quiet_s") is None, \
+                f"{name} is event-triggered and should have max_quiet_s=None, got {jc.JOBS[name]['max_quiet_s']!r}"

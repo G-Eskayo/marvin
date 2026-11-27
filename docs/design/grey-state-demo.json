@@ -1,0 +1,41 @@
+{
+  "generated_at": 1729000000,
+  "projects": [
+    {
+      "id": "marvin",
+      "name": "MARVIN",
+      "repo": "G-Eskayo/marvin",
+      "paths": ["/Users/gileskayo/.agents"],
+      "desc": "MARVIN self-maintenance automation"
+    }
+  ],
+  "workers": [
+    {
+      "id": "job:health-check",
+      "name": "health-check",
+      "kind": "job",
+      "state": "grey",
+      "project": "marvin",
+      "ended": null,
+      "desc": "not hearing from it · 45 min"
+    },
+    {
+      "id": "job:daily-digest",
+      "name": "daily-digest",
+      "kind": "job",
+      "state": "running",
+      "project": "marvin",
+      "ended": null,
+      "desc": "Scheduled job (mini); serves: Work gets done without the owner chasing it, cheaply, without the paid subscription"
+    },
+    {
+      "id": "job:usage-scan",
+      "name": "usage-scan",
+      "kind": "job",
+      "state": "failed",
+      "project": "marvin",
+      "ended": 1728999500,
+      "desc": "Scheduled job (both); serves: Work gets done without the owner chasing it, cheaply, without the paid subscription"
+    }
+  ]
+}

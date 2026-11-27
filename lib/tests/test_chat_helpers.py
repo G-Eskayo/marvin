@@ -16,6 +16,7 @@ LIB = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(LIB))
 
 import chat_helpers as ch  # noqa: E402
+import work_nudge  # noqa: E402
 
 T0 = datetime(2026, 10, 22, 15, tzinfo=timezone.utc)
 SESSION = "b41ed591-f7da-40f3-8ec4-73db4398eb1b"
@@ -259,7 +260,7 @@ def test_the_hook_exits_0_when_the_logs_dir_cannot_be_written(tmp_path):
 def test_the_real_hook_tells_the_map_when_a_helper_starts_and_stops_not_on_every_event(tmp_path, monkeypatch):
     e = env(tmp_path)
     nudges = []
-    monkeypatch.setattr(ch, "_nudge_work", lambda: nudges.append(1))
+    monkeypatch.setattr(work_nudge, "quietly", lambda: nudges.append(1))
     monkeypatch.setattr(ch, "_jobs_dir", lambda: e["jobs"])
     monkeypatch.setattr(ch, "_sessions_path", lambda: e["sessions"])
     base = {"session_id": SESSION, "transcript_path": e["transcript"], "cwd": "/w"}
@@ -274,7 +275,7 @@ def test_the_real_hook_tells_the_map_when_a_helper_starts_and_stops_not_on_every
 def test_a_test_or_tool_passing_its_own_folder_never_tells_the_live_map(tmp_path, monkeypatch):
     e = env(tmp_path)
     nudges = []
-    monkeypatch.setattr(ch, "_nudge_work", lambda: nudges.append(1))
+    monkeypatch.setattr(work_nudge, "quietly", lambda: nudges.append(1))
     fire(e, "start", agent_id="a1", agent_type="general-purpose")
     fire(e, "stop", agent_id="a1", last_assistant_message="done")
     assert nudges == []
@@ -285,7 +286,7 @@ def test_a_map_nudge_that_blows_up_never_breaks_the_hook(tmp_path, monkeypatch):
 
     def boom():
         raise RuntimeError("no")
-    monkeypatch.setattr(ch, "_nudge_work", boom)
+    monkeypatch.setattr(work_nudge, "quietly", boom)
     monkeypatch.setattr(ch, "_jobs_dir", lambda: e["jobs"])
     monkeypatch.setattr(ch, "_sessions_path", lambda: e["sessions"])
     ch.handle("start", json.dumps({"session_id": SESSION, "agent_id": "a1", "agent_type": "g"}), machine="m", now=T0)

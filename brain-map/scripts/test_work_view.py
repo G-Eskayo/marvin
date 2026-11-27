@@ -278,6 +278,33 @@ def test_a_failed_job_whose_next_run_passed_is_gone():
 
 # ── the whole half, from disk ───────────────────────────────────────────────
 
+def test_a_job_idle_but_overdue_shows_grey_and_reports_how_long_quiet():
+    """A job that hasn't run in longer than max_quiet_s shows as grey, not idle (#1251)."""
+    jobs_with_max_quiet = {
+        "hourly": {"machine": "mini", "goal": "ns1", "max_quiet_s": 3600},  # once an hour
+    }
+    logs = {
+        "hourly": {"runs": [{"status": "passed", "started_at": iso(T0 - timedelta(minutes=90)),
+                           "finished_at": iso(T0 - timedelta(minutes=90))}]},  # 90 min old, expected hourly
+    }
+    w = by_id(wv.job_workers(jobs_with_max_quiet, logs, [], wv.monitored_projects(catalog()), NOW))
+    assert w["job:hourly"]["state"] == "grey"  # 90 min > 60 min
+    assert "not hearing from it · 90 min" in w["job:hourly"]["desc"]
+
+
+def test_a_job_idle_within_its_window_is_not_shown():
+    """A job within its max_quiet_s window is idle and not drawn."""
+    jobs_with_max_quiet = {
+        "hourly": {"machine": "mini", "goal": "ns1", "max_quiet_s": 3600},
+    }
+    logs = {
+        "hourly": {"runs": [{"status": "passed", "started_at": iso(T0 - timedelta(minutes=30)),
+                           "finished_at": iso(T0 - timedelta(minutes=30))}]},
+    }
+    w = wv.job_workers(jobs_with_max_quiet, logs, [], wv.monitored_projects(catalog()), NOW)
+    assert w == []  # idle, not drawn
+
+
 def test_read_live_reads_every_source_and_survives_junk(tmp_path):
     claude = tmp_path / "claude"
     jobs_dir = claude / "logs" / "jobs"

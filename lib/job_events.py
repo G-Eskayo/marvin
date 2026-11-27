@@ -106,8 +106,11 @@ class _Run:
 
 @contextmanager
 def job_run(job: str, label: str | None = None, directory: Path | None = None):
-    run = _Run(job, directory or JOBS_DIR, label)
+    resolved_dir = directory or JOBS_DIR
+    run = _Run(job, resolved_dir, label)
     run._mutate(lambda r: None)  # appear immediately as "running"
+    if resolved_dir == JOBS_DIR:
+        _nudge_work_started()
     try:
         yield run
     except SystemExit as e:
@@ -122,9 +125,30 @@ def job_run(job: str, label: str | None = None, directory: Path | None = None):
         raise
     else:
         run._finish("failed" if run._failed else "passed", run._failed)
+    finally:
+        if resolved_dir == JOBS_DIR:
+            _nudge_work_finished()
 
 
 _CURRENT: list = []  # the active run(s), so any code can call step() without threading `run` through
+
+
+def _nudge_work_started() -> None:
+    """Tell the map a job started. Detached; see lib/work_nudge.py."""
+    try:
+        import work_nudge  # noqa: PLC0415  (standard library only, beside this file)
+        work_nudge.quietly()
+    except Exception:  # noqa: BLE001 -- the map being behind must never break a job
+        pass
+
+
+def _nudge_work_finished() -> None:
+    """Tell the map a job finished. Detached; see lib/work_nudge.py."""
+    try:
+        import work_nudge  # noqa: PLC0415  (standard library only, beside this file)
+        work_nudge.quietly()
+    except Exception:  # noqa: BLE001 -- the map being behind must never break a job
+        pass
 
 
 def job_id(default: str) -> str:
