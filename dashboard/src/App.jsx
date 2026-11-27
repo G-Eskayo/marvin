@@ -16,6 +16,7 @@ import WorkshopTab, { useWorkshopNow } from '@components/WorkshopTab.jsx'
 import { visibleTabs } from './lib/tabs.js'
 import { ScrollArea, useScrollArea } from '@components/ScrollPlaces.jsx'
 import { reviewDotStatus } from './lib/pr_fetch_status.js'
+import { healthDotStatus } from './lib/health_dot_status.js'
 
 
 const DOT_COLOR = {
@@ -60,7 +61,7 @@ export default function App() {
     if (m) openItem(m[1], m[2], 'pr')
   }
   const [reviewStatus, setReviewStatus] = useState(null)
-  const [healthOverall, setHealthOverall] = useState(null)
+  const [healthStatus, setHealthStatus] = useState(null)
   const [support, setSupport] = useState({ role: null, badge: 0 })
   // Workshop ▸ Now (#862): read on triggers, here so the tab's count shows from any tab.
   const workshop = useWorkshopNow()
@@ -117,7 +118,7 @@ export default function App() {
       window.api.health
         .status()
         .then((result) => {
-          if (!cancelled) setHealthOverall(result.overall)
+          if (!cancelled) setHealthStatus(result)
         })
         .catch(() => {})
     }
@@ -137,9 +138,10 @@ export default function App() {
         <nav className="flex flex-wrap gap-1">
           {visibleTabs(support.role).map((tab) => {
             const { dot: mrDot, note: mrNote } = tab.id === 'mr-review' && reviewStatus ? reviewDotStatus(reviewStatus) : { dot: null, note: null }
-            const dot = tab.id === 'mr-review' ? mrDot : tab.id === 'health' ? healthOverall : null
+            const { dot: healthDot, note: healthNote } = tab.id === 'health' && healthStatus ? healthDotStatus({ overall: healthStatus.overall, copy: healthStatus.copy, checksCount: healthStatus.checks?.length ?? 0 }) : { dot: null, note: null }
+            const dot = tab.id === 'mr-review' ? mrDot : tab.id === 'health' ? healthDot : null
             const dotColorMap = tab.id === 'health' ? HEALTH_DOT_COLOR : DOT_COLOR
-            const title = tab.id === 'mr-review' && dot ? (mrDot === 'grey' ? mrNote : `${STATUS_LABEL[dot]}${mrNote ? ` — ${mrNote}` : ''}`) : tab.id === 'health' && dot ? `Overall: ${dot}` : undefined
+            const title = tab.id === 'mr-review' && dot ? (mrDot === 'grey' ? mrNote : `${STATUS_LABEL[dot]}${mrNote ? ` — ${mrNote}` : ''}`) : tab.id === 'health' && healthNote ? healthNote : undefined
             return (
               <button
                 key={tab.id}

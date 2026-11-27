@@ -8,6 +8,7 @@ import AgentsPanel from './AgentsPanel.jsx'
 import ProjectReadinessPanel from './ProjectReadinessPanel.jsx'
 import SafetyReviews from './SafetyReviews.jsx'
 import { healthFocus } from '../lib/boot_view.js'
+import { verdictLine } from '../lib/verdict_line.js'
 
 // How long a check is trusted at full color before it starts visually
 // greying out (ADR 0033's Staleness gradient term). All v1 checks run in
@@ -124,13 +125,21 @@ function UnmonitoredCard({ jobName, onClick }) {
   )
 }
 
-function OverallBadge({ overall, generatedAt, refreshing, onRefresh }) {
-  const colors = SEVERITY_COLOR[overall] ?? SEVERITY_COLOR.unmonitored
+export function OverallBadge({ overall, generatedAt, checksCount, copy, refreshing, onRefresh }) {
+  const verdict = verdictLine({ overall, generatedAt, checksCount, copy })
+  const toneToColor = {
+    nominal: 'green',
+    issues: overall === 'red' ? 'red' : 'yellow',
+    stale: 'yellow',
+    unknown: 'yellow'
+  }
+  const colorKey = toneToColor[verdict.tone] ?? 'yellow'
+  const colors = SEVERITY_COLOR[colorKey] ?? SEVERITY_COLOR.unmonitored
   return (
     <div className="mb-4 flex items-center gap-3">
       <span className={`flex items-center gap-2 rounded-md ${colors.bg} ${colors.border} border px-3 py-1.5 text-sm font-medium ${colors.text}`}>
         <span className={`h-2 w-2 rounded-full ${colors.dot}`} />
-        {overall === 'red' ? 'Something is broken' : overall === 'yellow' ? 'Degraded' : 'All checks healthy'}
+        {verdict.text}
       </span>
       <span className="text-xs text-neutral-500">
         last run: {generatedAt ? new Date(generatedAt).toLocaleString(undefined, { dateStyle: 'medium', timeStyle: 'short' }) : 'never'}
@@ -295,7 +304,7 @@ export default function HealthDashboard({ nav, onOpenTicket = null }) {
         <ProjectReadinessPanel plans={readiness} profiles={profiles} loading={readinessLoading} onChanged={reloadReadinessAndProfiles} />
       ) : (
       <>
-      <OverallBadge overall={status.overall} generatedAt={status.generated_at} refreshing={refreshing} onRefresh={handleRefresh} />
+      <OverallBadge overall={status.overall} generatedAt={status.generated_at} checksCount={status.checks?.length ?? 0} copy={status.copy} refreshing={refreshing} onRefresh={handleRefresh} />
       <ReachRow />
       <AccountsPanel />
 

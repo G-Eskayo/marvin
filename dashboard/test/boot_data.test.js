@@ -51,7 +51,9 @@ describe('the verdict: ALL SYSTEMS NOMINAL only when it is true', () => {
   it('is nominal when health says green, every check is green, and the snapshot is fresh', () => {
     const t = tree({ health: GREEN() })
     const d = buildBootData(t)
-    expect(d.verdict).toEqual({ nominal: true, tone: 'nominal', text: 'ALL SYSTEMS NOMINAL' })
+    expect(d.verdict.nominal).toBe(true)
+    expect(d.verdict.tone).toBe('nominal')
+    expect(d.verdict.text).toMatch(/^ALL SYSTEMS NOMINAL · \d+ [A-Z]+ AGO$/)
     t.done()
   })
 
@@ -67,16 +69,18 @@ describe('the verdict: ALL SYSTEMS NOMINAL only when it is true', () => {
   it('is NOT nominal when overall claims green but a check inside is red (trust the worst check, not the summary)', () => {
     const t = tree({ health: GREEN([check('disk:space@macbook-pro-1', 'red', 'Disk space -- macbook-pro-1')]) })
     const d = buildBootData(t)
-    expect(d.verdict).toMatchObject({ nominal: false, tone: 'issues', text: '1 CRITICAL · OPEN HEALTH' })
+    expect(d.verdict.nominal).toBe(false)
+    expect(d.verdict.tone).toBe('issues')
+    expect(d.verdict.text).toMatch(/^1 CRITICAL · \d+ [A-Z]+ AGO · OPEN HEALTH$/)
     t.done()
   })
 
   it('a warning alone also blocks nominal, and counts are pluralised correctly', () => {
     const one = tree({ health: { ...GREEN([check('x', 'yellow')]), overall: 'yellow' } })
-    expect(buildBootData(one).verdict.text).toBe('1 WARNING · OPEN HEALTH')
+    expect(buildBootData(one).verdict.text).toMatch(/^1 WARNING · \d+ [A-Z]+ AGO · OPEN HEALTH$/)
     one.done()
     const many = tree({ health: { ...GREEN([check('a', 'red'), check('b', 'red'), check('c', 'yellow'), check('d', 'yellow')]), overall: 'red' } })
-    expect(buildBootData(many).verdict.text).toBe('2 CRITICAL · 2 WARNINGS · OPEN HEALTH')
+    expect(buildBootData(many).verdict.text).toMatch(/^2 CRITICAL · 2 WARNINGS · \d+ [A-Z]+ AGO · OPEN HEALTH$/)
     many.done()
   })
 
@@ -105,6 +109,64 @@ describe('the verdict: ALL SYSTEMS NOMINAL only when it is true', () => {
     expect(d.verdict.nominal).toBe(false)
     expect(d.counts.yellow).toBe(2)
     expect(d.feed.filter((f) => f.level === 'yellow').map((f) => f.label)).toEqual(['Weird', 'None'])
+    t.done()
+  })
+
+  it('is NOT nominal when the snapshot is stale (frozen sweep), and shows the age and reason', () => {
+    const t = tree({ health: { ...GREEN(), generated_at: minutesAgo(STALE_MINUTES + 5) } })
+    const d = buildBootData(t)
+    expect(d.verdict.nominal).toBe(false)
+    expect(d.verdict.tone).toBe('stale')
+    expect(d.verdict.text).toMatch(/^SWEEP FROZEN · \d+ [A-Z]+ AGO · OPEN HEALTH$/)
+    t.done()
+  })
+
+  it('is NOT nominal when the snapshot is future-dated, and shows the reason', () => {
+    // Simulate a future-dated snapshot by creating one with a generated_at ahead of now
+    const future = new Date(NOW.getTime() + 5 * 60_000).toISOString()
+    const t = tree({ health: { ...GREEN(), generated_at: future }, now: NOW })
+    const d = buildBootData(t)
+    expect(d.verdict.nominal).toBe(false)
+    expect(d.verdict.tone).toBe('stale')
+    expect(d.verdict.text).toMatch(/^FUTURE-DATED SNAPSHOT · .*/)
+    t.done()
+  })
+
+  it('is NOT nominal when the snapshot is fresh but has zero or missing checks (partial snapshot)', () => {
+    const partial = { generated_at: minutesAgo(2), overall: 'green', checks: [] }
+    const t = tree({ health: partial })
+    const d = buildBootData(t)
+    expect(d.verdict.nominal).toBe(false)
+    expect(d.verdict.tone).toBe('unknown')
+    t.done()
+  })
+
+  it('is NOT nominal when the snapshot has an unrecognized overall value (bad data)', () => {
+    const bad = { generated_at: minutesAgo(2), overall: 'purple', checks: GREEN().checks }
+    const t = tree({ health: bad })
+    const d = buildBootData(t)
+    expect(d.verdict.nominal).toBe(false)
+    expect(d.verdict.tone).toBe('unknown')
+    t.done()
+  })
+
+  it('handles clock moving back from future to normal (stale state clears on fresh snapshot)', () => {
+    // Create a single tree that persists across calls
+    const t = tree({ health: { ...GREEN(), generated_at: minutesAgo(2) }, now: NOW })
+
+    // First: simulate future-dated snapshot by writing a snapshot ahead of NOW
+    const future = new Date(NOW.getTime() + 5 * 60_000).toISOString()
+    writeFileSync(t.healthPath, JSON.stringify({ ...GREEN(), generated_at: future }))
+    let d = buildBootData(t)
+    expect(d.verdict.tone).toBe('stale')
+    expect(d.verdict.text).toMatch(/FUTURE-DATED/)
+
+    // Then: "clock moves back" by updating the health file with a fresh timestamp
+    // (now within the normal past, not future) and calling buildBootData again
+    writeFileSync(t.healthPath, JSON.stringify({ ...GREEN(), generated_at: minutesAgo(2) }))
+    d = buildBootData(t)
+    expect(d.verdict.nominal).toBe(true)
+    expect(d.verdict.tone).toBe('nominal')
     t.done()
   })
 })
@@ -186,7 +248,11 @@ describe('the summary lines read real sources', () => {
 
   it('TEST reads the real counts from main:green, and is a warning when that check is missing', () => {
     const t = tree({ health: GREEN() })
-    expect(line(buildBootData(t), 'TEST')).toEqual({ chip: 'TEST', level: 'green', text: 'TESTS · 2143 PASSED · 9 SKIPPED', target: { tab: 'health', check: 'main:green' } })
+    const testLine = line(buildBootData(t), 'TEST')
+    expect(testLine.chip).toBe('TEST')
+    expect(testLine.level).toBe('green')
+    expect(testLine.text).toBe('TESTS · 2143 PASSED · 9 SKIPPED')
+    expect(testLine.target).toEqual({ tab: 'health', check: 'main:green' })
     t.done()
     const u = tree({ health: { generated_at: minutesAgo(1), overall: 'green', checks: [] } })
     expect(line(buildBootData(u), 'TEST')).toMatchObject({ level: 'yellow', text: 'TESTS · UNKNOWN' })

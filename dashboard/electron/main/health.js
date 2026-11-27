@@ -54,5 +54,5 @@ export async function readHealthStatusFresh(peers, statusPath = HEALTH_STATUS_PA
   return { ...c.value, copy: { ...copyMeta(c), from: c.from, producerUnreachable: !!c.producerUnreachable } }
 }
 
-const copyMeta = (c) => ({ host: c.host || null, ageS: c.ageS, stale: !!c.stale, legacy: !!c.legacy, toleranceS: c.toleranceS ?? null })
+const copyMeta = (c) => ({ host: c.host || null, ageS: c.ageS, stale: !!c.stale, future: !!c.future, legacy: !!c.legacy, toleranceS: c.toleranceS ?? null })
 

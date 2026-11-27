@@ -49,7 +49,7 @@ export function producerOf(copy, registry = {}) {
   return copy?.host || null
 }
 
-function ago(s) {
+export function ago(s) {
   if (s == null) return 'age unknown'
   if (s < 60) return 'just now'
   if (s < 3600) return `${Math.floor(s / 60)} min ago`

@@ -2,7 +2,7 @@ import { readFileSync, readdirSync, existsSync, statSync } from 'fs'
 import { homedir } from 'os'
 import path from 'path'
 import { HEALTH_STATUS_PATH } from './health.js'
-import { readStamped } from './stamped.js'
+import { readStamped, ago } from './stamped.js'
 import { readNetworkRegistry } from './github_feed.js'
 import { resolveDeviceId } from './device_identity.js'
 
@@ -34,9 +34,9 @@ export const DEFAULT_BOOT_PATHS = {
   handoffsDir: path.join(homedir(), '.claude', 'handoffs')
 }
 
-function readHealth(healthPath) {
+function readHealth(healthPath, now) {
   try {
-    const c = readStamped(healthPath, { defaultToleranceS: STALE_MINUTES * 60 }) // which Mac, how old (marvin#1223)
+    const c = readStamped(healthPath, { now, defaultToleranceS: STALE_MINUTES * 60 }) // which Mac, how old (marvin#1223)
     const h = c.value
     if (!h || !Array.isArray(h.checks)) return null
     const checks = h.checks.map((c) =>
@@ -44,7 +44,7 @@ function readHealth(healthPath) {
         ? { id: String(c.id ?? ''), label: String(c.label ?? c.id ?? 'unknown check'), severity: level(c.severity), detail: String(c.detail ?? '') }
         : { id: '', label: 'unreadable check', severity: 'yellow', detail: '' }
     )
-    return { overall: h.overall, generatedAt: h.generated_at ? new Date(h.generated_at) : null, checks, host: c.host || null, ageS: c.ageS }
+    return { overall: h.overall, generatedAt: h.generated_at ? new Date(h.generated_at) : null, checks, host: c.host || null, ageS: c.ageS, stale: c.stale, future: c.future }
   } catch {
     return null
   }
@@ -141,16 +141,29 @@ function verdictOf(health, counts, ageMin, freshInstall) {
   if (freshInstall) return { nominal: false, tone: 'first-run', text: 'MARVIN STARTING' }
   if (!health || !counts.total) return { nominal: false, tone: 'unknown', text: 'HEALTH UNKNOWN · OPEN HEALTH' }
   const parts = [counts.red && `${counts.red} CRITICAL`, counts.yellow && `${counts.yellow} WARNING${counts.yellow > 1 ? 'S' : ''}`].filter(Boolean)
-  if (parts.length) return { nominal: false, tone: 'issues', text: parts.join(' · ') + ' · OPEN HEALTH' }
-  const fresh = ageMin !== null && ageMin <= STALE_MINUTES
-  if (health.overall !== 'green' || !fresh) return { nominal: false, tone: 'unknown', text: (fresh ? 'HEALTH UNCONFIRMED' : 'HEALTH STALE') + ' · OPEN HEALTH' }
-  return { nominal: true, tone: 'nominal', text: 'ALL SYSTEMS NOMINAL' }
+  if (parts.length) {
+    const ageStr = health.generatedAt && health.ageS != null ? ' · ' + up(ago(health.ageS)) : ''
+    return { nominal: false, tone: 'issues', text: parts.join(' · ') + ageStr + ' · OPEN HEALTH' }
+  }
+  // Check for stale or future-dated snapshot (future_clock decision: treat as untrustworthy)
+  const untrustworthy = health.stale || health.future
+  if (health.overall !== 'green' || untrustworthy) {
+    if (untrustworthy && health.generatedAt && health.ageS != null) {
+      // partial_wording decision: distinct wording for partial/stale vs missing
+      const ageStr = up(ago(health.ageS))
+      const reason = health.future ? 'FUTURE-DATED SNAPSHOT' : 'SWEEP FROZEN'
+      return { nominal: false, tone: 'stale', text: `${reason} · ${ageStr} · OPEN HEALTH` }
+    }
+    return { nominal: false, tone: 'unknown', text: 'HEALTH UNCONFIRMED · OPEN HEALTH' }
+  }
+  const ageStr = health.generatedAt && health.ageS != null ? ' · ' + up(ago(health.ageS)) : ''
+  return { nominal: true, tone: 'nominal', text: 'ALL SYSTEMS NOMINAL' + ageStr }
 }
 
 export function buildBootData(opts = {}) {
   const p = { ...DEFAULT_BOOT_PATHS, ...opts }
   const now = opts.now ?? new Date()
-  const health = readHealth(p.healthPath)
+  const health = readHealth(p.healthPath, now)
   const checks = health?.checks ?? []
   const ageMin = health?.generatedAt && !isNaN(health.generatedAt) ? Math.floor((now - health.generatedAt) / 60_000) : null
 
