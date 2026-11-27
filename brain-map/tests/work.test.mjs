@@ -431,3 +431,134 @@ test('the default layout draws every node as a circle, as before', async (t) => 
   assert.ok((await m(page, () => window.__map.nodes())).every((n) => n.shape === undefined || n.shape === 'circle'))
   await page.close()
 })
+
+// ── Producers: job liveness watched by the map (#1434)
+const producer = (name, quiet_s = 100, last_heard = null) => ({
+  id: `producer:${name}`, name, project: 'marvin', quiet_s, last_heard: last_heard ?? nowS()
+})
+
+test('applying producers arms timers for liveness tracking', async (t) => {
+  if (skipReason) return t.skip(skipReason)
+  const page = await openMap()
+  const doc = { producers: [producer('test1', 10, nowS() - 1)] }
+  await m(page, (doc) => window.__map.applyProducers(doc), doc)
+  const state = await m(page, (id) => window.__map.producerState(id), 'producer:test1')
+  assert.ok(state, 'producer not tracked')
+  assert.equal(state.grey, false, 'fresh producer should not be grey yet')
+  assert.equal(typeof state.last_heard, 'number', 'last_heard should be a timestamp')
+})
+
+test('a producer timeout fires and greys the producer when quiet_s elapses', async (t) => {
+  if (skipReason) return t.skip(skipReason)
+  const page = await openMap()
+  const short_quiet = 0.5  // half a second in test time
+  const doc = { producers: [producer('test2', short_quiet, nowS())] }  // fresh start, deadline in future
+  await m(page, (doc) => window.__map.applyProducers(doc), doc)
+  let state = await m(page, (id) => window.__map.producerState(id), 'producer:test2')
+  assert.equal(state.grey, false, 'not yet grey at start')
+  await page.waitForTimeout(600)  // slightly longer than quiet_s
+  state = await m(page, (id) => window.__map.producerState(id), 'producer:test2')
+  assert.equal(state.grey, true, 'producer should be grey after timeout')
+})
+
+test('producer state query returns null for unknown producers', async (t) => {
+  if (skipReason) return t.skip(skipReason)
+  const page = await openMap()
+  const state = await m(page, (id) => window.__map.producerState(id), 'producer:unknown')
+  assert.equal(state, null, 'unknown producer should return null')
+})
+
+test('isDeaf() returns true only when every applicable producer is grey', async (t) => {
+  if (skipReason) return t.skip(skipReason)
+  const page = await openMap()
+  assert.equal(await m(page, () => window.__map.isDeaf()), false, 'no producers means not deaf')
+
+  const short_quiet = 0.3
+  const doc = {
+    producers: [
+      producer('p1', short_quiet, nowS()),
+      producer('p2', short_quiet, nowS())
+    ]
+  }
+  await m(page, (doc) => window.__map.applyProducers(doc), doc)
+  assert.equal(await m(page, () => window.__map.isDeaf()), false, 'fresh producers not deaf')
+
+  await page.waitForTimeout(400)  // wait for both timeouts
+  assert.equal(await m(page, () => window.__map.isDeaf()), true, 'all grey producers means deaf')
+
+  // Apply a fresher event for one producer: should revive it
+  const updated = {
+    producers: [
+      { ...doc.producers[0], last_heard: nowS() },  // fresher
+      doc.producers[1]  // still old
+    ]
+  }
+  await m(page, (updated) => window.__map.applyProducers(updated), updated)
+  assert.equal(await m(page, () => window.__map.isDeaf()), false, 'one grey producer means not deaf')
+})
+
+test('a fresher last_heard rearmes the timer, never backwards', async (t) => {
+  if (skipReason) return t.skip(skipReason)
+  const page = await openMap()
+  const short_quiet = 0.3
+  const old_time = nowS() - 5
+  const fresh_time = nowS() - 0.1
+
+  // Start with old producer
+  let doc = { producers: [{ id: 'producer:test3', name: 'test3', project: 'marvin', quiet_s: short_quiet, last_heard: old_time }] }
+  await m(page, (doc) => window.__map.applyProducers(doc), doc)
+  let state = await m(page, (id) => window.__map.producerState(id), 'producer:test3')
+  const initial_last_heard = state.last_heard
+
+  // Update with fresher timestamp: timer should rearm
+  doc = { producers: [{ ...doc.producers[0], last_heard: fresh_time }] }
+  await m(page, (doc) => window.__map.applyProducers(doc), doc)
+  state = await m(page, (id) => window.__map.producerState(id), 'producer:test3')
+  assert.ok(state.last_heard > initial_last_heard, 'fresher timestamp should update')
+
+  // Try to update with older timestamp: should not rearm
+  const even_older = old_time - 1
+  doc = { producers: [{ ...doc.producers[0], last_heard: even_older }] }
+  await m(page, (doc) => window.__map.applyProducers(doc), doc)
+  state = await m(page, (id) => window.__map.producerState(id), 'producer:test3')
+  assert.equal(state.last_heard, fresh_time, 'backwards timestamp should not update')
+
+  await page.close()
+})
+
+test('a producer that never reported (last_heard === null) is immediately grey', async (t) => {
+  if (skipReason) return t.skip(skipReason)
+  const page = await openMap()
+  const doc = { producers: [{ id: 'producer:never', name: 'never', project: 'marvin', quiet_s: 10, last_heard: null }] }
+  await m(page, (doc) => window.__map.applyProducers(doc), doc)
+  const state = await m(page, (id) => window.__map.producerState(id), 'producer:never')
+  assert.ok(state, 'never-heard producer should be tracked')
+  assert.equal(state.grey, true, 'never-heard producer should be immediately grey')
+  assert.equal(await m(page, () => window.__map.isDeaf()), true, 'one grey producer means deaf')
+  await page.close()
+})
+
+test('orphaned producers are cleaned up when removed from work.json', async (t) => {
+  if (skipReason) return t.skip(skipReason)
+  const page = await openMap()
+  const short_quiet = 0.1
+  const doc = {
+    producers: [
+      producer('orphan1', short_quiet, nowS()),
+      producer('orphan2', short_quiet, nowS())
+    ]
+  }
+  await m(page, (doc) => window.__map.applyProducers(doc), doc)
+  let state1 = await m(page, (id) => window.__map.producerState(id), 'producer:orphan1')
+  assert.ok(state1, 'both producers tracked initially')
+
+  // Remove orphan1 but keep orphan2
+  const updated = { producers: [doc.producers[1]] }
+  await m(page, (updated) => window.__map.applyProducers(updated), updated)
+  state1 = await m(page, (id) => window.__map.producerState(id), 'producer:orphan1')
+  const state2 = await m(page, (id) => window.__map.producerState(id), 'producer:orphan2')
+  assert.equal(state1, null, 'removed producer should be cleaned up')
+  assert.ok(state2, 'kept producer should still be tracked')
+
+  await page.close()
+})

@@ -87,6 +87,54 @@ def test_status_of_distinguishes_running_idle_failed_and_crashed():
     assert je.status_of({"job": "x", "runs": []}, T0) == "never"
 
 
+def test_last_heard_at_returns_finished_at_or_started_at_as_unix_timestamp():
+    def doc(finished=None, started=None):
+        f = finished.isoformat() if finished else None
+        s = started.isoformat() if started else None
+        return {"runs": [{"status": "passed", "finished_at": f, "started_at": s}]}
+
+    finished = T0 - timedelta(minutes=5)
+    assert je.last_heard_at(doc(finished=finished)) == finished.timestamp()
+
+    started = T0 - timedelta(minutes=10)
+    assert je.last_heard_at(doc(started=started)) == started.timestamp()
+
+
+def test_last_heard_at_returns_none_for_missing_or_malformed_timestamps():
+    assert je.last_heard_at({}) is None
+    assert je.last_heard_at({"runs": []}) is None
+    assert je.last_heard_at({"runs": [{}]}) is None
+    assert je.last_heard_at({"runs": [{"finished_at": "not-a-date", "started_at": "also-not"}]}) is None
+
+
+def test_last_heard_at_uses_finished_first_then_started():
+    finished = T0 - timedelta(hours=1)
+    started = T0 - timedelta(minutes=5)
+    doc = {"runs": [{"status": "running", "finished_at": finished.isoformat(), "started_at": started.isoformat()}]}
+    assert je.last_heard_at(doc) == finished.timestamp()
+
+
+def test_last_heard_at_guards_against_corrupt_non_dict_doc():
+    """Test case from defect: corrupt or junk job log (not a dict)."""
+    assert je.last_heard_at("not a dict") is None
+    assert je.last_heard_at(["a", "list"]) is None
+    assert je.last_heard_at(123) is None
+
+
+def test_last_heard_at_guards_against_corrupt_non_list_runs():
+    """Test case from defect: runs field is not a list."""
+    assert je.last_heard_at({"runs": "not a list"}) is None
+    assert je.last_heard_at({"runs": {"key": "value"}}) is None
+    assert je.last_heard_at({"runs": 123}) is None
+
+
+def test_last_heard_at_guards_against_corrupt_non_dict_run_entry():
+    """Test case from defect: a run entry is not a dict."""
+    assert je.last_heard_at({"runs": ["string entry"]}) is None
+    assert je.last_heard_at({"runs": [123]}) is None
+    assert je.last_heard_at({"runs": [["nested", "list"]]}) is None
+
+
 def test_a_job_can_mark_its_run_failed_without_raising(tmp_path):
     with je.job_run("demo", directory=tmp_path) as run:
         run.fail("rate limited; kept last good")

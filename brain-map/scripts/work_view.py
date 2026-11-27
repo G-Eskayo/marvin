@@ -22,6 +22,12 @@ report names no ticket or PR), it stays red and says it couldn't confirm. Its `e
 dismissing it never hides a later one. Jobs follow the same rule:
 idle and switched-off jobs aren't drawn.
 
+Producers: scheduled jobs that declare quiet_s (seconds of silence before they're considered deaf), on machines they
+apply to. The map watches for jobs older than their quiet_s, greying them out when unheard from (via brain-map's
+producer awareness: one per job, with id/name/project/quiet_s/last_heard/path). Never dropped, unlike workers.
+The dashboard shows producers alongside workers; each producer row contains the quiet_s timeout and last_heard
+timestamp so the map can arm timers and track liveness.
+
 A helper's project: the catalog project whose local folder holds its working folder (longest wins), else the repo
 that folder pushes to (a worktree in a temp folder), else the repo most of the tickets in its report name.
 
@@ -49,6 +55,7 @@ HERE = Path(__file__).resolve().parent
 LIB = HERE.parents[1] / "lib"
 sys.path.insert(0, str(LIB))
 import chat_helpers  # noqa: E402  (state_of: the one rule for a helper killed mid-run)
+import job_events  # noqa: E402  (last_heard_at: when a producer last reported)
 import ticket_evidence  # noqa: E402  (what counts as a commit that did a ticket)
 
 UNASSIGNED = "Unassigned"
@@ -300,6 +307,38 @@ def job_workers(jobs: dict, logs: dict, loaded: list[str], projects: list[dict],
     return out
 
 
+def producers(jobs: dict, logs: dict, loaded: list[str], projects: list[dict], now: float,
+             machine_role: str = "both", paths: dict | None = None) -> list[dict]:
+    """Every job (catalogued or loaded) that declares quiet_s and applies to this machine. Never dropped.
+    Rows: {id, name, project, quiet_s, last_heard, path}. machine_role: "both", "mini", or "laptop"."""
+    ids = {p["id"] for p in projects}
+    marvin = next((p["id"] for p in projects if p["id"] == "marvin"), None)
+    out = []
+    names = list(jobs or {}) + [n for n in dict.fromkeys(loaded or []) if isinstance(n, str) and n and n not in (jobs or {})]
+    for name in names:
+        j = (jobs or {}).get(name)
+        machine = j.get("machine") if j else None
+        quiet_s = j.get("quiet_s") if j else None
+        if not isinstance(quiet_s, int) or quiet_s <= 0:
+            continue
+        if machine and machine != "both" and machine != machine_role:
+            continue
+        goal = j.get("goal") if j else None
+        if isinstance(goal, str) and goal.startswith("project:"):
+            pid = goal[len("project:"):]
+            pid = pid if pid in ids else None
+        elif isinstance(goal, str) and re.fullmatch(r"ns\d+", goal):
+            pid = marvin
+        else:
+            pid = None
+        last_heard = job_events.last_heard_at(logs.get(name) or {})
+        row = {"id": f"producer:{name}", "name": name, "project": pid, "quiet_s": quiet_s, "last_heard": last_heard}
+        if paths and name in paths:
+            row["path"] = paths[name]
+        out.append(row)
+    return out
+
+
 # ── the tree ────────────────────────────────────────────────────────────────
 
 def worker_node(w: dict) -> dict:
@@ -376,7 +415,8 @@ def launchd_jobs(agents_dir: Path, launch_dir: Path) -> tuple[list[str], dict]:
 
 
 def read_live(claude_dir: Path | None = None, jobs: dict | None = None, loaded: list[str] | None = None,
-              now: float | None = None, remote_of=None, goals: dict | None = None, paths: dict | None = None) -> dict:
+              now: float | None = None, remote_of=None, goals: dict | None = None, paths: dict | None = None,
+              machine_role: str = "both") -> dict:
     claude_dir = claude_dir or Path.home() / ".claude"
     now = time.time() if now is None else now
     projects = monitored_projects(newest_catalog(claude_dir))
@@ -399,7 +439,8 @@ def read_live(claude_dir: Path | None = None, jobs: dict | None = None, loaded: 
     settled = settled_by(_repo_states(claude_dir, projects))
     workers = (helper_workers(helpers, projects, now, remote_of, settled) + builder_workers(stages, projects, now, settled)
                + job_workers(jobs or {}, logs, loaded or [], projects, now, goals, paths))
-    return {"generated_at": now, "projects": projects, "workers": workers}
+    prod = producers(jobs or {}, logs, loaded or [], projects, now, machine_role, paths)
+    return {"generated_at": now, "projects": projects, "workers": workers, "producers": prod}
 
 
 def _repo_states(claude_dir: Path, projects: list[dict]) -> dict:
@@ -437,8 +478,10 @@ def write(out: Path, doc: dict) -> None:
 def live_doc() -> dict:
     """read_live with this Mac's real job catalog and launchd jobs."""
     import job_catalog  # noqa: PLC0415  (reads the north stars; only needed for a real run)
+    import job_units  # noqa: PLC0415  (gets this Mac's role: mini or laptop)
     loaded, paths = launchd_jobs(Path.home() / ".agents", Path.home() / "Library" / "LaunchAgents")
-    return read_live(jobs=job_catalog.JOBS, loaded=loaded, goals=job_catalog.GOALS, paths=paths, remote_of=git_remote)
+    machine_role = job_units.machine_role() or "both"
+    return read_live(jobs=job_catalog.JOBS, loaded=loaded, goals=job_catalog.GOALS, paths=paths, remote_of=git_remote, machine_role=machine_role)
 
 
 def main(argv: list[str]) -> int:

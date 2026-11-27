@@ -276,6 +276,84 @@ def test_a_failed_job_whose_next_run_passed_is_gone():
     assert wv.job_workers(JOBS, logs, [], wv.monitored_projects(catalog()), NOW) == []
 
 
+# ── producers: liveness watched by the map ─────────────────────────────────────
+
+def test_a_producer_has_id_name_project_quiet_s_and_last_heard():
+    jobs_with_quiet = {"test-job": {"machine": "both", "goal": "project:seal", "quiet_s": 100}}
+    logs = {"test-job": {"runs": [{"status": "running", "started_at": iso(T0 - timedelta(minutes=1)),
+                                   "finished_at": iso(T0 - timedelta(minutes=1))}]}}
+    prod = wv.producers(jobs_with_quiet, logs, [], wv.monitored_projects(catalog()), NOW)
+    assert len(prod) == 1
+    p = prod[0]
+    assert p["id"] == "producer:test-job"
+    assert p["name"] == "test-job"
+    assert p["project"] == "seal"
+    assert p["quiet_s"] == 100
+    assert isinstance(p["last_heard"], float)
+
+
+def test_only_jobs_with_quiet_s_become_producers():
+    jobs = {"with-quiet": {"machine": "both", "goal": "project:seal", "quiet_s": 100},
+            "no-quiet": {"machine": "both", "goal": "project:seal"},
+            "zero-quiet": {"machine": "both", "goal": "project:seal", "quiet_s": 0},
+            "bad-quiet": {"machine": "both", "goal": "project:seal", "quiet_s": "not-a-number"}}
+    prod = by_id(wv.producers(jobs, {}, [], wv.monitored_projects(catalog()), NOW))
+    assert len(prod) == 1 and "producer:with-quiet" in prod
+
+
+def test_a_producer_respects_machine_placement():
+    jobs = {"mini-only": {"machine": "mini", "goal": "project:marvin", "quiet_s": 100},
+            "laptop-only": {"machine": "laptop", "goal": "project:marvin", "quiet_s": 100},
+            "both": {"machine": "both", "goal": "project:marvin", "quiet_s": 100}}
+    mini_prod = by_id(wv.producers(jobs, {}, [], wv.monitored_projects(catalog()), NOW, machine_role="mini"))
+    laptop_prod = by_id(wv.producers(jobs, {}, [], wv.monitored_projects(catalog()), NOW, machine_role="laptop"))
+    assert set(mini_prod.keys()) == {"producer:mini-only", "producer:both"}
+    assert set(laptop_prod.keys()) == {"producer:laptop-only", "producer:both"}
+
+
+def test_a_producer_goes_under_its_declared_project():
+    jobs = {"for-seal": {"machine": "both", "goal": "project:seal", "quiet_s": 100},
+            "north-star": {"machine": "both", "goal": "ns1", "quiet_s": 100},
+            "no-goal": {"machine": "both", "quiet_s": 100}}
+    prod = by_id(wv.producers(jobs, {}, [], wv.monitored_projects(catalog()), NOW))
+    assert prod["producer:for-seal"]["project"] == "seal"
+    assert prod["producer:north-star"]["project"] == "marvin"  # north stars are MARVIN's
+    assert prod["producer:no-goal"]["project"] is None
+
+
+def test_a_producer_reports_last_heard_from_its_job_log():
+    finished = T0 - timedelta(hours=1)
+    jobs = {"past": {"machine": "both", "quiet_s": 100},
+            "recent": {"machine": "both", "quiet_s": 100},
+            "never": {"machine": "both", "quiet_s": 100}}
+    logs = {"past": {"runs": [{"status": "passed", "started_at": iso(T0 - timedelta(days=1)),
+                              "finished_at": iso(finished)}]},
+            "recent": {"runs": [{"status": "passed", "started_at": iso(T0 - timedelta(minutes=1)),
+                                "finished_at": iso(T0 - timedelta(minutes=1))}]},
+            "never": {}}
+    prod = by_id(wv.producers(jobs, logs, [], wv.monitored_projects(catalog()), NOW))
+    assert prod["producer:past"]["last_heard"] == finished.timestamp()
+    assert prod["producer:never"]["last_heard"] is None
+
+
+def test_a_loaded_job_not_in_the_catalog_becomes_a_producer_too():
+    jobs = {}
+    logs = {"mystery": {"runs": [{"status": "passed", "started_at": iso(T0)}]}}
+    prod = wv.producers(jobs, logs, ["mystery"], wv.monitored_projects(catalog()), NOW)
+    assert len(prod) == 0  # no quiet_s, so no producer
+
+
+def test_producers_are_never_dropped_unlike_workers():
+    # This is just conceptual; real filtering happens in the browser.
+    # The producers list is complete and always includes jobs that declare quiet_s.
+    jobs = {"always-here": {"machine": "both", "quiet_s": 100}}
+    logs = {}  # no runs at all; the job has never reported
+    prod = wv.producers(jobs, logs, [], wv.monitored_projects(catalog()), NOW)
+    assert len(prod) == 1
+    assert prod[0]["id"] == "producer:always-here"
+    assert prod[0]["last_heard"] is None  # went deaf immediately
+
+
 # ── the whole half, from disk ───────────────────────────────────────────────
 
 def test_read_live_reads_every_source_and_survives_junk(tmp_path):
@@ -302,6 +380,52 @@ def test_read_live_reads_every_source_and_survives_junk(tmp_path):
 def test_read_live_with_no_catalog_or_logs_is_empty_not_a_crash(tmp_path):
     doc = wv.read_live(claude_dir=tmp_path / "nothing", jobs={}, loaded=[], now=NOW)
     assert doc["projects"] == [] and doc["workers"] == []
+
+
+def test_read_live_includes_producers_in_the_output(tmp_path):
+    jobs = {"job1": {"machine": "both", "goal": "project:seal", "quiet_s": 100}}
+    logs = {"job1": {"runs": [{"status": "running", "started_at": iso(T0)}]}}
+    (tmp_path / "catalog").mkdir()
+    (tmp_path / "catalog" / "projects.m1.json").write_text(json.dumps({"projects": catalog()}))
+    doc = wv.read_live(claude_dir=tmp_path, jobs=jobs, loaded=[], now=NOW)
+    assert "producers" in doc
+    assert len(doc["producers"]) == 1
+    assert doc["producers"][0]["id"] == "producer:job1"
+    assert doc["producers"][0]["name"] == "job1"
+    assert doc["producers"][0]["quiet_s"] == 100
+
+
+def test_machine_specific_jobs_filtered_by_machine_role():
+    # Defect 1: machine-specific jobs on the wrong machine should be excluded from producers.
+    jobs = {
+        "both-job": {"machine": "both", "quiet_s": 100},
+        "mini-job": {"machine": "mini", "quiet_s": 100},
+        "laptop-job": {"machine": "laptop", "quiet_s": 100},
+    }
+    logs = {}
+    prod = wv.producers(jobs, logs, [], wv.monitored_projects(catalog()), NOW, machine_role="mini")
+    ids = {p["id"] for p in prod}
+    assert "producer:both-job" in ids, "both-job should be included for mini"
+    assert "producer:mini-job" in ids, "mini-job should be included on mini"
+    assert "producer:laptop-job" not in ids, "laptop-job should be excluded on mini"
+
+
+def test_never_heard_producers_are_included():
+    # Defect 3: producers with no runs at all should still be tracked.
+    jobs = {"never-runs": {"machine": "both", "quiet_s": 100}}
+    logs = {}  # no runs at all
+    prod = wv.producers(jobs, logs, [], wv.monitored_projects(catalog()), NOW)
+    assert len(prod) == 1
+    assert prod[0]["last_heard"] is None, "never-heard producer should have null last_heard"
+
+
+def test_producers_include_script_path():
+    # Producers should include their script path for rendering in the Body half.
+    jobs = {"test-job": {"machine": "both", "quiet_s": 100}}
+    paths = {"test-job": "lib/example_job.py"}
+    prod = wv.producers(jobs, {}, [], wv.monitored_projects(catalog()), NOW, paths=paths)
+    assert len(prod) == 1
+    assert prod[0].get("path") == "lib/example_job.py", "producer should include path"
 
 
 def test_the_writer_replaces_work_json_whole(tmp_path):

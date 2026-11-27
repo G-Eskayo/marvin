@@ -798,6 +798,97 @@
     return added.length > 0 || removed;
   }
   window.applyWork = applyWork;
+
+  // ── Producers: job liveness watched by the map (#1434). Offline grey color when no fresher event lands within quiet_s.
+  // A producer is a catalogued job that declares quiet_s (seconds before considered deaf). The map arms a one-shot timer per
+  // producer; on fire, the producer turns grey. It rearmed if a fresher last_heard event arrives, never rearmed backwards.
+  // Producers are looked up by resolved script path in the Body half, falling back to a Producers region when no match.
+  var OFFLINE_GREY_RGB = "90,90,90";  // #5a5a5a in decimal RGB, for use in rgba() strings
+  var producerState = {}, producerTimers = {}, producerData = {};  // producerState[id] = {last_heard, grey}, producerData[id] = {path, name}
+  var currentProducerIds = {};  // id -> true: track which producers are in the latest doc for cleanup
+  function applyProducers(doc, now) {
+    if (!Array.isArray(doc.producers)) return false;
+    now = now || clockNow();
+    var changed = false;
+    var newProducerIds = {};
+
+    doc.producers.forEach(function (p) {
+      if (!p || typeof p !== "object" || typeof p.id !== "string" || !p.id || typeof p.quiet_s !== "number" || p.quiet_s <= 0) return;
+      newProducerIds[p.id] = true;
+      var old = producerState[p.id] || {};
+      var last = typeof p.last_heard === "number" ? p.last_heard : null;
+
+      // Store producer data (path, name) for node lookup
+      producerData[p.id] = { path: p.path, name: p.name };
+
+      // Always enter the producer into state (never drop them). Initially grey if never heard from.
+      if (!producerState[p.id]) {
+        producerState[p.id] = { last_heard: last, grey: last === null };
+        if (last === null) changed = true;  // never-heard producers are immediately grey
+      }
+
+      // Only rearm if fresher (never backwards): same or older last_heard keeps the existing timer.
+      if (last !== null && (!old.last_heard || last > old.last_heard)) {
+        producerState[p.id] = { last_heard: last, grey: false };
+        clearTimeout(producerTimers[p.id]);
+        var delay_ms = Math.max(0, (last + p.quiet_s - now) * 1000);
+        producerTimers[p.id] = setTimeout(function () {
+          if (producerState[p.id]) {
+            producerState[p.id].grey = true;
+            updateDeafNodes();  // mark nodes whose producers just went grey
+            relayout(false);  // recolor without full rebuild
+          }
+        }, delay_ms);
+        changed = true;
+      }
+    });
+
+    // Clean up producers no longer in the doc: cancel their timers and remove state.
+    Object.keys(currentProducerIds).forEach(function (id) {
+      if (!newProducerIds[id]) {
+        clearTimeout(producerTimers[id]);
+        delete producerTimers[id];
+        delete producerState[id];
+        delete producerData[id];
+        changed = true;
+      }
+    });
+
+    currentProducerIds = newProducerIds;
+    if (changed) updateDeafNodes();  // refresh deaf node list whenever producers change
+    return changed;
+  }
+  var deafNodeIds = {};  // node id -> true: nodes whose producers are grey
+  function updateDeafNodes() {
+    deafNodeIds = {};
+    Object.keys(producerState).forEach(function (prodId) {
+      if (producerState[prodId].grey) {
+        var data = producerData[prodId];
+        if (!data) return;
+        // Try to find the node by script path in the Body half (by matching path with file leaves or job nodes)
+        var foundNodeId = null;
+        if (data.path) {
+          // Look for a job node with matching path: job:<name>
+          var jobNodeId = "job:" + (data.name || "");
+          if (byId[jobNodeId]) foundNodeId = jobNodeId;
+        }
+        // If found by path, mark it; otherwise fall back to producer ID itself (creates in Producers region on demand)
+        deafNodeIds[foundNodeId || prodId] = true;
+      }
+    });
+  }
+  function producerIsDeaf(id) {
+    var state = producerState[id];
+    return state && state.grey;
+  }
+  function isDeaf() {
+    // True only when every applicable producer is grey (all watched jobs are silent).
+    var producers = Object.keys(producerState);
+    if (!producers.length) return false;
+    return producers.every(function (id) { return producerIsDeaf(id); });
+  }
+  window.applyProducers = applyProducers;
+
   // An activity line from inside a helper: light the worker; a file it touched is a leaf under it, and the link to
   // the body part that owns the file carries the traffic. True when the line named a worker on the map.
   function workerEvent(ev) {
@@ -1122,7 +1213,13 @@
     if (LAYOUT_WORK) {
       fetch("./work.json?_=" + Date.now())
         .then(function (r) { return r.ok ? r.json() : null; })
-        .then(function (doc) { if (doc) applyWork(doc); })
+        .then(function (doc) {
+          if (doc) {
+            applyWork(doc);
+            applyProducers(doc);
+            updateDeafNodes();
+          }
+        })
         .catch(function () { /* not written yet: the generated workers stand */ });
     }
   }
@@ -1751,6 +1848,7 @@
       // fallback only, not the live behavior.
       var color = nd.archived ? "#404040" : (nd.ready === false ? "#6b5b4a" : (nd.online === false ? "#5a5a5a" : CAT[nd.cat].color));
       var failed = !!failedIds[nd.id]; // red, and stays red, until a pass for this node
+      var deaf = !!deafNodeIds[nd.id]; // grey, while the producer is deaf (overdue)
       var pulse = pulseIntensityOf(nd.id);
       // Body and Work (#854, Gil 2026-10-30): activity is brightness of the part's own hue; amber is kept for a missed
       // purpose and red for failure, so neither is used to mean "busy" here.
@@ -1776,11 +1874,11 @@
 
       ctx.beginPath();
       traceShape(shape, p.sx, p.sy, r + pulse * 2);
-      ctx.fillStyle = dim ? "rgba(110,118,129,0.25)" : (failed ? "rgb(" + FAIL_RGB + ")" : (pulse > 0 ? "rgba(" + litRGB + ",1)" : color));
+      ctx.fillStyle = dim ? "rgba(110,118,129,0.25)" : (deaf ? "rgb(" + OFFLINE_GREY_RGB + ")" : (failed ? "rgb(" + FAIL_RGB + ")" : (pulse > 0 ? "rgba(" + litRGB + ",1)" : color)));
       ctx.globalAlpha = bf * (dim ? 0.4 : Math.min(1, 0.6 + depthT * 0.4 + pulse * 0.4));
       ctx.save();
       var hubGlow = nd.depth <= 1 ? 6 : 0;
-      var glowAmt = pulse > 0 ? 16 + pulse * 16 : (dim ? 0 : hubGlow);
+      var glowAmt = pulse > 0 ? 16 + pulse * 16 : (dim || deaf ? 0 : hubGlow);
       if (glowAmt > 0) { ctx.shadowBlur = glowAmt; ctx.shadowColor = pulse > 0 ? "rgba(" + litRGB + ",0.95)" : color; }
       ctx.fill();
       ctx.restore();
@@ -1815,11 +1913,11 @@
         // label shows on hover or tap (select).
         isHover = isHover || hovered === nd;
         alwaysLabel = isRegionOrProject(nd);
-        eligible = alwaysLabel || isSel || isHover || pulse > 0 || failed;
+        eligible = alwaysLabel || isSel || isHover || pulse > 0 || failed || deaf;
       }
       labelCands.push({
         nd: nd, p: p, r: r, bf: bf, dim: dim, pulse: pulse, depthT: depthT, alwaysLabel: alwaysLabel,
-        isSel: isSel, isHover: isHover, failed: failed, eligible: eligible
+        isSel: isSel, isHover: isHover, failed: failed, deaf: deaf, eligible: eligible
       });
     });
     drawnNodes = discs;
@@ -1924,7 +2022,7 @@
       labelAlpha[nd.id] = a;
       if (a <= 0) return;
       var la = a * c.bf * (c.dim ? 0.3 : Math.min(1, 0.6 + c.depthT * 0.4 + c.pulse * 0.4));
-      ctx.fillStyle = LAYOUT_WORK && (c.pulse > 0 || c.failed) ? "rgba(" + (c.failed ? FAIL_RGB : LABEL_RGB) + "," + la + ")" :
+      ctx.fillStyle = LAYOUT_WORK && (c.pulse > 0 || c.failed || c.deaf) ? "rgba(" + (c.failed ? FAIL_RGB : (c.deaf ? OFFLINE_GREY_RGB : LABEL_RGB)) + "," + la + ")" :
         c.pulse > 0.1 ? "rgba(" + SYNAPSE_COLOR + "," + la + ")" : c.alwaysLabel ? "rgba(" + LABEL_RGB + "," + la + ")" : "rgba(" + LABEL_RGB_DIM + "," + la + ")";
       ctx.fillText(text, p.sx, p.sy - c.r - 6);
       drawnLabels.push({ text: text, x: box.x, y: box.y, w: box.w, h: box.h, alpha: a, shown: want, color: ctx.fillStyle });
@@ -1994,7 +2092,14 @@
         }
       }
       return null;
-    }
+    },
+    // Producer state: job liveness tracking for the map (#1434)
+    producerState: function (id) {
+      var state = producerState[id];
+      return state ? { last_heard: state.last_heard, grey: state.grey } : null;
+    },
+    isDeaf: isDeaf,
+    applyProducers: applyProducers
   };
 
   // Body and Work shapes (Gil, 2026-10-30, for review): body parts circles, projects diamonds, workers by kind (chat

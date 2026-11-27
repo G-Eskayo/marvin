@@ -164,6 +164,20 @@ def reported(default_name: str, label: str | None = None):
     return deco
 
 
+def last_heard_at(doc: dict) -> float | None:
+    """Unix timestamp of the latest event from the job's last run (finished_at, else started_at), or None."""
+    if not isinstance(doc, dict):
+        return None
+    runs = doc.get("runs")
+    if not isinstance(runs, list) or not runs:
+        return None
+    last = runs[-1]
+    if not isinstance(last, dict):
+        return None
+    ts = _parse(last.get("finished_at")) or _parse(last.get("started_at"))
+    return ts.timestamp() if ts else None
+
+
 def status_of(doc: dict, now: datetime | None = None) -> str:
     """running | idle | failed | crashed | never -- what the dashboard shows as the job's state."""
     runs = doc.get("runs") or []
