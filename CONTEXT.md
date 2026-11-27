@@ -524,7 +524,8 @@ ever been closed unmerged. Gil approves almost everything; the wait is the cost.
 - **Missed purpose**: a monitored system that is running without errors but not doing its job. Vitals shows it in
   amber at the top of that system, with the reason and a fix. It is red only when it has also blocked something
   else (a deadline, another system). It is not the same as a **decision**: a real choice for Gil (retire a producer,
-  lower a target), which goes to the decision lane.
+  lower a target), which goes to the decision lane. The pipeline's concrete instance (I5, ADR 0080): `check_pipeline_purpose` 
+  diagnoses why a ready ticket has no PR — breaker trip, stale code, guard refusal, stage failure, no run, or unknown.
 - **Independence** (measured): for each kind of work (coding tickets, research, review, embeddings and search,
   transcription, voice), the share of runs done on our own machines and models. A run counts only if it holds the
   bar: quality within 5% of the paid baseline and latency within 1.5×. These are starting bars; *beating* the paid

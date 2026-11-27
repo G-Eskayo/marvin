@@ -995,6 +995,49 @@ def check_parallel_dispatch() -> dict:
 	return _result(cid, label, severity, detail)
 
 
+def check_pipeline_purpose(reachability: dict[str, str] | None = None, remote=None) -> list[dict]:
+	"""I5 from ADR 0080: nothing stuck silently. When a repo has ready tickets but no PR was
+	raised, diagnose why: breaker trip, stale code, guard refusal, stage failure, no run, or unknown.
+	Cross-machine: local repo + each reachable remote, SSH each Mac for its own state."""
+	import pipeline_purpose as pp_check
+	import ticket_pipeline as tp
+	import project_profile as prof
+	import failure_breaker
+
+	cid, label = "purpose:pipeline", "Pipeline purpose: PR raised or reason identified"
+	now = _now()
+	remote = remote or _run_failure_breaker_remote
+	results = []
+
+	try:
+		repos = [tp.REPO, *prof.runnable_repos()]
+		breaker_trips = failure_breaker.tripped()
+
+		for repo in repos:
+			ready = tp._unclaimed_ready_tickets(repo=repo)
+			ready_count = len(ready)
+			if ready_count == 0:
+				continue
+
+			reason_id, reason_detail = pp_check.missed_purpose(repo, machine_profile.registry_id(), now,
+			                                                     ready_count=ready_count,
+			                                                     breaker_trips=breaker_trips)
+			if reason_id is None:
+				continue
+
+			repo_slug = repo.split("/")[-1] if "/" in repo else repo
+			severity = "red" if reason_id == "breaker-trip" else "yellow"
+			detail = f"[{repo_slug}] {ready_count} ready, {reason_id}: {reason_detail}"
+			results.append(_result(f"purpose:pipeline@{repo_slug}@local", label, severity, detail,
+			                       value={"reason": reason_id, "ready_count": ready_count}))
+	except Exception as exc:
+		return [_unknown(cid, label, f"local pipeline state: {exc}")]
+
+	if not results:
+		return [_result(cid, label, "green", "every ready ticket has a PR or a known blocker")]
+	return results
+
+
 TRIGGER_MISS_LOG = Path.home() / ".claude" / "logs" / "trigger-misses.jsonl"
 TRIGGER_MISS_WINDOW_HOURS = 24
 
@@ -1912,6 +1955,7 @@ def default_checks(reach: dict[str, str] | None = None, reach_results: list[dict
         ("sync:stuck", "Code sync", lambda: check_sync_stuck(reach), CROSS_MACHINE_BUDGET_S),
         ("sync:union-review", "Code sync: merged lines to check", check_union_merge_review, CHECK_BUDGET_S),
         ("dispatch:parallel", "Parallel dispatch keeping up", check_parallel_dispatch, CHECK_BUDGET_S),
+        ("purpose:pipeline", "Pipeline purpose: PR raised or reason identified", lambda: check_pipeline_purpose(reach), CROSS_MACHINE_BUDGET_S),
         ("purpose:missed", "Purpose metrics", check_missed_purposes, CHECK_BUDGET_S),
         ("freshness:stale-relay", "Stale claims: caught vs leaked", lambda: check_stale_relay(reach), CROSS_MACHINE_BUDGET_S),
         ("parked:overdue", "Parked choices come back when due", check_parked, CHECK_BUDGET_S),
