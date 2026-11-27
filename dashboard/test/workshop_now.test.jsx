@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest'
 import { renderToStaticMarkup } from 'react-dom/server'
-import { buildNow, nextStep, prStep, ticketStep, SECTIONS, MARVIN_STUCK_MS, projectChip } from '../src/lib/next_step.js'
+import { buildNow, nextStep, prStep, ticketStep, SECTIONS, MARVIN_STUCK_MS, projectChip, foldByCause } from '../src/lib/next_step.js'
 import { readSources, loadSaved, save, SAVED_KEY } from '../src/lib/workshop_feed.js'
 import { WorkshopNow } from '../src/components/WorkshopTab.jsx'
 
@@ -57,13 +57,12 @@ function expectCoverage(src, now) {
   // Every ticket (itself or through the PR that closes it), PR and proposal exactly once, in exactly one section.
   const seen = new Map()
   for (const s of SECTIONS) for (const i of sections[s]) {
-    const keys = i.type === 'ticket' ? [i.key] : [i.key, ...i.covers]
+    const keys = i.type === 'fold' ? i.parts.flatMap((p) => p.type === 'ticket' ? [p.key] : [p.key, ...p.covers]) : i.type === 'ticket' ? [i.key] : [i.key, ...i.covers]
     for (const k of keys) seen.set(k, (seen.get(k) || 0) + 1)
   }
   const want = [...src.tickets.map((t) => `${t.repo}#${t.number}`), ...src.prs.map((p) => p.key), ...src.proposals.map((p) => `proposal:${p.id}`),
     ...[...src.running, ...src.queue].map((r) => `${r.repo}#${r.number}`)]
   for (const k of new Set(want)) expect(seen.get(k), k).toBe(1)
-  expect(SECTIONS.reduce((n, s) => n + sections[s].length, 0)).toBe(items.length)
   return sections
 }
 
@@ -140,7 +139,7 @@ describe('the Now view (#862)', () => {
     const rows = (h.match(/data-testid="now-row"/g) || []).length
     // Up next shows its first row with "N more ready"; "MARVIN is on it" is never collapsed.
     expect(rows).toBe(sections.stuck.length + sections.yours.length + sections.marvin.length + 1)
-    expect(h).toContain(`▸ ${sections.next.length - 1} more ready`)
+    expect(h).toContain(`Show ${sections.next.length - 1} more`)
     expect(h).toContain(`all ${sections.marvin.length} · everything in motion`)
     expect(render(feedOf({ tickets: [ticket(1, ['needs-info'])] }))).not.toContain('now-stuck')
   })
@@ -414,5 +413,58 @@ describe('a parked ticket is the owner\'s move, not Stuck (stuck sweep, 2026-11-
   })
   it('a claim gone quiet stays Stuck even with needs-info: the claim is MARVIN\'s to release', () => {
     expect(ticketStep(ticket(26, ['needs-info', 'claimed:x'], { column: 'blocked', reason: 'Claimed by x but no activity for 3 days' })).section).toBe('stuck')
+  })
+})
+
+describe('merge queue cause field', () => {
+  it('a PR in the merge queue carries the cause from its entry', () => {
+    const p = pr(1, { mergeQueue: { queued: true, state: 'queued', reason: '1st in the queue', cause: 'MAIN_RED' } })
+    const { items } = buildNow({ prs: [p], tickets: [], projects, running: [], queue: [], proposals: [] }, NOW)
+    expect(items[0].cause).toBe('MAIN_RED')
+  })
+})
+
+describe('folds group items by cause (defect fix: stuckSince)', () => {
+  it('folds use stuckSince (how long stuck), not since (creation time), for the fold row\'s stuckSince', () => {
+    // Two PRs both created 1000 min ago, but stuck for different durations.
+    // PR 1: created 1000 min ago, stuck for 100 min (stuckSince = NOW - 100 min).
+    // PR 2: created 1000 min ago, stuck for 200 min (stuckSince = NOW - 200 min).
+    // The fold's stuckSince should be the earliest (200 min), not the creation time (1000 min).
+    // Build items and add stuckSince manually to simulate stuck items
+    const items = [
+      { type: 'pr', key: `${REPO}#1`, number: 1, cause: 'MAIN_RED', step: { section: 'stuck', stuckSince: NOW - 100 * 60_000 } },
+      { type: 'pr', key: `${REPO}#2`, number: 2, cause: 'MAIN_RED', step: { section: 'stuck', stuckSince: NOW - 200 * 60_000 } }
+    ]
+    // foldByCause should group them and use the earliest stuckSince (200 min)
+    const folded = foldByCause(items)
+    const fold = folded.find((f) => f.type === 'fold')
+    expect(fold).toBeDefined()
+    expect(fold.step.stuckSince).toBe(NOW - 200 * 60_000)
+    expect(fold.step.stuckSince).not.toBe(NOW - 1000 * 60_000)
+  })
+})
+
+describe('Row component (defect fix: stripFor on fold items)', () => {
+  it('a fold item renders without calling stripFor (which would fail on missing fields)', () => {
+    const fold = {
+      type: 'fold',
+      key: 'cause:MAIN_RED',
+      cause: 'MAIN_RED',
+      title: '2 blocked',
+      parts: [
+        { type: 'pr', key: 'acme/app#1', number: 1, step: { section: 'stuck', verb: 'Build failed' } },
+        { type: 'pr', key: 'acme/app#2', number: 2, step: { section: 'stuck', verb: 'Build failed' } }
+      ],
+      step: { section: 'stuck', verb: 'main is red', owner: 'nobody', stuckSince: NOW - 100 * 60_000 }
+    }
+    const h = renderToStaticMarkup(
+      <WorkshopNow feed={{ now: { items: [fold], sections: { stuck: [fold], yours: [], marvin: [], next: [], waiting: [] }, count: 0 }, failed: [], loaded: true, at: NOW }} onOpen={() => {}} now={NOW} />
+    )
+    // The fold should render without throwing, and should show its title
+    expect(h).toContain('2 blocked')
+    expect(h).toContain('▸ Stuck') // fold shows the stuck duration in leftLabel for stuck section
+    expect(h).toContain('data-key="cause:MAIN_RED"') // fold renders with its cause key
+    // No stage strip should appear in the fold row
+    expect(h).not.toContain('aria-label="stages"')
   })
 })

@@ -25,6 +25,40 @@ export const SECTIONS = ['stuck', 'yours', 'marvin', 'next', 'waiting']
 // I5: MARVIN's stuck steps restart after 30 min.
 export const MARVIN_STUCK_MS = 30 * 60_000
 
+export const CAUSE_LABEL = {
+  'MAIN_RED': 'main is red',
+  'GITHUB_UNAVAILABLE': 'github is unavailable'
+}
+
+export function foldByCause(items, section) {
+  const byKey = new Map(), folds = [], others = []
+  for (const item of items) {
+    const cause = item.cause ?? null
+    if (cause && cause in CAUSE_LABEL) {
+      if (!byKey.has(cause)) byKey.set(cause, [])
+      byKey.get(cause).push(item)
+    } else {
+      others.push(item)
+    }
+  }
+  for (const [cause, parts] of byKey) {
+    if (parts.length >= 2) {
+      const earliestSince = Math.min(...parts.map((p) => p.step?.stuckSince ?? Infinity))
+      folds.push({
+        type: 'fold',
+        key: `cause:${section}:${cause}`,
+        cause,
+        title: `${parts.length} blocked`,
+        parts,
+        step: { section: parts[0]?.step?.section || 'waiting', verb: CAUSE_LABEL[cause], owner: 'nobody', stuckSince: earliestSince === Infinity ? null : earliestSince }
+      })
+    } else {
+      others.push(...parts)
+    }
+  }
+  return [...folds, ...others]
+}
+
 const PRIORITY_RE = /^(?:priority:)?(p[0-3])$/
 export function priorityOf(labels = []) {
   for (const l of labels) {
@@ -196,7 +230,7 @@ export function buildNow(sources = {}, now = Date.now()) {
     if (ticket) covered.add(ticketKey)
     const item = { type: 'pr', key: pr.key || keyOf(pr.repo, pr.number), repo: pr.repo, number: pr.number, title: pr.title, url: pr.url, pr,
       ticketNumber: pr.ticketRef ?? null, covers: ticket ? [ticketKey] : [], priority: priorityOf(ticket?.labels), since: ms(pr.createdAt),
-      worker: ticketKey ? workerOf(ticketKey) : null, events: ticketKey ? events.get(ticketKey) || [] : [] }
+      worker: ticketKey ? workerOf(ticketKey) : null, events: ticketKey ? events.get(ticketKey) || [] : [], cause: pr.mergeQueue?.cause ?? null }
     items.push(item)
   }
   // Tickets a board pairs with an open PR that closes it, which MR Review's list didn't pair by its body.
@@ -238,6 +272,9 @@ export function buildNow(sources = {}, now = Date.now()) {
   }
 
   const sections = Object.fromEntries(SECTIONS.map((s) => [s, items.filter((i) => i.step.section === s)]))
+  for (const s of SECTIONS) {
+    sections[s] = foldByCause(sections[s], s)
+  }
   sections.stuck.sort(sortBy([(a, b) => (a.step.stuckSince ?? Infinity) - (b.step.stuckSince ?? Infinity)]))
   sections.yours.sort(sortBy([(a, b) => priorityRank(a.priority) - priorityRank(b.priority), sinceAsc]))
   sections.marvin.sort(sortBy([(a, b) => (a.startedAt ?? Infinity) - (b.startedAt ?? Infinity), sinceAsc]))

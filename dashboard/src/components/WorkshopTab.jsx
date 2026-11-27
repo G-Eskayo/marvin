@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
-import { buildNow, durationText, stripFor } from '../lib/next_step.js'
+import { buildNow, durationText, stripFor, CAUSE_LABEL } from '../lib/next_step.js'
 import { itemTarget, targetKey } from '../lib/workshop_item.js'
 import WorkshopItem from './WorkshopItem.jsx'
 import { NOW_TOPICS, SHOWN_ROWS, loadSaved, readEvents, patchSectionState, readSectionState, readSources, save, shownRows, writeSectionState } from '../lib/workshop_feed.js'
@@ -133,6 +133,11 @@ export function clock(ms, now = Date.now()) {
 export function metaFor(item, section, now = Date.now()) {
   const parts = []
   const pr = item.pr
+  if (item.type === 'fold') {
+    if (item.cause) parts.push(CAUSE_LABEL[item.cause] || item.cause)
+    parts.push(`${item.parts.length} blocked`)
+    return parts
+  }
   if (section === 'waiting') {
     parts.push(`#${item.number}`)
     if (item.priority) parts.push(item.priority)
@@ -180,6 +185,13 @@ export function metaFor(item, section, now = Date.now()) {
 }
 
 export function leftLabel(item, section, now = Date.now()) {
+  if (item.type === 'fold') {
+    if (section === 'stuck') {
+      const d = durationText(item.step.stuckSince, now)
+      return `Stuck${d ? ` ${d}` : ''} · ${item.step.owner === 'marvin' ? 'MARVIN' : 'nobody'}`
+    }
+    return item.step.verb
+  }
   if (section === 'stuck') {
     const d = durationText(item.step.stuckSince, now)
     return `Stuck${d ? ` ${d}` : ''} · ${item.step.owner === 'marvin' ? 'MARVIN' : 'nobody'}`
@@ -197,7 +209,28 @@ function rightLabel(item, section, now) {
   return null
 }
 
-function Row({ item, section, onOpen, now }) {
+function Row({ item, section, onOpen, now, ui }) {
+  if (item.type === 'fold') {
+    const expanded = !!ui?.state?.[item.key]?.expanded
+    return (
+      <>
+        <button onClick={() => ui?.set?.(item.key, { expanded: !expanded })} data-testid="now-row" data-section={section} data-key={item.key}
+          className="flex w-full min-w-0 flex-col gap-2 px-4 py-3 text-left hover:bg-white/[0.03] lg:flex-row lg:items-center lg:gap-0">
+          <span className={`shrink-0 text-sm font-semibold lg:w-[164px] ${VERB_TONE[section]}`}>{expanded ? '▾' : '▸'} {leftLabel(item, section, now)}</span>
+          <span className="flex w-full min-w-0 flex-1 items-center gap-4 lg:w-auto">
+            <span className="min-w-0 flex-1">
+              <span className="block break-words text-sm text-neutral-100 [overflow-wrap:anywhere]">{item.title}</span>
+              <span className="mt-0.5 block break-words text-xs text-neutral-500 [overflow-wrap:anywhere]">
+                {metaFor(item, section, now).join(' · ')}
+              </span>
+            </span>
+            <span className="shrink-0 text-xs text-neutral-400">{rightLabel(item, section, now)}</span>
+          </span>
+        </button>
+        {expanded && item.parts.map((part) => <Row key={part.key} item={part} section={section} onOpen={onOpen} now={now} ui={ui} />)}
+      </>
+    )
+  }
   const strip = section === 'marvin' ? stripFor(item, now) : []
   return (
     <button onClick={() => onOpen(item)} data-testid="now-row" data-section={section} data-key={item.key}
@@ -249,7 +282,7 @@ export function WorkshopNow({ feed, onOpen, now = Date.now(), store = storageOf(
   }
   const { stuck, yours, marvin, next, waiting } = data.sections
   const asOf = feed.at ? new Date(feed.at).toLocaleString([], { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit', hour12: false }) : null
-  const rows = (list, section) => list.map((item) => <Row key={item.key} item={item} section={section} onOpen={onOpen} now={now} />)
+  const rows = (list, section) => list.map((item) => <Row key={item.key} item={item} section={section} onOpen={onOpen} now={now} ui={ui} />)
   const long = (list, section) => (
     <>
       {rows(shownRows(list, !!sectionState[section]?.all), section)}
@@ -276,13 +309,13 @@ export function WorkshopNow({ feed, onOpen, now = Date.now(), store = storageOf(
       <Section id="marvin" ui={ui} title="MARVIN is on it" aside={`all ${marvin.length} · everything in motion`} testid="now-marvin">
         <Box>{marvin.length ? long(marvin, 'marvin') : <Empty>Nothing in motion.</Empty>}</Box>
       </Section>
-      <Section id="next" ui={ui} title="Up next" aside="the pipeline’s queue" testid="now-next">
+      <Section id="next" ui={ui} title="Up next" aside="the pipeline queue" testid="now-next">
         <Box>
           {next.length === 0 && <Empty>Nothing ready.</Empty>}
-          {rows(nextOpen ? next : next.slice(0, 1), 'next')}
+          {rows(nextOpen ? next : next.slice(0, 1), "next")}
           {next.length > 1 && (
-            <button onClick={() => ui.set('next', { all: !nextOpen })} className="w-full px-4 py-3 text-left text-sm text-neutral-400 hover:text-neutral-200">
-              {nextOpen ? '▾ Show fewer' : `▸ ${next.length - 1} more ready`}
+            <button onClick={() => ui.set("next", { all: !nextOpen })} className="w-full px-4 py-3 text-left text-sm text-neutral-400 hover:text-neutral-200">
+              {nextOpen ? "Show fewer" : `Show ${next.length - 1} more`}
             </button>
           )}
         </Box>

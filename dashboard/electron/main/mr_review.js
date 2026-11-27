@@ -419,7 +419,7 @@ export async function listPipelinePrs(listOpenPrs, { canMerge = canMergeFromDash
       mockups: detectMockups(pr.body || '', pr.files),
       baseProblem: baseProblem(prs.map((p) => ({ ...p, repo: p.repo || MARVIN_REPO })), { ...pr, repo: pr.repo || MARVIN_REPO }),
       waitingOn: waitingOn(withState, { ...pr, repo: pr.repo || MARVIN_REPO }),
-      // marvin#231: { queued, state, tone, reason, position, waitsFor } from the merge queue, or null.
+      // marvin#231: { queued, state, tone, reason, position, waitsFor, cause } from the merge queue, or null.
       mergeQueue: lines[pr.url] || null,
       hasSchema,
       // The ticket was sent back for rework (marvin #129): approving would merge work that was just rejected.

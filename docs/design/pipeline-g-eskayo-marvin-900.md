@@ -1,0 +1,54 @@
+## North-star fit
+
+**Reuses before adding anything new:**
+- `dashboard/webhook-server/merge_order.js`'s `mergeOrder()` already computes, per PR, an explicit structural reason when main is red (`main.red && !isFix(p)` branch, ~line 248-256: `"main is red · waits for #978"`) or when a GitHub hold applies (`HOLD_UNTIL`/`TEMPORARY_CODES`, already naming `RATE_LIMITED`/`GITHUB_OUTAGE` as distinct codes). This *is* the "known root, recorded explicitly, never guessed" mechanism the ticket asks for — it just isn't carried as a structured field or folded into one row yet.
+- `dashboard/src/lib/next_step.js`'s `buildNow()` already derives a live, stateless `{items, sections}` view every refresh (no stored "incident" object to invalidate) — the same pattern `error_log.py`'s `recent()` (group-by-key-with-count) and the Vitals mock-up's `needsYou()` (loop-absorbs related checks into one row with `parts: []`) both use for exactly this kind of folding. I'm reusing that shape (`parts: [...]`, folded row carries a count) rather than inventing a new one.
+- `dashboard/src/components/WorkshopTab.jsx` already has the expand/collapse-by-id UI convention (`ui.state`/`patchSectionState`, the `waiting` section's toggle button) — the fold row's "show the blocked parts" control reuses that, not a new widget.
+
+**Why this is the simplest sufficient approach, and a correction to the ticket's own premise:** The ticket (written 2026-10-30) and CONTEXT.md's Vitals glossary still describe this as a Vitals-tab "what needs you" column feature. But `~/.claude` lexicon records a later, explicit reversal (Gil, 2026-11-09): "Pipeline health and activity are shown here too [Workshop], reversing the earlier 'Vitals' placement; machine status... stays in Vitals." The Vitals tab itself is still an unmerged draft (`marvin#873`, PR #1291, DRAFT) with no `cause`/`reason` field on checks yet (`#836`, the row-contract foundation, is still `ready-for-agent`, unbuilt). Workshop's `next_step.js`/`merge_order.js`, by contrast, is real, merged, and already carries the exact "main is red · waits for #N" signal the ticket's own example text names. Building against Vitals today would mean importing another ticket's unmerged work into this one. I'm building this in Workshop instead, where the signal and the decision both already live — this is very likely why the prior 3 attempts failed review (building against Vitals code that isn't on `main`). I'll leave the CONTEXT.md Vitals-section wording as a known staleness to flag, not fix in this PR (out of scope for #900).
+
+**Where it spends/saves:** One extra `O(n)` grouping pass per section per refresh (same cost class `buildNow()` already pays); no new network/model calls, no new stored state, no new polling.
+
+**Phone-OS / capability fit:** Collapsing 15 duplicate "main is red" rows into one is exactly what makes a future single push notification (instead of 15) possible — directly useful for MARVIN Mobile's proactive delivery. It makes Gil *more* capable (attention goes to the one real fix) without hiding anything (every blocked part is still listed, just nested).
+
+**Scope I'm deliberately not building:** CONTEXT.md's broader "known roots" list also names Mac-unreachable, budget-hard-line and memory-pressure. None of these have a real signal reaching Workshop's PR/ticket items today (the budget governor, `#872`, is unbuilt; Mac-reachability and memory pressure are machine-level, not merge-queue-level). Per the ticket's own rule — "never guess a root from timing alone" — I'm not fabricating detectors for these; I'm wiring the two roots that have a real, already-computed signal here: `MAIN_RED` and `GITHUB_UNAVAILABLE` (covering `RATE_LIMITED`/`GITHUB_OUTAGE` hold codes). The fold mechanism itself is cause-code-generic, so future producers (the governor, etc.) can add more roots later by just setting the field — no rework needed.
+
+No owner Decision is needed: the ticket already gives the exact row wording ("main is red · 15 builds blocked"), and the Vitals-vs-Workshop question is settled by an existing recorded decision, not an open choice.
+
+## Tests to write first
+
+In `dashboard/test/merge_order.test.js`:
+1. A PR blocked only because main is red gets `entries[url].cause === 'MAIN_RED'`; the fix-PR itself (closes the main-red ticket) never does.
+2. A PR held on `RATE_LIMITED` or `GITHUB_OUTAGE` gets `cause === 'GITHUB_UNAVAILABLE'`; a PR held on `GATE_INFRA`/`OUT_OF_ORDER`/any other code gets `cause === null` (never invents a root outside the fixed vocabulary).
+3. **Own-reason precedence (ticket: "the root clears but one blocked build still fails for its own reason"):** a PR with its own failing checks, while main is *also* red, gets its own-reason text and `cause === null` — never tagged MAIN_RED, so it can never be swept into that fold.
+4. **Two roots at once:** one repo with PRs blocked by MAIN_RED and others blocked by GITHUB_UNAVAILABLE simultaneously — each entry's `cause` reflects its own root, never the other's.
+5. Main goes green: every previously-MAIN_RED entry's `cause` reverts to `null` on the next `mergeOrder()` call with no held state left over (the view is purely derived — no stale cause survives a fresh computation).
+
+In `dashboard/test/workshop_now.test.jsx` (extending the existing `expectCoverage` helper to recurse into `.parts`, since folding is now allowed to nest items):
+6. **15 builds failing on MAIN_RED → one row with a count** (acceptance criterion 1): 15 PRs each with `mergeQueue.cause === 'MAIN_RED'` in the same section fold into one item, `type: 'fold'`, title/label "main is red", meta "15 builds blocked", `parts.length === 15`.
+7. **Fixing main clears the row** (acceptance criterion 2): re-running `buildNow()` after main goes green (all 15 PRs' `cause` now null, each merging/queued normally) yields zero fold items and the 15 appear as their own normal rows/sections again.
+8. **An unrelated failure in the same minute stays its own row** (acceptance criterion 3 / "break it" bullet): two items with `cause: null` created at the identical timestamp are never grouped with each other or with a real fold group — folding never uses time, only the explicit `cause` field.
+9. **Missing cause code is never folded by guess:** one item with `cause: null` sitting beside 14 items with `cause: 'MAIN_RED'` stays its own standalone row, not absorbed into the fold's count.
+10. **Two roots at once, rendered:** MAIN_RED and GITHUB_UNAVAILABLE items in the same section produce two separate fold rows, never merged into one, never cross-counted.
+11. A single item carrying a cause (count of 1) is never folded into a pointless one-item group — renders as a normal row.
+12. Folding is scoped per section: two items sharing a cause but landing in different sections (e.g. one `marvin`, one `waiting`) each stay in their own section, not merged across sections.
+13. Malformed/adversarial input: `cause` as `''`, `0`, an object, or an array is treated identically to "no cause" (never folds, never throws).
+14. A large group (e.g. 500 items sharing one cause) still produces exactly one row with `parts.length === 500`, and the pass stays linear (no accidental quadratic comparison across items).
+15. Idempotence/no-mutation: calling the fold pass twice on the same input array produces equal output and never mutates the original items or their order (guards concurrent reads of the same snapshot).
+16. The existing "every ticket/PR/proposal exactly once, in exactly one section" invariant (`expectCoverage`) still holds when some of those items are nested inside a fold's `.parts` instead of appearing top-level — extend the helper to count parts, don't weaken the assertion.
+17. Rendering: a fold row's expand/collapse state persists across a re-render via the same section-state/localStorage mechanism already used for `waiting`/`next` (closing and reopening the dashboard doesn't lose the choice) — a person's own habit of leaving things collapsed isn't undone by MARVIN.
+18. Rendering: expanding a fold shows every part's own title and still lets each one be opened individually (the existing `onOpen` path), so a blocked part is never hidden, only nested.
+
+## Decisions
+None needed. The ticket's own text supplies the row wording, and the Vitals-vs-Workshop question is resolved by the existing 2026-11-09 Workshop decision already recorded in the lexicon — see "North-star fit" above for the correction. I'm making the Mac-unreachable/memory-pressure/budget-hard-line scoping call myself (defer; no real signal exists yet) rather than manufacturing a choice.
+
+## Task List
+
+1. `dashboard/webhook-server/merge_order.js`: add an explicit `cause` field to the `why` object in both the `main.red && !isFix(p)` sub-branches (→ `'MAIN_RED'`) and the hold branch when `holds.get(p.url).code` is `RATE_LIMITED`/`GITHUB_OUTAGE` (→ `'GITHUB_UNAVAILABLE'`); propagate `why?.cause ?? null` onto `entries[p.url].cause`. No other branch sets it.
+2. Tests for step 1 in `dashboard/test/merge_order.test.js` (tests 1-5 above).
+3. `dashboard/electron/main/mr_review.js`: update the one-line doc comment at `mergeQueue: lines[pr.url] || null` to list `cause` in the documented entry shape (no logic change — it already flows through).
+4. `dashboard/src/lib/next_step.js`: in `buildNow()`'s PR-item construction, carry `item.cause = pr.mergeQueue?.cause ?? null`. Add an exported `CAUSE_LABEL` map (`MAIN_RED → 'main is red'`, `GITHUB_UNAVAILABLE → 'github is unavailable'`) and an exported pure `foldByCause(items)` helper: groups items sharing a non-null `cause` (2+ only) into one `{type: 'fold', key, cause, title, parts, step: {section, verb: label, owner: 'nobody', stuckSince/since from earliest part}}` item, leaving everything else untouched. Apply it per section right after `sections` is built in `buildNow()`, before the existing per-section sorts.
+5. Tests for step 4 in `dashboard/test/workshop_now.test.jsx` (tests 6, 8-15 above), plus updating `expectCoverage` to recurse into `.parts` (test 16).
+6. `dashboard/src/components/WorkshopTab.jsx`: handle `item.type === 'fold'` in `Row`/`metaFor`/`leftLabel` — render the cause label and "`N` blocked" count, with a toggle (reusing the existing `ui.state`/`patchSectionState` persistence already used by the `waiting` section) that expands to list each part as its own openable row via the existing `onOpen` path.
+7. Tests for step 6 in `dashboard/test/workshop_now.test.jsx` (tests 7, 17, 18 above).
+8. Run the full existing `workshop_now.test.jsx` and `merge_order.test.js` suites (not just the new cases) to confirm nothing pre-existing regressed, then the full dashboard test suite per the merge-gate requirement.

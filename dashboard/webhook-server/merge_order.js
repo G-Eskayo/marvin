@@ -239,7 +239,11 @@ export function mergeOrder(openPrs, mainState, queue) {
       const after = p.conflictAfter ?? (held || p.conflict ? queue?.lastMerged ?? null : null)
       why = ownReason(held ? { ...p, conflict: true, conflictAfter: after } : { ...p, conflictAfter: after }, base)
     }
-    if (!why && holds.has(p.url) && stillHeld(holds.get(p.url), p, main, now)) why = { reason: holdReason(holds.get(p.url)), held: true }
+    if (!why && holds.has(p.url) && stillHeld(holds.get(p.url), p, main, now)) {
+      const h = holds.get(p.url)
+      const cause = h.code === 'RATE_LIMITED' || h.code === 'GITHUB_OUTAGE' ? 'GITHUB_UNAVAILABLE' : null
+      why = { reason: holdReason(h), held: true, cause }
+    }
     if (!why && parent.get(p.url)) {
       const up = parent.get(p.url)
       waitsFor = up.number
@@ -251,11 +255,11 @@ export function mergeOrder(openPrs, mainState, queue) {
       if (partOfRedNum !== null && fixPrs.length === 0) {
         why = { reason: `waits for a PR that closes #${partOfRedNum}, and none does yet` }
       } else {
-        why = { reason: redWaitsFor ? `main is red · waits for #${redWaitsFor}` : 'main is red · waits for a fix' }
+        why = { reason: redWaitsFor ? `main is red · waits for #${redWaitsFor}` : 'main is red · waits for a fix', cause: 'MAIN_RED' }
       }
     }
     entries[p.url] = { url: p.url, number: p.number, queued, state: why ? 'waiting' : queued ? 'queued' : 'ready', tone: why ? 'amber' : queued ? 'sky' : null,
-      reason: why?.reason || null, position: null, waitsFor, ...(why?.unbuilt ? { unbuilt: true } : {}), ...(why?.conflict ? { conflict: true } : {}) }
+      reason: why?.reason || null, position: null, waitsFor, cause: why?.cause ?? null, ...(why?.unbuilt ? { unbuilt: true } : {}), ...(why?.conflict ? { conflict: true } : {}) }
   }
 
   // Every queued PR in merge order: base before what is built on it (topological), then fixes for a red main first,

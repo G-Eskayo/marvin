@@ -229,6 +229,41 @@ describe('mergeOrder: positions', () => {
   })
 })
 
+describe('mergeOrder: cause field', () => {
+  const green_main = mainStateFrom({ issues: [] })
+
+  it('a PR waiting for main to be fixed sets cause to MAIN_RED', () => {
+    const issues = [{ number: 978, title: 'Main is red', state: 'OPEN', labels: ['main-red'] }]
+    const red = mainStateFrom({ issues })
+    const prs = [pr(970), pr(986, { body: 'Closes #978' })]
+    const out = mergeOrder(prs, red, q(970))
+    expect(line(out, 970).cause).toBe('MAIN_RED')
+  })
+
+  it('a PR held due to GITHUB_OUTAGE sets cause to GITHUB_UNAVAILABLE', () => {
+    const queue = { items: [{ url: url(1), approvedAt: 100, hold: { code: 'GITHUB_OUTAGE', until: 'later', notBefore: Date.now() + 10000 } }], failed: {} }
+    const out = mergeOrder([pr(1)], green_main, queue)
+    expect(line(out, 1).cause).toBe('GITHUB_UNAVAILABLE')
+  })
+
+  it('a PR held due to RATE_LIMITED sets cause to GITHUB_UNAVAILABLE', () => {
+    const queue = { items: [{ url: url(1), approvedAt: 100, hold: { code: 'RATE_LIMITED', until: 'later', notBefore: Date.now() + 10000 } }], failed: {} }
+    const out = mergeOrder([pr(1)], green_main, queue)
+    expect(line(out, 1).cause).toBe('GITHUB_UNAVAILABLE')
+  })
+
+  it('a PR held due to other reasons does not set cause', () => {
+    const queue = { items: [{ url: url(1), approvedAt: 100, hold: { code: 'CI_PENDING', until: 'checks', key: 'k1', notBefore: 0 } }], failed: {} }
+    const out = mergeOrder([pr(1)], green_main, queue)
+    expect(line(out, 1).cause).toBeNull()
+  })
+
+  it('a PR with no blocking reason has cause as null', () => {
+    const out = mergeOrder([pr(1)], green_main, q())
+    expect(line(out, 1).cause).toBeNull()
+  })
+})
+
 // marvin#1099: the gate is the check. GitHub's copy of a check the gate runs itself doesn't hold a PR in the queue.
 describe('checks the gate runs itself', () => {
   const cancelledPython = [{ __typename: 'CheckRun', name: 'Python tests', status: 'COMPLETED', conclusion: 'CANCELLED' },
